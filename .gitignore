@@ -1,0 +1,12 @@
+# Runtime data & secrets (never commit — created by server.js on first run)
+server-config.json
+data/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+
+# Claude Code local session state (machine-specific, not project config)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

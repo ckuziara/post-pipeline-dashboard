@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Post Pipeline — Episodic Post-Production Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="js/state.js" defer></script>
+<script src="js/api.js" defer></script>
+<script src="js/seed.js" defer></script>
+<script src="js/gantt.js" defer></script>
+<script src="js/board.js" defer></script>
+<script src="js/journal.js" defer></script>
+<script src="js/dashboard.js" defer></script>
+<script src="js/dialog.js" defer></script>
+<script src="js/admin.js" defer></script>
+<script src="js/render.js" defer></script>
+<script src="js/main.js" defer></script>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="brand">
+        <button class="brand-logo" id="brand-logo" aria-label="Preferences">
+          <span class="logo-film">🎬</span>
+          <span class="logo-cog">⚙️</span>
+        </button>
+        <div>
+          <div class="brand-name">Post Pipeline</div>
+        </div>
+      </div>
+
+      <div class="view-tabs" id="view-tabs"></div>
+
+      <div class="topbar-spacer"></div>
+
+      <div class="role-select" id="role-select"></div>
+      <button id="btn-reset" class="ghost" title="Reset to the reference demo data">↺ Reset</button>
+    </header>
+
+    <div id="toolbar"></div>
+    <div class="kpis" id="kpis"></div>
+    <main id="view"></main>
+  </div>
+  <div id="toast-root"></div>
+  <noscript>This tool requires JavaScript.</noscript>
+</body>
+</html>

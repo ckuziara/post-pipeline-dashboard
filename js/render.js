@@ -1,0 +1,229 @@
+/* App shell — role tabs, contextual toolbar (filters / legend / zoom), KPI strip,
+   the Director review queue, and dispatch to the timeline / board / dashboard views. */
+window.App = window.App || {};
+(function () {
+  'use strict';
+  const el = (s, p, c) => App.el(s, p, c);
+
+  // detail listings (board rows, timeline sub-bars, dashboard aggregates) honour
+  // the department / owner filters; episode-level rollups always use all subitems.
+  App.subsView = function (ep) {
+    const f = App.state.filters;
+    return App.subitems(ep).filter(su =>
+      (f.dept === 'all' || su.dept === f.dept) &&
+      (f.person === 'all' || su.assignee === f.person));
+  };
+
+  App.visibleEpisodes = function () {
+    const f = App.state.filters;
+    let eps = App.state.data.episodes.filter(ep =>
+      (f.show === 'all' || ep.showId === f.show) &&
+      (f.q === '' || (ep.title + ' ' + ep.code).toLowerCase().includes(f.q.toLowerCase())));
+    if (f.person !== 'all') eps = eps.filter(ep => Object.values(ep.assignees || {}).includes(f.person));
+    return eps;
+  };
+
+  App.render = function () {
+    if (!App.state.data) return;
+    App.board.closePop && App.board.closePop();
+    if (App.tooltip) { App.tooltip.hide(); App.tooltip._stack = []; }
+
+    // guard: only admins may sit on the Admin view
+    if (App.state.view === 'admin' && !App.isAdminRole(App.state.role)) App.state.view = 'timeline';
+
+    renderViewTabs();
+    renderRoleSelect();
+
+    const episodes = App.visibleEpisodes();
+    renderToolbar(episodes);
+    if (App.state.view === 'timeline') renderKpis(episodes);
+    else document.getElementById('kpis').innerHTML = '';
+
+    const view = document.getElementById('view');
+
+    // Preserve scroll position when re-rendering within the same view
+    const sameView = App.state._lastRenderedView === App.state.view;
+    const savedScroll = (sameView && view) ? view.scrollTop : 0;
+
+    // Snapshot the gantt's scroll position while its DOM is still alive — this
+    // makes restoration correct for EVERY render trigger (filters, edits,
+    // expand clicks) without depending on async scroll events having fired.
+    if (App.gantt && App.gantt.syncScrollState) App.gantt.syncScrollState();
+
+    view.innerHTML = '';
+
+    if (App.state.view === 'admin') { view.appendChild(App.admin.render()); }
+    else if (App.state.view === 'review') { view.appendChild(reviewQueue(episodes)); }
+    else if (App.state.view === 'board') view.appendChild(App.board.render(episodes));
+    else if (App.state.view === 'dashboard') view.appendChild(App.dashboard.render(episodes));
+    else { view.appendChild(App.gantt.render(episodes)); App.gantt.afterMount(); }
+
+    // Restore scroll after the browser has painted the new content
+    if (savedScroll > 0) requestAnimationFrame(() => { if (view) view.scrollTop = savedScroll; });
+    App.state._lastRenderedView = App.state.view;
+  };
+
+  function renderViewTabs() {
+    const box = document.getElementById('view-tabs'); box.innerHTML = '';
+    const tabs = [['timeline', '📊', 'Timeline'], ['board', '▦', 'Board'], ['dashboard', '🧭', 'Dashboard']];
+    if (App.isAdminRole(App.state.role)) tabs.push(['admin', '🛠', 'Admin']);
+    tabs.forEach(([v, ic, lbl]) => {
+      box.appendChild(el('button.view-tab' + (App.state.view === v ? '.active' : ''),
+        { 'data-view': v, onclick: () => { App.state.view = v; App.render(); } },
+        [el('span.ic', null, ic), lbl]));
+    });
+  }
+
+  function renderRoleSelect() {
+    const box = document.getElementById('role-select'); box.innerHTML = '';
+    const user = App.state.user;
+
+    // signed in: show who you are, with sign-out
+    if (user) {
+      box.appendChild(el('.user-chip', { title: user.email + ' — signed in via ' + (App.api.me && App.api.me.via === 'google' ? 'Google' : 'team sign-in') }, [
+        user.picture
+          ? el('img.user-pic', { src: user.picture, alt: '' })
+          : el('span.avatar', { style: { background: 'var(--accent)' } }, App.initials(user.name)),
+        el('span.user-name', null, user.name),
+        el('button.user-out', { onclick: () => App.api.logout(), title: 'Sign out' }, '⎋')
+      ]));
+    }
+
+    // admins (and the offline demo) may switch the viewing role; everyone
+    // else is pinned to the role their directory entry gives them
+    const canSwitch = !user || user.admin;
+    if (canSwitch) {
+      const sel = el('select.role-dd', { title: 'View as role' });
+      App.ROLES.forEach(r => {
+        const o = document.createElement('option'); o.value = r.key; o.textContent = r.icon + '  ' + r.label;
+        if (r.key === App.state.role) o.selected = true; sel.appendChild(o);
+      });
+      sel.addEventListener('change', e => App.setRole(e.target.value));
+      box.appendChild(sel);
+    } else {
+      const r = App.role(App.state.role);
+      box.appendChild(el('span.role-pin', { title: 'Your pipeline role' }, r.icon + '  ' + r.label));
+    }
+
+    // resetting the shared board is an admin move
+    const reset = document.getElementById('btn-reset');
+    if (reset) reset.style.display = canSwitch ? '' : 'none';
+  }
+
+  function renderToolbar(episodes) {
+    const bar = document.getElementById('toolbar');
+    bar.innerHTML = '';
+    const f = App.state.filters;
+
+    bar.appendChild(el('span.toolbar-label', null, 'Show'));
+    bar.appendChild(selectEl([['all', 'All shows']].concat(App.state.data.shows.map(s => [s.id, s.name])),
+      f.show, v => { f.show = v; App.render(); }));
+
+    bar.appendChild(el('span.toolbar-label', null, 'Dept'));
+    bar.appendChild(selectEl([['all', 'All departments']].concat(Object.keys(App.DEPARTMENTS).map(k => [k, App.DEPARTMENTS[k].label])),
+      f.dept, v => { f.dept = v; App.render(); }));
+
+    bar.appendChild(el('span.toolbar-label', null, 'Owner'));
+    bar.appendChild(selectEl([['all', 'Everyone']].concat(App.state.data.people.filter(p => App.roleDept(p.role)).map(p => [p.id, p.name])),
+      f.person, v => { f.person = v; App.render(); }));
+
+    const search = el('input#search', { type: 'text', placeholder: 'Search episodes…', value: f.q });
+    search.addEventListener('input', e => { f.q = e.target.value; debouncedRender(); });
+    bar.appendChild(search);
+
+    if (App.state.view === 'timeline') {
+      bar.appendChild(el('button.ghost', { onclick: () => App.gantt.zoomBy(0.8), title: 'Zoom out (Ctrl+scroll on the chart)' }, '−'));
+      bar.appendChild(el('button.ghost', { onclick: () => App.gantt.zoomBy(1.25), title: 'Zoom in (Ctrl+scroll on the chart)' }, '+'));
+      bar.appendChild(el('button.ghost', { onclick: () => App.gantt.centerToday(), title: 'Scroll to today' }, '⊙ Today'));
+    }
+
+    // legend — departments on the timeline, statuses elsewhere
+    const legend = el('.legend');
+    if (App.state.view === 'timeline') {
+      App.state.data.shows.forEach(s => legend.appendChild(legItem(s.color, s.name)));
+    } else {
+      App.STATUS_ORDER.forEach(sk => legend.appendChild(legItem(App.STATUSES[sk].color, App.STATUSES[sk].label)));
+    }
+    bar.appendChild(legend);
+  }
+
+  function legItem(color, label) {
+    return el('.legend-item', null, [el('span.swatch', { style: { background: color } }), label]);
+  }
+
+  function renderKpis(episodes) {
+    const box = document.getElementById('kpis');
+    box.innerHTML = '';
+    const today = App.isoDate(App.today());
+    const deliveredEps = [], inProg = [], review = [], overdue = [], blocked = [];
+    episodes.forEach(ep => {
+      if (App.isDelivered(ep)) deliveredEps.push(ep.code + ' — ' + ep.title);
+      App.subitems(ep).forEach(su => {
+        const tag = ep.code + ' — ' + su.name;
+        if (su.status === 'in_progress') inProg.push(tag);
+        if (su.status === 'review') review.push(tag);
+        if (su.status !== 'approved' && su.due < today) overdue.push(tag);
+        if (App.isRiskBlocked(ep, su.key)) blocked.push(tag);
+      });
+    });
+    // cap long lists so the tooltip stays readable
+    const tip = (list) => {
+      if (!list.length) return null;
+      const cap = 14, shown = list.slice(0, cap), extra = list.length - shown.length;
+      return shown.join('\n') + (extra > 0 ? '\n+' + extra + ' more' : '');
+    };
+    const kpi = (cls, num, sub, label, list) => el('.kpi.' + cls, { title: tip(list), tipPos: 'below' }, [
+      el('.kpi-num', null, [String(num), sub ? el('span.kpi-sub', null, sub) : null]),
+      el('.kpi-label', null, label)
+    ]);
+    box.appendChild(kpi('k-green', deliveredEps.length, ' / ' + episodes.length, 'Delivered', deliveredEps));
+    box.appendChild(kpi('k-orange', inProg.length, '', 'In progress', inProg));
+    box.appendChild(kpi('k-purple', review.length, '', 'Ready for review', review));
+    box.appendChild(kpi('k-red', overdue.length, '', 'Overdue subitems', overdue));
+    if (blocked.length) box.appendChild(kpi('k-red', blocked.length, '', 'Blocked by deps', blocked));
+  }
+
+  // ---- Director: ready-for-review queue ----
+  function reviewQueue(episodes) {
+    const wrap = el('div');
+    wrap.appendChild(el('.section-title', null, '🎯 Ready for Review — director queue'));
+    const items = [];
+    episodes.forEach(ep => App.subsView(ep).forEach(su => { if (su.status === 'review') items.push({ ep, su }); }));
+    if (!items.length) return wrap.appendChild(el('.empty', null, 'Nothing is waiting for review right now. 🎉')), wrap;
+
+    const list = el('.risk-list');
+    items.sort((a, b) => a.su.due < b.su.due ? -1 : 1).forEach(x => {
+      const show = App.show(x.ep.showId), dep = App.dept(x.su.dept);
+      const person = x.su.assignee ? App.person(x.su.assignee) : null;
+      list.appendChild(el('.risk-item', { style: { padding: '12px 14px' } }, [
+        el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color), fontSize: '10px', padding: '2px 7px' } }, x.ep.code),
+        el('.ri-main', null, [
+          el('.ri-title', { style: { fontSize: '13px' } }, x.su.name + '  ·  ' + x.ep.title),
+          el('.ri-sub', null, [
+            el('span.dept-chip', { style: { padding: '1px 7px', fontSize: '10px', marginRight: '8px' } }, [el('span.dot', { style: { background: dep.color } }), dep.label]),
+            (person ? person.name + ' · ' : '') + 'due ' + App.fmtDate(x.su.due)
+          ])
+        ]),
+        el('button.ghost', { style: { borderColor: 'rgba(0,200,117,.5)', color: '#6ee0aa' }, onclick: () => App.setStatus(x.ep.id, x.su.key, 'approved') }, '✓ Approve'),
+        el('button.ghost', { style: { borderColor: 'rgba(253,171,61,.5)', color: '#ffce8e' }, onclick: () => App.setStatus(x.ep.id, x.su.key, 'in_progress') }, '↩ Send back')
+      ]));
+    });
+    wrap.appendChild(list);
+    return wrap;
+  }
+
+  // ---- helpers ----
+  function selectEl(options, value, onChange) {
+    const sel = el('select.filter');
+    options.forEach(([v, label]) => {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = label; if (v === value) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener('change', e => onChange(e.target.value));
+    return sel;
+  }
+
+  let _t = null;
+  function debouncedRender() { clearTimeout(_t); _t = setTimeout(App.render, 160); }
+})();

@@ -1,0 +1,387 @@
+/* Boot + interactions: role/view switching, permission-guarded status & task edits,
+   show creation/removal, team-role assignment, and popup/modal dismissal. */
+window.App = window.App || {};
+(function () {
+  'use strict';
+
+  const SHOW_PALETTE = ['#ff6f9c', '#6cc24a', '#f6be00', '#a06cd5', '#3da4dd', '#ff7a59', '#27c4b8', '#e35d6a'];
+  const PERSON_PALETTE = ['#e8615b', '#f6a609', '#37b679', '#2d9cdb', '#9b59b6', '#16a085', '#e67e22', '#d6457f', '#4b6bfb'];
+
+  // Keep "Ready to Start" honest after any change: a not-started task whose (non-removed)
+  // dependencies are all Approved becomes Ready; a Ready task that loses a dep drops back.
+  App.refreshReadiness = function (ep) {
+    const removed = ep.removed || [];
+    const pipe = App.pipelineFor(ep);
+    pipe.forEach(t => {
+      if (removed.includes(t.key)) return;
+      const cur = ep.statuses[t.key] || 'not_started';
+      const deps = t.deps.filter(d => !removed.includes(d) && pipe.some(p => p.key === d));
+      const depsOK = deps.every(d => (ep.statuses[d] || 'not_started') === 'approved');
+      const hasOwner = !!(ep.assignees && ep.assignees[t.key]);
+      // no-dependency tasks are ready from day one — provided someone owns them
+      if (cur === 'not_started' && depsOK && (deps.length || hasOwner)) ep.statuses[t.key] = 'ready';
+      else if (cur === 'ready' && !depsOK) ep.statuses[t.key] = 'not_started';
+    });
+  };
+
+  // ---- permission helpers shared by the mutators ----
+  function guardEdit(epId, key) {
+    const ep = App.state.data.episodes.find(e => e.id === epId);
+    const su = ep && App.subitem(ep, key);
+    if (!su) return null;
+    if (!App.canEditTask(App.state.role, su)) {
+      const d = App.roleDept(App.state.role);
+      App.toast('Your role can only edit ' + (d ? App.dept(d).label : 'permitted') + ' tasks', true);
+      return null;
+    }
+    return { ep, su };
+  }
+
+  App.setStatus = function (epId, key, status) {
+    App.board.closePop && App.board.closePop();
+    const g = guardEdit(epId, key); if (!g) return;
+    if (status === 'approved' && !App.canApprove(App.state.role)) {
+      App.toast('Only Producer, Director or Manager can approve tasks', true); return;
+    }
+    App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = status; App.refreshReadiness(e); });
+    App.toast(g.su.name + ' → ' + App.status(status).label);
+  };
+
+  App.applyTaskEdit = function (epId, key, { name, status, start, due, assignee }) {
+    const g = guardEdit(epId, key); if (!g) return;
+    if (status === 'approved' && g.su.status !== 'approved' && !App.canApprove(App.state.role)) {
+      App.toast('Only Producer, Director or Manager can approve tasks', true); return;
+    }
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.names = e.names || {}; e.dates = e.dates || {};
+      e.names[key] = name; e.dates[key] = { start, due }; e.statuses[key] = status;
+      // assignee is only passed when the editor holds the assign-owners privilege
+      if (assignee !== undefined && App.canAssignOwners(App.state.role)) {
+        e.assignees = e.assignees || {};
+        if (assignee) e.assignees[key] = assignee; else delete e.assignees[key];
+      }
+      App.refreshReadiness(e);
+    });
+    App.toast('Saved “' + name + '”');
+  };
+
+  // Reschedule a task by dragging its bar on the Timeline. minDays is a hard
+  // floor (rejected outright — the drag itself already clamps to it live, so
+  // this only fires on a genuine bug or a very fast gesture); dependency
+  // ordering is a soft rule — the move still applies, but the user is warned.
+  App.moveTask = function (epId, key, newStart, newDue) {
+    const g = guardEdit(epId, key); if (!g) return;
+    const pipe = App.pipelineFor(g.ep);
+    const task = pipe.find(t => t.key === key);
+    const minDays = (task && task.minDays) || 1;
+    const hideWeekends = App.prefs.get('hideWeekends', true);
+    const span = App.visibleDayCount(newStart, newDue, hideWeekends);
+    if (span < minDays) {
+      App.toast('“' + g.su.name + '” needs at least ' + minDays + ' day' + (minDays === 1 ? '' : 's') + ' — adjustment ignored', true);
+      return;
+    }
+
+    const byKey = {}; App.subitems(g.ep).forEach(s => { byKey[s.key] = s; });
+    const warnings = [];
+    (task ? task.deps : []).forEach(dk => {
+      const dep = byKey[dk];
+      if (dep && newStart <= dep.due) warnings.push('now starts before its dependency “' + dep.name + '” finishes');
+    });
+    pipe.forEach(t => {
+      if (t.key !== key && t.deps.includes(key)) {
+        const dependent = byKey[t.key];
+        if (dependent && dependent.start <= newDue) warnings.push('“' + dependent.name + '” now starts before it finishes');
+      }
+    });
+
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.dates = e.dates || {};
+      e.dates[key] = { start: newStart, due: newDue };
+      App.refreshReadiness(e);
+    });
+    if (warnings.length) App.toast('⚠ “' + g.su.name + '”: ' + warnings.join('; '), true);
+    else App.toast('“' + g.su.name + '” → ' + App.fmtRange(newStart, newDue));
+  };
+
+  // toggle a role's assign-owners privilege (Admin panel)
+  App.setAssignPriv = function (roleKey, allowed) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change privileges', true); return; }
+    App.mutate(d => {
+      const cur = d.assignPriv || App.defaultAssignPriv();
+      d.assignPriv = allowed ? [...new Set([...cur, roleKey])] : cur.filter(k => k !== roleKey);
+    });
+    App.toast(App.role(roleKey).label + (allowed ? ' can now assign owners' : ' can no longer assign owners'));
+  };
+
+  // toggle any other role capability (Admin → Access Control). The Producer's
+  // permissions are locked so an admin can never lock everyone out.
+  App.setRolePerm = function (roleKey, perm, allowed, label) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change privileges', true); return; }
+    if (roleKey === 'producer' && !allowed) { App.toast('Producer permissions are locked', true); return; }
+    App.mutate(d => {
+      d.rolePerms = d.rolePerms || {};
+      d.rolePerms[roleKey] = d.rolePerms[roleKey] || {};
+      d.rolePerms[roleKey][perm] = allowed;
+    });
+    App.toast(label + (allowed ? ' enabled' : ' disabled') + ' for ' + App.role(roleKey).label);
+  };
+
+  App.removeTask = function (epId, key) {
+    const g = guardEdit(epId, key); if (!g) return;
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.removed = e.removed || []; if (!e.removed.includes(key)) e.removed.push(key);
+      App.refreshReadiness(e);
+    });
+    App.toast('Removed “' + g.su.name + '”');
+  };
+
+  // ---- shows ----
+  // pipeline: the show's own task template [{key,name,dept,days,minDays,deps}].
+  // scale: squeeze/extend factor from the Add Show dialog (1 = recommended pace;
+  // durations never drop below each task's minDays). Episode i starts at
+  // startIso + i*cadence; every task gets concrete scheduled dates in ep.dates.
+  App.createShow = function ({ name, code, type, epNames, pipeline, startIso, cadence, scale }) {
+    if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
+    type = type || 'animation';
+    pipeline = pipeline || App.defaultPipelineFor(type);
+    startIso = startIso || App.isoDate(App.today());
+    cadence = cadence == null ? 14 : cadence;
+    App.mutate(d => {
+      const showId = code.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + App.uid().slice(0, 3);
+      d.shows.push({ id: showId, name, prefix: code, type, color: SHOW_PALETTE[d.shows.length % SHOW_PALETTE.length], pipeline });
+      const byDept = {};
+      d.people.forEach(p => { const dep = App.roleDept(p.role); if (dep) (byDept[dep] = byDept[dep] || []).push(p.id); });
+      epNames.forEach((title, i) => {
+        const sch = App.schedulePipeline(pipeline, App.shiftIso(startIso, i * cadence), scale);
+        const assignees = {};
+        pipeline.forEach(t => { const pool = byDept[t.dept] || []; if (pool.length) assignees[t.key] = pool[i % pool.length]; });
+        d.episodes.push({
+          id: App.uid(), showId, code: code + '-' + (i + 1), title, index: d.episodes.length,
+          shiftDays: 0, dates: sch.dates,
+          statuses: App.deriveStatusesFromDates(pipeline, sch.dates, assignees), assignees
+        });
+      });
+    });
+    App.toast('Created “' + name + '” with ' + epNames.length + ' episode' + (epNames.length === 1 ? '' : 's'));
+  };
+
+  App.removeShow = function (showId) {
+    if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can remove shows', true); return; }
+    const show = App.show(showId);
+    if (!confirm('Remove “' + show.name + '” and all its episodes?')) return;
+    App.mutate(d => {
+      d.shows = d.shows.filter(s => s.id !== showId);
+      d.episodes = d.episodes.filter(e => e.showId !== showId);
+    });
+    if (App.state.filters.show === showId) App.state.filters.show = 'all';
+    App.render();
+    App.toast('Removed “' + show.name + '”');
+  };
+
+  // ---- team / admin ----
+  App.setPersonRole = function (id, role) {
+    App.mutate(d => { const p = d.people.find(x => x.id === id); if (p) p.role = role; });
+    App.toast('Role updated');
+  };
+  App.renamePerson = function (id, name) {
+    if (!name.trim()) { App.toast('Name can’t be empty', true); return; }
+    App.mutate(d => { const p = d.people.find(x => x.id === id); if (p) p.name = name.trim(); });
+  };
+  App.setPersonEmail = function (id, email) {
+    email = email.trim();
+    if (email && !/^\S+@\S+\.\S+$/.test(email)) { App.toast('Enter a valid work email', true); return; }
+    App.mutate(d => { const p = d.people.find(x => x.id === id); if (p) p.email = email; });
+  };
+  // Integration flags are placeholders until real SSO/OAuth linking exists —
+  // for now they just mark whether a team member's Slack/Gmail is connected.
+  App.toggleIntegration = function (id, key) {
+    App.mutate(d => {
+      const p = d.people.find(x => x.id === id); if (!p) return;
+      p.integrations = p.integrations || {};
+      p.integrations[key] = !p.integrations[key];
+    });
+  };
+  App.addPerson = function (name, role, email) {
+    email = (email || '').trim();
+    if (email && !/^\S+@\S+\.\S+$/.test(email)) { App.toast('Enter a valid work email', true); return; }
+    App.mutate(d => { d.people.push({ id: App.uid(), name, role, email, integrations: {}, color: PERSON_PALETTE[d.people.length % PERSON_PALETTE.length] }); });
+    App.toast(name + ' added as ' + App.role(role).label);
+  };
+  App.removePerson = function (id) {
+    const p = App.person(id); if (!p) return;
+    if (!confirm('Remove ' + p.name + ' from the team?')) return;
+    App.mutate(d => {
+      d.people = d.people.filter(x => x.id !== id);
+      d.episodes.forEach(e => { if (e.assignees) Object.keys(e.assignees).forEach(k => { if (e.assignees[k] === id) delete e.assignees[k]; }); });
+    });
+    if (App.state.filters.person === id) { App.state.filters.person = 'all'; App.render(); }
+    App.toast(p.name + ' removed');
+  };
+
+  // ---- role preset ----
+  App.setRole = function (role) {
+    App.state.role = role;
+    const r = App.role(role), f = App.state.filters;
+    f.person = 'all';
+    if (r.dept) { App.state.view = 'board'; f.dept = r.dept; }
+    else { f.dept = 'all'; App.state.view = r.view || 'timeline'; }
+    if (App.state.view === 'admin' && !App.isAdminRole(role)) App.state.view = 'timeline';
+    App.render();
+  };
+
+  /* ---- identity: map the signed-in account onto the team directory ----
+     adminEmails from server-config are always Producer (bootstrap); everyone
+     else must match a directory member by work email to get their role. */
+  function applyIdentity() {
+    const me = App.api.me;
+    if (!me) return true;                                   // offline demo mode
+    const person = App.state.data.people.find(p => (p.email || '').toLowerCase() === me.email);
+    App.state.user = {
+      email: me.email, picture: me.picture, admin: !!me.admin,
+      name: person ? person.name : me.name, personId: person ? person.id : null
+    };
+    if (me.admin) App.state.role = 'producer';
+    else if (person) App.state.role = person.role;
+    else return false;                                      // signed in but not in the directory
+    App.state.baseRole = App.state.role;
+    const r = App.role(App.state.role);
+    App.state.view = r.dept ? 'board' : (r.view || 'timeline');
+    if (r.dept) App.state.filters.dept = r.dept;
+    return true;
+  }
+
+  /* ---- sign-in screens ---- */
+  const G_LOGO = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M23.5 12.27c0-.85-.08-1.66-.22-2.45H12v4.64h6.45a5.52 5.52 0 0 1-2.39 3.62v3h3.87c2.26-2.09 3.57-5.17 3.57-8.81z"/><path fill="#34A853" d="M12 24c3.24 0 5.96-1.07 7.93-2.91l-3.87-3c-1.07.72-2.44 1.14-4.06 1.14-3.12 0-5.77-2.11-6.71-4.95H1.29v3.1A12 12 0 0 0 12 24z"/><path fill="#FBBC05" d="M5.29 14.28A7.2 7.2 0 0 1 4.91 12c0-.79.14-1.56.38-2.28v-3.1H1.29a12 12 0 0 0 0 10.76l4-3.1z"/><path fill="#EA4335" d="M12 4.77c1.76 0 3.34.6 4.58 1.79l3.44-3.44A11.97 11.97 0 0 0 12 0 12 12 0 0 0 1.29 6.62l4 3.1C6.23 6.88 8.88 4.77 12 4.77z"/></svg>';
+
+  function loginScreen() {
+    const el = App.el, opts = App.api.loginOpts || {};
+    const err = new URLSearchParams(location.search).get('err');
+    const emailInput = el('input.login-input', { type: 'email', placeholder: 'you@moonbug.com' });
+    const devSubmit = () => App.api.devLogin(emailInput.value).catch(e => App.toast(e.message, true));
+    emailInput.addEventListener('keydown', e => { if (e.key === 'Enter') devSubmit(); });
+
+    document.body.appendChild(el('.login-screen', null, el('.login-card', null, [
+      el('.login-logo', null, '🎬'),
+      el('.login-title', null, 'Post Pipeline'),
+      el('.login-sub', null, 'Episodic post-production tracker'),
+      (err ? el('.login-err', null, '⚠ ' + err) : null),
+      el('a.login-google' + (opts.googleConfigured ? '' : '.disabled'),
+        { href: opts.googleConfigured ? '/auth/google' : null },
+        [el('span.login-g', { html: G_LOGO }), 'Sign in with Google']),
+      (!opts.googleConfigured ? el('.login-hint', null, 'Google SSO isn’t configured yet — the server owner can enable it (see README). Use the team sign-in below for now.') : null),
+      (opts.devLogin ? el('.login-div', null, el('span', null, 'or')) : null),
+      (opts.devLogin ? el('.login-dev', null, [
+        emailInput,
+        el('button.btn-primary', { onclick: devSubmit }, 'Sign in')
+      ]) : null)
+    ])));
+  }
+
+  function notInDirectoryScreen() {
+    const el = App.el, me = App.api.me;
+    document.body.appendChild(el('.login-screen', null, el('.login-card', null, [
+      el('.login-logo', null, '🔒'),
+      el('.login-title', null, 'Almost there'),
+      el('.login-sub', { style: { maxWidth: '300px' } },
+        'You’re signed in as ' + me.email + ', but that address isn’t in the team directory yet. ' +
+        'Ask a Producer or Manager to add it to your profile in Admin → User Directory.'),
+      el('button.ghost', { onclick: () => App.api.logout(), style: { marginTop: '16px' } }, 'Sign out')
+    ])));
+  }
+
+  /* ---- quick preferences popover (opens from the topbar logo/cog) ---- */
+  App.prefsMenu = {
+    _pop: null,
+    close() { if (this._pop) { this._pop.remove(); this._pop = null; } },
+    toggle() { this._pop ? this.close() : this.open(); },
+    open() {
+      this.close();
+      const el = App.el;
+      const prefRow = (title, desc, key, def, onChange) => {
+        const on = App.prefs.get(key, def);
+        return el('.prefs-row', {
+          onclick: () => {
+            App.prefs.set(key, !on);
+            this.open();                       // rebuild the menu with the new switch state
+            if (onChange) onChange(!on);
+          }
+        }, [
+          el('div', null, [
+            el('.prefs-row-title', null, title),
+            el('.prefs-row-desc', null, desc)
+          ]),
+          el('span.switch' + (on ? '.on' : ''), null, el('span.knob'))
+        ]);
+      };
+      const segRow = (title, desc, key, def, options) => {
+        const cur = App.prefs.get(key, def);
+        return el('.prefs-row', { style: { cursor: 'default' } }, [
+          el('div', null, [
+            el('.prefs-row-title', null, title),
+            el('.prefs-row-desc', null, desc)
+          ]),
+          el('.prefs-seg', null, options.map(o =>
+            el('button.seg' + (cur === o.v ? '.active' : ''), {
+              onclick: (e) => { e.stopPropagation(); App.prefs.set(key, o.v); this.open(); App.render(); }
+            }, o.label)))
+        ]);
+      };
+      const pop = el('.prefs-pop', { onclick: e => e.stopPropagation() }, [
+        el('.prefs-title', null, 'Quick preferences'),
+        segRow('Sort timeline by',
+          'Episode: tasks grouped by department, stacked so parallel work shares a row. Department: one row per task. Show: matching tasks across a show’s episodes share a line.',
+          'timelineSort', 'department', [{ v: 'episode', label: 'Episode' }, { v: 'department', label: 'Department' }, { v: 'show', label: 'Show' }]),
+        prefRow('Latch scrolling',
+          'Timeline: keep the episode row you’ve scrolled into pinned under the header while its tasks scroll.',
+          'latchScroll', false, () => App.render()),
+        prefRow('Hide weekends',
+          'Timeline: remove Saturday and Sunday columns from the calendar instead of just shading them.',
+          'hideWeekends', true, () => App.render())
+      ]);
+      const r = document.getElementById('brand-logo').getBoundingClientRect();
+      pop.style.top = (r.bottom + 8) + 'px';
+      pop.style.left = Math.max(8, r.left) + 'px';
+      document.body.appendChild(pop);
+      this._pop = pop;
+    }
+  };
+
+  async function boot() {
+    await App.api.boot();
+
+    if (App.api.online && !App.api.me) { loginScreen(); return; }
+
+    if (App.api.online) {
+      let remote = null;
+      try { remote = await App.api.pull(); } catch (e) { /* fall through to local */ }
+      if (remote) { App.state.data = remote; App.save(); }
+      else { App.load(); App.api.push(); }                  // fresh server: seed it
+      if (!applyIdentity()) { notInDirectoryScreen(); return; }
+      App.api.startPolling();
+    } else {
+      App.load();                                           // no backend: localStorage mode
+    }
+
+    document.getElementById('btn-reset').addEventListener('click', () => {
+      if (confirm('Reset everything to the reference demo board?')) App.resetData();
+    });
+    document.getElementById('brand-logo').addEventListener('click', e => {
+      e.stopPropagation();
+      App.prefsMenu.toggle();
+    });
+    document.addEventListener('click', () => {
+      App.board.closePop && App.board.closePop();
+      App.prefsMenu.close();
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { App.board.closePop && App.board.closePop(); App.prefsMenu.close(); }
+    });
+    App.render();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
