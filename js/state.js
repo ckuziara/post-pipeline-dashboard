@@ -51,6 +51,53 @@ window.App = window.App || {};
   App.STATUS_ORDER = ['not_started', 'ready', 'in_progress', 'review', 'approved'];
   App.status = (k) => App.STATUSES[k] || App.STATUSES.not_started;
 
+  /* ---------------------------------------------------------------------------
+     Workflow customisation (Admin → Workflow & Status Settings).
+     Departments and status colours/labels are editable and persist in
+     data.workflow as overrides; structural status fields (weight/group/order)
+     stay fixed. applyWorkflow() rebuilds the live DEPARTMENTS/STATUSES objects
+     from the pristine defaults + overrides, so every reader (which all go
+     through App.DEPARTMENTS / App.STATUSES / App.dept / App.status at call
+     time) picks up edits with no other code change. Custom departments are
+     appended after the built-ins, preserving order.
+  --------------------------------------------------------------------------- */
+  App._DEFAULT_DEPARTMENTS = JSON.parse(JSON.stringify(App.DEPARTMENTS));
+  App._DEFAULT_STATUSES = JSON.parse(JSON.stringify(App.STATUSES));
+  App.isDefaultDept = (k) => Object.prototype.hasOwnProperty.call(App._DEFAULT_DEPARTMENTS, k);
+
+  // readable ink for a background colour (relative luminance threshold)
+  App.pickInkFor = function (hex) {
+    if (!/^#[0-9a-f]{6}$/i.test(hex)) return '#ffffff';
+    const n = parseInt(hex.slice(1), 16), r = n >> 16 & 255, g = n >> 8 & 255, b = n & 255;
+    return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#11131a' : '#ffffff';
+  };
+
+  App.applyWorkflow = function () {
+    const wf = (App.state.data && App.state.data.workflow) || {};
+
+    const deps = {};
+    Object.keys(App._DEFAULT_DEPARTMENTS).forEach(k => { deps[k] = Object.assign({}, App._DEFAULT_DEPARTMENTS[k]); });
+    if (wf.departments) Object.keys(wf.departments).forEach(k => {
+      deps[k] = Object.assign(deps[k] || {}, wf.departments[k]);   // new keys land after the built-ins
+    });
+    App.DEPARTMENTS = deps;
+
+    const sts = {};
+    App.STATUS_ORDER.forEach(k => {
+      sts[k] = Object.assign({}, App._DEFAULT_STATUSES[k]);
+      const ov = wf.statuses && wf.statuses[k];
+      if (ov) {
+        if (ov.label != null && ov.label !== '') sts[k].label = ov.label;
+        if (ov.color) { sts[k].color = ov.color; sts[k].ink = App.pickInkFor(ov.color); }
+      }
+    });
+    App.STATUSES = sts;
+
+    // keep the pure-CSS status colours (KPI accents, dashboard bar) in sync
+    const root = document.documentElement && document.documentElement.style;
+    if (root) App.STATUS_ORDER.forEach(k => root.setProperty('--st-' + k, sts[k].color));
+  };
+
   // episode-level swimlane groups (mirrors the reference Gantt's groupings)
   App.EP_GROUPS = {
     working:   { label: 'Working on it', color: '#fdab3d' },
@@ -395,6 +442,13 @@ window.App = window.App || {};
   --------------------------------------------------------------------------- */
   App.show = (id) => App.state.data.shows.find(s => s.id === id) || { name: '—', color: '#888' };
   App.person = (id) => App.state.data.people.find(p => p.id === id) || null;
+
+  // Archival (Admin → Workflow → Shows): archived shows/episodes keep all
+  // their data but vanish from every view until restored. An episode is
+  // archived either directly or by its whole show being archived.
+  App.activeShows = () => App.state.data.shows.filter(s => !s.archived);
+  App.isEpArchived = (ep) => !!ep.archived || !!App.show(ep.showId).archived;
+  App.activeEpisodes = () => App.state.data.episodes.filter(ep => !App.isEpArchived(ep));
 
   App.epStart = function (ep) {
     return App.subitems(ep).reduce((m, s) => s.start < m ? s.start : m, '9999-99-99');

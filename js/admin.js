@@ -15,7 +15,7 @@ window.App = window.App || {};
         return wrap;
       }
       const v = App.state.admin.view;
-      wrap.appendChild(v === 'directory' ? directory() : v === 'roles' ? accessControl() : hub());
+      wrap.appendChild(v === 'directory' ? directory() : v === 'roles' ? accessControl() : v === 'workflow' ? workflow() : hub());
       return wrap;
     }
   };
@@ -50,8 +50,8 @@ window.App = window.App || {};
         desc: 'Configure what each role can do — approving tasks, assigning owners, managing shows and admin access.',
         btn: 'Configure Roles', onclick: () => go('roles') },
       { ic: '🗂', tint: 'green', title: 'Workflow & Status Settings',
-        desc: 'Department states and status colour sequences. Pipelines are currently customised per show when it’s created.',
-        btn: 'Coming soon', soon: true },
+        desc: 'Rename and recolour task statuses and departments across the whole tracker. Pipelines themselves are customised per show when it’s created.',
+        btn: 'Configure Workflow', onclick: () => go('workflow') },
       { ic: '📜', tint: 'amber', title: 'Audit & Event Logs',
         desc: 'A timestamped record of every change made across the tracker, for project auditing.',
         btn: 'Coming soon', soon: true }
@@ -83,9 +83,9 @@ window.App = window.App || {};
     const search = el('input.adm-search', { type: 'text', placeholder: '🔍  Search team members…', value: App.state.admin.q });
     box.appendChild(search);
 
-    // live task load per person: active / total assigned
+    // live task load per person: active / total assigned (archived excluded)
     const load = {};
-    App.state.data.episodes.forEach(ep => App.subitems(ep).forEach(su => {
+    App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
       if (!su.assignee) return;
       const l = load[su.assignee] = load[su.assignee] || { active: 0, total: 0 };
       l.total++;
@@ -266,6 +266,302 @@ window.App = window.App || {};
     layout.appendChild(panel);
     box.appendChild(layout);
     return box;
+  }
+
+  /* --------------------------------------------------- workflow & status ---- */
+  // A colour-swatch input + live-editable name row, shared by the statuses and
+  // departments lists. `preview` is the chip shown as it will actually appear.
+  function styleRow(opts) {
+    // opts: { color, label, preview, onColor, onLabel, onRemove }
+    const swatch = el('label.wf-swatch', { title: 'Pick a colour', style: { background: opts.color } });
+    const picker = el('input', { type: 'color', value: opts.color });
+    picker.addEventListener('input', () => { swatch.style.background = picker.value; });
+    picker.addEventListener('change', () => opts.onColor(picker.value));
+    swatch.appendChild(picker);
+
+    const name = el('input.wf-name', { type: 'text', value: opts.label });
+    name.addEventListener('change', () => opts.onLabel(name.value));
+    name.addEventListener('keydown', e => { if (e.key === 'Enter') name.blur(); });
+
+    return el('.wf-row', null, [
+      swatch,
+      name,
+      opts.preview || el('span'),
+      opts.onRemove
+        ? el('button.btn-mini.danger', { onclick: opts.onRemove, title: 'Remove department' }, '✕')
+        : el('span.wf-lock', { title: 'Built-in — colour & name only' }, '')
+    ]);
+  }
+
+  function workflow() {
+    const box = el('div');
+    box.appendChild(crumb('Workflow & Status'));
+    const tab = App.state.admin.wfTab || 'statuses';
+    box.appendChild(head('Workflow & Status Settings',
+      'Statuses, departments and reusable pipelines. Changes apply across the whole tracker for everyone.',
+      (tab === 'statuses' || tab === 'departments') ? el('button.ghost', { onclick: () => App.resetWorkflow() }, '↺ Reset colours & names') : null));
+
+    const layout = el('.adm-split');
+    const side = el('.adm-side');
+    side.appendChild(el('.adm-side-label', null, 'Workflow'));
+    [['statuses', '🎨', 'Task statuses'], ['departments', '🏷️', 'Departments'], ['pipelines', '🧬', 'Pipelines'], ['shows', '📚', 'Shows']].forEach(([k, ic, lbl]) => {
+      side.appendChild(el('button.adm-role' + (tab === k ? '.active' : ''), {
+        onclick: () => { App.state.admin.wfTab = k; App.render(); }
+      }, [el('span.adm-role-ic', null, ic), lbl]));
+    });
+
+    // the pipeline editor's rows need real width for their columns (name,
+    // dept, days, min, deps) — the 640px cap that suits the toggle-style
+    // statuses/departments lists would clip its controls
+    const panel = el('.adm-perms' + (tab === 'pipelines' ? '.wide' : ''));
+    panel.appendChild(
+      tab === 'departments' ? departmentsCard()
+      : tab === 'pipelines' ? pipelinesPanel()
+      : tab === 'shows' ? showsPanel()
+      : statusesCard());
+
+    layout.appendChild(side);
+    layout.appendChild(panel);
+    box.appendChild(layout);
+    return box;
+  }
+
+  function statusesCard() {
+    const stCard = el('.adm-permcard');
+    stCard.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'Task statuses'),
+      el('.adm-permcard-desc', null, 'The label set every task moves through. Order and meaning are fixed; colour and name are yours.')
+    ]));
+    const stBody = el('.wf-list');
+    App.STATUS_ORDER.forEach(k => {
+      const s = App.STATUSES[k];
+      const chip = el('span.status-cell.wf-preview', { style: { background: s.color, color: s.ink } }, s.label);
+      stBody.appendChild(styleRow({
+        color: s.color, label: s.label, preview: chip,
+        onColor: v => App.setStatusStyle(k, { color: v }),
+        onLabel: v => App.setStatusStyle(k, { label: v })
+      }));
+    });
+    stCard.appendChild(stBody);
+    return stCard;
+  }
+
+  function departmentsCard() {
+    const dpCard = el('.adm-permcard');
+    dpCard.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'Departments'),
+      el('.adm-permcard-desc', null, 'Pipeline departments and their colours. Add your own; built-ins can be recoloured and renamed but not removed.')
+    ]));
+    const dpBody = el('.wf-list');
+    Object.keys(App.DEPARTMENTS).forEach(k => {
+      const d = App.DEPARTMENTS[k];
+      const chip = el('span.dept-chip.wf-preview', null, [el('span.dot', { style: { background: d.color } }), d.label]);
+      dpBody.appendChild(styleRow({
+        color: d.color, label: d.label, preview: chip,
+        onColor: v => App.setDeptStyle(k, { color: v }),
+        onLabel: v => App.setDeptStyle(k, { label: v }),
+        onRemove: App.isDefaultDept(k) ? null : () => App.removeDept(k)
+      }));
+    });
+    dpCard.appendChild(dpBody);
+
+    const nameInput = el('input.fld', { type: 'text', placeholder: 'New department name', style: { maxWidth: '260px' } });
+    const add = () => { if (nameInput.value.trim()) { App.addDept(nameInput.value.trim()); } else App.toast('Enter a department name', true); };
+    nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
+    dpCard.appendChild(el('.wf-add', null, [
+      nameInput,
+      el('button.btn-primary', { onclick: add }, '＋ Add department')
+    ]));
+    return dpCard;
+  }
+
+  /* ---- Pipelines: named presets a Producer/Manager can build once and pick
+     from in Add Show. The draft being edited lives on App.state.admin so a
+     background re-render (teammate sync) never wipes in-progress work. ---- */
+  function pipelinesPanel() {
+    const draft = App.state.admin.presetDraft;
+    if (draft) return presetEditor(draft);
+
+    const cardEl = el('.adm-permcard');
+    cardEl.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'Pipeline presets'),
+      el('.adm-permcard-desc', null, 'Reusable task pipelines for Animation or Live Action shows. When adding a show, pick a preset instead of the standard pipeline.')
+    ]));
+
+    const presets = App.state.data.pipelinePresets || [];
+    const list = el('.wf-list');
+    if (!presets.length) list.appendChild(el('.adm-empty', null, 'No presets yet — create one below, starting from a standard pipeline.'));
+    presets.forEach(p => {
+      list.appendChild(el('.preset-row', null, [
+        el('span.preset-type.' + p.type, null, p.type === 'live_action' ? 'Live Action' : 'Animation'),
+        el('div', { style: { minWidth: 0 } }, [
+          el('.adm-name', null, p.name),
+          el('.adm-name-sub', null, p.pipeline.length + ' tasks · ' +
+            [...new Set(p.pipeline.map(t => t.dept))].map(d => App.dept(d).label).join(', '))
+        ]),
+        el('.preset-actions', null, [
+          el('button.btn-mini', { title: 'Edit preset',
+            onclick: () => { App.state.admin.presetDraft = JSON.parse(JSON.stringify(p)); App.render(); } }, '✎'),
+          el('button.btn-mini', { title: 'Duplicate preset', onclick: () => App.duplicatePipelinePreset(p.id) }, '⧉'),
+          el('button.btn-mini.danger', { title: 'Delete preset', onclick: () => App.deletePipelinePreset(p.id) }, '✕')
+        ])
+      ]));
+    });
+    cardEl.appendChild(list);
+
+    // create: name + base type → opens the editor seeded with that default
+    const nameInput = el('input.fld', { type: 'text', placeholder: 'New pipeline name (e.g. “Blippi 2-week turnaround”)', style: { flex: '1', minWidth: '180px' } });
+    const typeSel = el('select.fld', { style: { maxWidth: '150px' } });
+    [['animation', 'Animation'], ['live_action', 'Live Action']].forEach(([v, l]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = l; typeSel.appendChild(o);
+    });
+    const create = () => {
+      if (!nameInput.value.trim()) { App.toast('Give the pipeline a name', true); return; }
+      App.state.admin.presetDraft = {
+        id: null, name: nameInput.value.trim(), type: typeSel.value,
+        pipeline: App.defaultPipelineFor(typeSel.value)
+      };
+      App.render();
+    };
+    nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') create(); });
+    cardEl.appendChild(el('.wf-add', null, [nameInput, typeSel, el('button.btn-primary', { onclick: create }, '＋ New pipeline')]));
+    return cardEl;
+  }
+
+  function presetEditor(draft) {
+    const wrap = el('div');
+    const editor = App.pipelineEditor(draft.pipeline, {});
+
+    const nameInput = el('input.wf-name', { type: 'text', value: draft.name, placeholder: 'Pipeline name', style: { maxWidth: '280px' } });
+    nameInput.addEventListener('input', () => { draft.name = nameInput.value; });
+    const typeSel = el('select.fld', { style: { maxWidth: '150px' }, onchange: () => { draft.type = typeSel.value; } });
+    [['animation', 'Animation'], ['live_action', 'Live Action']].forEach(([v, l]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = l;
+      if (v === draft.type) o.selected = true; typeSel.appendChild(o);
+    });
+
+    const cardEl = el('.adm-permcard');
+    cardEl.appendChild(el('.adm-permcard-head.preset-edit-head', null, [
+      el('div', null, [
+        el('.adm-permcard-title', null, draft.id ? 'Edit pipeline' : 'New pipeline'),
+        el('.adm-permcard-desc', null, 'Add, remove, reorder and re-time tasks; set dependencies. Shows made from this preset take their own copy.')
+      ]),
+      el('.preset-edit-flds', null, [nameInput, typeSel])
+    ]));
+
+    cardEl.appendChild(el('.preset-pipe-bar', null, [
+      el('span.pipe-toggle-lbl', null, 'Pipeline tasks'),
+      editor.count,
+      el('button.btn-icon', { type: 'button', title: 'Add task', onclick: () => editor.addTask() }, '＋')
+    ]));
+    cardEl.appendChild(el('.preset-pipe-body', null, editor.list));
+
+    cardEl.appendChild(el('.wf-add', { style: { justifyContent: 'flex-end' } }, [
+      el('button.btn-ghost', {
+        onclick: () => { editor.closeMenus(); App.state.admin.presetDraft = null; App.render(); }
+      }, 'Cancel'),
+      el('button.btn-primary', {
+        onclick: () => {
+          editor.closeMenus();
+          if (App.savePipelinePreset(draft)) { App.state.admin.presetDraft = null; App.render(); }
+        }
+      }, '💾 Save pipeline')
+    ]));
+    wrap.appendChild(cardEl);
+    return wrap;
+  }
+
+  /* ------------------------------------------------- shows & archive ---- */
+  // Active shows with their episodes nested beneath; archive a whole show or
+  // a single episode. The Archive card below holds everything archived, where
+  // content can be restored — or permanently deleted.
+  function showsPanel() {
+    const wrapP = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '18px' } });
+    const shows = App.state.data.shows;
+    const eps = App.state.data.episodes;
+
+    // ---- active ----
+    const act = el('.adm-permcard');
+    act.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'Active shows'),
+      el('.adm-permcard-desc', null, 'Archiving hides a show or episode from every view without losing any of its data.')
+    ]));
+    const actList = el('.wf-list');
+    const activeShows = shows.filter(s => !s.archived);
+    if (!activeShows.length) actList.appendChild(el('.adm-empty', null, 'No active shows.'));
+    // shows collapse to a single line by default; expansion state lives on
+    // admin state so it survives re-renders (archive clicks, teammate sync)
+    const open = App.state.admin.showsOpen = App.state.admin.showsOpen || {};
+    activeShows.forEach(s => {
+      const sEps = eps.filter(e => e.showId === s.id && !e.archived);
+      const isOpen = !!open[s.id];
+      actList.appendChild(el('.show-arch-row.expandable', {
+        onclick: () => { open[s.id] = !isOpen; App.render(); }
+      }, [
+        el('span.chev' + (isOpen ? '.open' : ''), null, '▶'),
+        el('span.show-arch-dot', { style: { background: s.color } }),
+        el('div', { style: { minWidth: 0 } }, [
+          el('.adm-name', null, s.name),
+          el('.adm-name-sub', null, (s.prefix || '—') + ' · ' + sEps.length + ' active episode' + (sEps.length === 1 ? '' : 's'))
+        ]),
+        el('.arch-actions', null,
+          el('button.btn-mini', { onclick: (e) => { e.stopPropagation(); App.setShowArchived(s.id, true); } }, '🗄 Archive show'))
+      ]));
+      if (isOpen) sEps.forEach(ep => {
+        actList.appendChild(el('.ep-arch-row', null, [
+          el('span.ep-arch-code', { style: { background: s.color, color: App.pickInkFor(s.color) } }, ep.code),
+          el('span.ep-arch-title', null, ep.title),
+          el('span.ep-arch-dates', null, App.fmtRange(App.epStart(ep), App.epDue(ep))),
+          el('.arch-actions', null,
+            el('button.btn-mini', { onclick: () => App.setEpisodeArchived(ep.id, true) }, '🗄'))
+        ]));
+      });
+    });
+    act.appendChild(actList);
+    wrapP.appendChild(act);
+
+    // ---- archive ----
+    const arch = el('.adm-permcard');
+    arch.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, '🗄 Archive'),
+      el('.adm-permcard-desc', null, 'Restore brings content back exactly as it was. Deleting is permanent and can’t be undone.')
+    ]));
+    const archList = el('.wf-list');
+    const archShows = shows.filter(s => s.archived);
+    // episodes archived on their own (their show is still active)
+    const archEps = eps.filter(e => e.archived && !(shows.find(x => x.id === e.showId) || {}).archived);
+    if (!archShows.length && !archEps.length) archList.appendChild(el('.adm-empty', null, 'Nothing is archived.'));
+    archShows.forEach(s => {
+      const n = eps.filter(e => e.showId === s.id).length;
+      archList.appendChild(el('.show-arch-row.archived', null, [
+        el('span.show-arch-dot', { style: { background: s.color } }),
+        el('div', { style: { minWidth: 0 } }, [
+          el('.adm-name', null, s.name),
+          el('.adm-name-sub', null, 'Whole show · ' + n + ' episode' + (n === 1 ? '' : 's') + ' inside')
+        ]),
+        el('.arch-actions', null, [
+          el('button.btn-mini', { onclick: () => App.setShowArchived(s.id, false) }, '↩ Restore'),
+          el('button.btn-mini.danger', { onclick: () => App.deleteShow(s.id) }, '✕ Delete')
+        ])
+      ]));
+    });
+    archEps.forEach(ep => {
+      const s = App.show(ep.showId);
+      archList.appendChild(el('.show-arch-row.archived', null, [
+        el('span.ep-arch-code', { style: { background: s.color, color: App.pickInkFor(s.color) } }, ep.code),
+        el('div', { style: { minWidth: 0 } }, [
+          el('.adm-name', null, ep.title),
+          el('.adm-name-sub', null, s.name)
+        ]),
+        el('.arch-actions', null, [
+          el('button.btn-mini', { onclick: () => App.setEpisodeArchived(ep.id, false) }, '↩ Restore'),
+          el('button.btn-mini.danger', { onclick: () => App.deleteEpisode(ep.id) }, '✕ Delete')
+        ])
+      ]));
+    });
+    arch.appendChild(archList);
+    wrapP.appendChild(arch);
+    return wrapP;
   }
 
   /* ------------------------------------------------------------ helpers */

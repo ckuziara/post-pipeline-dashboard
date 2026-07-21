@@ -128,6 +128,166 @@ window.App = window.App || {};
     App.toast(label + (allowed ? ' enabled' : ' disabled') + ' for ' + App.role(roleKey).label);
   };
 
+  // ---- Workflow & Status Settings (Admin) ----
+  // All persist as overrides in data.workflow; App.applyWorkflow folds them
+  // into the live DEPARTMENTS/STATUSES on the next render.
+  function guardAdmin() {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change workflow settings', true); return false; }
+    return true;
+  }
+  const HEX = /^#[0-9a-fA-F]{6}$/;
+
+  App.setStatusStyle = function (key, patch) {
+    if (!guardAdmin()) return;
+    if (!App._DEFAULT_STATUSES[key]) return;
+    if (patch.color && !HEX.test(patch.color)) { App.toast('Enter a valid colour', true); return; }
+    if (patch.label != null && !patch.label.trim()) { App.toast('Status name can’t be empty', true); return; }
+    App.mutate(d => {
+      d.workflow = d.workflow || {};
+      d.workflow.statuses = d.workflow.statuses || {};
+      d.workflow.statuses[key] = Object.assign({}, d.workflow.statuses[key], patch);
+    });
+  };
+
+  App.setDeptStyle = function (key, patch) {
+    if (!guardAdmin()) return;
+    if (patch.color && !HEX.test(patch.color)) { App.toast('Enter a valid colour', true); return; }
+    if (patch.label != null && !patch.label.trim()) { App.toast('Department name can’t be empty', true); return; }
+    App.mutate(d => {
+      d.workflow = d.workflow || {};
+      d.workflow.departments = d.workflow.departments || {};
+      d.workflow.departments[key] = Object.assign({}, d.workflow.departments[key], patch);
+    });
+  };
+
+  const DEPT_PALETTE = ['#7a5cff', '#2ec4b6', '#e07a5f', '#f2b134', '#5f8fff', '#d65db1', '#3ec46d', '#ff8f6b'];
+  App.addDept = function (label) {
+    if (!guardAdmin()) return;
+    label = (label || '').trim();
+    if (!label) { App.toast('Enter a department name', true); return; }
+    let base = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'dept';
+    let key = base, i = 2;
+    while (App.DEPARTMENTS[key]) key = base + '_' + (i++);
+    const color = DEPT_PALETTE[Object.keys(App.DEPARTMENTS).length % DEPT_PALETTE.length];
+    App.mutate(d => {
+      d.workflow = d.workflow || {};
+      d.workflow.departments = d.workflow.departments || {};
+      d.workflow.departments[key] = { label, color };
+    });
+    App.toast('Added department “' + label + '”');
+  };
+
+  App.removeDept = function (key) {
+    if (!guardAdmin()) return;
+    if (App.isDefaultDept(key)) { App.toast('Built-in departments can’t be removed', true); return; }
+    const inUse = App.state.data.shows.some(s => (s.pipeline || []).some(t => t.dept === key)) ||
+                  App.ROLES.some(r => r.dept === key);
+    if (inUse && !confirm('This department is still used by a show pipeline or role. Remove it anyway?')) return;
+    App.mutate(d => { if (d.workflow && d.workflow.departments) delete d.workflow.departments[key]; });
+    App.toast('Department removed');
+  };
+
+  App.resetWorkflow = function () {
+    if (!guardAdmin()) return;
+    if (!confirm('Reset all department and status colours & names to their defaults?')) return;
+    App.mutate(d => { delete d.workflow; });
+    App.toast('Workflow settings reset to defaults');
+  };
+
+  // ---- Shows & episodes archive (Admin → Workflow → Shows) ----
+  // Archiving hides content from every view but keeps all of its data;
+  // only archived content can be permanently deleted.
+  App.setShowArchived = function (showId, archived) {
+    if (!guardAdmin()) return;
+    const s = App.state.data.shows.find(x => x.id === showId); if (!s) return;
+    App.mutate(d => {
+      const t = d.shows.find(x => x.id === showId);
+      if (archived) t.archived = true; else delete t.archived;
+    });
+    if (archived && App.state.filters.show === showId) { App.state.filters.show = 'all'; App.render(); }
+    App.toast((archived ? 'Archived “' : 'Restored “') + s.name + '”');
+  };
+
+  App.setEpisodeArchived = function (epId, archived) {
+    if (!guardAdmin()) return;
+    const ep = App.state.data.episodes.find(x => x.id === epId); if (!ep) return;
+    App.mutate(d => {
+      const t = d.episodes.find(x => x.id === epId);
+      if (archived) t.archived = true; else delete t.archived;
+    });
+    App.toast((archived ? 'Archived ' : 'Restored ') + ep.code + ' — ' + ep.title);
+  };
+
+  App.deleteShow = function (showId) {
+    if (!guardAdmin()) return;
+    const s = App.state.data.shows.find(x => x.id === showId);
+    if (!s || !s.archived) { App.toast('Only archived shows can be deleted', true); return; }
+    const n = App.state.data.episodes.filter(e => e.showId === showId).length;
+    if (!confirm('Permanently delete “' + s.name + '” and its ' + n + ' episode' + (n === 1 ? '' : 's') + '? This can’t be undone.')) return;
+    App.mutate(d => {
+      d.shows = d.shows.filter(x => x.id !== showId);
+      d.episodes = d.episodes.filter(e => e.showId !== showId);
+    });
+    App.toast('Deleted “' + s.name + '”');
+  };
+
+  App.deleteEpisode = function (epId) {
+    if (!guardAdmin()) return;
+    const ep = App.state.data.episodes.find(x => x.id === epId);
+    if (!ep || !App.isEpArchived(ep)) { App.toast('Only archived episodes can be deleted', true); return; }
+    if (!confirm('Permanently delete ' + ep.code + ' — “' + ep.title + '”? This can’t be undone.')) return;
+    App.mutate(d => { d.episodes = d.episodes.filter(x => x.id !== epId); });
+    App.toast('Deleted ' + ep.code);
+  };
+
+  // ---- Pipeline presets (Admin → Workflow → Pipelines) ----
+  // Named, reusable pipelines per show type. Add Show offers them alongside
+  // the built-in defaults; a created show always takes its own deep copy, so
+  // editing or deleting a preset never touches existing shows.
+  App.savePipelinePreset = function (preset) {
+    if (!guardAdmin()) return false;
+    const name = (preset.name || '').trim();
+    if (!name) { App.toast('Give the pipeline a name', true); return false; }
+    if (!preset.pipeline.length) { App.toast('The pipeline needs at least one task', true); return false; }
+    if (!App.topoSort(preset.pipeline)) { App.toast('The pipeline has a dependency cycle', true); return false; }
+    App.mutate(d => {
+      d.pipelinePresets = d.pipelinePresets || [];
+      const clean = {
+        id: preset.id || App.uid(),
+        name,
+        type: preset.type === 'live_action' ? 'live_action' : 'animation',
+        pipeline: preset.pipeline.map(t => ({
+          key: t.key, name: (t.name || '').trim() || t.key, dept: t.dept,
+          days: t.days, minDays: t.minDays, deps: t.deps.slice()
+        }))
+      };
+      const i = d.pipelinePresets.findIndex(x => x.id === clean.id);
+      if (i >= 0) d.pipelinePresets[i] = clean; else d.pipelinePresets.push(clean);
+    });
+    App.toast('Saved pipeline “' + name + '”');
+    return true;
+  };
+
+  App.duplicatePipelinePreset = function (id) {
+    if (!guardAdmin()) return;
+    const p = (App.state.data.pipelinePresets || []).find(x => x.id === id);
+    if (!p) return;
+    const copy = JSON.parse(JSON.stringify(p));
+    copy.id = App.uid();
+    copy.name = p.name + ' copy';
+    App.mutate(d => { d.pipelinePresets.push(copy); });
+    App.toast('Duplicated “' + p.name + '”');
+  };
+
+  App.deletePipelinePreset = function (id) {
+    if (!guardAdmin()) return;
+    const p = (App.state.data.pipelinePresets || []).find(x => x.id === id);
+    if (!p) return;
+    if (!confirm('Delete the pipeline preset “' + p.name + '”? Shows already created from it keep their own copy.')) return;
+    App.mutate(d => { d.pipelinePresets = d.pipelinePresets.filter(x => x.id !== id); });
+    App.toast('Deleted “' + p.name + '”');
+  };
+
   App.removeTask = function (epId, key) {
     const g = guardEdit(epId, key); if (!g) return;
     App.mutate(d => {
@@ -179,6 +339,35 @@ window.App = window.App || {};
     if (App.state.filters.show === showId) App.state.filters.show = 'all';
     App.render();
     App.toast('Removed “' + show.name + '”');
+  };
+
+  // ---- producer notes (per-show timeline annotations) ----
+  // Producers & Managers author them; everyone else sees them read-only.
+  App.canEditNotes = () => App.isAdminRole(App.state.role);
+  App.addNote = function (showId, note) {
+    if (!App.canEditNotes()) { App.toast('Only Producers and Managers can edit notes', true); return null; }
+    const id = App.uid();
+    App.mutate(d => {
+      const s = d.shows.find(x => x.id === showId); if (!s) return;
+      s.notes = s.notes || [];
+      s.notes.push(Object.assign({ id, text: '', color: '#f6be00' }, note));
+    });
+    return id;
+  };
+  App.updateNote = function (showId, id, patch) {
+    if (!App.canEditNotes()) { App.toast('Only Producers and Managers can edit notes', true); return; }
+    App.mutate(d => {
+      const s = d.shows.find(x => x.id === showId);
+      const n = s && s.notes && s.notes.find(x => x.id === id);
+      if (n) Object.assign(n, patch);
+    });
+  };
+  App.removeNote = function (showId, id) {
+    if (!App.canEditNotes()) { App.toast('Only Producers and Managers can edit notes', true); return; }
+    App.mutate(d => {
+      const s = d.shows.find(x => x.id === showId);
+      if (s && s.notes) s.notes = s.notes.filter(x => x.id !== id);
+    });
   };
 
   // ---- team / admin ----
@@ -300,7 +489,7 @@ window.App = window.App || {};
     open() {
       this.close();
       const el = App.el;
-      const prefRow = (title, desc, key, def, onChange) => {
+      const prefRow = (title, key, def, onChange) => {
         const on = App.prefs.get(key, def);
         return el('.prefs-row', {
           onclick: () => {
@@ -309,20 +498,14 @@ window.App = window.App || {};
             if (onChange) onChange(!on);
           }
         }, [
-          el('div', null, [
-            el('.prefs-row-title', null, title),
-            el('.prefs-row-desc', null, desc)
-          ]),
+          el('.prefs-row-title', null, title),
           el('span.switch' + (on ? '.on' : ''), null, el('span.knob'))
         ]);
       };
-      const segRow = (title, desc, key, def, options) => {
+      const segRow = (title, key, def, options) => {
         const cur = App.prefs.get(key, def);
         return el('.prefs-row', { style: { cursor: 'default' } }, [
-          el('div', null, [
-            el('.prefs-row-title', null, title),
-            el('.prefs-row-desc', null, desc)
-          ]),
+          el('.prefs-row-title', null, title),
           el('.prefs-seg', null, options.map(o =>
             el('button.seg' + (cur === o.v ? '.active' : ''), {
               onclick: (e) => { e.stopPropagation(); App.prefs.set(key, o.v); this.open(); App.render(); }
@@ -331,15 +514,10 @@ window.App = window.App || {};
       };
       const pop = el('.prefs-pop', { onclick: e => e.stopPropagation() }, [
         el('.prefs-title', null, 'Quick preferences'),
-        segRow('Sort timeline by',
-          'Episode: tasks grouped by department, stacked so parallel work shares a row. Department: one row per task. Show: matching tasks across a show’s episodes share a line.',
-          'timelineSort', 'department', [{ v: 'episode', label: 'Episode' }, { v: 'department', label: 'Department' }, { v: 'show', label: 'Show' }]),
-        prefRow('Latch scrolling',
-          'Timeline: keep the episode row you’ve scrolled into pinned under the header while its tasks scroll.',
-          'latchScroll', false, () => App.render()),
-        prefRow('Hide weekends',
-          'Timeline: remove Saturday and Sunday columns from the calendar instead of just shading them.',
-          'hideWeekends', true, () => App.render())
+        segRow('Sort timeline by', 'timelineSort', 'department',
+          [{ v: 'episode', label: 'Episode' }, { v: 'department', label: 'Department' }, { v: 'show', label: 'Show' }]),
+        prefRow('Latch scrolling', 'latchScroll', false, () => App.render()),
+        prefRow('Hide weekends', 'hideWeekends', true, () => App.render())
       ]);
       const r = document.getElementById('brand-logo').getBoundingClientRect();
       pop.style.top = (r.bottom + 8) + 'px';
