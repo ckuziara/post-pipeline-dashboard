@@ -16,7 +16,7 @@ window.App = window.App || {};
 
   App.visibleEpisodes = function () {
     const f = App.state.filters;
-    let eps = App.state.data.episodes.filter(ep =>
+    let eps = App.activeEpisodes().filter(ep =>      // archived shows/episodes never surface
       (f.show === 'all' || ep.showId === f.show) &&
       (f.q === '' || (ep.title + ' ' + ep.code).toLowerCase().includes(f.q.toLowerCase())));
     if (f.person !== 'all') eps = eps.filter(ep => Object.values(ep.assignees || {}).includes(f.person));
@@ -25,7 +25,9 @@ window.App = window.App || {};
 
   App.render = function () {
     if (!App.state.data) return;
+    App.applyWorkflow && App.applyWorkflow();   // fold any workflow overrides into DEPARTMENTS/STATUSES
     App.board.closePop && App.board.closePop();
+    App.gantt && App.gantt.closeNoteEditor && App.gantt.closeNoteEditor();
     if (App.tooltip) { App.tooltip.hide(); App.tooltip._stack = []; }
 
     // guard: only admins may sit on the Admin view
@@ -116,7 +118,7 @@ window.App = window.App || {};
     const f = App.state.filters;
 
     bar.appendChild(el('span.toolbar-label', null, 'Show'));
-    bar.appendChild(selectEl([['all', 'All shows']].concat(App.state.data.shows.map(s => [s.id, s.name])),
+    bar.appendChild(selectEl([['all', 'All shows']].concat(App.activeShows().map(s => [s.id, s.name])),
       f.show, v => { f.show = v; App.render(); }));
 
     bar.appendChild(el('span.toolbar-label', null, 'Dept'));
@@ -140,7 +142,7 @@ window.App = window.App || {};
     // legend — departments on the timeline, statuses elsewhere
     const legend = el('.legend');
     if (App.state.view === 'timeline') {
-      App.state.data.shows.forEach(s => legend.appendChild(legItem(s.color, s.name)));
+      App.activeShows().forEach(s => legend.appendChild(legItem(s.color, s.name)));
     } else {
       App.STATUS_ORDER.forEach(sk => legend.appendChild(legItem(App.STATUSES[sk].color, App.STATUSES[sk].label)));
     }

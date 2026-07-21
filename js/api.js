@@ -72,7 +72,7 @@ window.App = window.App || {};
         // don't clobber unsent edits — and never re-render mid-typing in the journal
         if (this._pushTimer || this._pushing || document.hidden) return;
         const ae = document.activeElement;
-        if (ae && ae.classList && ae.classList.contains('jr-block')) return;
+        if (ae && ae.classList && (ae.classList.contains('jr-block') || ae.classList.contains('pn-note-input'))) return;
         try {
           const r = await fetch('/api/version', { cache: 'no-store' });
           if (!r.ok) return;

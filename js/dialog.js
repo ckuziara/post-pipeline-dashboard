@@ -143,6 +143,159 @@ window.App = window.App || {};
     }
   };
 
+  /* ---- Reusable pipeline editor ----
+     The compact/expandable task list shared by Add Show and Admin → Workflow →
+     Pipelines. Mutates the array it's given IN PLACE (push/splice/swap), so the
+     caller's reference stays valid; `onChange` fires after anything that could
+     alter scheduling (add/remove/reorder/deps/durations). */
+  App.pipelineEditor = function (initialPipe, opts) {
+    const onChange = (opts && opts.onChange) || function () {};
+    const tip = (opts && opts.tooltips === false) ? () => null : (text) => text;
+    let pipe = initialPipe;
+    let editingKey = null;
+    let depMenu = null;
+    const closeDepMenu = () => { if (depMenu) { depMenu.remove(); depMenu = null; document.removeEventListener('click', closeDepMenu); } };
+
+    const pipeCount = el('span.count-badge');
+    const pipeList = el('.pipe-list');
+
+    // would adding `candidate` as a dependency of `t` create a cycle?
+    const dependsOn = (fromKey, onKey) => {
+      const seen = new Set();
+      const walk = (k) => {
+        if (k === onKey) return true;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        const task = pipe.find(p => p.key === k);
+        return !!task && task.deps.some(walk);
+      };
+      return walk(fromKey);
+    };
+
+    function openDepMenu(btn, t) {
+      closeDepMenu();
+      const options = pipe.filter(p => p.key !== t.key && !t.deps.includes(p.key) && !dependsOn(p.key, t.key));
+      depMenu = el('.dep-menu');
+      if (!options.length) depMenu.appendChild(el('.dep-menu-empty', null, 'No tasks available (self, existing deps and cycles are excluded)'));
+      options.forEach(p => {
+        depMenu.appendChild(el('button.dep-menu-item', {
+          type: 'button',
+          onclick: (e) => { e.stopPropagation(); t.deps.push(p.key); closeDepMenu(); renderPipe(); onChange(); }
+        }, [el('span.dot', { style: { background: App.dept(p.dept).color } }), p.name]));
+      });
+      document.body.appendChild(depMenu);
+      const r = btn.getBoundingClientRect();
+      requestAnimationFrame(() => {
+        const mh = depMenu.offsetHeight, mw = depMenu.offsetWidth;
+        depMenu.style.top = (r.bottom + mh + 6 > window.innerHeight ? r.top - mh - 4 : r.bottom + 4) + 'px';
+        depMenu.style.left = Math.min(r.left, window.innerWidth - mw - 8) + 'px';
+      });
+      setTimeout(() => document.addEventListener('click', closeDepMenu), 0);
+    }
+
+    const numFld = (t, prop, min) => el('input.fld.fld-num', {
+      type: 'number', value: String(t[prop]), min: String(min), max: '365',
+      onchange: (e) => { t[prop] = Math.max(min, Math.min(365, parseInt(e.target.value) || min)); e.target.value = t[prop]; onChange(); }
+    });
+
+    const moveBtns = (i, extraCls) => el('.pipe-move' + (extraCls || ''), null, [
+      el('button.btn-move', { type: 'button', disabled: i === 0, title: tip('Move up'),
+        onclick: (e) => { e.stopPropagation(); [pipe[i - 1], pipe[i]] = [pipe[i], pipe[i - 1]]; renderPipe(); } }, '▲'),
+      el('button.btn-move', { type: 'button', disabled: i === pipe.length - 1, title: tip('Move down'),
+        onclick: (e) => { e.stopPropagation(); [pipe[i], pipe[i + 1]] = [pipe[i + 1], pipe[i]]; renderPipe(); } }, '▼')
+    ]);
+
+    function compactRow(t, i) {
+      const dep = App.dept(t.dept);
+      const depNames = t.deps.map(dk => { const d = pipe.find(p => p.key === dk); return d ? d.name : dk; });
+      return el('.pipe-row.compact', {
+        title: tip('Click to edit'),
+        onclick: () => { editingKey = t.key; renderPipe(); }
+      }, [
+        el('span.pipe-num', null, i + 1),
+        el('span.pipe-dot', { style: { background: dep.color }, title: tip(dep.label) }),
+        el('span.pipe-name-ro', null, t.name || '—'),
+        el('span.pipe-deps-sum', { title: tip(depNames.join(', ')) }, depNames.length ? '◷ ' + depNames.join(', ') : ''),
+        el('span.pipe-dur', { title: tip('Nominal ' + t.days + ' days · minimum ' + t.minDays) }, t.days + 'd'),
+        moveBtns(i, '.hov')
+      ]);
+    }
+
+    function editRow(t, i) {
+      const deptSel = el('select.fld.fld-dept', { onchange: (e) => { t.dept = e.target.value; } });
+      Object.keys(App.DEPARTMENTS).forEach(dk => {
+        const o = document.createElement('option'); o.value = dk; o.textContent = App.DEPARTMENTS[dk].label;
+        if (dk === t.dept) o.selected = true; deptSel.appendChild(o);
+      });
+
+      const depsBox = el('.dep-tags', null, [
+        ...t.deps.map(dk => {
+          const dep = pipe.find(p => p.key === dk);
+          return el('span.dep-tag', null, [
+            dep ? dep.name : dk,
+            el('button.dep-tag-x', {
+              type: 'button', title: tip('Remove dependency'),
+              onclick: () => { t.deps = t.deps.filter(k => k !== dk); renderPipe(); onChange(); }
+            }, '✕')
+          ]);
+        }),
+        el('button.dep-add', {
+          type: 'button', title: tip('Add dependency'),
+          onclick: (e) => { e.stopPropagation(); openDepMenu(e.currentTarget, t); }
+        }, '＋')
+      ]);
+
+      return el('.pipe-row.editing', null, [
+        el('span.pipe-num', null, i + 1),
+        moveBtns(i),
+        el('input.fld.fld-name', { type: 'text', value: t.name, placeholder: 'Task name',
+          oninput: (e) => { t.name = e.target.value; } }),
+        deptSel,
+        el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'days'), numFld(t, 'days', 1)]),
+        el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'min'), numFld(t, 'minDays', 1)]),
+        depsBox,
+        el('button.btn-done', {
+          type: 'button', title: tip('Done editing'),
+          onclick: () => { editingKey = null; renderPipe(); }
+        }, '✓'),
+        el('button.btn-row-x', {
+          type: 'button', title: tip('Remove task'),
+          onclick: () => {
+            pipe.splice(i, 1);
+            pipe.forEach(p => { p.deps = p.deps.filter(k => k !== t.key); });
+            editingKey = null;
+            renderPipe(); onChange();
+          }
+        }, '🗑')
+      ]);
+    }
+
+    function renderPipe() {
+      closeDepMenu();
+      pipeCount.textContent = pipe.length;
+      pipeList.innerHTML = '';
+      pipe.forEach((t, i) => pipeList.appendChild(t.key === editingKey ? editRow(t, i) : compactRow(t, i)));
+    }
+
+    function addTask() {
+      const key = 'task_' + App.uid().slice(0, 6);
+      pipe.push({ key, name: 'New Task', dept: 'creative', days: 5, minDays: 2, deps: [] });
+      editingKey = key;
+      renderPipe(); onChange();
+      pipeList.scrollTop = pipeList.scrollHeight;
+      const fld = pipeList.querySelector('.pipe-row.editing .fld-name');
+      if (fld) { fld.focus(); fld.select(); }
+    }
+
+    renderPipe();
+    return {
+      list: pipeList, count: pipeCount, addTask, render: renderPipe,
+      getPipe: () => pipe,
+      setPipe: (p) => { pipe = p; editingKey = null; renderPipe(); },
+      closeMenus: closeDepMenu
+    };
+  };
+
   // ---- Add Show ----
   // Schedule planner + per-show pipeline editor. The producer supplies a start
   // date; a dependency-aware forward pass (App.schedulePipeline) computes the
@@ -153,26 +306,45 @@ window.App = window.App || {};
       if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
 
       // working copy of the pipeline this show will own — reloaded when the
-      // show type changes (each type has its own default task set)
+      // show type or preset changes (each type has its own default task set,
+      // plus any named presets saved in Admin → Workflow → Pipelines)
       let pipe = App.defaultPipelineFor('animation');
       let targetTouched = false;                    // has the user hand-picked an end date?
-      let depMenu = null;                           // the open dependency dropdown, if any
-
-      const closeDepMenu = () => { if (depMenu) { depMenu.remove(); depMenu = null; document.removeEventListener('click', closeDepMenu); } };
+      const editor = App.pipelineEditor(pipe, { onChange: () => updateSchedule(), tooltips: false });
 
       // ---------- show details ----------
       const nameInput = el('input.fld', { type: 'text', placeholder: 'e.g. Little Angel' });
       const codeInput = el('input.fld', { type: 'text', placeholder: 'e.g. LA', maxlength: '6' });
       const typeSel = el('select.fld', {
-        onchange: () => {
-          pipe = App.defaultPipelineFor(typeSel.value);
-          editingKey = null;
-          renderPipe(); updateSchedule();
-        }
+        onchange: () => { rebuildPresetOptions(); loadPipeline(); }
       });
       [['animation', 'Animation'], ['live_action', 'Live Action']].forEach(([v, l]) => {
         const o = document.createElement('option'); o.value = v; o.textContent = l; typeSel.appendChild(o);
       });
+
+      // pipeline preset picker — the type's built-in default plus any saved
+      // presets for that type; the show gets its own deep copy either way
+      const presetSel = el('select.fld', { onchange: () => loadPipeline() });
+      function rebuildPresetOptions() {
+        presetSel.innerHTML = '';
+        const t = typeSel.value;
+        const def = document.createElement('option');
+        def.value = ''; def.textContent = 'Standard ' + (t === 'animation' ? 'Animation' : 'Live Action');
+        presetSel.appendChild(def);
+        (App.state.data.pipelinePresets || []).filter(p => p.type === t).forEach(p => {
+          const o = document.createElement('option');
+          o.value = p.id; o.textContent = p.name + ' · ' + p.pipeline.length + ' tasks';
+          presetSel.appendChild(o);
+        });
+      }
+      function loadPipeline() {
+        const preset = presetSel.value && (App.state.data.pipelinePresets || []).find(p => p.id === presetSel.value);
+        pipe = preset
+          ? JSON.parse(JSON.stringify(preset.pipeline))
+          : App.defaultPipelineFor(typeSel.value);
+        editor.setPipe(pipe);
+        updateSchedule();
+      }
       const countInput = el('input.fld', { type: 'number', value: '3', min: '1', max: '30' });
       const epList = el('.ep-name-list');
       const rebuildEps = () => {
@@ -194,7 +366,7 @@ window.App = window.App || {};
       const recPill = el('.rec-pill');
       const endFeedback = el('.end-feedback');
       const useRecBtn = el('button.btn-icon', {
-        type: 'button', title: 'Reset to the recommended end date',
+        type: 'button',
         onclick: () => { targetTouched = false; updateSchedule(); }
       }, '↺');
 
@@ -253,143 +425,12 @@ window.App = window.App || {};
       cadenceInput.addEventListener('change', updateSchedule);
       endInput.addEventListener('change', () => { targetTouched = true; updateSchedule(); });
 
-      // ---------- pipeline editor ----------
-      const pipeCount = el('span.count-badge');
-      const pipeList = el('.pipe-list');
-
-      // would adding `candidate` as a dependency of `t` create a cycle?
-      // (yes if candidate already depends on t, transitively)
-      const dependsOn = (fromKey, onKey) => {
-        const seen = new Set();
-        const walk = (k) => {
-          if (k === onKey) return true;
-          if (seen.has(k)) return false;
-          seen.add(k);
-          const task = pipe.find(p => p.key === k);
-          return !!task && task.deps.some(walk);
-        };
-        return walk(fromKey);
-      };
-
-      function openDepMenu(btn, t) {
-        closeDepMenu();
-        const options = pipe.filter(p => p.key !== t.key && !t.deps.includes(p.key) && !dependsOn(p.key, t.key));
-        depMenu = el('.dep-menu');
-        if (!options.length) depMenu.appendChild(el('.dep-menu-empty', null, 'No tasks available (self, existing deps and cycles are excluded)'));
-        options.forEach(p => {
-          depMenu.appendChild(el('button.dep-menu-item', {
-            type: 'button',
-            onclick: (e) => { e.stopPropagation(); t.deps.push(p.key); closeDepMenu(); renderPipe(); updateSchedule(); }
-          }, [el('span.dot', { style: { background: App.dept(p.dept).color } }), p.name]));
-        });
-        document.body.appendChild(depMenu);
-        const r = btn.getBoundingClientRect();
-        requestAnimationFrame(() => {
-          const mh = depMenu.offsetHeight, mw = depMenu.offsetWidth;
-          depMenu.style.top = (r.bottom + mh + 6 > window.innerHeight ? r.top - mh - 4 : r.bottom + 4) + 'px';
-          depMenu.style.left = Math.min(r.left, window.innerWidth - mw - 8) + 'px';
-        });
-        setTimeout(() => document.addEventListener('click', closeDepMenu), 0);
-      }
-
-      const numFld = (t, prop, min) => el('input.fld.fld-num', {
-        type: 'number', value: String(t[prop]), min: String(min), max: '365',
-        onchange: (e) => { t[prop] = Math.max(min, Math.min(365, parseInt(e.target.value) || min)); e.target.value = t[prop]; updateSchedule(); }
-      });
-
-      // rows render compact; clicking one expands it into the full editor
-      let editingKey = null;
-
-      const moveBtns = (i, extraCls) => el('.pipe-move' + (extraCls || ''), null, [
-        el('button.btn-move', { type: 'button', disabled: i === 0, title: 'Move up',
-          onclick: (e) => { e.stopPropagation(); [pipe[i - 1], pipe[i]] = [pipe[i], pipe[i - 1]]; renderPipe(); } }, '▲'),
-        el('button.btn-move', { type: 'button', disabled: i === pipe.length - 1, title: 'Move down',
-          onclick: (e) => { e.stopPropagation(); [pipe[i], pipe[i + 1]] = [pipe[i + 1], pipe[i]]; renderPipe(); } }, '▼')
-      ]);
-
-      function compactRow(t, i) {
-        const dep = App.dept(t.dept);
-        const depNames = t.deps.map(dk => { const d = pipe.find(p => p.key === dk); return d ? d.name : dk; });
-        return el('.pipe-row.compact', {
-          title: 'Click to edit',
-          onclick: () => { editingKey = t.key; renderPipe(); }
-        }, [
-          el('span.pipe-num', null, i + 1),
-          el('span.pipe-dot', { style: { background: dep.color }, title: dep.label }),
-          el('span.pipe-name-ro', null, t.name || '—'),
-          el('span.pipe-deps-sum', { title: depNames.join(', ') }, depNames.length ? '◷ ' + depNames.join(', ') : ''),
-          el('span.pipe-dur', { title: 'Nominal ' + t.days + ' days · minimum ' + t.minDays }, t.days + 'd'),
-          moveBtns(i, '.hov')
-        ]);
-      }
-
-      function editRow(t, i) {
-        const deptSel = el('select.fld.fld-dept', { onchange: (e) => { t.dept = e.target.value; } });
-        Object.keys(App.DEPARTMENTS).forEach(dk => {
-          const o = document.createElement('option'); o.value = dk; o.textContent = App.DEPARTMENTS[dk].label;
-          if (dk === t.dept) o.selected = true; deptSel.appendChild(o);
-        });
-
-        const depsBox = el('.dep-tags', null, [
-          ...t.deps.map(dk => {
-            const dep = pipe.find(p => p.key === dk);
-            return el('span.dep-tag', null, [
-              dep ? dep.name : dk,
-              el('button.dep-tag-x', {
-                type: 'button', title: 'Remove dependency',
-                onclick: () => { t.deps = t.deps.filter(k => k !== dk); renderPipe(); updateSchedule(); }
-              }, '✕')
-            ]);
-          }),
-          el('button.dep-add', {
-            type: 'button', title: 'Add dependency',
-            onclick: (e) => { e.stopPropagation(); openDepMenu(e.currentTarget, t); }
-          }, '＋')
-        ]);
-
-        return el('.pipe-row.editing', null, [
-          el('span.pipe-num', null, i + 1),
-          moveBtns(i),
-          el('input.fld.fld-name', { type: 'text', value: t.name, placeholder: 'Task name',
-            oninput: (e) => { t.name = e.target.value; } }),
-          deptSel,
-          el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'days'), numFld(t, 'days', 1)]),
-          el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'min'), numFld(t, 'minDays', 1)]),
-          depsBox,
-          el('button.btn-done', {
-            type: 'button', title: 'Done editing',
-            onclick: () => { editingKey = null; renderPipe(); }
-          }, '✓'),
-          el('button.btn-row-x', {
-            type: 'button', title: 'Remove task',
-            onclick: () => {
-              pipe.splice(i, 1);
-              pipe.forEach(p => { p.deps = p.deps.filter(k => k !== t.key); });
-              editingKey = null;
-              renderPipe(); updateSchedule();
-            }
-          }, '🗑')
-        ]);
-      }
-
-      function renderPipe() {
-        closeDepMenu();
-        pipeCount.textContent = pipe.length;
-        pipeList.innerHTML = '';
-        pipe.forEach((t, i) => pipeList.appendChild(t.key === editingKey ? editRow(t, i) : compactRow(t, i)));
-      }
-
+      // ---------- pipeline editor (shared component) ----------
       const addTaskBtn = el('button.btn-icon', {
-        type: 'button', title: 'Add task',
+        type: 'button',
         onclick: (e) => {
           e.stopPropagation();                      // lives inside the collapse toggle row
-          const key = 'task_' + App.uid().slice(0, 6);
-          pipe.push({ key, name: 'New Task', dept: 'creative', days: 5, minDays: 2, deps: [] });
-          editingKey = key;
-          renderPipe(); updateSchedule();
-          pipeList.scrollTop = pipeList.scrollHeight;
-          const fld = pipeList.querySelector('.pipe-row.editing .fld-name');
-          if (fld) { fld.focus(); fld.select(); }
+          editor.addTask();
         }
       }, '＋');
 
@@ -399,7 +440,7 @@ window.App = window.App || {};
       const pipeBody = el('.pipe-body', { style: { display: 'none' } }, [
         el('.fld-hint', { style: { margin: '8px 0' } },
           '“days” is the nominal duration, “min” the floor it can be squeezed to. Dependencies gate when a task can start. Click a task to edit it.'),
-        pipeList
+        editor.list
       ]);
       addTaskBtn.style.display = 'none';
       const pipeToggle = el('.pipe-toggle', {
@@ -412,12 +453,12 @@ window.App = window.App || {};
       }, [
         pipeChev,
         el('span.pipe-toggle-lbl', null, 'Customize Pipeline Tasks'),
-        pipeCount,
+        editor.count,
         addTaskBtn
       ]);
 
       rebuildEps();
-      renderPipe();
+      rebuildPresetOptions();
       updateSchedule();
 
       const sections = [
@@ -425,7 +466,8 @@ window.App = window.App || {};
         el('.plan-grid', null, [
           field('Show Name', nameInput, 'The full title of the series'),
           field('Show Code', codeInput, 'Prefix for episode codes (LA → LA-1)'),
-          field('Show Type', typeSel, 'Sets the default pipeline for this show')
+          field('Show Type', typeSel, 'Sets the default pipeline for this show'),
+          field('Pipeline', presetSel, 'The standard pipeline, or a preset saved in Admin → Workflow')
         ]),
         el('.modal-section-title', null, 'Schedule'),
         el('.sched-box', null, [
@@ -449,7 +491,7 @@ window.App = window.App || {};
       ];
 
       const footer = [
-        el('button.btn-ghost', { onclick: () => { closeDepMenu(); App.modal.close(); } }, 'Cancel'),
+        el('button.btn-ghost', { onclick: () => { editor.closeMenus(); App.modal.close(); } }, 'Cancel'),
         el('button.btn-primary', {
           onclick: () => {
             const name = nameInput.value.trim(), code = codeInput.value.trim().toUpperCase();
@@ -463,7 +505,7 @@ window.App = window.App || {};
             const scale = target === rec.end ? 1 : App.solveScale(pipe, start, epCount, cadence, target).scale;
             const pipeline = pipe.map(t => ({ key: t.key, name: t.name.trim() || t.key, dept: t.dept, days: t.days, minDays: t.minDays, deps: t.deps.slice() }));
             App.createShow({ name, code, type: typeSel.value, epNames, pipeline, startIso: start, cadence, scale });
-            closeDepMenu();
+            editor.closeMenus();
             App.modal.close();
           }
         }, '＋ Create Show')

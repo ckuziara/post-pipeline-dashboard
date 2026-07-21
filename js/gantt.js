@@ -137,6 +137,7 @@ window.App = window.App || {};
       this._dw = dw;
       this._hideWeekends = hideWeekends;
       this._xOf = xOf;
+      this._startIso = startIso;
 
       const tier = tierFor(dw);
       const scroll = el('.gantt-scroll', { style: { maxHeight: 'calc(100vh - 230px)' } });
@@ -162,6 +163,10 @@ window.App = window.App || {};
         const tx = LABEL_W + xOf(todayIso) + dw / 2;
         body.appendChild(el('.today-line', { style: { left: tx + 'px' } }));
       }
+
+      // Producer Notes swimlane — per-show annotations, only meaningful when a
+      // single show is in view (nonsensical mixed across shows on "All shows").
+      if (App.state.filters.show !== 'all') this.producerNotesLane(body, App.state.filters.show, startIso, dw, xOf);
 
       const sort = App.prefs.get('timelineSort', 'department');
       const byStart = (a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1;
@@ -276,6 +281,14 @@ window.App = window.App || {};
 
       const hoverHandler = (e) => {
         if (this._drag) return;
+        const noteEl = e.target.closest('.pn-note.editable');
+        if (noteEl) {
+          if (this._hoverBar && this._hoverBar !== noteEl) { this._hoverBar.style.cursor = ''; this._hoverBar.classList.remove('adjustable'); }
+          this._hoverBar = noteEl;
+          noteEl.classList.add('adjustable');
+          noteEl.style.cursor = this.dragZone(noteEl, e.clientX) === 'move' ? 'grab' : 'ew-resize';
+          return;
+        }
         const bar = e.target.closest('.bar');
         const row = bar && bar.closest('.g-row.sub');
         if (!bar || !row || row.classList.contains('phase')) {
@@ -304,6 +317,35 @@ window.App = window.App || {};
       scroll.addEventListener('mousemove', hoverHandler);
 
       const downHandler = (e) => {
+        // producer notes — DRAWING: empty grid cell in a notes row → draw a new note
+        const drawTrack = e.target.closest('.g-row.pn-row .g-track.pn-drawable');
+        if (drawTrack && !e.target.closest('.pn-note') && App.canEditNotes()) {
+          e.preventDefault();
+          this.closeNoteEditor();
+          this.startNoteDraw(e, drawTrack);
+          return;
+        }
+
+        // producer notes: draggable/resizable like task bars, but no dep rules
+        const noteEl = e.target.closest('.pn-note.editable');
+        if (noteEl) {
+          const showId = noteEl.dataset.showId, id = noteEl.dataset.noteId;
+          const show = App.show(showId);
+          const note = show && (show.notes || []).find(n => n.id === id);
+          if (!note) return;
+          e.preventDefault();
+          hideTip();
+          const zone = this.dragZone(noteEl, e.clientX);
+          this._drag = {
+            kind: 'note', el: noteEl, showId, id, zone, startClientX: e.clientX,
+            origStart: note.start, origDue: note.due, curStart: note.start, curDue: note.due, moved: false
+          };
+          noteEl.classList.add('dragging');
+          document.body.classList.add('gantt-dragging');
+          document.body.style.cursor = zone === 'move' ? 'grabbing' : 'ew-resize';
+          return;
+        }
+
         const bar = e.target.closest('.bar');
         if (!bar) return;
         const row = bar.closest('.g-row.sub');
@@ -349,6 +391,37 @@ window.App = window.App || {};
       const dw = this._dw, hw = this._hideWeekends, xOf = this._xOf;
       const colDelta = Math.round((e.clientX - d.startClientX) / dw);
 
+      if (d.kind === 'note-draw') {
+        const cur = d.startCol + Math.round((e.clientX - d.startClientX) / dw);
+        const a = Math.max(0, Math.min(d.startCol, cur)), b = Math.max(0, Math.max(d.startCol, cur));
+        d.curA = a; d.curB = b;
+        if (Math.abs(e.clientX - d.startClientX) > 4) d.moved = true;
+        d.ghost.style.left = (a * dw) + 'px';
+        d.ghost.style.width = ((b - a + 1) * dw) + 'px';
+        const sIso = App.addVisibleDays(this._startIso, a, hw), dIso = App.addVisibleDays(this._startIso, b, hw);
+        const tip = dragTipEl(); tip.innerHTML = '';
+        tip.appendChild(el('span.tip-dot', { style: { background: '#5b6cff' } }));
+        tip.appendChild(document.createTextNode(App.fmtRange(sIso, dIso)));
+        tip.style.display = 'flex'; tip.style.left = e.clientX + 'px'; tip.style.top = (e.clientY - 38) + 'px';
+        return;
+      }
+
+      if (d.kind === 'note') {
+        if (Math.abs(e.clientX - d.startClientX) > 3) d.moved = true;
+        let ns = d.origStart, nd = d.origDue;
+        if (d.zone === 'move') { ns = App.addVisibleDays(d.origStart, colDelta, hw); nd = App.addVisibleDays(d.origDue, colDelta, hw); }
+        else if (d.zone === 'resize-left') { ns = App.addVisibleDays(d.origStart, colDelta, hw); if (ns > nd) ns = nd; }
+        else { nd = App.addVisibleDays(d.origDue, colDelta, hw); if (nd < ns) nd = ns; }
+        d.curStart = ns; d.curDue = nd;
+        d.el.style.left = xOf(ns) + 'px';
+        d.el.style.width = xOf.width(ns, nd) + 'px';
+        const tip = dragTipEl(); tip.innerHTML = '';
+        tip.appendChild(el('span.tip-dot', { style: { background: '#5fb0f0' } }));
+        tip.appendChild(document.createTextNode(App.fmtRange(ns, nd)));
+        tip.style.display = 'flex'; tip.style.left = e.clientX + 'px'; tip.style.top = (e.clientY - 38) + 'px';
+        return;
+      }
+
       let newStart = d.origStart, newDue = d.origDue;
       if (d.zone === 'move') {
         newStart = App.addVisibleDays(d.origStart, colDelta, hw);
@@ -379,10 +452,35 @@ window.App = window.App || {};
     onDragEnd(e) {
       const d = this._drag; if (!d) return;
       this._drag = null;
-      d.bar.classList.remove('dragging', 'warn');
       document.body.classList.remove('gantt-dragging');
       document.body.style.cursor = '';
       hideDragTip();
+
+      if (d.kind === 'note-draw') {
+        d.ghost.remove();
+        if (d.moved) {
+          const sIso = App.addVisibleDays(this._startIso, d.curA, this._hideWeekends);
+          const dIso = App.addVisibleDays(this._startIso, d.curB, this._hideWeekends);
+          const id = App.addNote(d.showId, { text: '', start: sIso, due: dIso, color: '#f6be00' });
+          if (id) requestAnimationFrame(() => {
+            const nEl = this._scrollEl && this._scrollEl.querySelector('.pn-note[data-note-id="' + id + '"]');
+            if (nEl) this.openNoteEditor(nEl);
+          });
+        }
+        return;
+      }
+
+      if (d.kind === 'note') {
+        d.el.classList.remove('dragging');
+        if (d.moved && (d.curStart !== d.origStart || d.curDue !== d.origDue)) {
+          App.updateNote(d.showId, d.id, { start: d.curStart, due: d.curDue });
+        } else {
+          this.openNoteEditor(d.el);   // a click (no move) opens the editor
+        }
+        return;
+      }
+
+      d.bar.classList.remove('dragging', 'warn');
       if (d.curStart !== d.origStart || d.curDue !== d.origDue) App.moveTask(d.epId, d.suKey, d.curStart, d.curDue);
     },
 
@@ -607,7 +705,7 @@ window.App = window.App || {};
           srow.appendChild(el('.g-label', { style: { background: deptLabelBg(dep.color) } },
             el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } },
               multi
-                ? [el('span', { style: { color: 'var(--text-3)', paddingLeft: '20px' } }, '↳')]
+                ? []                       // continuation row — no marker on the Y axis
                 : [el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } }),
                    el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, dep.label)]
             )
@@ -700,9 +798,7 @@ window.App = window.App || {};
               el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } }),
               el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, t.name),
               el('span', { style: { color: 'var(--text-3)', fontWeight: '500', fontSize: '9px', marginLeft: 'auto', paddingLeft: '6px', flex: 'none' } }, dep.label)
-            ] : [
-              el('span', { style: { color: 'var(--text-3)', paddingLeft: '13px' } }, '↳')
-            ])
+            ] : [])   // continuation row — no marker on the Y axis
           ]));
 
           const st = el('.g-track');
@@ -725,6 +821,175 @@ window.App = window.App || {};
           body.appendChild(srow);
         });
       });
+    },
+
+    // ---- Producer Notes swimlane ----
+    // A collapsible band at the top of the timeline holding free-form, date-
+    // ranged producer annotations for the selected show. Notes interval-stack
+    // onto as many rows as needed so overlapping notes never hide each other.
+    // Click-drag an empty grid cell to draw a new note, click a note to
+    // edit/recolour/delete, drag the middle to move or an edge to resize
+    // (weekend-aware, same math as task bars).
+    producerNotesLane(body, showId, startIso, dw, xOf) {
+      const show = App.show(showId);
+      if (!show) return;
+      const notes = (show.notes || []).slice().sort((a, b) => a.start < b.start ? -1 : 1);
+      const open = App.state.notesOpen !== false;   // default open
+      const canEdit = App.canEditNotes();
+
+      // header row
+      const head = el('.g-row.pn-head');
+      const label = el('.g-label.pn-label', {
+        title: 'Producer notes for ' + show.name,
+        onclick: () => { App.state.notesOpen = !open; App.render(); }
+      }, [
+        el('.l-title', null, [
+          el('span.chev' + (open ? '.open' : ''), null, '▶'),
+          el('span', null, 'PRODUCER NOTES'),
+          el('span.pn-count', null, notes.length ? String(notes.length) : '')
+        ])
+      ]);
+      head.appendChild(label);
+      head.appendChild(el('.g-track'));   // empty track keeps the header aligned
+      body.appendChild(head);
+      if (!open) return;
+
+      // Shape every note first: one whose text can't fit across its (usually
+      // short) date span flips to an upright portrait box, which makes its row
+      // taller. HFONT/VSTEP ≈ px per character horizontally / vertically at 10px.
+      const HFONT = 5.6, VSTEP = 7.4;
+      const shaped = notes.map(n => {
+        const width = xOf.width(n.start, n.due);
+        const text = n.text || 'Untitled note';
+        const fitsFlat = width - 16 >= text.length * HFONT;
+        const portraitH = Math.max(36, Math.min(84, Math.round(text.length * VSTEP) + 14));
+        return { n, width, text, portrait: !fitsFlat, portraitH };
+      });
+
+      // Interval-stack, but keep portrait notes on their own lanes and flat
+      // notes on theirs: portrait notes pack tightly together (a tall row is
+      // costly, so we don't want a flat note stranding a portrait note onto a
+      // fresh tall row) — this is the "vertical notes share a lane" priority.
+      const stack = (arr) => {
+        const lv = [];
+        arr.forEach(s => {
+          const l = lv.find(x => s.n.start > x.lastDue);
+          if (l) { l.lastDue = s.n.due; l.items.push(s); }
+          else lv.push({ lastDue: s.n.due, items: [s] });
+        });
+        return lv;
+      };
+      const levels = [...stack(shaped.filter(s => s.portrait)), ...stack(shaped.filter(s => !s.portrait))];
+      if (!levels.length) levels.push({ items: [] });          // hint / draw row when empty
+      if (canEdit) levels.push({ items: [] });                 // spare row so there's always open grid to draw in
+
+      levels.forEach((lvl, li) => {
+        const rowH = lvl.items.reduce((m, s) => s.portrait ? Math.max(m, s.portraitH + 8) : m, 26);
+        const row = el('.g-row.sub.pn-row', { style: { minHeight: rowH + 'px' } });
+        row.appendChild(el('.g-label.pn-sublabel', null,
+          el('.l-title', { style: { fontWeight: '600', fontSize: '10px' } },
+            li === 0 && !notes.length
+              ? [el('span', { style: { color: 'var(--text-3)', paddingLeft: '13px' } }, canEdit ? 'Drag to add a note' : 'No notes')]
+              : [])   // no ↳ continuation markers for note rows
+        ));
+        const track = el('.g-track' + (canEdit ? '.pn-drawable' : ''));
+        lvl.items.forEach(s => {
+          const n = s.n;
+          const left = xOf(n.start);
+          const ink = pickInk(n.color || '#f6be00');
+          const style = { left: left + 'px', width: s.width + 'px', background: n.color || '#f6be00', color: ink };
+          if (s.portrait) style.height = s.portraitH + 'px';
+          const note = el('.pn-note' + (canEdit ? '.editable' : '') + (s.portrait ? '.portrait' : ''), {
+            title: s.text + ' · ' + App.fmtRange(n.start, n.due),
+            style: style
+          }, [el('span', null, s.text)]);
+          note.dataset.noteId = n.id;
+          note.dataset.showId = showId;
+          track.appendChild(note);
+        });
+        row.appendChild(track);
+        body.appendChild(row);
+      });
+    },
+
+    // DRAWING: mousedown on empty notes grid starts a ghost; drag sets its span
+    startNoteDraw(e, trackEl) {
+      const dw = this._dw;
+      const rect = trackEl.getBoundingClientRect();
+      const startCol = Math.max(0, Math.round((e.clientX - rect.left) / dw));
+      const ghost = el('.pn-note.pn-ghost', {
+        style: { left: (startCol * dw) + 'px', width: dw + 'px', background: '#5b6cff', color: '#fff' }
+      }, el('span', null, 'New note'));
+      trackEl.appendChild(ghost);
+      this._drag = {
+        kind: 'note-draw', showId: App.state.filters.show, ghost,
+        startCol, startClientX: e.clientX, curA: startCol, curB: startCol, moved: false
+      };
+      document.body.classList.add('gantt-dragging');
+      document.body.style.cursor = 'ew-resize';
+    },
+
+    NOTE_COLORS: ['#f6be00', '#ff6f9c', '#6cc2f0', '#6cc24a', '#a06cd5', '#ff7a59', '#9aa0ad'],
+
+    openNoteEditor(noteEl) {
+      this.closeNoteEditor();
+      const showId = noteEl.dataset.showId, id = noteEl.dataset.noteId;
+      const show = App.show(showId);
+      const note = show && (show.notes || []).find(n => n.id === id);
+      if (!note) return;
+      const r = noteEl.getBoundingClientRect();
+
+      const origText = note.text || '', curColor = note.color || '#f6be00';
+      const input = el('input.pn-note-input', {
+        type: 'text', value: origText, placeholder: 'Note…',
+        onkeydown: (e) => { if (e.key === 'Enter' || e.key === 'Escape') this.closeNoteEditor(); }
+      });
+      const swatches = el('.pn-swatches', null, this.NOTE_COLORS.map(c =>
+        el('button.pn-swatch' + (c === curColor ? '.on' : ''), {
+          style: { background: c }, title: c,
+          // commit text + colour together; the resulting re-render closes us
+          onclick: () => { App.updateNote(showId, id, { text: input.value, color: c }); }
+        })
+      ));
+
+      const pop = el('.pn-editor', { onclick: (e) => e.stopPropagation(), onmousedown: (e) => e.stopPropagation() }, [
+        input,
+        swatches,
+        el('.pn-editor-actions', null, [
+          el('button.pn-del', { onclick: () => { pop._commit = null; this.closeNoteEditor(); App.removeNote(showId, id); } }, '🗑 Delete'),
+          el('button.pn-done', { onclick: () => this.closeNoteEditor() }, 'Done')
+        ])
+      ]);
+      // remember what to commit on teardown, without re-reading stale state
+      pop._commit = () => { if (input.value !== origText) App.updateNote(showId, id, { text: input.value }); };
+      document.body.appendChild(pop);
+      this._noteEditor = pop;
+
+      requestAnimationFrame(() => {
+        const pw = pop.offsetWidth, ph = pop.offsetHeight;
+        let left = r.left, top = r.bottom + 8;
+        if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+        if (top + ph > window.innerHeight - 8) top = r.top - ph - 8;   // flip above
+        pop.style.left = Math.max(8, left) + 'px';
+        pop.style.top = Math.max(8, top) + 'px';
+        input.focus(); input.select();
+      });
+
+      if (!this._noteOutside) {
+        this._noteOutside = () => this.closeNoteEditor();
+        setTimeout(() => document.addEventListener('mousedown', this._noteOutside), 0);
+      }
+    },
+
+    closeNoteEditor() {
+      if (this._noteOutside) { document.removeEventListener('mousedown', this._noteOutside); this._noteOutside = null; }
+      const pop = this._noteEditor;
+      this._noteEditor = null;                 // clear first so the commit's re-render is a no-op re-entry
+      // sweep the tracked editor plus any orphan left by a re-entrant path
+      document.querySelectorAll('.pn-editor').forEach(p => { if (p !== pop) p.remove(); });
+      if (!pop) return;
+      pop.remove();
+      if (pop._commit) pop._commit();          // may trigger a render; editor already detached
     },
 
     afterMount() {
