@@ -28,6 +28,8 @@ window.App = window.App || {};
     App.applyWorkflow && App.applyWorkflow();   // fold any workflow overrides into DEPARTMENTS/STATUSES
     App.board.closePop && App.board.closePop();
     App.gantt && App.gantt.closeNoteEditor && App.gantt.closeNoteEditor();
+    App.vc && App.vc.syncOpen && App.vc.syncOpen();   // live-refresh the Version Control panel on state sync
+    App.uploads && App.uploads._refresh && App.uploads._refresh();   // live-refresh the attachments section
     if (App.tooltip) { App.tooltip.hide(); App.tooltip._stack = []; }
 
     // guard: only admins may sit on the Admin view

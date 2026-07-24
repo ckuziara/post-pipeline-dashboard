@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "postpipeline-dashboard",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["/Users/chris.kuziara/.postpipeline-dashboard/server.js"],
+      "runtimeExecutable": "/usr/local/bin/node",
+      "runtimeArgs": ["server.js"],
       "port": 8771,
       "autoPort": true
     }

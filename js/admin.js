@@ -92,10 +92,12 @@ window.App = window.App || {};
       if (['ready', 'in_progress', 'review'].includes(su.status)) l.active++;
     }));
 
-    const panel = el('.adm-table');
+    const showInteg = App.memberConnectors().length > 0;   // drop the column when no per-member connectors are on
+    const panel = el('.adm-table' + (showInteg ? '' : '.no-integ'));
     panel.appendChild(el('.adm-thead', null, [
       el('.cell', null, 'User'), el('.cell', null, 'Department'),
-      el('.cell', null, 'Integrations'), el('.cell', null, 'Live tasks'), el('.cell', null, '')
+      (showInteg ? el('.cell', null, 'Integrations') : null),
+      el('.cell', null, 'Live tasks'), el('.cell', null, '')
     ]));
     const body = el('.adm-tbody');
     panel.appendChild(body);
@@ -133,18 +135,12 @@ window.App = window.App || {};
     return box;
   }
 
-  // grey silhouette by default; brand colour on hover (and once "connected").
-  // Toggling is just a placeholder until real OAuth/SSO linking exists.
-  const INTEGRATIONS = [
-    { key: 'slack', label: 'Slack', color: '#e01e5a',
-      svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523 2.528 2.528 0 0 1-2.522-2.523 2.528 2.528 0 0 1 2.522-2.52h2.52v2.52zm1.261 0a2.528 2.528 0 0 1 2.52-2.52h5.043a2.528 2.528 0 0 1 2.522 2.52v5.042a2.528 2.528 0 0 1-2.522 2.52H8.823a2.528 2.528 0 0 1-2.52-2.52v-5.042zM8.823 5.043a2.528 2.528 0 0 1-2.52-2.52A2.528 2.528 0 0 1 8.823 0a2.528 2.528 0 0 1 2.52 2.522v2.521h-2.52zm0 1.261a2.528 2.528 0 0 1 2.52 2.52v5.043a2.528 2.528 0 0 1-2.52 2.522H3.78a2.528 2.528 0 0 1-2.52-2.522V8.824a2.528 2.528 0 0 1 2.52-2.52h5.043zm10.135 3.761a2.528 2.528 0 0 1 2.522-2.52 2.528 2.528 0 0 1 2.52 2.52 2.528 2.528 0 0 1-2.52 2.522h-2.522v-2.522zm-1.262 0a2.528 2.528 0 0 1-2.52 2.52h-5.043a2.528 2.528 0 0 1-2.522-2.52V3.78a2.528 2.528 0 0 1 2.522-2.52h5.043a2.528 2.528 0 0 1 2.52 2.52v5.043zm-3.781 10.133a2.528 2.528 0 0 1 2.52 2.522c0 1.393-1.13 2.521-2.52 2.521a2.528 2.528 0 0 1-2.522-2.521v-2.522h2.522zm0-1.262a2.528 2.528 0 0 1-2.522-2.52v-5.043a2.528 2.528 0 0 1 2.522-2.52h5.043a2.528 2.528 0 0 1 2.52 2.52v5.043a2.528 2.528 0 0 1-2.52 2.52h-5.043z"/></svg>' },
-    { key: 'gmail', label: 'Gmail', color: '#ea4335',
-      svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 5.5v13a1.5 1.5 0 0 1-1.5 1.5H19V8.3l-7 5.15L5 8.3V20H3.5A1.5 1.5 0 0 1 2 18.5v-13A1.5 1.5 0 0 1 3.5 4h.6L12 9.9 19.9 4h.6A1.5 1.5 0 0 1 22 5.5z"/></svg>' }
-  ];
-
+  // Only enabled connectors (Workflow Settings → Connectors) render — grey
+  // silhouette by default, brand colour on hover / once "connected". Toggling
+  // a member's flag is a placeholder until real OAuth/SSO linking exists.
   function integrationsCell(p, editing) {
     const box = el('.integ-icons');
-    INTEGRATIONS.forEach(i => {
+    App.memberConnectors().forEach(i => {
       const on = !!(p.integrations && p.integrations[i.key]);
       const status = on ? i.label + ' connected' : i.label + ' not connected';
       box.appendChild(el('span.integ-ic.' + i.key + (on ? '.on' : '') + (editing ? '.editable' : ''), {
@@ -189,7 +185,7 @@ window.App = window.App || {};
         : dept
           ? el('span.dept-chip', null, [el('span.dot', { style: { background: App.dept(dept).color } }), App.dept(dept).label])
           : el('span.adm-role-chip', null, App.role(p.role).label + ' · oversight')),
-      el('.cell', null, integrationsCell(p, editing)),
+      (App.memberConnectors().length ? el('.cell', null, integrationsCell(p, editing)) : null),
       el('.cell', null, el('.adm-load', { title: load.total ? load.active + ' active of ' + load.total + ' assigned task' + (load.total === 1 ? '' : 's') : 'No assigned tasks' }, [
         el('span.adm-load-num', null, load.active + '/' + load.total),
         el('.adm-load-track', null, el('.adm-load-fill', { style: { width: pct + '%' } }))
@@ -304,7 +300,7 @@ window.App = window.App || {};
     const layout = el('.adm-split');
     const side = el('.adm-side');
     side.appendChild(el('.adm-side-label', null, 'Workflow'));
-    [['statuses', '🎨', 'Task statuses'], ['departments', '🏷️', 'Departments'], ['pipelines', '🧬', 'Pipelines'], ['shows', '📚', 'Shows']].forEach(([k, ic, lbl]) => {
+    [['statuses', '🎨', 'Task statuses'], ['departments', '🏷️', 'Departments'], ['pipelines', '🧬', 'Pipelines'], ['shows', '📚', 'Shows'], ['connectors', '🔌', 'Connectors']].forEach(([k, ic, lbl]) => {
       side.appendChild(el('button.adm-role' + (tab === k ? '.active' : ''), {
         onclick: () => { App.state.admin.wfTab = k; App.render(); }
       }, [el('span.adm-role-ic', null, ic), lbl]));
@@ -318,12 +314,76 @@ window.App = window.App || {};
       tab === 'departments' ? departmentsCard()
       : tab === 'pipelines' ? pipelinesPanel()
       : tab === 'shows' ? showsPanel()
+      : tab === 'connectors' ? connectorsCard()
       : statusesCard());
 
     layout.appendChild(side);
     layout.appendChild(panel);
     box.appendChild(layout);
     return box;
+  }
+
+  // Connectors: global on/off for each external tool. Disabled → hidden app-wide.
+  function connectorsCard() {
+    const wrap = el('div');
+    const card = el('.adm-permcard');
+    card.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'Connectors'),
+      el('.adm-permcard-desc', null, 'Turn connected tools on or off. A disabled connector is hidden everywhere in the app.')
+    ]));
+    App.CONNECTORS.forEach(c => {
+      const on = App.connectorEnabled(c.key);
+      card.appendChild(el('.adm-permrow', { onclick: () => App.setConnector(c.key, !on) }, [
+        el('.conn-row-main', null, [
+          el('span.conn-ic.' + c.key + (on ? '.on' : ''), { html: c.svg }),
+          el('div', null, [
+            el('.adm-perm-title', null, c.label),
+            el('.adm-perm-desc', null, c.desc)
+          ])
+        ]),
+        el('span.switch' + (on ? '.on' : ''), null, el('span.knob'))
+      ]));
+    });
+    wrap.appendChild(card);
+    if (App.connectorEnabled('lucidlink')) wrap.appendChild(lucidConnectionCard());
+    return wrap;
+  }
+
+  // LucidLink connection: choose the data source (mock vs live API) and hold
+  // the live endpoint / Service Account key. Switching to Live disables the mock.
+  function lucidConnectionCard() {
+    const cfg = App.lucid.cfg();
+    const live = App.lucid.isLive();
+    const card = el('.adm-permcard', { style: { marginTop: '16px' } });
+    card.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'LucidLink connection'),
+      el('.adm-permcard-desc', null, 'Phase 1 runs on simulated mock data. Switch to Live once a self-hosted LucidLink REST API + Service Account is available.')
+    ]));
+
+    // data source segmented control
+    card.appendChild(el('.adm-permrow', { style: { cursor: 'default' } }, [
+      el('div', null, [
+        el('.adm-perm-title', null, 'Data source'),
+        el('.adm-perm-desc', null, live ? 'Live — calls the LucidLink API for every checkout / check-in.' : 'Mock — simulated latency, 10% error rate and a 50 MB/s upload queue.')
+      ]),
+      el('.prefs-seg', null, [['mock', 'Mock'], ['live', 'Live API']].map(([v, lbl]) =>
+        el('button.seg' + (cfg.mode === v || (!cfg.mode && v === 'mock') ? '.active' : ''), {
+          onclick: () => App.setLucidConfig({ mode: v })
+        }, lbl)))
+    ]));
+
+    // live connection fields
+    const urlIn = el('input.fld', { type: 'text', value: cfg.apiUrl || '', placeholder: 'https://lucidlink.internal/api', style: { width: '100%' } });
+    urlIn.addEventListener('change', () => App.setLucidConfig({ apiUrl: urlIn.value.trim() }));
+    const keyIn = el('input.fld', { type: 'password', value: App.lucid._key || '', placeholder: 'Service Account key (kept in memory only)', style: { width: '100%' } });
+    keyIn.addEventListener('change', () => App.setLucidConfig({ key: keyIn.value }));
+    const conn = el('.wf-add', { style: { flexDirection: 'column', alignItems: 'stretch', gap: '8px', opacity: live ? '1' : '.5', pointerEvents: live ? 'auto' : 'none' } }, [
+      el('label.fld-label', null, 'API base URL'), urlIn,
+      el('label.fld-label', { style: { marginTop: '4px' } }, 'Service Account key'), keyIn,
+      el('.fld-hint', null, live && !App.lucid.real._ready() ? '⚠ Enter the URL and key to activate live calls — until then actions will error.' : 'The key is never written to the shared board; the backend holds the real Service Account.')
+    ]);
+    card.appendChild(conn);
+    return card;
   }
 
   function statusesCard() {

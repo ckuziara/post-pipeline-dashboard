@@ -40,6 +40,41 @@ window.App = window.App || {};
     return el('.field', null, [el('label.fld-label', null, label), control, hint ? el('.fld-hint', null, hint) : null]);
   }
 
+  /* Compact click-to-edit row (settings-menu style): shows a read-only value
+     that swaps to its control on click, and reverts when focus leaves. The
+     control is the source of truth, so Save reads it whether open or not. */
+  function editRow(labelText, control, renderDisplay, opts) {
+    opts = opts || {};
+    const display = el('.et-display', opts.locked ? null : { tabindex: '0' });
+    const editKids = [control]; if (opts.hint) editKids.push(el('.fld-hint', null, opts.hint));
+    const editWrap = el('.et-edit', { style: { display: 'none' } }, editKids);
+    const refresh = () => {
+      display.innerHTML = '';
+      const v = renderDisplay();
+      display.appendChild((v == null || v === '') ? el('span.et-empty', null, '—') : (typeof v === 'string' ? el('span', null, v) : v));
+      if (!opts.locked) display.appendChild(el('span.et-pencil', null, '✎'));
+    };
+    const enter = () => {
+      if (opts.locked) return;
+      display.style.display = 'none'; editWrap.style.display = '';
+      const f = editWrap.querySelector('input,select,textarea');
+      if (f) { f.focus(); if (f.select && f.type === 'text') f.select(); }
+    };
+    const leave = () => { editWrap.style.display = 'none'; display.style.display = ''; refresh(); };
+    display.addEventListener('click', enter);
+    display.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enter(); } });
+    // collapse once focus leaves the whole edit group (covers multi-input rows)…
+    editWrap.addEventListener('focusout', () => setTimeout(() => { if (editWrap.style.display !== 'none' && !editWrap.contains(document.activeElement)) leave(); }, 0));
+    // …plus immediate collapse when a dropdown is chosen or a text field commits
+    editWrap.addEventListener('change', e => { if (e.target.tagName === 'SELECT') leave(); });
+    editWrap.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type === 'text') { e.preventDefault(); leave(); } });
+    refresh();
+    return el('.et-row' + (opts.locked ? '.locked' : ''), null, [
+      el('.et-label', null, labelText),
+      el('.et-control', null, [display, editWrap])
+    ]);
+  }
+
   // ---- Edit Task ----
   App.editTask = {
     open(epId, key) {
@@ -100,22 +135,48 @@ window.App = window.App || {};
       };
       startInput.addEventListener('change', updateRange); dueInput.addEventListener('change', updateRange); updateRange();
 
+      // schedule editing group (two dates + a live range/validation pill)
+      const schedControl = el('.sched-box', null, [
+        el('.sched-grid', null, [field('Start', startInput), el('.sched-arrow', null, '→'), field('Due', dueInput)]),
+        rangePill
+      ]);
+      const schedDisplay = () => {
+        const s = startInput.value, d = dueInput.value;
+        if (s && d && d >= s) {
+          const days = App.diffDays(d, s) + 1;
+          return el('span.et-sched', null, [el('span.range-ic', null, '📅'), App.fmtRange(s, d) + ', ' + App.parseDate(d).getFullYear() + '  ·  ' + days + (days === 1 ? ' day' : ' days')]);
+        }
+        return el('span.et-empty', null, 'Set dates');
+      };
+      const statusDisplay = () => {
+        const st = App.status(statusSel.value);
+        return el('span.et-status', { style: { color: st.color } }, [el('span.et-dot', { style: { background: st.color } }), st.label]);
+      };
+      const ownerDisplay = () => {
+        const id = ownerSel.value; if (!id) return el('span.et-empty', null, 'Unassigned');
+        const p = App.person(id); if (!p) return 'Unassigned';
+        return el('span.et-owner', null, [el('span.avatar', { style: { background: p.color } }, App.initials(p.name)), p.name]);
+      };
+
       const sections = [
-        el('.ctx-box', null, [
-          el('.ctx-label', null, 'Episode Context'),
-          el('.ctx-row', null, [el('span.ctx-chip', null, '# ' + ep.code), el('span.ctx-title', null, ep.title)])
+        el('.ctx-box.slim', null, [
+          el('span.ctx-chip', null, '# ' + ep.code), el('span.ctx-title', null, ep.title),
+          el('span.ctx-dept', null, App.dept(su.dept).label)
         ]),
-        el('.modal-section-title', null, 'Basic Information'),
-        field('Task Name', nameInput, 'A clear, descriptive name for this task'),
-        field('Status', statusSel, lockedApproved ? 'Only Producer, Director or Manager can change an approved task'
-          : (canApprove ? null : 'Your role cannot set tasks to Approved')),
-        field('Owner', ownerSel, ownerHint),
-        el('.modal-section-title', null, 'Schedule'),
-        el('.sched-box', null, [
-          el('.sched-grid', null, [field('Start Date', startInput), el('.sched-arrow', null, '→'), field('Due Date', dueInput)]),
-          rangePill
+        el('.et-list', null, [
+          editRow('Task name', nameInput, () => nameInput.value),
+          editRow('Status', statusSel, statusDisplay, {
+            locked: lockedApproved,
+            hint: lockedApproved ? 'Only Producer, Director or Manager can change an approved task' : (canApprove ? null : 'Your role cannot set tasks to Approved')
+          }),
+          editRow('Owner', ownerSel, ownerDisplay, { locked: !canAssign, hint: ownerHint }),
+          editRow('Schedule', schedControl, schedDisplay)
         ]),
-        el('.fld-hint', null, 'Select the start and due dates for this task')
+        // LucidLink version control — only for tasks flagged version-controlled
+        // in the pipeline (enabled in Pipeline Presets, not here)
+        (App.vc && App.vc.isVc(ep, key) ? App.vc.inlineSection(epId, key) : null),
+        // Smart Upload — attachments for this subtask
+        (App.uploads ? App.uploads.inlineSection(epId, key) : null)
       ];
 
       const footer = [
@@ -215,6 +276,7 @@ window.App = window.App || {};
         el('span.pipe-num', null, i + 1),
         el('span.pipe-dot', { style: { background: dep.color }, title: tip(dep.label) }),
         el('span.pipe-name-ro', null, t.name || '—'),
+        (t.vc ? el('span.pipe-vc-tag', { title: tip('LucidLink version control enabled') }, '🔒') : null),
         el('span.pipe-deps-sum', { title: tip(depNames.join(', ')) }, depNames.length ? '◷ ' + depNames.join(', ') : ''),
         el('span.pipe-dur', { title: tip('Nominal ' + t.days + ' days · minimum ' + t.minDays) }, t.days + 'd'),
         moveBtns(i, '.hov')
@@ -245,6 +307,13 @@ window.App = window.App || {};
         }, '＋')
       ]);
 
+      // LucidLink version-control toggle — the ONLY place VC is switched on for
+      // a task, and off by default. Shown only when the connector is enabled.
+      const vcToggle = App.connectorEnabled('lucidlink') ? el('button.pipe-vc' + (t.vc ? '.on' : ''), {
+        type: 'button', title: tip(t.vc ? 'Version control ON — click to turn off' : 'Enable LucidLink version control for this task'),
+        onclick: (e) => { e.stopPropagation(); t.vc = !t.vc; renderPipe(); onChange(); }
+      }, '🔒') : null;
+
       return el('.pipe-row.editing', null, [
         el('span.pipe-num', null, i + 1),
         moveBtns(i),
@@ -254,19 +323,22 @@ window.App = window.App || {};
         el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'days'), numFld(t, 'days', 1)]),
         el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'min'), numFld(t, 'minDays', 1)]),
         depsBox,
-        el('button.btn-done', {
-          type: 'button', title: tip('Done editing'),
-          onclick: () => { editingKey = null; renderPipe(); }
-        }, '✓'),
-        el('button.btn-row-x', {
-          type: 'button', title: tip('Remove task'),
-          onclick: () => {
-            pipe.splice(i, 1);
-            pipe.forEach(p => { p.deps = p.deps.filter(k => k !== t.key); });
-            editingKey = null;
-            renderPipe(); onChange();
-          }
-        }, '🗑')
+        el('.pipe-actions', null, [
+          vcToggle,
+          el('button.btn-done', {
+            type: 'button', title: tip('Done editing'),
+            onclick: () => { editingKey = null; renderPipe(); }
+          }, '✓'),
+          el('button.btn-row-x', {
+            type: 'button', title: tip('Remove task'),
+            onclick: () => {
+              pipe.splice(i, 1);
+              pipe.forEach(p => { p.deps = p.deps.filter(k => k !== t.key); });
+              editingKey = null;
+              renderPipe(); onChange();
+            }
+          }, '🗑')
+        ])
       ]);
     }
 
@@ -279,7 +351,7 @@ window.App = window.App || {};
 
     function addTask() {
       const key = 'task_' + App.uid().slice(0, 6);
-      pipe.push({ key, name: 'New Task', dept: 'creative', days: 5, minDays: 2, deps: [] });
+      pipe.push({ key, name: 'New Task', dept: 'creative', days: 5, minDays: 2, deps: [], vc: false });
       editingKey = key;
       renderPipe(); onChange();
       pipeList.scrollTop = pipeList.scrollHeight;

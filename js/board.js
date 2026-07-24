@@ -9,7 +9,7 @@ window.App = window.App || {};
   App.board = {
     render(episodes) {
       const wrap = el('.board');
-      if (App.canManageShows(App.state.role)) wrap.appendChild(this.showManager());
+      if (App.canManageShows(App.state.role) || App.connectorEnabled('lucidlink')) wrap.appendChild(this.showManager());
       if (!episodes.length) { wrap.appendChild(el('.empty', null, 'No episodes match the current filters.')); return wrap; }
       episodes.forEach(ep => wrap.appendChild(this.group(ep)));
       return wrap;
@@ -17,7 +17,10 @@ window.App = window.App || {};
 
     showManager() {
       const bar = el('.show-manager');
-      bar.appendChild(el('button.btn-addshow', { onclick: () => App.addShow.open() }, '＋ Add show'));
+      if (App.connectorEnabled('lucidlink')) {
+        bar.appendChild(el('button.btn-vc', { onclick: () => App.vc.open(), title: 'LucidLink checkout / check-in & file locking' }, '🔒 Version Control'));
+      }
+      if (App.canManageShows(App.state.role)) bar.appendChild(el('button.btn-addshow', { onclick: () => App.addShow.open() }, '＋ Add show'));
       return bar;
     },
 
@@ -99,7 +102,8 @@ window.App = window.App || {};
           el('span.ep-title', null, ep.title),
           el('span.ep-show', null, show.name),
           (overdue ? el('span.risk-flag', { title: overdueTip }, '⚠ ' + overdue + ' overdue') : null),
-          (blocked ? el('span.risk-flag', { title: blockedTip, style: { color: '#ffce8e', background: 'rgba(253,171,61,.14)', borderColor: 'rgba(253,171,61,.3)' } }, '⛔ ' + blocked + ' blocked') : null)
+          (blocked ? el('span.risk-flag', { title: blockedTip, style: { color: '#ffce8e', background: 'rgba(253,171,61,.14)', borderColor: 'rgba(253,171,61,.3)' } }, '⛔ ' + blocked + ' blocked') : null),
+          (App.vc && App.vc.boardBadge(ep))
         ]),
         el('.ep-right', null, [
           el('.ep-meta.status-meta', null, [

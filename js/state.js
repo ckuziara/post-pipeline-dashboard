@@ -36,6 +36,30 @@ window.App = window.App || {};
   App.dept = (k) => App.DEPARTMENTS[k] || { label: k, color: '#888' };
 
   /* ---------------------------------------------------------------------------
+     Connectors — external tools that can be linked to team members. Admins turn
+     these on/off in Workflow Settings → Connectors; a disabled connector is
+     hidden everywhere in the app. `enabled` here is the default until an admin
+     overrides it in data.connectors.
+  --------------------------------------------------------------------------- */
+  App.CONNECTORS = [
+    { key: 'slack', label: 'Slack', color: '#e01e5a', perMember: true, desc: 'Show each member’s Slack link and (later) send notifications.',
+      svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523 2.528 2.528 0 0 1-2.522-2.523 2.528 2.528 0 0 1 2.522-2.52h2.52v2.52zm1.261 0a2.528 2.528 0 0 1 2.52-2.52h5.043a2.528 2.528 0 0 1 2.522 2.52v5.042a2.528 2.528 0 0 1-2.522 2.52H8.823a2.528 2.528 0 0 1-2.52-2.52v-5.042zM8.823 5.043a2.528 2.528 0 0 1-2.52-2.52A2.528 2.528 0 0 1 8.823 0a2.528 2.528 0 0 1 2.52 2.522v2.521h-2.52zm0 1.261a2.528 2.528 0 0 1 2.52 2.52v5.043a2.528 2.528 0 0 1-2.52 2.522H3.78a2.528 2.528 0 0 1-2.52-2.522V8.824a2.528 2.528 0 0 1 2.52-2.52h5.043zm10.135 3.761a2.528 2.528 0 0 1 2.522-2.52 2.528 2.528 0 0 1 2.52 2.52 2.528 2.528 0 0 1-2.52 2.522h-2.522v-2.522zm-1.262 0a2.528 2.528 0 0 1-2.52 2.52h-5.043a2.528 2.528 0 0 1-2.522-2.52V3.78a2.528 2.528 0 0 1 2.522-2.52h5.043a2.528 2.528 0 0 1 2.52 2.52v5.043zm-3.781 10.133a2.528 2.528 0 0 1 2.52 2.522c0 1.393-1.13 2.521-2.52 2.521a2.528 2.528 0 0 1-2.522-2.521v-2.522h2.522zm0-1.262a2.528 2.528 0 0 1-2.522-2.52v-5.043a2.528 2.528 0 0 1 2.522-2.52h5.043a2.528 2.528 0 0 1 2.52 2.52v5.043a2.528 2.528 0 0 1-2.52 2.52h-5.043z"/></svg>' },
+    { key: 'gmail', label: 'Gmail', color: '#ea4335', perMember: true, desc: 'Show each member’s email link and (later) send invites.',
+      svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 5.5v13a1.5 1.5 0 0 1-1.5 1.5H19V8.3l-7 5.15L5 8.3V20H3.5A1.5 1.5 0 0 1 2 18.5v-13A1.5 1.5 0 0 1 3.5 4h.6L12 9.9 19.9 4h.6A1.5 1.5 0 0 1 22 5.5z"/></svg>' },
+    { key: 'lucidlink', label: 'LucidLink Version Control', color: '#2fbf9f',
+      desc: 'PostLab-style checkout / check-in & file locking for NLE project files. Adds a Version Control panel on the Board.',
+      svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M6 8.4v7.2M8.2 6.6c4 0 7.6 1.4 7.6 5.4M8.1 17.2c4 0 7.5-1 7.7-4.9"/></svg>' }
+  ];
+  App.connector = (k) => App.CONNECTORS.find(c => c.key === k);
+  App.connectorEnabled = function (k) {
+    const c = App.state && App.state.data && App.state.data.connectors;
+    return (c && k in c) ? !!c[k] : true;         // enabled by default until an admin turns it off
+  };
+  App.enabledConnectors = () => App.CONNECTORS.filter(c => App.connectorEnabled(c.key));
+  // per-member connectors (shown as icons on each User Directory row)
+  App.memberConnectors = () => App.enabledConnectors().filter(c => c.perMember);
+
+  /* ---------------------------------------------------------------------------
      Statuses — the Monday label set from the board.
      `group` rolls several statuses up for the timeline's status swimlanes.
      `weight` drives the progress %.

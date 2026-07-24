@@ -128,6 +128,15 @@ window.App = window.App || {};
     App.toast(label + (allowed ? ' enabled' : ' disabled') + ' for ' + App.role(roleKey).label);
   };
 
+  // enable/disable a connector globally (Workflow Settings → Connectors).
+  // Disabled connectors are hidden everywhere in the app.
+  App.setConnector = function (key, enabled) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change connectors', true); return; }
+    App.mutate(d => { d.connectors = d.connectors || {}; d.connectors[key] = enabled; });
+    const c = App.connector(key);
+    App.toast((c ? c.label : key) + (enabled ? ' enabled' : ' disabled'));
+  };
+
   // ---- Workflow & Status Settings (Admin) ----
   // All persist as overrides in data.workflow; App.applyWorkflow folds them
   // into the live DEPARTMENTS/STATUSES on the next render.

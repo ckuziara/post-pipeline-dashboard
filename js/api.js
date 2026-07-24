@@ -1,6 +1,7 @@
 /* Server sync layer (Phase 2-3). Talks to the Node backend in server.js:
-   session check, shared-state pull/push with optimistic versioning, and a
-   light poll so everyone on the network sees each other's changes.
+   session check, shared-state pull/push with optimistic versioning, a live
+   Server-Sent-Events feed for instant cross-tab/cross-user updates, and a
+   slow poll as a fallback in case the SSE connection can't be held open.
    If no server responds (double-clicked index.html), the app silently stays
    in the old localStorage-only mode. */
 window.App = window.App || {};
@@ -14,6 +15,7 @@ window.App = window.App || {};
     _pushTimer: null,
     _pollTimer: null,
     _pushing: false,
+    _es: null,
 
     async boot() {
       try {
@@ -45,6 +47,7 @@ window.App = window.App || {};
     },
 
     async _doPush() {
+      this._pushTimer = null;   // the scheduled push is now in flight, not pending
       if (this._pushing) { this.push(); return; }
       this._pushing = true;
       try {
@@ -66,23 +69,42 @@ window.App = window.App || {};
       this._pushing = false;
     },
 
+    // Shared guard: never clobber unsent edits, and never re-render mid-typing
+    // in the journal — used by both the SSE push and the fallback poll.
+    async _adoptVersion(v) {
+      if (this._pushTimer || this._pushing || document.hidden) return;
+      const ae = document.activeElement;
+      if (ae && ae.classList && (ae.classList.contains('jr-block') || ae.classList.contains('pn-note-input'))) return;
+      if (v <= this.version) return;
+      const data = await this.pull();
+      if (data) { App.state.data = data; App.render(); }
+    },
+
+    // Instant path: a teammate's save broadcasts the new version over SSE.
+    // EventSource reconnects on its own if the stream drops.
+    connectLive() {
+      if (!window.EventSource || this._es) return;
+      const es = new EventSource('/api/events');
+      es.addEventListener('version', e => {
+        this._adoptVersion(Number(e.data)).catch(() => {});
+      });
+      this._es = es;
+    },
+
+    // Fallback safety net in case SSE can't be held open (e.g. a proxy that
+    // buffers streaming responses) — slow, since the live feed does the work.
     startPolling() {
+      this.connectLive();
       clearInterval(this._pollTimer);
       this._pollTimer = setInterval(async () => {
-        // don't clobber unsent edits — and never re-render mid-typing in the journal
         if (this._pushTimer || this._pushing || document.hidden) return;
-        const ae = document.activeElement;
-        if (ae && ae.classList && (ae.classList.contains('jr-block') || ae.classList.contains('pn-note-input'))) return;
         try {
           const r = await fetch('/api/version', { cache: 'no-store' });
           if (!r.ok) return;
           const v = (await r.json()).version;
-          if (v > this.version) {
-            const data = await this.pull();
-            if (data) { App.state.data = data; App.render(); }
-          }
+          await this._adoptVersion(v);
         } catch (e) { /* server briefly unreachable */ }
-      }, 5000);
+      }, 15000);
     },
 
     async devLogin(email) {
