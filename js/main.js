@@ -43,8 +43,10 @@ window.App = window.App || {};
     if (status === 'approved' && !App.canApprove(App.state.role)) {
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
+    const wasApproved = g.su.status === 'approved';
     App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = status; App.refreshReadiness(e); });
     App.toast(g.su.name + ' → ' + App.status(status).label);
+    if (status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
   };
 
   App.applyTaskEdit = function (epId, key, { name, status, start, due, assignee }) {
@@ -52,6 +54,7 @@ window.App = window.App || {};
     if (status === 'approved' && g.su.status !== 'approved' && !App.canApprove(App.state.role)) {
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
+    const wasApproved = g.su.status === 'approved';
     App.mutate(d => {
       const e = d.episodes.find(x => x.id === epId);
       e.names = e.names || {}; e.dates = e.dates || {};
@@ -64,6 +67,24 @@ window.App = window.App || {};
       App.refreshReadiness(e);
     });
     App.toast('Saved “' + name + '”');
+    if (status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
+  };
+
+  /* Approval is what turns delivered work into an asset the next department can
+     use, so that's the moment the files move out of the episode's Mezzanine
+     folder into Publish. Silent when there's nothing waiting — plenty of tasks
+     are approved without a file attached. */
+  App.promoteDelivered = function (epId, key) {
+    if (!App.masterPathSet || !App.masterPathSet()) return;
+    const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
+    App.api.flush()
+      .then(() => App.api.taskPromote({ epId, taskKey: key, pipeline: App.pipelineFor(ep) }))
+      .then(r => {
+        if (!r.promoted) return;
+        App.toast(r.promoted + ' delivered file' + (r.promoted === 1 ? '' : 's') + ' published');
+        App.workspace && App.workspace.reload && App.workspace.reload();
+      })
+      .catch(e => App.toast('Approved, but publishing the files failed: ' + e.message, true));
   };
 
   // Reschedule a task by dragging its bar on the Timeline. minDays is a hard
@@ -128,6 +149,15 @@ window.App = window.App || {};
     App.toast(label + (allowed ? ' enabled' : ' disabled') + ' for ' + App.role(roleKey).label);
   };
 
+  // enable/disable a connector globally (Workflow Settings → Connectors).
+  // Disabled connectors are hidden everywhere in the app.
+  App.setConnector = function (key, enabled) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change connectors', true); return; }
+    App.mutate(d => { d.connectors = d.connectors || {}; d.connectors[key] = enabled; });
+    const c = App.connector(key);
+    App.toast((c ? c.label : key) + (enabled ? ' enabled' : ' disabled'));
+  };
+
   // ---- Workflow & Status Settings (Admin) ----
   // All persist as overrides in data.workflow; App.applyWorkflow folds them
   // into the live DEPARTMENTS/STATUSES on the next render.
@@ -182,16 +212,21 @@ window.App = window.App || {};
     if (App.isDefaultDept(key)) { App.toast('Built-in departments can’t be removed', true); return; }
     const inUse = App.state.data.shows.some(s => (s.pipeline || []).some(t => t.dept === key)) ||
                   App.ROLES.some(r => r.dept === key);
-    if (inUse && !confirm('This department is still used by a show pipeline or role. Remove it anyway?')) return;
-    App.mutate(d => { if (d.workflow && d.workflow.departments) delete d.workflow.departments[key]; });
-    App.toast('Department removed');
+    const remove = () => {
+      App.mutate(d => { if (d.workflow && d.workflow.departments) delete d.workflow.departments[key]; });
+      App.toast('Department removed');
+    };
+    if (!inUse) return remove();
+    App.confirm('This department is still used by a show pipeline or role. Remove it anyway?',
+      remove, { title: 'Remove department', yesLabel: 'Remove' });
   };
 
   App.resetWorkflow = function () {
     if (!guardAdmin()) return;
-    if (!confirm('Reset all department and status colours & names to their defaults?')) return;
-    App.mutate(d => { delete d.workflow; });
-    App.toast('Workflow settings reset to defaults');
+    App.confirm('Reset all department and status colours & names to their defaults?', () => {
+      App.mutate(d => { delete d.workflow; });
+      App.toast('Workflow settings reset to defaults');
+    }, { title: 'Reset workflow settings', yesLabel: 'Reset', icon: '↺' });
   };
 
   // ---- Shows & episodes archive (Admin → Workflow → Shows) ----
@@ -223,21 +258,23 @@ window.App = window.App || {};
     const s = App.state.data.shows.find(x => x.id === showId);
     if (!s || !s.archived) { App.toast('Only archived shows can be deleted', true); return; }
     const n = App.state.data.episodes.filter(e => e.showId === showId).length;
-    if (!confirm('Permanently delete “' + s.name + '” and its ' + n + ' episode' + (n === 1 ? '' : 's') + '? This can’t be undone.')) return;
-    App.mutate(d => {
-      d.shows = d.shows.filter(x => x.id !== showId);
-      d.episodes = d.episodes.filter(e => e.showId !== showId);
-    });
-    App.toast('Deleted “' + s.name + '”');
+    App.confirm('Permanently delete “' + s.name + '” and its ' + n + ' episode' + (n === 1 ? '' : 's') + '? This can’t be undone.', () => {
+      App.mutate(d => {
+        d.shows = d.shows.filter(x => x.id !== showId);
+        d.episodes = d.episodes.filter(e => e.showId !== showId);
+      });
+      App.toast('Deleted “' + s.name + '”');
+    }, { title: 'Delete show' });
   };
 
   App.deleteEpisode = function (epId) {
     if (!guardAdmin()) return;
     const ep = App.state.data.episodes.find(x => x.id === epId);
     if (!ep || !App.isEpArchived(ep)) { App.toast('Only archived episodes can be deleted', true); return; }
-    if (!confirm('Permanently delete ' + ep.code + ' — “' + ep.title + '”? This can’t be undone.')) return;
-    App.mutate(d => { d.episodes = d.episodes.filter(x => x.id !== epId); });
-    App.toast('Deleted ' + ep.code);
+    App.confirm('Permanently delete ' + ep.code + ' — “' + ep.title + '”? This can’t be undone.', () => {
+      App.mutate(d => { d.episodes = d.episodes.filter(x => x.id !== epId); });
+      App.toast('Deleted ' + ep.code);
+    }, { title: 'Delete episode' });
   };
 
   // ---- Pipeline presets (Admin → Workflow → Pipelines) ----
@@ -283,9 +320,10 @@ window.App = window.App || {};
     if (!guardAdmin()) return;
     const p = (App.state.data.pipelinePresets || []).find(x => x.id === id);
     if (!p) return;
-    if (!confirm('Delete the pipeline preset “' + p.name + '”? Shows already created from it keep their own copy.')) return;
-    App.mutate(d => { d.pipelinePresets = d.pipelinePresets.filter(x => x.id !== id); });
-    App.toast('Deleted “' + p.name + '”');
+    App.confirm('Delete the pipeline preset “' + p.name + '”? Shows already created from it keep their own copy.', () => {
+      App.mutate(d => { d.pipelinePresets = d.pipelinePresets.filter(x => x.id !== id); });
+      App.toast('Deleted “' + p.name + '”');
+    }, { title: 'Delete pipeline preset' });
   };
 
   App.removeTask = function (epId, key) {
@@ -309,8 +347,9 @@ window.App = window.App || {};
     pipeline = pipeline || App.defaultPipelineFor(type);
     startIso = startIso || App.isoDate(App.today());
     cadence = cadence == null ? 14 : cadence;
+    let newShowId = null;
     App.mutate(d => {
-      const showId = code.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + App.uid().slice(0, 3);
+      const showId = newShowId = code.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + App.uid().slice(0, 3);
       d.shows.push({ id: showId, name, prefix: code, type, color: SHOW_PALETTE[d.shows.length % SHOW_PALETTE.length], pipeline });
       const byDept = {};
       d.people.forEach(p => { const dep = App.roleDept(p.role); if (dep) (byDept[dep] = byDept[dep] || []).push(p.id); });
@@ -326,19 +365,61 @@ window.App = window.App || {};
       });
     });
     App.toast('Created “' + name + '” with ' + epNames.length + ' episode' + (epNames.length === 1 ? '' : 's'));
+    // Build the whole production structure up front — shared folders plus every
+    // episode's department tree. The server reads the show and its episodes from
+    // stored state, so flush the pending save first or it won't see them yet.
+    if (App.masterPathSet() && newShowId) {
+      App.toast('Creating production folders…');
+      App.api.flush()
+        .then(() => App.api.createFolders({ showId: newShowId, pipeline }))
+        .then(r => App.toast(r.created + ' folder' + (r.created === 1 ? '' : 's') + ' created for ' +
+          r.episodes + ' episode' + (r.episodes === 1 ? '' : 's') + ' at ' + r.root))
+        .catch(e => App.toast('Show created, but folders failed: ' + e.message, true));
+    }
+  };
+
+  /* ---- production folders on the LucidLink master directory ----
+     Admin → Workflow → Storage holds the path; it lives in shared board state so
+     the whole team resolves the same root. */
+  App.masterPathSet = () => !!(App.api && App.api.online &&
+    App.state.data && App.state.data.storage && App.state.data.storage.masterPath);
+
+  App.setMasterPath = function (p) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change the master directory', true); return; }
+    App.mutate(d => { d.storage = Object.assign({}, d.storage, { masterPath: (p || '').trim() }); });
+    App.toast((p || '').trim() ? 'Master directory saved' : 'Master directory cleared');
+  };
+
+  /* Rebuild a show's folders (Admin → Workflow → Shows). Purely additive — the
+     server only creates what's missing and never touches existing folders or
+     their contents — so this covers a folder someone deleted or moved, a show
+     that predates the master directory being set, and a pipeline that gained
+     tasks after the show was created. */
+  App.rebuildShowFolders = function (showId) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can rebuild production folders', true); return; }
+    const show = App.show(showId); if (!show) return;
+    if (!App.masterPathSet()) { App.toast('Set a master directory in Admin → Workflow → Storage first', true); return; }
+    App.toast('Checking folders for “' + show.name + '”…');
+    App.api.flush()
+      .then(() => App.api.createFolders({ showId, pipeline: show.pipeline || App.defaultPipeline() }))
+      .then(r => App.toast(r.created
+        ? r.created + ' missing folder' + (r.created === 1 ? '' : 's') + ' restored for “' + show.name + '”'
+        : '“' + show.name + '” is complete — all ' + r.existed + ' folders present'))
+      .catch(e => App.toast('“' + show.name + '”: ' + e.message, true));
   };
 
   App.removeShow = function (showId) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can remove shows', true); return; }
     const show = App.show(showId);
-    if (!confirm('Remove “' + show.name + '” and all its episodes?')) return;
-    App.mutate(d => {
-      d.shows = d.shows.filter(s => s.id !== showId);
-      d.episodes = d.episodes.filter(e => e.showId !== showId);
-    });
-    if (App.state.filters.show === showId) App.state.filters.show = 'all';
-    App.render();
-    App.toast('Removed “' + show.name + '”');
+    App.confirm('Remove “' + show.name + '” and all its episodes?', () => {
+      App.mutate(d => {
+        d.shows = d.shows.filter(s => s.id !== showId);
+        d.episodes = d.episodes.filter(e => e.showId !== showId);
+      });
+      if (App.state.filters.show === showId) App.state.filters.show = 'all';
+      App.render();
+      App.toast('Removed “' + show.name + '”');
+    }, { title: 'Remove show', yesLabel: 'Remove' });
   };
 
   // ---- producer notes (per-show timeline annotations) ----
@@ -401,13 +482,14 @@ window.App = window.App || {};
   };
   App.removePerson = function (id) {
     const p = App.person(id); if (!p) return;
-    if (!confirm('Remove ' + p.name + ' from the team?')) return;
-    App.mutate(d => {
-      d.people = d.people.filter(x => x.id !== id);
-      d.episodes.forEach(e => { if (e.assignees) Object.keys(e.assignees).forEach(k => { if (e.assignees[k] === id) delete e.assignees[k]; }); });
-    });
-    if (App.state.filters.person === id) { App.state.filters.person = 'all'; App.render(); }
-    App.toast(p.name + ' removed');
+    App.confirm('Remove ' + p.name + ' from the team? Their task assignments will be cleared.', () => {
+      App.mutate(d => {
+        d.people = d.people.filter(x => x.id !== id);
+        d.episodes.forEach(e => { if (e.assignees) Object.keys(e.assignees).forEach(k => { if (e.assignees[k] === id) delete e.assignees[k]; }); });
+      });
+      if (App.state.filters.person === id) { App.state.filters.person = 'all'; App.render(); }
+      App.toast(p.name + ' removed');
+    }, { title: 'Remove team member', yesLabel: 'Remove' });
   };
 
   // ---- role preset ----
@@ -481,7 +563,9 @@ window.App = window.App || {};
     ])));
   }
 
-  /* ---- quick preferences popover (opens from the topbar logo/cog) ---- */
+  /* ---- quick preferences popover (opens from the topbar logo/cog) ----
+     The rows are scoped to the view that's open, so each tab exposes only the
+     settings that actually affect it (see viewRows below). */
   App.prefsMenu = {
     _pop: null,
     close() { if (this._pop) { this._pop.remove(); this._pop = null; } },
@@ -512,13 +596,50 @@ window.App = window.App || {};
             }, o.label)))
         ]);
       };
-      const pop = el('.prefs-pop', { onclick: e => e.stopPropagation() }, [
-        el('.prefs-title', null, 'Quick preferences'),
-        segRow('Sort timeline by', 'timelineSort', 'department',
-          [{ v: 'episode', label: 'Episode' }, { v: 'department', label: 'Department' }, { v: 'show', label: 'Show' }]),
-        prefRow('Latch scrolling', 'latchScroll', false, () => App.render()),
-        prefRow('Hide weekends', 'hideWeekends', true, () => App.render())
+      // a row of plain action buttons (no persisted switch) — for one-shot
+      // commands like expand-all or resetting a layout
+      const actionRow = (title, actions) => el('.prefs-row', { style: { cursor: 'default' } }, [
+        el('.prefs-row-title', null, title),
+        el('.prefs-actions', null, actions.map(a =>
+          el('button.prefs-btn', {
+            onclick: (e) => { e.stopPropagation(); a.run(); this.close(); App.render(); }
+          }, a.label)))
       ]);
+
+      // Which rows belong to which tab. Each entry returns the rows for that
+      // view; anything without an entry falls through to the empty note.
+      const viewRows = {
+        timeline: () => [
+          segRow('Sort timeline by', 'timelineSort', 'department',
+            [{ v: 'episode', label: 'Episode' }, { v: 'department', label: 'Department' }, { v: 'show', label: 'Show' }]),
+          prefRow('Latch scrolling', 'latchScroll', false, () => App.render()),
+          prefRow('Hide weekends', 'hideWeekends', true, () => App.render())
+        ],
+        board: () => [
+          actionRow('All episode groups', [
+            { label: 'Expand', run: () => App.visibleEpisodes().forEach(ep => { App.state.expanded[ep.id] = true; }) },
+            { label: 'Collapse', run: () => { App.state.expanded = {}; } }
+          ])
+        ],
+        dashboard: () => [
+          actionRow('Widget layout', [
+            { label: 'Reset to default', run: () => App.prefs.set('dashOrder', null) }
+          ])
+        ],
+        review: () => [
+          segRow('Sort reviews by', 'reviewSort', 'due',
+            [{ v: 'due', label: 'Due date' }, { v: 'show', label: 'Show' }, { v: 'dept', label: 'Dept' }])
+        ]
+      };
+
+      const view = App.state.view;
+      const label = ({ timeline: 'Timeline', board: 'Board', dashboard: 'Dashboard',
+        review: 'Reviews', admin: 'Admin' })[view] || 'Quick';
+      const rows = viewRows[view] ? viewRows[view]() : [];
+
+      const pop = el('.prefs-pop', { onclick: e => e.stopPropagation() },
+        [el('.prefs-title', null, label + ' preferences')].concat(
+          rows.length ? rows : [el('.prefs-note', null, 'No display options for this view.')]));
       const r = document.getElementById('brand-logo').getBoundingClientRect();
       pop.style.top = (r.bottom + 8) + 'px';
       pop.style.left = Math.max(8, r.left) + 'px';
@@ -544,7 +665,8 @@ window.App = window.App || {};
     }
 
     document.getElementById('btn-reset').addEventListener('click', () => {
-      if (confirm('Reset everything to the reference demo board?')) App.resetData();
+      App.confirm('Reset everything to the reference demo board? All current data will be replaced for the whole team.',
+        () => App.resetData(), { title: 'Reset board', yesLabel: 'Reset', icon: '↺' });
     });
     document.getElementById('brand-logo').addEventListener('click', e => {
       e.stopPropagation();

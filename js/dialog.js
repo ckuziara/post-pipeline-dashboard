@@ -22,6 +22,162 @@ window.App = window.App || {};
     close() { if (this._ov) { this._ov.remove(); this._ov = null; document.removeEventListener('keydown', this._esc); } }
   };
 
+  /* ---- confirmation prompt ----
+     Replaces window.confirm(), which silently returns false (no dialog shown)
+     inside embedded webviews like the desktop app's preview pane — that made
+     every destructive action a no-op there. Callers pass an onYes callback
+     instead of branching on a return value, since this can't block. */
+  App.confirm = function (message, onYes, opts) {
+    opts = opts || {};
+    // opts.onNo runs when the user backs out — used when the prompt replaced a
+    // dialog that should come back (e.g. Remove inside the Edit Task modal).
+    let settled = false;
+    const cancel = () => { if (settled) return; settled = true; App.modal.close(); if (opts.onNo) opts.onNo(); };
+    const yes = el('button.btn-danger', {
+      onclick: () => { settled = true; App.modal.close(); onYes(); }
+    }, opts.yesLabel || 'Delete');
+
+    App.modal.open(el('.modal-card.confirm-card', { onclick: e => e.stopPropagation() }, [
+      el('.modal-head', null, [
+        el('.modal-head-main', null, [
+          el('span.modal-ic', null, opts.icon || '⚠️'),
+          el('div', null, el('.modal-title', null, opts.title || 'Are you sure?'))
+        ]),
+        el('button.modal-x', { onclick: cancel, title: 'Close' }, '✕')
+      ]),
+      el('.modal-body', null, el('.confirm-msg', null, message)),
+      el('.modal-foot', null, [
+        el('button.btn-ghost', { onclick: cancel }, 'Cancel'),
+        yes
+      ])
+    ]));
+    // Esc / backdrop go through App.modal's own close, so mirror them into the
+    // cancel path to keep onNo firing however the user dismisses the prompt.
+    if (opts.onNo) {
+      const ov = App.modal._ov;
+      const watch = new MutationObserver(() => {
+        if (!ov.isConnected) { watch.disconnect(); if (!settled) { settled = true; opts.onNo(); } }
+      });
+      watch.observe(document.body, { childList: true });
+    }
+    setTimeout(() => yes.focus(), 30);   // Enter confirms, Esc cancels
+  };
+
+  function fmtBytes(bytes) {
+    if (!bytes) return '';
+    const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0, n = bytes;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)) + ' ' + u[i];
+  }
+
+  /* ---- folder picker ----
+     Browses the filesystem of the machine running the server, because that's
+     where the LucidLink mount lives — and because a browser's own folder picker
+     deliberately never reveals an absolute path, which is exactly what the
+     server needs to create directories. */
+  App.folderPicker = {
+    /* opts.pickFiles — list files too and return the chosen FILE's path. Used by
+       Deliver → "Pick from the volume", so big media already on the mount is
+       copied in place instead of pushed through the browser.
+       opts.onCancel — runs when the user backs out (the caller's dialog was
+       replaced by this one and usually wants to come back). */
+    open(startPath, onPick, opts) {
+      opts = opts || {};
+      const files = !!opts.pickFiles;
+      let cur = startPath || '', chosenFile = null;
+      const crumb = el('.fp-path');
+      const list = el('.fp-list');
+      const upBtn = el('button.btn-ghost.fp-up', { title: 'Up one level' }, '↑ Up');
+      const roots = el('.fp-roots');
+      const chooseBtn = el('button.btn-primary', { disabled: true },
+        opts.confirmLabel || (files ? 'Deliver this file' : 'Select this folder'));
+
+      let settled = false;
+      const cancel = () => { if (settled) return; settled = true; App.modal.close(); if (opts.onCancel) opts.onCancel(); };
+
+      const select = (name, size) => {
+        chosenFile = cur.replace(/\/$/, '') + '/' + name;
+        chooseBtn.disabled = false;
+        [...list.querySelectorAll('.fp-item.sel')].forEach(n => n.classList.remove('sel'));
+        const node = [...list.querySelectorAll('.fp-item')].find(n => n.dataset.file === name);
+        if (node) node.classList.add('sel');
+        crumb.textContent = chosenFile;
+      };
+
+      const go = async (p) => {
+        chosenFile = null;
+        list.innerHTML = '';
+        list.appendChild(el('.fp-loading', null, 'Opening…'));
+        try {
+          const r = await App.api.browse(p, files);
+          cur = r.path;
+          crumb.textContent = r.path;
+          // in file mode nothing is chosen until a file is clicked
+          chooseBtn.disabled = files;
+          upBtn.disabled = !r.parent;
+          upBtn.onclick = () => r.parent && go(r.parent);
+
+          roots.innerHTML = '';
+          (r.roots || []).forEach(rt => roots.appendChild(
+            el('button.fp-root' + (rt.path === r.path ? '.active' : ''), { onclick: () => go(rt.path) }, rt.label)));
+
+          list.innerHTML = '';
+          // the server redirected us out of an unreadable path — say so
+          if (r.notice) list.appendChild(el('.fp-notice', null, 'ⓘ ' + r.notice));
+          r.dirs.forEach(name => list.appendChild(
+            el('button.fp-item', { onclick: () => go(r.path.replace(/\/$/, '') + '/' + name) },
+              [el('span.fp-ic', null, '📁'), el('span.fp-name', null, name), el('span.fp-arrow', null, '›')])));
+          (r.files || []).forEach(f => list.appendChild(
+            el('button.fp-item', { 'data-file': f.name, onclick: () => select(f.name, f.size) },
+              [el('span.fp-ic', null, '📄'), el('span.fp-name', null, f.name),
+               el('span.fp-size', null, f.size ? fmtBytes(f.size) : '')])));
+          if (!r.dirs.length && !(r.files || []).length) {
+            list.appendChild(el('.fp-empty', null, files
+              ? 'Nothing here — go up and pick another folder.'
+              : 'No subfolders here — you can still select this folder.'));
+          }
+        } catch (e) {
+          list.innerHTML = '';
+          list.appendChild(el('.fp-error', null, '⚠ ' + e.message));
+          chooseBtn.disabled = true;   // don't let a folder we couldn't read be chosen
+        }
+      };
+
+      App.modal.open(el('.modal-card.fp-card', { onclick: e => e.stopPropagation() }, [
+        el('.modal-head', null, [
+          el('.modal-head-main', null, [
+            el('span.modal-ic', null, '📂'),
+            el('div', null, [
+              el('.modal-title', null, opts.title || 'Choose master directory'),
+              el('.modal-subtitle', null, opts.subtitle || (files
+                ? 'Files on the machine running Post Pipeline — pick one to deliver.'
+                : 'Folders on the machine running Post Pipeline — where your LucidLink volume is mounted.'))
+            ])
+          ]),
+          el('button.modal-x', { onclick: cancel, title: 'Close' }, '✕')
+        ]),
+        el('.modal-body', null, [roots, el('.fp-bar', null, [upBtn, crumb]), list]),
+        el('.modal-foot', null, [
+          el('button.btn-ghost', { onclick: cancel }, 'Cancel'),
+          chooseBtn
+        ])
+      ]));
+      chooseBtn.onclick = () => {
+        settled = true; App.modal.close();
+        onPick(files ? chosenFile : cur);
+      };
+      // Esc / backdrop close through App.modal, so mirror them into cancel
+      if (opts.onCancel) {
+        const ov = App.modal._ov;
+        const watch = new MutationObserver(() => {
+          if (!ov.isConnected) { watch.disconnect(); if (!settled) { settled = true; opts.onCancel(); } }
+        });
+        watch.observe(document.body, { childList: true });
+      }
+      go(cur);
+    }
+  };
+
   function card(icon, title, subtitle, sections, footer, cls) {
     return el('.modal-card' + (cls ? '.' + cls : ''), { onclick: (e) => e.stopPropagation() }, [
       el('.modal-head', null, [
@@ -38,6 +194,41 @@ window.App = window.App || {};
 
   function field(label, control, hint) {
     return el('.field', null, [el('label.fld-label', null, label), control, hint ? el('.fld-hint', null, hint) : null]);
+  }
+
+  /* Compact click-to-edit row (settings-menu style): shows a read-only value
+     that swaps to its control on click, and reverts when focus leaves. The
+     control is the source of truth, so Save reads it whether open or not. */
+  function editRow(labelText, control, renderDisplay, opts) {
+    opts = opts || {};
+    const display = el('.et-display', opts.locked ? null : { tabindex: '0' });
+    const editKids = [control]; if (opts.hint) editKids.push(el('.fld-hint', null, opts.hint));
+    const editWrap = el('.et-edit', { style: { display: 'none' } }, editKids);
+    const refresh = () => {
+      display.innerHTML = '';
+      const v = renderDisplay();
+      display.appendChild((v == null || v === '') ? el('span.et-empty', null, '—') : (typeof v === 'string' ? el('span', null, v) : v));
+      if (!opts.locked) display.appendChild(el('span.et-pencil', null, '✎'));
+    };
+    const enter = () => {
+      if (opts.locked) return;
+      display.style.display = 'none'; editWrap.style.display = '';
+      const f = editWrap.querySelector('input,select,textarea');
+      if (f) { f.focus(); if (f.select && f.type === 'text') f.select(); }
+    };
+    const leave = () => { editWrap.style.display = 'none'; display.style.display = ''; refresh(); };
+    display.addEventListener('click', enter);
+    display.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enter(); } });
+    // collapse once focus leaves the whole edit group (covers multi-input rows)…
+    editWrap.addEventListener('focusout', () => setTimeout(() => { if (editWrap.style.display !== 'none' && !editWrap.contains(document.activeElement)) leave(); }, 0));
+    // …plus immediate collapse when a dropdown is chosen or a text field commits
+    editWrap.addEventListener('change', e => { if (e.target.tagName === 'SELECT') leave(); });
+    editWrap.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type === 'text') { e.preventDefault(); leave(); } });
+    refresh();
+    return el('.et-row' + (opts.locked ? '.locked' : ''), null, [
+      el('.et-label', null, labelText),
+      el('.et-control', null, [display, editWrap])
+    ]);
   }
 
   // ---- Edit Task ----
@@ -100,28 +291,60 @@ window.App = window.App || {};
       };
       startInput.addEventListener('change', updateRange); dueInput.addEventListener('change', updateRange); updateRange();
 
+      // schedule editing group (two dates + a live range/validation pill)
+      const schedControl = el('.sched-box', null, [
+        el('.sched-grid', null, [field('Start', startInput), el('.sched-arrow', null, '→'), field('Due', dueInput)]),
+        rangePill
+      ]);
+      const schedDisplay = () => {
+        const s = startInput.value, d = dueInput.value;
+        if (s && d && d >= s) {
+          const days = App.diffDays(d, s) + 1;
+          return el('span.et-sched', null, [el('span.range-ic', null, '📅'), App.fmtRange(s, d) + ', ' + App.parseDate(d).getFullYear() + '  ·  ' + days + (days === 1 ? ' day' : ' days')]);
+        }
+        return el('span.et-empty', null, 'Set dates');
+      };
+      const statusDisplay = () => {
+        const st = App.status(statusSel.value);
+        return el('span.et-status', { style: { color: st.color } }, [el('span.et-dot', { style: { background: st.color } }), st.label]);
+      };
+      const ownerDisplay = () => {
+        const id = ownerSel.value; if (!id) return el('span.et-empty', null, 'Unassigned');
+        const p = App.person(id); if (!p) return 'Unassigned';
+        return el('span.et-owner', null, [el('span.avatar', { style: { background: p.color } }, App.initials(p.name)), p.name]);
+      };
+
       const sections = [
-        el('.ctx-box', null, [
-          el('.ctx-label', null, 'Episode Context'),
-          el('.ctx-row', null, [el('span.ctx-chip', null, '# ' + ep.code), el('span.ctx-title', null, ep.title)])
+        el('.ctx-box.slim', null, [
+          el('span.ctx-chip', null, '# ' + ep.code), el('span.ctx-title', null, ep.title),
+          el('span.ctx-dept', null, App.dept(su.dept).label)
         ]),
-        el('.modal-section-title', null, 'Basic Information'),
-        field('Task Name', nameInput, 'A clear, descriptive name for this task'),
-        field('Status', statusSel, lockedApproved ? 'Only Producer, Director or Manager can change an approved task'
-          : (canApprove ? null : 'Your role cannot set tasks to Approved')),
-        field('Owner', ownerSel, ownerHint),
-        el('.modal-section-title', null, 'Schedule'),
-        el('.sched-box', null, [
-          el('.sched-grid', null, [field('Start Date', startInput), el('.sched-arrow', null, '→'), field('Due Date', dueInput)]),
-          rangePill
+        el('.et-list', null, [
+          editRow('Task name', nameInput, () => nameInput.value),
+          editRow('Status', statusSel, statusDisplay, {
+            locked: lockedApproved,
+            hint: lockedApproved ? 'Only Producer, Director or Manager can change an approved task' : (canApprove ? null : 'Your role cannot set tasks to Approved')
+          }),
+          editRow('Owner', ownerSel, ownerDisplay, { locked: !canAssign, hint: ownerHint }),
+          editRow('Schedule', schedControl, schedDisplay)
         ]),
-        el('.fld-hint', null, 'Select the start and due dates for this task')
+        // LucidLink version control — only for tasks flagged version-controlled
+        // in the pipeline (enabled in Pipeline Presets, not here)
+        (App.vc && App.vc.isVc(ep, key) ? App.vc.inlineSection(epId, key) : null),
+        /* The task workspace (Project / Assets / Deliver) works against the real
+           production folders, so it needs a master directory. Without one, fall
+           back to Smart Upload's metadata catalogue rather than showing nothing. */
+        (App.workspace && App.masterPathSet && App.masterPathSet()
+          ? App.workspace.inlineSection(epId, key)
+          : (App.uploads ? App.uploads.inlineSection(epId, key) : null))
       ];
 
       const footer = [
         el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
         el('button.btn-danger', {
-          onclick: () => { if (confirm('Remove “' + su.name + '” from ' + ep.code + '?')) { App.removeTask(epId, key); App.modal.close(); } }
+          onclick: () => App.confirm('Remove “' + su.name + '” from ' + ep.code + '?',
+            () => { App.removeTask(epId, key); App.modal.close(); },
+            { title: 'Remove task', yesLabel: 'Remove', onNo: () => App.editTask.open(epId, key) })
         }, '🗑 Remove'),
         el('button.btn-primary', {
           onclick: () => {
@@ -215,6 +438,7 @@ window.App = window.App || {};
         el('span.pipe-num', null, i + 1),
         el('span.pipe-dot', { style: { background: dep.color }, title: tip(dep.label) }),
         el('span.pipe-name-ro', null, t.name || '—'),
+        (t.vc ? el('span.pipe-vc-tag', { title: tip('LucidLink version control enabled') }, '🔒') : null),
         el('span.pipe-deps-sum', { title: tip(depNames.join(', ')) }, depNames.length ? '◷ ' + depNames.join(', ') : ''),
         el('span.pipe-dur', { title: tip('Nominal ' + t.days + ' days · minimum ' + t.minDays) }, t.days + 'd'),
         moveBtns(i, '.hov')
@@ -245,6 +469,13 @@ window.App = window.App || {};
         }, '＋')
       ]);
 
+      // LucidLink version-control toggle — the ONLY place VC is switched on for
+      // a task, and off by default. Shown only when the connector is enabled.
+      const vcToggle = App.connectorEnabled('lucidlink') ? el('button.pipe-vc' + (t.vc ? '.on' : ''), {
+        type: 'button', title: tip(t.vc ? 'Version control ON — click to turn off' : 'Enable LucidLink version control for this task'),
+        onclick: (e) => { e.stopPropagation(); t.vc = !t.vc; renderPipe(); onChange(); }
+      }, '🔒') : null;
+
       return el('.pipe-row.editing', null, [
         el('span.pipe-num', null, i + 1),
         moveBtns(i),
@@ -254,19 +485,22 @@ window.App = window.App || {};
         el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'days'), numFld(t, 'days', 1)]),
         el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'min'), numFld(t, 'minDays', 1)]),
         depsBox,
-        el('button.btn-done', {
-          type: 'button', title: tip('Done editing'),
-          onclick: () => { editingKey = null; renderPipe(); }
-        }, '✓'),
-        el('button.btn-row-x', {
-          type: 'button', title: tip('Remove task'),
-          onclick: () => {
-            pipe.splice(i, 1);
-            pipe.forEach(p => { p.deps = p.deps.filter(k => k !== t.key); });
-            editingKey = null;
-            renderPipe(); onChange();
-          }
-        }, '🗑')
+        el('.pipe-actions', null, [
+          vcToggle,
+          el('button.btn-done', {
+            type: 'button', title: tip('Done editing'),
+            onclick: () => { editingKey = null; renderPipe(); }
+          }, '✓'),
+          el('button.btn-row-x', {
+            type: 'button', title: tip('Remove task'),
+            onclick: () => {
+              pipe.splice(i, 1);
+              pipe.forEach(p => { p.deps = p.deps.filter(k => k !== t.key); });
+              editingKey = null;
+              renderPipe(); onChange();
+            }
+          }, '🗑')
+        ])
       ]);
     }
 
@@ -279,7 +513,7 @@ window.App = window.App || {};
 
     function addTask() {
       const key = 'task_' + App.uid().slice(0, 6);
-      pipe.push({ key, name: 'New Task', dept: 'creative', days: 5, minDays: 2, deps: [] });
+      pipe.push({ key, name: 'New Task', dept: 'creative', days: 5, minDays: 2, deps: [], vc: false });
       editingKey = key;
       renderPipe(); onChange();
       pipeList.scrollTop = pipeList.scrollHeight;

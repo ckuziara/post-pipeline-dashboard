@@ -1,6 +1,10 @@
+# Dependencies (installed by `npm install` on the host)
+node_modules/
+
 # Runtime data & secrets (never commit — created by server.js on first run)
 server-config.json
 data/
+.env
 
 # OS / editor cruft
 .DS_Store

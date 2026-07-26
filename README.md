@@ -84,7 +84,45 @@ Everyone signs in, sees the **same shared board**, and edits sync automatically
 **Solo/offline mode still works:** double-click `index.html` and the app quietly
 falls back to browser-local storage, exactly as before.
 
+## Deploy for free (Render + Neon)
+
+To put the board on the internet — so teammates reach it anywhere and real
+Google SSO works — host the Node process on **Render** (free) with the shared
+state in **Neon** Postgres (free). The backend auto-switches storage: it uses
+Postgres when `DATABASE_URL` is set, and the local `data/state.json` file
+otherwise, so nothing changes for laptop dev. Sessions are stateless signed
+cookies, so no session store is needed either.
+
+1. **Neon** — create a project at <https://neon.tech>, copy the connection
+   string (looks like `postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require`).
+   The `board_state` table is created automatically on first boot.
+2. **Render** — New → **Blueprint**, point it at this repo. `render.yaml`
+   defines a free web service; Render will prompt for the `sync:false` secrets:
+   - `DATABASE_URL` — the Neon string from step 1
+   - `SESSION_SECRET` — any long random string (keep it stable; changing it
+     signs everyone out)
+   - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — from the SSO step below
+     (leave blank at first; team sign-in still works)
+   - `ADMIN_EMAILS`, `ALLOWED_DOMAIN` — already defaulted in `render.yaml`
+3. Deploy. Render gives you a URL like `https://post-pipeline-dashboard.onrender.com`.
+
+> ⚠ **Security:** `DEV_LOGIN` defaults to `true` so you can sign in before SSO
+> is wired up — but on a public URL that lets *anyone with the link* sign in.
+> Configure Google SSO (below) and set **`DEV_LOGIN=false`** as soon as you can.
+
+> Notes on the free tier: Render free web services **spin down after ~15 min
+> idle** (first request then takes ~1 min to wake) — fine for an internal tool.
+> Neon **scales its compute to zero** when idle and wakes on demand. When you
+> move to company servers, Neon → your Postgres/Aurora is just a
+> `pg_dump | pg_restore` (both are standard Postgres).
+
 ### Enabling Google SSO (one-time)
+
+Config can come from **environment variables** (hosted deploys, where the
+filesystem is wiped on restart) or `server-config.json` (local dev). Env wins.
+
+Until SSO is set up, the login page uses the **team sign-in** (email only —
+fine on a trusted office network, but no passwords):
 
 Until this is done, the login page uses the **team sign-in** (email only —
 fine on a trusted office network, but no passwords, so do the below when ready):
@@ -93,29 +131,32 @@ fine on a trusted office network, but no passwords, so do the below when ready):
 2. **APIs & Services → OAuth consent screen** → *Internal* (this limits sign-in
    to your Workspace org) → fill in the app name.
 3. **APIs & Services → Credentials → Create credentials → OAuth client ID** →
-   *Web application*. Add the redirect URI: `http://localhost:8771/auth/callback`.
-4. Copy the **Client ID** and **Client secret** into `server-config.json`:
-   ```json
-   "google": { "clientId": "…", "clientSecret": "…" }
-   ```
-5. Restart the server. The *Sign in with Google* button lights up, restricted to
-   `allowedDomain` (moonbug.com). Set `"devLogin": false` to turn off the
-   email-only fallback.
+   *Web application*. Add the redirect URI for wherever you're running:
+   - local: `http://localhost:8771/auth/callback`
+   - Render: `https://<your-app>.onrender.com/auth/callback`
+4. Provide the **Client ID / secret**:
+   - hosted: set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` env vars
+   - local: put them in `server-config.json` under `"google"`
+5. Restart. The *Sign in with Google* button lights up, restricted to
+   `ALLOWED_DOMAIN` (moonbug.com). Set `DEV_LOGIN=false` to turn off the
+   email-only fallback — **do this on any public deploy.**
 
-> Note: Google only accepts `localhost` redirect URLs over plain http, so the
-> Google button works on your laptop directly. For teammates over the LAN to use
-> it too, the server needs a proper hostname + https (e.g. a Tailscale/Cloudflare
-> tunnel) — until then they use the team sign-in, which still gives them their
-> correct role via directory email matching.
+> Note: Google accepts `localhost` and public `https` redirect URLs, but not a
+> raw LAN IP — so on a laptop the Google button works over localhost, and once
+> deployed (Render) it works for everyone. Over plain LAN, teammates use the
+> team sign-in, which still gives them their correct role via directory email.
 
 ## Files
 ```
 index.html          shell + script/style includes
 style.css           Monday-style dark theme
 server.js           Node backend: static hosting, Google SSO + dev sign-in,
-                    cookie sessions, shared versioned state API (zero dependencies)
-server-config.json  server settings (created on first run; holds OAuth secrets)
-data/state.json     the shared board (created on first save)
+                    stateless cookie sessions, shared versioned state API
+                    (Postgres when DATABASE_URL is set, else a local JSON file)
+package.json        start script + the one dependency (pg), used by the host
+render.yaml         Render Blueprint for the free deploy (env-var placeholders)
+server-config.json  local dev settings (git-ignored; hosted deploys use env vars)
+data/state.json     the shared board in local/file mode (git-ignored)
 js/state.js         data model, pipelines, dependencies, metrics, persistence
 js/api.js           server sync: session check, pull/push with versioning, polling
 js/seed.js          demo shows / team / episodes

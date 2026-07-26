@@ -1,53 +1,73 @@
-/* Post Pipeline backend — zero-dependency Node server (Node 18+).
+/* Post Pipeline backend (Node 18+).
    Serves the static frontend AND provides:
-     • Google Workspace SSO (OAuth code flow) with a local dev sign-in fallback
-     • cookie sessions (HMAC-signed, persisted across restarts)
-     • a shared state store (data/state.json) with optimistic versioning,
-       so every laptop on the network sees the same board.
+     • Google Workspace SSO (OAuth code flow) with a dev sign-in fallback
+     • stateless, HMAC-signed cookie sessions (no server-side session store)
+     • a shared board-state store with optimistic versioning:
+         – Postgres (Neon/RDS/…) when DATABASE_URL is set   → hosted / prod
+         – a local JSON file otherwise                       → laptop dev
 
-   Run:  node server.js         → http://<your-lan-ip>:8771
-   Config lives in server-config.json (created on first run). To enable real
-   Google sign-in, paste an OAuth client id/secret there — see README. */
+   Config comes from environment variables first (for hosts with an ephemeral
+   filesystem like Render), then server-config.json, then built-in defaults.
+   Local dev needs nothing: `node server.js` → http://localhost:8771.
+   See README for the Render + Neon deploy steps. */
 'use strict';
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const folders = require('./folders');
 
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
 const CONFIG_PATH = path.join(ROOT, 'server-config.json');
 const STATE_PATH = path.join(DATA_DIR, 'state.json');
-const SESSIONS_PATH = path.join(DATA_DIR, 'sessions.json');
+const ENV = process.env;
 
 /* ------------------------------------------------------------- config ---- */
 const DEFAULT_CONFIG = {
   port: 8771,
   host: '0.0.0.0',                       // bind to the LAN; use 127.0.0.1 for laptop-only
-  sessionSecret: '',                     // auto-generated below
-  devLogin: true,                        // email-only sign-in; disable once Google SSO works
+  sessionSecret: '',                     // from SESSION_SECRET env, or auto-generated locally
+  devLogin: true,                        // email-only sign-in; MUST be false in a public deploy
   google: { clientId: '', clientSecret: '' },
   allowedDomain: 'moonbug.com',          // only this Workspace domain may sign in ('' = any)
-  adminEmails: ['chris.kuziara@moonbug.com']  // always treated as Producer (bootstrap)
+  adminEmails: ['chris.kuziara@moonbug.com'],  // always treated as Producer (bootstrap)
+  databaseUrl: ''                        // Postgres connection string (Neon) → hosted mode
 };
 
 function loadConfig() {
   let cfg = {};
-  try { cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch (e) { /* first run */ }
+  try { cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch (e) { /* first run / hosted */ }
   cfg = Object.assign({}, DEFAULT_CONFIG, cfg);
   cfg.google = Object.assign({}, DEFAULT_CONFIG.google, cfg.google || {});
+
+  // Environment overrides — the source of truth for hosted deploys, where the
+  // filesystem is wiped on every restart so a config file can't be trusted.
+  if (ENV.SESSION_SECRET) cfg.sessionSecret = ENV.SESSION_SECRET;
+  if (ENV.GOOGLE_CLIENT_ID) cfg.google.clientId = ENV.GOOGLE_CLIENT_ID;
+  if (ENV.GOOGLE_CLIENT_SECRET) cfg.google.clientSecret = ENV.GOOGLE_CLIENT_SECRET;
+  if (ENV.ALLOWED_DOMAIN !== undefined) cfg.allowedDomain = ENV.ALLOWED_DOMAIN;
+  if (ENV.ADMIN_EMAILS) cfg.adminEmails = ENV.ADMIN_EMAILS.split(',').map(s => s.trim()).filter(Boolean);
+  if (ENV.DEV_LOGIN !== undefined) cfg.devLogin = ENV.DEV_LOGIN === 'true';
+  if (ENV.DATABASE_URL) cfg.databaseUrl = ENV.DATABASE_URL;
+
+  // Local dev only: persist a generated secret so sessions survive a restart.
+  // (In a hosted deploy SESSION_SECRET is set, so we never reach this.)
   if (!cfg.sessionSecret) {
     cfg.sessionSecret = crypto.randomBytes(32).toString('hex');
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+    try {
+      const toSave = Object.assign({}, cfg); delete toSave.databaseUrl;
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(toSave, null, 2));
+    } catch (e) { /* read-only fs — fine, secret just lives for this run */ }
   }
   return cfg;
 }
 const config = loadConfig();
-const PORT = process.env.PORT || config.port;
+const PORT = ENV.PORT || config.port;
+const SESSION_TTL = 1000 * 60 * 60 * 24 * 30; // 30 days
 
-/* ------------------------------------------------------ tiny persistence -- */
-fs.mkdirSync(DATA_DIR, { recursive: true });
+/* ------------------------------------------------- state store (2 backends) */
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return fallback; }
 }
@@ -57,43 +77,115 @@ function writeJson(file, obj) {          // atomic: tmp + rename
   fs.renameSync(tmp, file);
 }
 
-let store = readJson(STATE_PATH, { version: 0, data: null });
-let sessions = readJson(SESSIONS_PATH, {});   // sid -> {email,name,picture,created}
-const SESSION_TTL = 1000 * 60 * 60 * 24 * 30; // 30 days
+// The store exposes get()/version()/put(); put() is optimistic — it rejects a
+// write whose base version is stale, unless the board is still empty (first
+// write wins). Returns {ok:true, version} or {ok:false, current:{version,data}}.
+function makeFileStore() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  let store = readJson(STATE_PATH, { version: 0, data: null });
+  return {
+    kind: 'json file (' + STATE_PATH + ')',
+    async init() {},
+    async get() { return { version: store.version, data: store.data }; },
+    async version() { return store.version; },
+    async put(version, data) {
+      if (store.data !== null && version !== store.version) return { ok: false, current: { version: store.version, data: store.data } };
+      store = { version: store.version + 1, data };
+      writeJson(STATE_PATH, store);
+      return { ok: true, version: store.version };
+    }
+  };
+}
 
-function saveSessions() { writeJson(SESSIONS_PATH, sessions); }
+function makePgStore(connectionString) {
+  const { Pool } = require('pg');   // lazy — only a hosted deploy needs the dependency
+  const pool = new Pool({ connectionString, ssl: { rejectUnauthorized: false }, max: 5 });
+  return {
+    kind: 'postgres',
+    async init() {
+      await pool.query(
+        'CREATE TABLE IF NOT EXISTS board_state (' +
+        'id int PRIMARY KEY DEFAULT 1, version int NOT NULL DEFAULT 0, data jsonb, CHECK (id = 1))'
+      );
+      await pool.query('INSERT INTO board_state (id, version, data) VALUES (1, 0, NULL) ON CONFLICT (id) DO NOTHING');
+    },
+    async get() {
+      const r = await pool.query('SELECT version, data FROM board_state WHERE id = 1');
+      const row = r.rows[0] || { version: 0, data: null };
+      return { version: row.version, data: row.data };   // jsonb comes back already parsed
+    },
+    async version() {
+      const r = await pool.query('SELECT version FROM board_state WHERE id = 1');
+      return r.rows[0] ? r.rows[0].version : 0;
+    },
+    async put(version, data) {
+      // one atomic statement does the version check + bump — no read-modify-write
+      // race even with several writers. The `data IS NULL` clause lets the very
+      // first write land regardless of the client's base version.
+      const r = await pool.query(
+        'UPDATE board_state SET version = version + 1, data = $1::jsonb ' +
+        'WHERE id = 1 AND (version = $2 OR data IS NULL) RETURNING version',
+        [JSON.stringify(data), version]
+      );
+      if (!r.rowCount) return { ok: false, current: await this.get() };
+      return { ok: true, version: r.rows[0].version };
+    }
+  };
+}
+
+const storage = config.databaseUrl ? makePgStore(config.databaseUrl) : makeFileStore();
+
+/* ------------------------------------------------- live update fan-out ---- */
+// Plain-HTTP Server-Sent Events — no extra dependency, works through Render's
+// proxy. Every open /api/events connection gets the new version the instant
+// someone else's PUT lands, so the client can pull immediately instead of
+// waiting for its next poll.
+const sseClients = new Set();
+function broadcastVersion(v) {
+  const msg = 'event: version\ndata: ' + v + '\n\n';
+  for (const res of sseClients) {
+    try { res.write(msg); } catch (e) { sseClients.delete(res); }
+  }
+}
 
 /* ------------------------------------------------------------ sessions ---- */
-function sign(v) { return crypto.createHmac('sha256', config.sessionSecret).update(v).digest('hex').slice(0, 32); }
+// Stateless: the signed cookie IS the session (base64url payload + HMAC), so
+// there's nothing to persist — survives restarts and needs no shared store.
+function sign(v) { return crypto.createHmac('sha256', config.sessionSecret).update(v).digest('base64url'); }
 
 function createSession(user) {
-  const sid = crypto.randomUUID();
-  sessions[sid] = { ...user, created: Date.now() };
-  saveSessions();
-  return sid + '.' + sign(sid);
+  const payload = Buffer.from(JSON.stringify({ ...user, iat: Date.now() })).toString('base64url');
+  return payload + '.' + sign(payload);
 }
 function getSession(req) {
   const raw = (req.headers.cookie || '').split(/;\s*/).find(c => c.startsWith('pp_sid='));
   if (!raw) return null;
-  const [sid, sig] = raw.slice(7).split('.');
-  if (!sid || sig !== sign(sid)) return null;
-  const s = sessions[sid];
-  if (!s || Date.now() - s.created > SESSION_TTL) { delete sessions[sid]; return null; }
-  return { sid, ...s };
+  const [payload, sig] = raw.slice(7).split('.');
+  if (!payload || !sig || sig !== sign(payload)) return null;
+  let data;
+  try { data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch (e) { return null; }
+  if (!data.iat || Date.now() - data.iat > SESSION_TTL) return null;
+  return data;   // { email, name, picture, via, iat }
 }
-function destroySession(req) {
-  const s = getSession(req);
-  if (s) { delete sessions[s.sid]; saveSessions(); }
-}
-function sessionCookie(value, expire) {
+function sessionCookie(value, opts) {
+  opts = opts || {};
   return 'pp_sid=' + value + '; Path=/; HttpOnly; SameSite=Lax' +
-    (expire ? '; Max-Age=0' : '; Max-Age=' + Math.floor(SESSION_TTL / 1000));
+    (opts.secure ? '; Secure' : '') +
+    (opts.expire ? '; Max-Age=0' : '; Max-Age=' + Math.floor(SESSION_TTL / 1000));
 }
 
 /* --------------------------------------------------------- google oauth --- */
 const oauthStates = new Map();           // state -> expiry (10 min)
 function googleConfigured() { return !!(config.google.clientId && config.google.clientSecret); }
-function redirectUri(req) { return 'http://' + req.headers.host + '/auth/callback'; }
+// Honour the reverse-proxy's protocol header so the OAuth redirect is the real
+// public https:// URL (a hosted app receives http internally behind TLS).
+function baseUrl(req) {
+  const xf = (req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const proto = xf || (req.socket && req.socket.encrypted ? 'https' : 'http');
+  return proto + '://' + req.headers.host;
+}
+function isSecure(req) { return baseUrl(req).startsWith('https'); }
+function redirectUri(req) { return baseUrl(req) + '/auth/callback'; }
 
 function googleAuthUrl(req) {
   const state = crypto.randomBytes(16).toString('hex');
@@ -144,11 +236,68 @@ async function googleCallback(req, url) {
   return { email, name: ui.name || email, picture: ui.picture || '', via: 'google' };
 }
 
+/* --------------------------------------------------- task workspace ------ */
+/* Backs the per-subtask workspace (Project / Assets / Deliver) so nobody has to
+   open Finder. Upload destinations are handed out as short-lived tokens: the
+   client never names a filesystem path, so path authority stays server-side even
+   though delivering isn't an admin-only action. */
+const deliverTokens = new Map();   // token -> { dir, exp }
+function issueDeliverToken(dir) {
+  const t = crypto.randomBytes(18).toString('base64url');
+  for (const [k, v] of deliverTokens) if (v.exp < Date.now()) deliverTokens.delete(k);
+  deliverTokens.set(t, { dir, exp: Date.now() + 3600000 });   // an hour to finish uploading
+  return t;
+}
+function redeemDeliverToken(t) {
+  const rec = deliverTokens.get(t);
+  if (!rec || rec.exp < Date.now()) { deliverTokens.delete(t); return null; }
+  return rec.dir;
+}
+
+// Native "Open" only makes sense when the server shares a machine with the user.
+// Their setup is a local server per Mac against the LucidLink mount, so this is
+// the normal case; a remote/shared server falls back to showing the path.
+function isLocalRequest(req) {
+  const a = (req.socket && req.socket.remoteAddress) || '';
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
+function openNatively(target) {
+  const { spawn } = require('child_process');
+  const cmd = process.platform === 'darwin' ? 'open'
+    : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+  // no shell: the path is passed as a single argv entry, so spaces and quotes
+  // in show or episode names can't turn into shell syntax
+  const child = spawn(cmd, [target], { detached: true, stdio: 'ignore' });
+  child.on('error', e => console.error('[open] ' + e.message));
+  child.unref();
+}
+
+// The master directory + the show/episode/pipeline a workspace request refers to,
+// or an { error } describing what's missing.
+async function resolveTaskContext(body) {
+  const { data } = await storage.get();
+  if (!data) return { error: 'no board state yet' };
+  const masterPath = ENV.MASTER_PATH || (data.storage && data.storage.masterPath) || '';
+  if (!masterPath) return { error: 'No master directory set — an admin can set one in Admin → Workflow → Storage' };
+  if (!path.isAbsolute(masterPath)) return { error: 'Master directory must be an absolute path' };
+  if (!fs.existsSync(masterPath)) return { error: 'Master directory not found — is LucidLink mounted?' };
+
+  const ep = (data.episodes || []).find(e => e.id === body.epId);
+  if (!ep) return { error: 'unknown episode' };
+  const show = (data.shows || []).find(s => s.id === ep.showId);
+  if (!show) return { error: 'unknown show' };
+  let pipeline;
+  try { pipeline = folders.normalisePipeline(show.pipeline || body.pipeline); }
+  catch (e) { return { error: e.message }; }
+  const paths = folders.taskPaths(ep, pipeline, body.taskKey);
+  if (!paths) return { error: 'that task is not in this show’s pipeline' };
+  return { data, masterPath, show, ep, pipeline, paths };
+}
+
 /* ------------------------------------------------------------- helpers ---- */
 function sendJson(res, code, obj) {
-  const body = JSON.stringify(obj);
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-  res.end(body);
+  res.end(JSON.stringify(obj));
 }
 function readBody(req, limit = 10 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
@@ -209,7 +358,7 @@ const server = http.createServer(async (req, res) => {
     if (route === 'GET /auth/callback') {
       try {
         const user = await googleCallback(req, url);
-        res.writeHead(302, { 'Set-Cookie': sessionCookie(createSession(user)), Location: '/' });
+        res.writeHead(302, { 'Set-Cookie': sessionCookie(createSession(user), { secure: isSecure(req) }), Location: '/' });
       } catch (e) {
         res.writeHead(302, { Location: '/?err=' + encodeURIComponent(e.message) });
       }
@@ -222,13 +371,12 @@ const server = http.createServer(async (req, res) => {
       const email = String(body.email || '').trim().toLowerCase();
       if (!/^\S+@\S+\.\S+$/.test(email)) return sendJson(res, 400, { error: 'enter a valid email' });
       const name = email.split('@')[0].split(/[._-]/).map(w => w[0] ? w[0].toUpperCase() + w.slice(1) : w).join(' ');
-      res.setHeader('Set-Cookie', sessionCookie(createSession({ email, name, picture: '', via: 'dev' })));
+      res.setHeader('Set-Cookie', sessionCookie(createSession({ email, name, picture: '', via: 'dev' }), { secure: isSecure(req) }));
       return sendJson(res, 200, { ok: true });
     }
 
     if (route === 'POST /auth/logout') {
-      destroySession(req);
-      res.setHeader('Set-Cookie', sessionCookie('', true));
+      res.setHeader('Set-Cookie', sessionCookie('', { expire: true, secure: isSecure(req) }));
       return sendJson(res, 200, { ok: true });
     }
 
@@ -236,20 +384,373 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/')) {
       if (!getSession(req)) return sendJson(res, 401, { error: 'not signed in' });
 
-      if (route === 'GET /api/state') return sendJson(res, 200, store);
-      if (route === 'GET /api/version') return sendJson(res, 200, { version: store.version });
+      if (route === 'GET /api/state') return sendJson(res, 200, await storage.get());
+      if (route === 'GET /api/version') return sendJson(res, 200, { version: await storage.version() });
+
+      if (route === 'GET /api/events') {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-store',
+          Connection: 'keep-alive'
+        });
+        res.write(': connected\n\n');
+        sseClients.add(res);
+        const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 20000);
+        req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
+        return;
+      }
+
+      /* Directory browser behind the Storage setting's "Browse…" button.
+         A browser folder picker can't hand us an absolute path (by design), and
+         it's this process — not the laptop — that needs to see the LucidLink
+         mount, so the listing happens here. Admin-only, directories only, and it
+         grants nothing an admin didn't already have: they can type any path into
+         the same setting. */
+      if (route === 'GET /api/browse') {
+        const s = getSession(req);
+        // Admins browse anywhere (they're choosing the master directory). Everyone
+        // else may browse only to pick a file to deliver — hence files=1, which
+        // any signed-in user can call so they never need Finder.
+        const wantFiles = url.searchParams.get('files') === '1';
+        if (!wantFiles && !config.adminEmails.map(e => e.toLowerCase()).includes(s.email)) {
+          return sendJson(res, 403, { error: 'Only admins can browse the server filesystem' });
+        }
+        const roots = [
+          { label: 'Volumes', path: '/Volumes' },
+          { label: os.userInfo().username, path: os.homedir() },
+          { label: 'Root', path: '/' }
+        ].filter(r => { try { return fs.statSync(r.path).isDirectory(); } catch (e) { return false; } });
+
+        const listing = (d) => {
+          const st = fs.statSync(d);
+          if (!st.isDirectory()) throw Object.assign(new Error('not a directory'), { code: 'ENOTDIR' });
+          return fs.readdirSync(d, { withFileTypes: true });
+        };
+
+        const asked = url.searchParams.get('path') || (roots[0] && roots[0].path) || '/';
+        let dir = path.resolve(asked), entries, notice = null;
+        try {
+          entries = listing(dir);
+        } catch (e) {
+          // Never dead-end the picker: fall back to a known-good root so the user
+          // can always navigate out of a bad saved path.
+          const why = e.code === 'EACCES' ? 'No permission to read' : 'Can’t open';
+          const fb = roots.find(r => { try { listing(r.path); return true; } catch (err) { return false; } });
+          if (!fb) return sendJson(res, 400, { error: why + ' ' + dir, roots });
+          notice = why + ' ' + asked + ' — showing ' + fb.path + ' instead.';
+          dir = fb.path;
+          entries = listing(dir);
+        }
+        const dirs = entries
+          .filter(e => !e.name.startsWith('.'))
+          .filter(e => { try { return e.isDirectory() || (e.isSymbolicLink() && fs.statSync(path.join(dir, e.name)).isDirectory()); } catch (err) { return false; } })
+          .map(e => e.name)
+          .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+        const parent = path.dirname(dir);
+        // files=1 additionally returns the files, so "pick from the mount" can
+        // choose one to deliver without ever opening Finder
+        const files = wantFiles ? entries
+          .filter(e => !e.name.startsWith('.') && !dirs.includes(e.name))
+          .map(e => { let size = 0; try { size = fs.statSync(path.join(dir, e.name)).size; } catch (err) {} return { name: e.name, size }; })
+          .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })) : undefined;
+        return sendJson(res, 200, { path: dir, parent: parent === dir ? null : parent, dirs, files, roots, notice });
+      }
+
+      /* ---- per-subtask workspace ----------------------------------------
+         One read that returns everything the Edit Task panel shows: the task's
+         own folders and project files, plus each dependency's published assets
+         (or nothing, which the UI shows as Pending). POST because it needs the
+         pipeline in the body — seed shows don't carry one in stored state. */
+      if (route === 'POST /api/task/workspace') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body);
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { data, masterPath, show, ep, pipeline, paths } = ctx;
+
+        const rel = (p) => folders.resolveIn(masterPath, show, p);
+        const task = pipeline.find(t => t.key === body.taskKey);
+
+        // project files = what's sitting in the task's working folder
+        const workAbs = rel(paths.work);
+        const work = folders.listDir(workAbs);
+
+        // Studio-wide templates plus anything this show overrides. Plain notes
+        // (a README explaining the folder) are excluded — nobody should be able
+        // to start a project from readme.txt.
+        const templates = folders.templatesFor(masterPath, show);
+
+        // dependency assets — the heart of the Assets panel
+        const deps = (task.deps || []).map(depKey => {
+          const dt = pipeline.find(t => t.key === depKey);
+          if (!dt) return null;
+          const dp = folders.taskPaths(ep, pipeline, depKey);
+          const items = dp ? folders.listDir(rel(dp.publish)) : [];
+          return {
+            key: depKey, name: dt.name, dept: dt.dept,
+            status: (ep.statuses && ep.statuses[depKey]) || 'not_started',
+            publish: dp ? dp.publish : null,
+            // An earlier iteration of the SAME deliverable (Animatic V2 → V3,
+            // Layout → Blocking) shares this task's folder, so it isn't an
+            // incoming handoff — the UI lists it as a version, not an asset.
+            sameFolder: !!dp && dp.publish === paths.publish,
+            items: items.map(i => ({ name: i.name, dir: i.dir, size: i.size, path: i.path }))
+          };
+        }).filter(Boolean);
+
+        return sendJson(res, 200, {
+          ok: true,
+          local: isLocalRequest(req),
+          root: folders.resolveIn(masterPath, show, ''),
+          deliverable: paths.deliverable,
+          paths: { work: paths.work, mezzanine: paths.mezzanine, publish: paths.publish },
+          absolute: { work: workAbs, mezzanine: rel(paths.mezzanine), publish: rel(paths.publish) },
+          work: work.map(i => ({ name: i.name, dir: i.dir, size: i.size, mtime: i.mtime })),
+          // delivered but awaiting approval
+          mezzanine: folders.listDir(rel(paths.mezzanine)).map(i => ({ name: i.name, dir: i.dir, size: i.size })),
+          publish: folders.listDir(rel(paths.publish)).map(i => ({ name: i.name, dir: i.dir, size: i.size })),
+          templates, deps
+        });
+      }
+
+      /* Create Project — makes the working folder and, if a template was chosen,
+         copies it in under a versioned name. Never overwrites. */
+      if (route === 'POST /api/task/project') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body);
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { masterPath, show, ep, paths } = ctx;
+        const workAbs = folders.resolveIn(masterPath, show, paths.work);
+        fs.mkdirSync(workAbs, { recursive: true });
+
+        let created = null;
+        if (body.template) {
+          // templateSource says which library it came from: the studio-wide one,
+          // or this show's own override folder
+          const src = folders.templatePath(masterPath, show, body.template, body.templateSource);
+          if (!fs.existsSync(src)) {
+            return sendJson(res, 400, { error: 'template not found: ' + body.template });
+          }
+          // <EPCODE>_<Deliverable>_v001.<ext> — e.g. LA-101_Animatic_v001.aep
+          const ext = path.extname(src);
+          const base = folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_v001' + ext;
+          const dest = folders.uniquePath(workAbs, folders.safeFile(base));
+          // a Logic .logicx (and friends) is a package directory, so copy recursively
+          fs.cpSync(src, dest, { recursive: fs.statSync(src).isDirectory() });
+          created = path.basename(dest);
+        }
+        const willOpen = body.open !== false && isLocalRequest(req);
+        if (willOpen) openNatively(created ? path.join(workAbs, created) : workAbs);
+        return sendJson(res, 200, { ok: true, created, dir: workAbs, opened: willOpen });
+      }
+
+      /* Open — hands the file or folder to the OS when the server is on this
+         machine (their normal setup); otherwise returns the path to copy. */
+      if (route === 'POST /api/task/open') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body);
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { masterPath, show, paths } = ctx;
+        const which = body.which === 'publish' ? paths.publish
+          : body.which === 'mezzanine' ? paths.mezzanine
+          : paths.work;
+        const target = folders.resolveIn(masterPath, show,
+          body.name ? which + '/' + folders.safeFile(body.name) : which);
+        if (!fs.existsSync(target)) return sendJson(res, 404, { error: 'not there yet: ' + path.basename(target) });
+        if (!isLocalRequest(req)) return sendJson(res, 200, { ok: true, opened: false, path: target });
+        openNatively(target);
+        return sendJson(res, 200, { ok: true, opened: true, path: target });
+      }
+
+      /* Promote a task's delivered files from Mezzanine to Publish. Called when a
+         task reaches Approved, which is the moment its output becomes a usable
+         asset for everything downstream. Idempotent: re-running moves whatever is
+         still sitting in Mezzanine and reports honestly. */
+      if (route === 'POST /api/task/promote') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body);
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { masterPath, show, paths } = ctx;
+        const mezz = folders.resolveIn(masterPath, show, paths.mezzanine);
+        const pub = folders.resolveIn(masterPath, show, paths.publish);
+        if (!fs.existsSync(mezz)) return sendJson(res, 200, { ok: true, promoted: 0 });
+
+        const items = folders.listDir(mezz);
+        if (!items.length) return sendJson(res, 200, { ok: true, promoted: 0 });
+        fs.mkdirSync(pub, { recursive: true });
+
+        const promoted = [];
+        for (const it of items) {
+          const dest = folders.uniquePath(pub, folders.safeFile(it.name));
+          try {
+            fs.renameSync(it.path, dest);
+          } catch (e) {
+            if (e.code !== 'EXDEV') throw e;
+            fs.cpSync(it.path, dest, { recursive: it.dir });
+            fs.rmSync(it.path, { recursive: it.dir, force: true });
+          }
+          promoted.push(path.basename(dest));
+        }
+        console.log('[promote] ' + getSession(req).email + ' ' + paths.deliverable +
+          ': ' + promoted.length + ' → Publish');
+        return sendJson(res, 200, { ok: true, promoted: promoted.length, names: promoted, dir: pub });
+      }
+
+      /* Hand a URL to the OS so it opens in the real default browser (Create
+         Project → Google Docs/Sheets template gallery). Deliberately narrow: only
+         https, and only hosts we ship links for, so this can't become a general
+         "make the server launch anything" endpoint. */
+      if (route === 'POST /api/open-url') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        let u;
+        try { u = new URL(String(body.url || '')); } catch (e) { return sendJson(res, 400, { error: 'not a URL' }); }
+        const ALLOWED = ['docs.google.com', 'drive.google.com', 'sheets.google.com'];
+        if (u.protocol !== 'https:' || !ALLOWED.includes(u.hostname)) {
+          return sendJson(res, 400, { error: 'that host isn’t allowed: ' + u.hostname });
+        }
+        if (!isLocalRequest(req)) return sendJson(res, 200, { ok: true, opened: false, url: u.href });
+        openNatively(u.href);
+        return sendJson(res, 200, { ok: true, opened: true, url: u.href });
+      }
+
+      /* Deliver, step 1: create the destination and hand back an upload token,
+         so the browser never gets to name a path. Also used by "pick from the
+         volume", which relocates a file already on the mount. */
+      if (route === 'POST /api/task/deliver/prepare') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body);
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { masterPath, show, paths } = ctx;
+        // Deliveries go to Mezzanine, NOT Publish — they only become assets for
+        // downstream tasks once this task is approved (see /api/task/promote).
+        const destAbs = folders.resolveIn(masterPath, show, paths.mezzanine);
+        fs.mkdirSync(destAbs, { recursive: true });      // lazily created on first delivery
+
+        if (body.src) {
+          const src = path.resolve(String(body.src));
+          if (!fs.existsSync(src)) return sendJson(res, 400, { error: 'source not found' });
+          const st = fs.statSync(src);
+          /* Already in the delivery folder? Do nothing. Comparing src to dest
+             can't catch this — uniquePath has by then renamed dest to _2, so the
+             move would "succeed" and leave a pointless duplicate. */
+          if (path.dirname(path.resolve(src)) === path.resolve(destAbs)) {
+            return sendJson(res, 400, { error: path.basename(src) + ' is already delivered' });
+          }
+          const dest = folders.uniquePath(destAbs, folders.safeFile(path.basename(src)));
+
+          /* Delivering MOVES the export out of the working folder, so there's one
+             copy of the master rather than a duplicate to keep in sync. The two
+             reference libraries are the exception: those are shared source
+             material, and emptying them to deliver would be data loss, so files
+             taken from there are copied instead. */
+          const isLibrary = /(^|\/)(!!_Templates|!!_ShowLibrary)\//.test(src + '/');
+          let moved = false;
+          try {
+            if (isLibrary) {
+              fs.cpSync(src, dest, { recursive: st.isDirectory() });
+            } else {
+              try {
+                fs.renameSync(src, dest);            // same volume: instant, even for a 40GB master
+                moved = true;
+              } catch (e) {
+                if (e.code !== 'EXDEV') throw e;      // different filesystem — fall back to copy+remove
+                fs.cpSync(src, dest, { recursive: st.isDirectory() });
+                fs.rmSync(src, { recursive: st.isDirectory(), force: true });
+                moved = true;
+              }
+            }
+          } catch (e) {
+            return sendJson(res, 400, { error: (moved ? 'move' : 'copy') + ' failed: ' + e.message });
+          }
+          console.log('[deliver] ' + getSession(req).email + ' ' + (moved ? 'moved' : 'copied') + ' ' + src + ' → ' + dest);
+          return sendJson(res, 200, {
+            ok: true, filed: path.basename(dest), dir: destAbs,
+            size: st.size, dirEntry: st.isDirectory(), moved, fromLibrary: isLibrary
+          });
+        }
+        return sendJson(res, 200, { ok: true, token: issueDeliverToken(destAbs), dir: destAbs });
+      }
+
+      /* Deliver, step 2: stream the body straight to disk under the token's
+         directory. One request per file — no multipart parsing, and large media
+         never buffers in memory. */
+      if (route === 'POST /api/task/deliver/upload') {
+        const dir = redeemDeliverToken(url.searchParams.get('token') || '');
+        if (!dir) return sendJson(res, 400, { error: 'upload window expired — press Deliver again' });
+        const name = folders.safeFile(url.searchParams.get('filename') || 'untitled');
+        const dest = folders.uniquePath(dir, name);
+        try {
+          await new Promise((resolve, reject) => {
+            const out = fs.createWriteStream(dest);
+            req.pipe(out);
+            out.on('finish', resolve);
+            out.on('error', reject);
+            req.on('error', reject);
+          });
+        } catch (e) {
+          try { fs.unlinkSync(dest); } catch (err) {}   // don't leave a half file behind
+          return sendJson(res, 500, { error: 'write failed: ' + e.message });
+        }
+        console.log('[deliver] ' + getSession(req).email + ' uploaded → ' + dest);
+        return sendJson(res, 200, { ok: true, filed: path.basename(dest), size: fs.statSync(dest).size });
+      }
+
+      /* Production folders on the LucidLink master directory. Admin-only, and
+         the show/episode NAMES come from stored state rather than the request,
+         so a client can only ever address content it can already see. */
+      if (route === 'POST /api/folders') {
+        const s = getSession(req);
+        if (!config.adminEmails.map(e => e.toLowerCase()).includes(s.email)) {
+          return sendJson(res, 403, { error: 'Only admins can create production folders' });
+        }
+        const body = JSON.parse(await readBody(req) || '{}');
+        const { data } = await storage.get();
+        if (!data) return sendJson(res, 400, { error: 'no board state yet' });
+
+        const masterPath = ENV.MASTER_PATH || (data.storage && data.storage.masterPath) || '';
+        if (!masterPath) return sendJson(res, 400, { error: 'No master directory set — add one in Admin → Workflow → Storage' });
+        // A relative path would resolve against the server's working directory and
+        // quietly build the tree inside the app folder. Demand an absolute one.
+        if (!path.isAbsolute(masterPath)) {
+          return sendJson(res, 400, { error: 'Master directory must be an absolute path starting with “/” — use Browse… to pick it.\nGot: ' + masterPath });
+        }
+        if (!fs.existsSync(masterPath)) return sendJson(res, 400, { error: 'Master directory not found — is LucidLink mounted?\n' + masterPath });
+
+        const show = (data.shows || []).find(x => x.id === body.showId);
+        if (!show) return sendJson(res, 404, { error: 'unknown show' });
+
+        try {
+          // The studio-wide template library sits beside the shows, so make sure
+          // it exists — it's shared, and creating any show is a fine moment to
+          // guarantee it's there.
+          fs.mkdirSync(folders.resolveMaster(masterPath, folders.MASTER_TEMPLATES), { recursive: true });
+
+          // Whole show, once, at creation: shared folders + every episode's tree.
+          const pipeline = folders.normalisePipeline(show.pipeline || body.pipeline);
+          const showEps = (data.episodes || []).filter(e => e.showId === show.id);
+          let dirs = folders.showSkeleton(show);
+          showEps.forEach(ep => { dirs = dirs.concat(folders.episodeTree(ep, pipeline)); });
+
+          const result = folders.createDirs(masterPath, show, dirs);
+          console.log('[folders] ' + s.email + ' → ' + result.root + ' (' + showEps.length + ' episode' +
+            (showEps.length === 1 ? '' : 's') + ', +' + result.created.length + ' new, ' + result.existed.length + ' existing)');
+          return sendJson(res, 200, {
+            ok: true, label: show.name, root: result.root, episodes: showEps.length,
+            created: result.created.length, existed: result.existed.length
+          });
+        } catch (e) {
+          return sendJson(res, 400, { error: e.message });
+        }
+      }
 
       if (route === 'PUT /api/state') {
         const body = JSON.parse(await readBody(req) || '{}');
         if (!body.data) return sendJson(res, 400, { error: 'missing data' });
-        // optimistic concurrency: reject stale writes so nobody silently
-        // overwrites a teammate's change; the client adopts the newer state
-        if (store.data !== null && body.version !== store.version) {
-          return sendJson(res, 409, store);
-        }
-        store = { version: store.version + 1, data: body.data };
-        writeJson(STATE_PATH, store);
-        return sendJson(res, 200, { version: store.version });
+        // optimistic concurrency: a stale write is rejected with the current
+        // state so the client can adopt it instead of clobbering a teammate.
+        const result = await storage.put(body.version, body.data);
+        if (!result.ok) return sendJson(res, 409, result.current);
+        broadcastVersion(result.version);
+        return sendJson(res, 200, { version: result.version });
       }
       return sendJson(res, 404, { error: 'unknown api route' });
     }
@@ -263,12 +764,20 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, config.host, () => {
-  const nets = os.networkInterfaces();
-  const lan = Object.values(nets).flat().find(n => n && n.family === 'IPv4' && !n.internal);
-  console.log('Post Pipeline server running:');
-  console.log('  • This laptop:  http://localhost:' + PORT + '/');
-  if (config.host !== '127.0.0.1' && lan) console.log('  • Team (LAN):   http://' + lan.address + ':' + PORT + '/');
-  console.log('  • Google SSO:   ' + (googleConfigured() ? 'configured ✓' : 'not configured — dev sign-in active (see README)'));
-  console.log('  • Shared data:  ' + STATE_PATH);
-});
+(async () => {
+  try { await storage.init(); }
+  catch (e) { console.error('Storage init failed:', e.message); process.exit(1); }
+
+  server.listen(PORT, config.host, () => {
+    const nets = os.networkInterfaces();
+    const lan = Object.values(nets).flat().find(n => n && n.family === 'IPv4' && !n.internal);
+    console.log('Post Pipeline server running:');
+    console.log('  • This host:    http://localhost:' + PORT + '/');
+    if (config.host !== '127.0.0.1' && lan) console.log('  • Team (LAN):   http://' + lan.address + ':' + PORT + '/');
+    console.log('  • Storage:      ' + storage.kind);
+    console.log('  • Google SSO:   ' + (googleConfigured() ? 'configured ✓' : 'not configured — dev sign-in active'));
+    if (config.devLogin && storage.kind === 'postgres') {
+      console.log('  ⚠ DEV_LOGIN is ON in a hosted deploy — set DEV_LOGIN=false once Google SSO works, or anyone with the URL can sign in.');
+    }
+  });
+})();

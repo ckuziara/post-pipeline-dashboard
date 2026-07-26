@@ -1,0 +1,15 @@
+{
+  "name": "post-pipeline-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Episodic post-production tracker — static frontend + zero-config Node backend (JSON file locally, Postgres when DATABASE_URL is set).",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}
