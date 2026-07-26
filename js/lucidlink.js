@@ -186,11 +186,17 @@ window.App = window.App || {};
       finally { this._syncing = null; this._refresh(); }
     },
 
-    async forceUnlock(epId, suKey) {
+    forceUnlock(epId, suKey) {
       if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can force-unlock', true); return; }
       const proj = this.get(epId, suKey); if (!proj || !proj.lock) return;
+      App.confirm('Releases ' + proj.lock.userName + '’s lock without saving their working copy, and quarantines it (read-only) so a late sync can’t overwrite the master.',
+        () => this._doForceUnlock(epId, suKey),
+        { title: 'Force unlock this file?', yesLabel: 'Force unlock', icon: '🔓' });
+    },
+
+    async _doForceUnlock(epId, suKey) {
+      const proj = this.get(epId, suKey); if (!proj || !proj.lock) return;
       const holder = proj.lock.userName, k = CKEY(epId, suKey);
-      if (!confirm('Force unlock this file?\n\nReleases ' + holder + '’s lock without saving their working copy, and quarantines it (read-only) so a late sync can’t overwrite the master.')) return;
       this._busy[k] = 'Releasing…'; this._refresh();
       try {
         await App.lucid.adapter().quarantine({ projectId: k, offlineUserId: proj.lock.userId });

@@ -22,6 +22,162 @@ window.App = window.App || {};
     close() { if (this._ov) { this._ov.remove(); this._ov = null; document.removeEventListener('keydown', this._esc); } }
   };
 
+  /* ---- confirmation prompt ----
+     Replaces window.confirm(), which silently returns false (no dialog shown)
+     inside embedded webviews like the desktop app's preview pane — that made
+     every destructive action a no-op there. Callers pass an onYes callback
+     instead of branching on a return value, since this can't block. */
+  App.confirm = function (message, onYes, opts) {
+    opts = opts || {};
+    // opts.onNo runs when the user backs out — used when the prompt replaced a
+    // dialog that should come back (e.g. Remove inside the Edit Task modal).
+    let settled = false;
+    const cancel = () => { if (settled) return; settled = true; App.modal.close(); if (opts.onNo) opts.onNo(); };
+    const yes = el('button.btn-danger', {
+      onclick: () => { settled = true; App.modal.close(); onYes(); }
+    }, opts.yesLabel || 'Delete');
+
+    App.modal.open(el('.modal-card.confirm-card', { onclick: e => e.stopPropagation() }, [
+      el('.modal-head', null, [
+        el('.modal-head-main', null, [
+          el('span.modal-ic', null, opts.icon || '⚠️'),
+          el('div', null, el('.modal-title', null, opts.title || 'Are you sure?'))
+        ]),
+        el('button.modal-x', { onclick: cancel, title: 'Close' }, '✕')
+      ]),
+      el('.modal-body', null, el('.confirm-msg', null, message)),
+      el('.modal-foot', null, [
+        el('button.btn-ghost', { onclick: cancel }, 'Cancel'),
+        yes
+      ])
+    ]));
+    // Esc / backdrop go through App.modal's own close, so mirror them into the
+    // cancel path to keep onNo firing however the user dismisses the prompt.
+    if (opts.onNo) {
+      const ov = App.modal._ov;
+      const watch = new MutationObserver(() => {
+        if (!ov.isConnected) { watch.disconnect(); if (!settled) { settled = true; opts.onNo(); } }
+      });
+      watch.observe(document.body, { childList: true });
+    }
+    setTimeout(() => yes.focus(), 30);   // Enter confirms, Esc cancels
+  };
+
+  function fmtBytes(bytes) {
+    if (!bytes) return '';
+    const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0, n = bytes;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)) + ' ' + u[i];
+  }
+
+  /* ---- folder picker ----
+     Browses the filesystem of the machine running the server, because that's
+     where the LucidLink mount lives — and because a browser's own folder picker
+     deliberately never reveals an absolute path, which is exactly what the
+     server needs to create directories. */
+  App.folderPicker = {
+    /* opts.pickFiles — list files too and return the chosen FILE's path. Used by
+       Deliver → "Pick from the volume", so big media already on the mount is
+       copied in place instead of pushed through the browser.
+       opts.onCancel — runs when the user backs out (the caller's dialog was
+       replaced by this one and usually wants to come back). */
+    open(startPath, onPick, opts) {
+      opts = opts || {};
+      const files = !!opts.pickFiles;
+      let cur = startPath || '', chosenFile = null;
+      const crumb = el('.fp-path');
+      const list = el('.fp-list');
+      const upBtn = el('button.btn-ghost.fp-up', { title: 'Up one level' }, '↑ Up');
+      const roots = el('.fp-roots');
+      const chooseBtn = el('button.btn-primary', { disabled: true },
+        opts.confirmLabel || (files ? 'Deliver this file' : 'Select this folder'));
+
+      let settled = false;
+      const cancel = () => { if (settled) return; settled = true; App.modal.close(); if (opts.onCancel) opts.onCancel(); };
+
+      const select = (name, size) => {
+        chosenFile = cur.replace(/\/$/, '') + '/' + name;
+        chooseBtn.disabled = false;
+        [...list.querySelectorAll('.fp-item.sel')].forEach(n => n.classList.remove('sel'));
+        const node = [...list.querySelectorAll('.fp-item')].find(n => n.dataset.file === name);
+        if (node) node.classList.add('sel');
+        crumb.textContent = chosenFile;
+      };
+
+      const go = async (p) => {
+        chosenFile = null;
+        list.innerHTML = '';
+        list.appendChild(el('.fp-loading', null, 'Opening…'));
+        try {
+          const r = await App.api.browse(p, files);
+          cur = r.path;
+          crumb.textContent = r.path;
+          // in file mode nothing is chosen until a file is clicked
+          chooseBtn.disabled = files;
+          upBtn.disabled = !r.parent;
+          upBtn.onclick = () => r.parent && go(r.parent);
+
+          roots.innerHTML = '';
+          (r.roots || []).forEach(rt => roots.appendChild(
+            el('button.fp-root' + (rt.path === r.path ? '.active' : ''), { onclick: () => go(rt.path) }, rt.label)));
+
+          list.innerHTML = '';
+          // the server redirected us out of an unreadable path — say so
+          if (r.notice) list.appendChild(el('.fp-notice', null, 'ⓘ ' + r.notice));
+          r.dirs.forEach(name => list.appendChild(
+            el('button.fp-item', { onclick: () => go(r.path.replace(/\/$/, '') + '/' + name) },
+              [el('span.fp-ic', null, '📁'), el('span.fp-name', null, name), el('span.fp-arrow', null, '›')])));
+          (r.files || []).forEach(f => list.appendChild(
+            el('button.fp-item', { 'data-file': f.name, onclick: () => select(f.name, f.size) },
+              [el('span.fp-ic', null, '📄'), el('span.fp-name', null, f.name),
+               el('span.fp-size', null, f.size ? fmtBytes(f.size) : '')])));
+          if (!r.dirs.length && !(r.files || []).length) {
+            list.appendChild(el('.fp-empty', null, files
+              ? 'Nothing here — go up and pick another folder.'
+              : 'No subfolders here — you can still select this folder.'));
+          }
+        } catch (e) {
+          list.innerHTML = '';
+          list.appendChild(el('.fp-error', null, '⚠ ' + e.message));
+          chooseBtn.disabled = true;   // don't let a folder we couldn't read be chosen
+        }
+      };
+
+      App.modal.open(el('.modal-card.fp-card', { onclick: e => e.stopPropagation() }, [
+        el('.modal-head', null, [
+          el('.modal-head-main', null, [
+            el('span.modal-ic', null, '📂'),
+            el('div', null, [
+              el('.modal-title', null, opts.title || 'Choose master directory'),
+              el('.modal-subtitle', null, opts.subtitle || (files
+                ? 'Files on the machine running Post Pipeline — pick one to deliver.'
+                : 'Folders on the machine running Post Pipeline — where your LucidLink volume is mounted.'))
+            ])
+          ]),
+          el('button.modal-x', { onclick: cancel, title: 'Close' }, '✕')
+        ]),
+        el('.modal-body', null, [roots, el('.fp-bar', null, [upBtn, crumb]), list]),
+        el('.modal-foot', null, [
+          el('button.btn-ghost', { onclick: cancel }, 'Cancel'),
+          chooseBtn
+        ])
+      ]));
+      chooseBtn.onclick = () => {
+        settled = true; App.modal.close();
+        onPick(files ? chosenFile : cur);
+      };
+      // Esc / backdrop close through App.modal, so mirror them into cancel
+      if (opts.onCancel) {
+        const ov = App.modal._ov;
+        const watch = new MutationObserver(() => {
+          if (!ov.isConnected) { watch.disconnect(); if (!settled) { settled = true; opts.onCancel(); } }
+        });
+        watch.observe(document.body, { childList: true });
+      }
+      go(cur);
+    }
+  };
+
   function card(icon, title, subtitle, sections, footer, cls) {
     return el('.modal-card' + (cls ? '.' + cls : ''), { onclick: (e) => e.stopPropagation() }, [
       el('.modal-head', null, [
@@ -175,14 +331,20 @@ window.App = window.App || {};
         // LucidLink version control — only for tasks flagged version-controlled
         // in the pipeline (enabled in Pipeline Presets, not here)
         (App.vc && App.vc.isVc(ep, key) ? App.vc.inlineSection(epId, key) : null),
-        // Smart Upload — attachments for this subtask
-        (App.uploads ? App.uploads.inlineSection(epId, key) : null)
+        /* The task workspace (Project / Assets / Deliver) works against the real
+           production folders, so it needs a master directory. Without one, fall
+           back to Smart Upload's metadata catalogue rather than showing nothing. */
+        (App.workspace && App.masterPathSet && App.masterPathSet()
+          ? App.workspace.inlineSection(epId, key)
+          : (App.uploads ? App.uploads.inlineSection(epId, key) : null))
       ];
 
       const footer = [
         el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
         el('button.btn-danger', {
-          onclick: () => { if (confirm('Remove “' + su.name + '” from ' + ep.code + '?')) { App.removeTask(epId, key); App.modal.close(); } }
+          onclick: () => App.confirm('Remove “' + su.name + '” from ' + ep.code + '?',
+            () => { App.removeTask(epId, key); App.modal.close(); },
+            { title: 'Remove task', yesLabel: 'Remove', onNo: () => App.editTask.open(epId, key) })
         }, '🗑 Remove'),
         el('button.btn-primary', {
           onclick: () => {

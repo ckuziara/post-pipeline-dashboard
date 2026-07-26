@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const folders = require('./folders');
 
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
@@ -235,6 +236,64 @@ async function googleCallback(req, url) {
   return { email, name: ui.name || email, picture: ui.picture || '', via: 'google' };
 }
 
+/* --------------------------------------------------- task workspace ------ */
+/* Backs the per-subtask workspace (Project / Assets / Deliver) so nobody has to
+   open Finder. Upload destinations are handed out as short-lived tokens: the
+   client never names a filesystem path, so path authority stays server-side even
+   though delivering isn't an admin-only action. */
+const deliverTokens = new Map();   // token -> { dir, exp }
+function issueDeliverToken(dir) {
+  const t = crypto.randomBytes(18).toString('base64url');
+  for (const [k, v] of deliverTokens) if (v.exp < Date.now()) deliverTokens.delete(k);
+  deliverTokens.set(t, { dir, exp: Date.now() + 3600000 });   // an hour to finish uploading
+  return t;
+}
+function redeemDeliverToken(t) {
+  const rec = deliverTokens.get(t);
+  if (!rec || rec.exp < Date.now()) { deliverTokens.delete(t); return null; }
+  return rec.dir;
+}
+
+// Native "Open" only makes sense when the server shares a machine with the user.
+// Their setup is a local server per Mac against the LucidLink mount, so this is
+// the normal case; a remote/shared server falls back to showing the path.
+function isLocalRequest(req) {
+  const a = (req.socket && req.socket.remoteAddress) || '';
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
+function openNatively(target) {
+  const { spawn } = require('child_process');
+  const cmd = process.platform === 'darwin' ? 'open'
+    : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+  // no shell: the path is passed as a single argv entry, so spaces and quotes
+  // in show or episode names can't turn into shell syntax
+  const child = spawn(cmd, [target], { detached: true, stdio: 'ignore' });
+  child.on('error', e => console.error('[open] ' + e.message));
+  child.unref();
+}
+
+// The master directory + the show/episode/pipeline a workspace request refers to,
+// or an { error } describing what's missing.
+async function resolveTaskContext(body) {
+  const { data } = await storage.get();
+  if (!data) return { error: 'no board state yet' };
+  const masterPath = ENV.MASTER_PATH || (data.storage && data.storage.masterPath) || '';
+  if (!masterPath) return { error: 'No master directory set — an admin can set one in Admin → Workflow → Storage' };
+  if (!path.isAbsolute(masterPath)) return { error: 'Master directory must be an absolute path' };
+  if (!fs.existsSync(masterPath)) return { error: 'Master directory not found — is LucidLink mounted?' };
+
+  const ep = (data.episodes || []).find(e => e.id === body.epId);
+  if (!ep) return { error: 'unknown episode' };
+  const show = (data.shows || []).find(s => s.id === ep.showId);
+  if (!show) return { error: 'unknown show' };
+  let pipeline;
+  try { pipeline = folders.normalisePipeline(show.pipeline || body.pipeline); }
+  catch (e) { return { error: e.message }; }
+  const paths = folders.taskPaths(ep, pipeline, body.taskKey);
+  if (!paths) return { error: 'that task is not in this show’s pipeline' };
+  return { data, masterPath, show, ep, pipeline, paths };
+}
+
 /* ------------------------------------------------------------- helpers ---- */
 function sendJson(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -339,6 +398,347 @@ const server = http.createServer(async (req, res) => {
         const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 20000);
         req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
         return;
+      }
+
+      /* Directory browser behind the Storage setting's "Browse…" button.
+         A browser folder picker can't hand us an absolute path (by design), and
+         it's this process — not the laptop — that needs to see the LucidLink
+         mount, so the listing happens here. Admin-only, directories only, and it
+         grants nothing an admin didn't already have: they can type any path into
+         the same setting. */
+      if (route === 'GET /api/browse') {
+        const s = getSession(req);
+        // Admins browse anywhere (they're choosing the master directory). Everyone
+        // else may browse only to pick a file to deliver — hence files=1, which
+        // any signed-in user can call so they never need Finder.
+        const wantFiles = url.searchParams.get('files') === '1';
+        if (!wantFiles && !config.adminEmails.map(e => e.toLowerCase()).includes(s.email)) {
+          return sendJson(res, 403, { error: 'Only admins can browse the server filesystem' });
+        }
+        const roots = [
+          { label: 'Volumes', path: '/Volumes' },
+          { label: os.userInfo().username, path: os.homedir() },
+          { label: 'Root', path: '/' }
+        ].filter(r => { try { return fs.statSync(r.path).isDirectory(); } catch (e) { return false; } });
+
+        const listing = (d) => {
+          const st = fs.statSync(d);
+          if (!st.isDirectory()) throw Object.assign(new Error('not a directory'), { code: 'ENOTDIR' });
+          return fs.readdirSync(d, { withFileTypes: true });
+        };
+
+        const asked = url.searchParams.get('path') || (roots[0] && roots[0].path) || '/';
+        let dir = path.resolve(asked), entries, notice = null;
+        try {
+          entries = listing(dir);
+        } catch (e) {
+          // Never dead-end the picker: fall back to a known-good root so the user
+          // can always navigate out of a bad saved path.
+          const why = e.code === 'EACCES' ? 'No permission to read' : 'Can’t open';
+          const fb = roots.find(r => { try { listing(r.path); return true; } catch (err) { return false; } });
+          if (!fb) return sendJson(res, 400, { error: why + ' ' + dir, roots });
+          notice = why + ' ' + asked + ' — showing ' + fb.path + ' instead.';
+          dir = fb.path;
+          entries = listing(dir);
+        }
+        const dirs = entries
+          .filter(e => !e.name.startsWith('.'))
+          .filter(e => { try { return e.isDirectory() || (e.isSymbolicLink() && fs.statSync(path.join(dir, e.name)).isDirectory()); } catch (err) { return false; } })
+          .map(e => e.name)
+          .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+        const parent = path.dirname(dir);
+        // files=1 additionally returns the files, so "pick from the mount" can
+        // choose one to deliver without ever opening Finder
+        const files = wantFiles ? entries
+          .filter(e => !e.name.startsWith('.') && !dirs.includes(e.name))
+          .map(e => { let size = 0; try { size = fs.statSync(path.join(dir, e.name)).size; } catch (err) {} return { name: e.name, size }; })
+          .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })) : undefined;
+        return sendJson(res, 200, { path: dir, parent: parent === dir ? null : parent, dirs, files, roots, notice });
+      }
+
+      /* ---- per-subtask workspace ----------------------------------------
+         One read that returns everything the Edit Task panel shows: the task's
+         own folders and project files, plus each dependency's published assets
+         (or nothing, which the UI shows as Pending). POST because it needs the
+         pipeline in the body — seed shows don't carry one in stored state. */
+      if (route === 'POST /api/task/workspace') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body);
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { data, masterPath, show, ep, pipeline, paths } = ctx;
+
+        const rel = (p) => folders.resolveIn(masterPath, show, p);
+        const task = pipeline.find(t => t.key === body.taskKey);
+
+        // project files = what's sitting in the task's working folder
+        const workAbs = rel(paths.work);
+        const work = folders.listDir(workAbs);
+
+        // Studio-wide templates plus anything this show overrides. Plain notes
+        // (a README explaining the folder) are excluded — nobody should be able
+        // to start a project from readme.txt.
+        const templates = folders.templatesFor(masterPath, show);
+
+        // dependency assets — the heart of the Assets panel
+        const deps = (task.deps || []).map(depKey => {
+          const dt = pipeline.find(t => t.key === depKey);
+          if (!dt) return null;
+          const dp = folders.taskPaths(ep, pipeline, depKey);
+          const items = dp ? folders.listDir(rel(dp.publish)) : [];
+          return {
+            key: depKey, name: dt.name, dept: dt.dept,
+            status: (ep.statuses && ep.statuses[depKey]) || 'not_started',
+            publish: dp ? dp.publish : null,
+            // An earlier iteration of the SAME deliverable (Animatic V2 → V3,
+            // Layout → Blocking) shares this task's folder, so it isn't an
+            // incoming handoff — the UI lists it as a version, not an asset.
+            sameFolder: !!dp && dp.publish === paths.publish,
+            items: items.map(i => ({ name: i.name, dir: i.dir, size: i.size, path: i.path }))
+          };
+        }).filter(Boolean);
+
+        return sendJson(res, 200, {
+          ok: true,
+          local: isLocalRequest(req),
+          root: folders.resolveIn(masterPath, show, ''),
+          deliverable: paths.deliverable,
+          paths: { work: paths.work, mezzanine: paths.mezzanine, publish: paths.publish },
+          absolute: { work: workAbs, mezzanine: rel(paths.mezzanine), publish: rel(paths.publish) },
+          work: work.map(i => ({ name: i.name, dir: i.dir, size: i.size, mtime: i.mtime })),
+          // delivered but awaiting approval
+          mezzanine: folders.listDir(rel(paths.mezzanine)).map(i => ({ name: i.name, dir: i.dir, size: i.size })),
+          publish: folders.listDir(rel(paths.publish)).map(i => ({ name: i.name, dir: i.dir, size: i.size })),
+          templates, deps
+        });
+      }
+
+      /* Create Project — makes the working folder and, if a template was chosen,
+         copies it in under a versioned name. Never overwrites. */
+      if (route === 'POST /api/task/project') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body);
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { masterPath, show, ep, paths } = ctx;
+        const workAbs = folders.resolveIn(masterPath, show, paths.work);
+        fs.mkdirSync(workAbs, { recursive: true });
+
+        let created = null;
+        if (body.template) {
+          // templateSource says which library it came from: the studio-wide one,
+          // or this show's own override folder
+          const src = folders.templatePath(masterPath, show, body.template, body.templateSource);
+          if (!fs.existsSync(src) || fs.statSync(src).isDirectory()) {
+            return sendJson(res, 400, { error: 'template not found: ' + body.template });
+          }
+          // <EPCODE>_<Deliverable>_v001.<ext> — e.g. LA-101_Animatic_v001.aep
+          const ext = path.extname(src);
+          const base = folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_v001' + ext;
+          const dest = folders.uniquePath(workAbs, folders.safeFile(base));
+          fs.copyFileSync(src, dest);
+          created = path.basename(dest);
+        }
+        const willOpen = body.open !== false && isLocalRequest(req);
+        if (willOpen) openNatively(created ? path.join(workAbs, created) : workAbs);
+        return sendJson(res, 200, { ok: true, created, dir: workAbs, opened: willOpen });
+      }
+
+      /* Open — hands the file or folder to the OS when the server is on this
+         machine (their normal setup); otherwise returns the path to copy. */
+      if (route === 'POST /api/task/open') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body);
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { masterPath, show, paths } = ctx;
+        const which = body.which === 'publish' ? paths.publish
+          : body.which === 'mezzanine' ? paths.mezzanine
+          : paths.work;
+        const target = folders.resolveIn(masterPath, show,
+          body.name ? which + '/' + folders.safeFile(body.name) : which);
+        if (!fs.existsSync(target)) return sendJson(res, 404, { error: 'not there yet: ' + path.basename(target) });
+        if (!isLocalRequest(req)) return sendJson(res, 200, { ok: true, opened: false, path: target });
+        openNatively(target);
+        return sendJson(res, 200, { ok: true, opened: true, path: target });
+      }
+
+      /* Promote a task's delivered files from Mezzanine to Publish. Called when a
+         task reaches Approved, which is the moment its output becomes a usable
+         asset for everything downstream. Idempotent: re-running moves whatever is
+         still sitting in Mezzanine and reports honestly. */
+      if (route === 'POST /api/task/promote') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body);
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { masterPath, show, paths } = ctx;
+        const mezz = folders.resolveIn(masterPath, show, paths.mezzanine);
+        const pub = folders.resolveIn(masterPath, show, paths.publish);
+        if (!fs.existsSync(mezz)) return sendJson(res, 200, { ok: true, promoted: 0 });
+
+        const items = folders.listDir(mezz);
+        if (!items.length) return sendJson(res, 200, { ok: true, promoted: 0 });
+        fs.mkdirSync(pub, { recursive: true });
+
+        const promoted = [];
+        for (const it of items) {
+          const dest = folders.uniquePath(pub, folders.safeFile(it.name));
+          try {
+            fs.renameSync(it.path, dest);
+          } catch (e) {
+            if (e.code !== 'EXDEV') throw e;
+            fs.cpSync(it.path, dest, { recursive: it.dir });
+            fs.rmSync(it.path, { recursive: it.dir, force: true });
+          }
+          promoted.push(path.basename(dest));
+        }
+        console.log('[promote] ' + getSession(req).email + ' ' + paths.deliverable +
+          ': ' + promoted.length + ' → Publish');
+        return sendJson(res, 200, { ok: true, promoted: promoted.length, names: promoted, dir: pub });
+      }
+
+      /* Hand a URL to the OS so it opens in the real default browser (Create
+         Project → Google Docs/Sheets template gallery). Deliberately narrow: only
+         https, and only hosts we ship links for, so this can't become a general
+         "make the server launch anything" endpoint. */
+      if (route === 'POST /api/open-url') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        let u;
+        try { u = new URL(String(body.url || '')); } catch (e) { return sendJson(res, 400, { error: 'not a URL' }); }
+        const ALLOWED = ['docs.google.com', 'drive.google.com', 'sheets.google.com'];
+        if (u.protocol !== 'https:' || !ALLOWED.includes(u.hostname)) {
+          return sendJson(res, 400, { error: 'that host isn’t allowed: ' + u.hostname });
+        }
+        if (!isLocalRequest(req)) return sendJson(res, 200, { ok: true, opened: false, url: u.href });
+        openNatively(u.href);
+        return sendJson(res, 200, { ok: true, opened: true, url: u.href });
+      }
+
+      /* Deliver, step 1: create the destination and hand back an upload token,
+         so the browser never gets to name a path. Also used by "pick from the
+         volume", which relocates a file already on the mount. */
+      if (route === 'POST /api/task/deliver/prepare') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body);
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { masterPath, show, paths } = ctx;
+        // Deliveries go to Mezzanine, NOT Publish — they only become assets for
+        // downstream tasks once this task is approved (see /api/task/promote).
+        const destAbs = folders.resolveIn(masterPath, show, paths.mezzanine);
+        fs.mkdirSync(destAbs, { recursive: true });      // lazily created on first delivery
+
+        if (body.src) {
+          const src = path.resolve(String(body.src));
+          if (!fs.existsSync(src)) return sendJson(res, 400, { error: 'source not found' });
+          const st = fs.statSync(src);
+          /* Already in the delivery folder? Do nothing. Comparing src to dest
+             can't catch this — uniquePath has by then renamed dest to _2, so the
+             move would "succeed" and leave a pointless duplicate. */
+          if (path.dirname(path.resolve(src)) === path.resolve(destAbs)) {
+            return sendJson(res, 400, { error: path.basename(src) + ' is already delivered' });
+          }
+          const dest = folders.uniquePath(destAbs, folders.safeFile(path.basename(src)));
+
+          /* Delivering MOVES the export out of the working folder, so there's one
+             copy of the master rather than a duplicate to keep in sync. The two
+             reference libraries are the exception: those are shared source
+             material, and emptying them to deliver would be data loss, so files
+             taken from there are copied instead. */
+          const isLibrary = /(^|\/)(!!_Templates|!!_ShowLibrary)\//.test(src + '/');
+          let moved = false;
+          try {
+            if (isLibrary) {
+              fs.cpSync(src, dest, { recursive: st.isDirectory() });
+            } else {
+              try {
+                fs.renameSync(src, dest);            // same volume: instant, even for a 40GB master
+                moved = true;
+              } catch (e) {
+                if (e.code !== 'EXDEV') throw e;      // different filesystem — fall back to copy+remove
+                fs.cpSync(src, dest, { recursive: st.isDirectory() });
+                fs.rmSync(src, { recursive: st.isDirectory(), force: true });
+                moved = true;
+              }
+            }
+          } catch (e) {
+            return sendJson(res, 400, { error: (moved ? 'move' : 'copy') + ' failed: ' + e.message });
+          }
+          console.log('[deliver] ' + getSession(req).email + ' ' + (moved ? 'moved' : 'copied') + ' ' + src + ' → ' + dest);
+          return sendJson(res, 200, {
+            ok: true, filed: path.basename(dest), dir: destAbs,
+            size: st.size, dirEntry: st.isDirectory(), moved, fromLibrary: isLibrary
+          });
+        }
+        return sendJson(res, 200, { ok: true, token: issueDeliverToken(destAbs), dir: destAbs });
+      }
+
+      /* Deliver, step 2: stream the body straight to disk under the token's
+         directory. One request per file — no multipart parsing, and large media
+         never buffers in memory. */
+      if (route === 'POST /api/task/deliver/upload') {
+        const dir = redeemDeliverToken(url.searchParams.get('token') || '');
+        if (!dir) return sendJson(res, 400, { error: 'upload window expired — press Deliver again' });
+        const name = folders.safeFile(url.searchParams.get('filename') || 'untitled');
+        const dest = folders.uniquePath(dir, name);
+        try {
+          await new Promise((resolve, reject) => {
+            const out = fs.createWriteStream(dest);
+            req.pipe(out);
+            out.on('finish', resolve);
+            out.on('error', reject);
+            req.on('error', reject);
+          });
+        } catch (e) {
+          try { fs.unlinkSync(dest); } catch (err) {}   // don't leave a half file behind
+          return sendJson(res, 500, { error: 'write failed: ' + e.message });
+        }
+        console.log('[deliver] ' + getSession(req).email + ' uploaded → ' + dest);
+        return sendJson(res, 200, { ok: true, filed: path.basename(dest), size: fs.statSync(dest).size });
+      }
+
+      /* Production folders on the LucidLink master directory. Admin-only, and
+         the show/episode NAMES come from stored state rather than the request,
+         so a client can only ever address content it can already see. */
+      if (route === 'POST /api/folders') {
+        const s = getSession(req);
+        if (!config.adminEmails.map(e => e.toLowerCase()).includes(s.email)) {
+          return sendJson(res, 403, { error: 'Only admins can create production folders' });
+        }
+        const body = JSON.parse(await readBody(req) || '{}');
+        const { data } = await storage.get();
+        if (!data) return sendJson(res, 400, { error: 'no board state yet' });
+
+        const masterPath = ENV.MASTER_PATH || (data.storage && data.storage.masterPath) || '';
+        if (!masterPath) return sendJson(res, 400, { error: 'No master directory set — add one in Admin → Workflow → Storage' });
+        // A relative path would resolve against the server's working directory and
+        // quietly build the tree inside the app folder. Demand an absolute one.
+        if (!path.isAbsolute(masterPath)) {
+          return sendJson(res, 400, { error: 'Master directory must be an absolute path starting with “/” — use Browse… to pick it.\nGot: ' + masterPath });
+        }
+        if (!fs.existsSync(masterPath)) return sendJson(res, 400, { error: 'Master directory not found — is LucidLink mounted?\n' + masterPath });
+
+        const show = (data.shows || []).find(x => x.id === body.showId);
+        if (!show) return sendJson(res, 404, { error: 'unknown show' });
+
+        try {
+          // The studio-wide template library sits beside the shows, so make sure
+          // it exists — it's shared, and creating any show is a fine moment to
+          // guarantee it's there.
+          fs.mkdirSync(folders.resolveMaster(masterPath, folders.MASTER_TEMPLATES), { recursive: true });
+
+          // Whole show, once, at creation: shared folders + every episode's tree.
+          const pipeline = folders.normalisePipeline(show.pipeline || body.pipeline);
+          const showEps = (data.episodes || []).filter(e => e.showId === show.id);
+          let dirs = folders.showSkeleton(show);
+          showEps.forEach(ep => { dirs = dirs.concat(folders.episodeTree(ep, pipeline)); });
+
+          const result = folders.createDirs(masterPath, show, dirs);
+          console.log('[folders] ' + s.email + ' → ' + result.root + ' (' + showEps.length + ' episode' +
+            (showEps.length === 1 ? '' : 's') + ', +' + result.created.length + ' new, ' + result.existed.length + ' existing)');
+          return sendJson(res, 200, {
+            ok: true, label: show.name, root: result.root, episodes: showEps.length,
+            created: result.created.length, existed: result.existed.length
+          });
+        } catch (e) {
+          return sendJson(res, 400, { error: e.message });
+        }
       }
 
       if (route === 'PUT /api/state') {

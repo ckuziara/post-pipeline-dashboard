@@ -30,6 +30,7 @@ window.App = window.App || {};
     App.gantt && App.gantt.closeNoteEditor && App.gantt.closeNoteEditor();
     App.vc && App.vc.syncOpen && App.vc.syncOpen();   // live-refresh the Version Control panel on state sync
     App.uploads && App.uploads._refresh && App.uploads._refresh();   // live-refresh the attachments section
+    App.workspace && App.workspace.syncOpen && App.workspace.syncOpen();   // reflect a teammate's delivery
     if (App.tooltip) { App.tooltip.hide(); App.tooltip._stack = []; }
 
     // guard: only admins may sit on the Admin view
@@ -70,6 +71,7 @@ window.App = window.App || {};
   function renderViewTabs() {
     const box = document.getElementById('view-tabs'); box.innerHTML = '';
     const tabs = [['timeline', '📊', 'Timeline'], ['board', '▦', 'Board'], ['dashboard', '🧭', 'Dashboard']];
+    if (App.state.role === 'director') tabs.push(['review', '🎯', 'Reviews']);
     if (App.isAdminRole(App.state.role)) tabs.push(['admin', '🛠', 'Admin']);
     tabs.forEach(([v, ic, lbl]) => {
       box.appendChild(el('button.view-tab' + (App.state.view === v ? '.active' : ''),
@@ -196,7 +198,14 @@ window.App = window.App || {};
     if (!items.length) return wrap.appendChild(el('.empty', null, 'Nothing is waiting for review right now. 🎉')), wrap;
 
     const list = el('.risk-list');
-    items.sort((a, b) => a.su.due < b.su.due ? -1 : 1).forEach(x => {
+    // sort order comes from the Reviews tab's own preferences popover
+    const byDue = (a, b) => a.su.due < b.su.due ? -1 : a.su.due > b.su.due ? 1 : 0;
+    const sorters = {
+      due: byDue,
+      show: (a, b) => App.show(a.ep.showId).name.localeCompare(App.show(b.ep.showId).name) || byDue(a, b),
+      dept: (a, b) => App.dept(a.su.dept).label.localeCompare(App.dept(b.su.dept).label) || byDue(a, b)
+    };
+    items.sort(sorters[App.prefs.get('reviewSort', 'due')] || byDue).forEach(x => {
       const show = App.show(x.ep.showId), dep = App.dept(x.su.dept);
       const person = x.su.assignee ? App.person(x.su.assignee) : null;
       list.appendChild(el('.risk-item', { style: { padding: '12px 14px' } }, [

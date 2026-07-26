@@ -102,6 +102,125 @@ button { font-family: inherit; cursor: pointer; }
 }
 .prefs-seg .seg:hover { color: var(--text); }
 .prefs-seg .seg.active { background: var(--accent); color: #fff; }
+.prefs-actions { display: flex; gap: 6px; flex: none; }
+.prefs-btn {
+  border: 1px solid var(--border-2); background: var(--bg); color: var(--text-2);
+  font-size: 11px; font-weight: 700; padding: 5px 10px; border-radius: 7px; cursor: pointer;
+  transition: background .13s, color .13s, border-color .13s;
+}
+.prefs-btn:hover { background: var(--hover); color: var(--text); border-color: var(--accent); }
+.prefs-note { font-size: 12px; color: var(--text-3); padding: 4px 10px 10px; }
+
+/* Create Project steps — a little wider than a confirm, and scrollable when a
+   department has a long template list */
+.modal-card.ws-step { max-width: 480px; }
+.ws-step .modal-body { max-height: 56vh; overflow-y: auto; }
+
+/* ---- per-subtask workspace (App.workspace) ---- */
+.ws { display: flex; flex-direction: column; gap: 16px; margin-top: 18px; }
+.ws-block { background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 13px 14px; }
+.ws-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.ws-path {
+  font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%;
+}
+.ws-sub { font-size: 10px; font-weight: 800; color: var(--text-3); text-transform: uppercase; letter-spacing: .6px; margin: 12px 0 6px; }
+.ws-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ws-btn { padding: 8px 13px; font-size: 12px; }
+.ws-note { font-size: 12px; color: var(--text-3); line-height: 1.5; padding: 6px 2px; }
+.ws-note.tight { padding: 2px 2px 0; font-size: 11.5px; }
+
+.ws-list { display: flex; flex-direction: column; gap: 4px; margin-top: 9px; }
+.ws-item {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font-size: 12px; padding: 7px 10px; border-radius: 8px; cursor: pointer;
+  transition: background .13s, border-color .13s;
+}
+.ws-item:hover { background: var(--hover); border-color: var(--accent); }
+.ws-item.static { cursor: default; }
+.ws-item.static:hover { background: var(--surface); border-color: var(--border); }
+.ws-ic { flex: none; font-size: 13px; }
+.ws-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.ws-name { color: var(--accent-2, #8fa2ff); text-decoration: none; }
+a.ws-name:hover { text-decoration: underline; }
+.ws-meta { flex: none; font-size: 10.5px; color: var(--text-3); }
+.ws-go { flex: none; color: var(--text-3); font-size: 11px; }
+.ws-x { flex: none; border: 0; background: transparent; color: var(--text-3); cursor: pointer; padding: 2px 4px; border-radius: 5px; }
+.ws-x:hover { color: #ff8a95; background: rgba(255,91,110,.12); }
+
+/* assets, grouped by the dependency that owes them */
+.ws-dep { border-top: 1px solid var(--border); padding: 10px 0 4px; }
+.ws-dep:first-of-type { border-top: 0; }
+.ws-dep-head { display: flex; align-items: center; gap: 9px; }
+.ws-dep-name { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-chip { flex: none; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.ws-chip.ok { background: rgba(0,200,117,.16); color: #6ee0aa; }
+.ws-chip.pending { background: rgba(253,171,61,.16); color: #ffce8e; }
+.ws-dep.pending .ws-dep-name { color: var(--text-2); }
+
+/* deliver drop area */
+.ws-drop {
+  border: 1.5px dashed var(--border-2); border-radius: 11px; padding: 20px 14px;
+  text-align: center; cursor: pointer; transition: background .13s, border-color .13s;
+}
+.ws-drop:hover { border-color: var(--accent); background: var(--hover); }
+.ws-drop.over { border-color: var(--accent); background: rgba(91,108,255,.10); }
+.ws-drop-main { font-size: 12.5px; font-weight: 700; }
+.ws-drop-sub { font-size: 10.5px; color: var(--text-3); margin-top: 3px; }
+.ws-progress:empty { display: none; }
+.ws-prog-line { font-size: 11.5px; color: var(--text-2); padding: 8px 2px 0; }
+.ws-prog-line.ok { color: #6ee0aa; }
+.ws-prog-line.err { color: #ff8a95; }
+.ws-delivered { margin-top: 4px; }
+
+/* folder picker (App.folderPicker) — server-side directory browser */
+.modal-card.fp-card { max-width: 560px; }
+.fp-roots { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.fp-root {
+  border: 1px solid var(--border-2); background: var(--bg); color: var(--text-2);
+  font-size: 11.5px; font-weight: 700; padding: 5px 11px; border-radius: 999px; cursor: pointer;
+}
+.fp-root:hover { background: var(--hover); color: var(--text); }
+.fp-root.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.fp-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.fp-up { padding: 7px 12px; font-size: 12px; flex: none; }
+.fp-up:disabled { opacity: .4; cursor: default; }
+.fp-path {
+  flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 11px; font-family: ui-monospace, monospace;
+  font-size: 11.5px; color: var(--text-2); overflow-x: auto; white-space: nowrap;
+}
+.fp-list {
+  height: 300px; overflow-y: auto; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 10px; padding: 5px;
+}
+.fp-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  border: 0; background: transparent; color: var(--text); font-size: 12.5px;
+  padding: 8px 10px; border-radius: 7px; cursor: pointer;
+}
+.fp-item:hover { background: var(--hover); }
+.fp-ic { flex: none; font-size: 13px; }
+.fp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-arrow { flex: none; color: var(--text-3); }
+.fp-size { flex: none; font-size: 10.5px; color: var(--text-3); }
+.fp-item.sel { background: rgba(91,108,255,.16); outline: 1px solid var(--accent); }
+.fp-loading, .fp-empty, .fp-error, .fp-notice { font-size: 12.5px; color: var(--text-3); padding: 14px 12px; }
+.fp-error { color: #ff8a95; white-space: pre-line; }
+.fp-notice { color: #ffce8e; padding: 10px 12px; line-height: 1.5; }
+/* a disabled action must not look pressable */
+.btn-primary:disabled, .btn-ghost:disabled, .btn-danger:disabled {
+  opacity: .45; cursor: default; filter: grayscale(.4);
+}
+.btn-primary:disabled:hover { background: var(--accent); }
+
+/* Admin → Workflow → Storage: the generated-tree preview */
+.storage-tree {
+  margin: 0; padding: 12px 14px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 10px; font-family: ui-monospace, monospace; font-size: 11.5px;
+  line-height: 1.65; color: var(--text-2); overflow-x: auto; white-space: pre;
+}
 .brand-name { font-weight: 800; font-size: 15px; letter-spacing: .2px; line-height: 1; }
 .brand-sub { font-size: 10.5px; color: var(--text-3); margin-top: 3px; letter-spacing: .3px; }
 
@@ -1109,6 +1228,12 @@ body.gantt-dragging { user-select: none; }
 .modal-body { padding: 8px 22px 4px; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 22px 20px; }
 .modal-section-title { font-size: 13px; font-weight: 800; margin: 18px 0 10px; }
+
+/* confirmation prompt (App.confirm) — narrow, message-only */
+.modal-card.confirm-card { max-width: 440px; }
+.confirm-card .modal-ic { background: rgba(255,91,110,.16); color: #ff8a95; }
+.confirm-msg { font-size: 13.5px; line-height: 1.55; color: var(--text-2); white-space: pre-line; }
+.confirm-card .btn-danger:focus-visible { outline: 2px solid #ff8a95; outline-offset: 2px; }
 
 .ctx-box { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
 .ctx-label { font-size: 11px; color: var(--text-3); margin-bottom: 7px; }

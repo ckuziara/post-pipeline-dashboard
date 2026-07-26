@@ -300,7 +300,7 @@ window.App = window.App || {};
     const layout = el('.adm-split');
     const side = el('.adm-side');
     side.appendChild(el('.adm-side-label', null, 'Workflow'));
-    [['statuses', '🎨', 'Task statuses'], ['departments', '🏷️', 'Departments'], ['pipelines', '🧬', 'Pipelines'], ['shows', '📚', 'Shows'], ['connectors', '🔌', 'Connectors']].forEach(([k, ic, lbl]) => {
+    [['statuses', '🎨', 'Task statuses'], ['departments', '🏷️', 'Departments'], ['pipelines', '🧬', 'Pipelines'], ['shows', '📚', 'Shows'], ['storage', '🗂', 'Storage'], ['connectors', '🔌', 'Connectors']].forEach(([k, ic, lbl]) => {
       side.appendChild(el('button.adm-role' + (tab === k ? '.active' : ''), {
         onclick: () => { App.state.admin.wfTab = k; App.render(); }
       }, [el('span.adm-role-ic', null, ic), lbl]));
@@ -314,6 +314,7 @@ window.App = window.App || {};
       tab === 'departments' ? departmentsCard()
       : tab === 'pipelines' ? pipelinesPanel()
       : tab === 'shows' ? showsPanel()
+      : tab === 'storage' ? storageCard()
       : tab === 'connectors' ? connectorsCard()
       : statusesCard());
 
@@ -321,6 +322,71 @@ window.App = window.App || {};
     layout.appendChild(panel);
     box.appendChild(layout);
     return box;
+  }
+
+  /* Storage: the LucidLink master directory new shows are built under. Held in
+     shared board state so everyone resolves the same root; the server does the
+     actual mkdir and generates every path itself from the show's pipeline. */
+  function storageCard() {
+    const wrap = el('div');
+    const cur = (App.state.data.storage && App.state.data.storage.masterPath) || '';
+
+    const card = el('.adm-permcard');
+    card.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'Production master directory'),
+      el('.adm-permcard-desc', null, 'The LucidLink (or mounted) folder new shows are created under. Adding a show builds its whole structure straight away — shared libraries, production folders, and every episode’s department tree.')
+    ]));
+
+    const input = el('input.fld', { type: 'text', value: cur, spellcheck: 'false',
+      placeholder: '/Volumes/LucidLink/Productions', style: { flex: '1', minWidth: '260px', fontFamily: 'ui-monospace, monospace' } });
+    const save = () => App.setMasterPath(input.value);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+
+    card.appendChild(el('.wf-add', null, [
+      input,
+      // browse the server's filesystem — a browser picker can't return an
+      // absolute path, and it's the server that has the LucidLink mount
+      el('button.btn-ghost', {
+        // only seed the picker from the field when it's already absolute —
+        // a relative value would just bounce off the server's fallback
+        onclick: () => App.folderPicker.open(/^\//.test(input.value.trim()) ? input.value.trim() : undefined, p => {
+          input.value = p;
+          App.setMasterPath(p);
+        })
+      }, '📂 Browse…'),
+      el('button.btn-primary', { onclick: save }, '💾 Save'),
+      cur ? el('button.btn-ghost', { onclick: () => App.setMasterPath('') }, 'Clear') : null
+    ]));
+    card.appendChild(
+      !cur ? el('.adm-name-sub', { style: { padding: '0 4px 12px' } }, 'Not set — folder creation is off until a path is saved.')
+      : cur[0] !== '/' ? el('.fp-error', { style: { padding: '0 4px 12px' } },
+          '⚠ That’s a relative path, so the server can’t find it. It needs to start with “/” — probably /Volumes/' + cur + '. Use Browse… to pick it.')
+      : el('.adm-name-sub', { style: { padding: '0 4px 12px' } }, 'Shows are created at ' + cur + '/<CODE>_<ShowName>/'));
+    wrap.appendChild(card);
+
+    // what the generated tree looks like, so the path isn't set blind
+    const info = el('.adm-permcard');
+    info.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'What gets created'),
+      el('.adm-permcard-desc', null, 'Generated from each show’s own pipeline, so it always matches the tasks on the board — including custom presets. Kept lean for working storage: tasks that are iterations of one deliverable share a folder (Animatic V1–V3 are versioned files, not three directories), and rearranging for long-term storage is the archival process’s job. About 23 folders per episode.')
+    ]));
+    info.appendChild(el('pre.storage-tree', null,
+      '!!_Templates/              project templates, shared by every show\n' +
+      '<CODE>_<ShowName>/\n' +
+      '  !!_ShowLibrary/          styleguides, design, music & SFX, GFX, LUTs\n' +
+      '  0001_Production/         schedules, scripts, contracts & crew, notes\n' +
+      '  0002_Episodes/\n' +
+      '    <CODE>-1_<Title>/      every episode, built with the show\n' +
+      '      !!_Mezzanine/        delivered, waiting on approval\n' +
+      '      !!_Publish/          approved handoffs — what downstream tasks read\n' +
+      '      !!_Reviews/          YYMMDD_<Task> review packages\n' +
+      '      0001_Creative/       Story · Design · Storyboard · Animatic\n' +
+      '      0002_Music/          Skeleton · Vocals · Master\n' +
+      '      0003_Animation/      Layout_Blocking · Animation · LRC\n' +
+      '      0004_AudioPost/      VO · Wallah · SFX\n' +
+      '      0005_VideoPost/      0006_PostOps/      0007_QC/'));
+    wrap.appendChild(info);
+    return wrap;
   }
 
   // Connectors: global on/off for each external tool. Disabled → hidden app-wide.
@@ -544,7 +610,8 @@ window.App = window.App || {};
     const act = el('.adm-permcard');
     act.appendChild(el('.adm-permcard-head', null, [
       el('.adm-permcard-title', null, 'Active shows'),
-      el('.adm-permcard-desc', null, 'Archiving hides a show or episode from every view without losing any of its data.')
+      el('.adm-permcard-desc', null, 'Archiving hides a show or episode from every view without losing any of its data.' +
+        (App.masterPathSet() ? ' Rebuild only adds folders that are missing on the master directory — it never touches existing files.' : ''))
     ]));
     const actList = el('.wf-list');
     const activeShows = shows.filter(s => !s.archived);
@@ -564,8 +631,16 @@ window.App = window.App || {};
           el('.adm-name', null, s.name),
           el('.adm-name-sub', null, (s.prefix || '—') + ' · ' + sEps.length + ' active episode' + (sEps.length === 1 ? '' : 's'))
         ]),
-        el('.arch-actions', null,
-          el('button.btn-mini', { onclick: (e) => { e.stopPropagation(); App.setShowArchived(s.id, true); } }, '🗄 Archive show'))
+        el('.arch-actions', null, [
+          // restore anything missing from this show's tree on the master directory
+          (App.masterPathSet()
+            ? el('button.btn-mini', {
+                title: 'Create any of this show’s production folders that are missing',
+                onclick: (e) => { e.stopPropagation(); App.rebuildShowFolders(s.id); }
+              }, '🗂 Rebuild folders')
+            : null),
+          el('button.btn-mini', { onclick: (e) => { e.stopPropagation(); App.setShowArchived(s.id, true); } }, '🗄 Archive show')
+        ])
       ]));
       if (isOpen) sEps.forEach(ep => {
         actList.appendChild(el('.ep-arch-row', null, [

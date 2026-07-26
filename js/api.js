@@ -46,6 +46,25 @@ window.App = window.App || {};
       this._pushTimer = setTimeout(() => this._doPush(), 400);
     },
 
+    /* Send any pending save NOW and wait for it to land. Needed before asking
+       the server to act on state we just changed locally (e.g. creating a new
+       show's folders) — otherwise the debounce means the server hasn't seen the
+       show yet and would answer "unknown show". */
+    async flush() {
+      if (!this.online || !this.me) return;
+      clearTimeout(this._pushTimer);
+      this._pushTimer = null;
+      await this._doPush();
+      // _doPush re-queues itself if a push was already in flight; wait that out
+      // so callers can rely on the server being current when this resolves.
+      while (this._pushing || this._pushTimer) {
+        clearTimeout(this._pushTimer);
+        this._pushTimer = null;
+        await new Promise(r => setTimeout(r, 60));
+        if (!this._pushing) await this._doPush();
+      }
+    },
+
     async _doPush() {
       this._pushTimer = null;   // the scheduled push is now in flight, not pending
       if (this._pushing) { this.push(); return; }
@@ -105,6 +124,70 @@ window.App = window.App || {};
           await this._adoptVersion(v);
         } catch (e) { /* server briefly unreachable */ }
       }, 15000);
+    },
+
+    /* List a directory on the machine running the server — the folder picker's
+       backing call. A browser picker can't return an absolute path, and it's the
+       server that has to see the LucidLink mount. */
+    async browse(dirPath, withFiles) {
+      const q = [];
+      if (dirPath) q.push('path=' + encodeURIComponent(dirPath));
+      if (withFiles) q.push('files=1');
+      const r = await fetch('/api/browse' + (q.length ? '?' + q.join('&') : ''), { cache: 'no-store' });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not open that folder');
+      return body;
+    },
+
+    /* ---- per-subtask workspace (Project / Assets / Deliver) ----
+       All of these POST because the server needs the pipeline to resolve a task's
+       folder, and seed shows don't carry one in stored state. */
+    async _post(path, body) {
+      const r = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(out.error || 'request failed');
+      return out;
+    },
+
+    taskWorkspace(b) { return this._post('/api/task/workspace', b); },
+    taskProject(b)   { return this._post('/api/task/project', b); },
+    taskOpen(b)      { return this._post('/api/task/open', b); },
+    deliverPrepare(b) { return this._post('/api/task/deliver/prepare', b); },
+    // moves a task's delivered files from Mezzanine to Publish, on approval
+    taskPromote(b) { return this._post('/api/task/promote', b); },
+    // opens in the OS default browser when the server is on this machine
+    openUrl(url) { return this._post('/api/open-url', { url }); },
+
+    /* Streams one file straight to the token's folder. Kept as a raw body (not
+       multipart) so multi-GB media never buffers in memory on either side. */
+    async deliverUpload(token, file) {
+      const q = '?token=' + encodeURIComponent(token) + '&filename=' + encodeURIComponent(file.name);
+      const r = await fetch('/api/task/deliver/upload' + q, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: file
+      });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(out.error || 'upload failed');
+      return out;
+    },
+
+    /* Build a show's whole production structure on the LucidLink master directory
+       — shared folders plus every episode. The server generates every path itself
+       from stored state; we only name the show. */
+    async createFolders({ showId, pipeline }) {
+      const r = await fetch('/api/folders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ showId, pipeline })
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not create folders');
+      return body;
     },
 
     async devLogin(email) {
