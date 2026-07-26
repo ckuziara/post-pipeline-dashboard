@@ -456,10 +456,9 @@ window.App = window.App || {};
       const status = el('.ws-progress');
       const drop = el('.ws-drop', null, [
         el('.ws-drop-main', null, '📤  Drop files here to deliver'),
-        el('.ws-drop-sub', null, 'held in !!_Mezzanine/' + d.deliverable + ' until this task is approved')
+        el('.ws-drop-sub', null, 'or click to browse the volume — held in !!_Mezzanine/' +
+          d.deliverable + ' until this task is approved')
       ]);
-      const fileIn = el('input', { type: 'file', multiple: true, style: { display: 'none' },
-        onchange: (e) => { this._upload([...e.target.files], status); e.target.value = ''; } });
 
       ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => {
         e.preventDefault(); e.stopPropagation(); drop.classList.add('over');
@@ -472,10 +471,13 @@ window.App = window.App || {};
         const files = e.dataTransfer && e.dataTransfer.files;
         if (files && files.length) this._upload([...files], status);
       });
-      drop.addEventListener('click', () => fileIn.click());
+      /* Clicking opens OUR file browser, never <input type="file">. A native file
+         dialog crashes the embedded webview the app runs in — the same reason
+         window.confirm() had to be replaced — and a native dialog is Finder,
+         which this whole feature exists to avoid. */
+      drop.addEventListener('click', () => this._pickFromMount());
 
       wrap.appendChild(drop);
-      wrap.appendChild(fileIn);
       wrap.appendChild(status);
 
       wrap.appendChild(el('.ws-actions', null, [

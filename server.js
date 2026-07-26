@@ -527,14 +527,15 @@ const server = http.createServer(async (req, res) => {
           // templateSource says which library it came from: the studio-wide one,
           // or this show's own override folder
           const src = folders.templatePath(masterPath, show, body.template, body.templateSource);
-          if (!fs.existsSync(src) || fs.statSync(src).isDirectory()) {
+          if (!fs.existsSync(src)) {
             return sendJson(res, 400, { error: 'template not found: ' + body.template });
           }
           // <EPCODE>_<Deliverable>_v001.<ext> — e.g. LA-101_Animatic_v001.aep
           const ext = path.extname(src);
           const base = folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_v001' + ext;
           const dest = folders.uniquePath(workAbs, folders.safeFile(base));
-          fs.copyFileSync(src, dest);
+          // a Logic .logicx (and friends) is a package directory, so copy recursively
+          fs.cpSync(src, dest, { recursive: fs.statSync(src).isDirectory() });
           created = path.basename(dest);
         }
         const willOpen = body.open !== false && isLocalRequest(req);

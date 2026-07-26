@@ -286,9 +286,17 @@ function listDir(absDir) {
    version replaces the studio one rather than appearing twice. */
 function templatesFor(masterPath, show) {
   const NOT_TEMPLATE = ['txt', 'md', 'rtf', 'pdf', 'doc', 'docx'];
-  const usable = f => !f.dir && !NOT_TEMPLATE.includes(f.name.split('.').pop().toLowerCase());
+  /* Several real project formats are macOS PACKAGES — a Logic .logicx or a Final
+     Cut .fcpbundle is a directory, not a file — so directories count as templates
+     when they carry an extension. A plain folder (someone's "Old versions") does
+     not. Excluding all directories silently hid real Logic templates. */
+  const usable = f => {
+    const ext = f.name.includes('.') ? f.name.split('.').pop().toLowerCase() : '';
+    if (!ext || NOT_TEMPLATE.includes(ext)) return false;
+    return true;                          // file or package, both fine
+  };
   const pick = (absDir, source) => listDir(absDir).filter(usable)
-    .map(f => ({ name: f.name, size: f.size, source }));
+    .map(f => ({ name: f.name, size: f.size, source, pkg: f.dir }));
 
   const master = pick(resolveMaster(masterPath, MASTER_TEMPLATES), 'master');
   const own = pick(resolveIn(masterPath, show, SHOW_TEMPLATES), 'show');
