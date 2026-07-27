@@ -24,3 +24,9 @@ services:
         value: chris.kuziara@moonbug.com
       - key: DEV_LOGIN             # start "true" so you can sign in; set "false" once Google SSO works
         value: "true"
+      # NOTE: MASTER_PATH is deliberately NOT set here. The production-folder
+      # automation (/api/folders, /api/task/*) and "open in app" actions need a
+      # mounted LucidLink volume and a local desktop to spawn apps on, so they
+      # only work when the server runs on a studio machine. Hosted, those routes
+      # fail gracefully ("Master directory not found — is LucidLink mounted?")
+      # while the board, timeline, admin and SSO all work normally.

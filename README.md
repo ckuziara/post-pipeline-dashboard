@@ -106,6 +106,11 @@ cookies, so no session store is needed either.
    - `ADMIN_EMAILS`, `ALLOWED_DOMAIN` — already defaulted in `render.yaml`
 3. Deploy. Render gives you a URL like `https://post-pipeline-dashboard.onrender.com`.
 
+The database connection verifies the server's TLS certificate by default, which
+works out of the box with Neon (and RDS/Aurora). If you later point this at an
+on-prem Postgres using a **self-signed** certificate, set `PGSSL_NO_VERIFY=true`
+to skip verification — only do that on a trusted network.
+
 > ⚠ **Security:** `DEV_LOGIN` defaults to `true` so you can sign in before SSO
 > is wired up — but on a public URL that lets *anyone with the link* sign in.
 > Configure Google SSO (below) and set **`DEV_LOGIN=false`** as soon as you can.

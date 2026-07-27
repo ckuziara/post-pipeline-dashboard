@@ -99,7 +99,12 @@ function makeFileStore() {
 
 function makePgStore(connectionString) {
   const { Pool } = require('pg');   // lazy — only a hosted deploy needs the dependency
-  const pool = new Pool({ connectionString, ssl: { rejectUnauthorized: false }, max: 5 });
+  // Verify the server certificate by default — Neon (and RDS/Aurora) present
+  // certs from a public CA, so this just works and protects the connection
+  // from interception. An on-prem Postgres with a self-signed cert can opt out
+  // with PGSSL_NO_VERIFY=true rather than us weakening it for everyone.
+  const ssl = { rejectUnauthorized: ENV.PGSSL_NO_VERIFY !== 'true' };
+  const pool = new Pool({ connectionString, ssl, max: 5 });
   return {
     kind: 'postgres',
     async init() {
