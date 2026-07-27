@@ -206,9 +206,15 @@ window.App = window.App || {};
       { title: 'Assign Task Owners', desc: 'Can set or change a task’s owner from the Edit Task dialog.',
         get: k => App.canAssignOwners(k), set: (k, v) => App.setAssignPriv(k, v) },
       { title: 'Approve Tasks', desc: 'Can move tasks to Approved, and change tasks that are already approved.',
-        get: k => App.canApprove(k), set: (k, v) => App.setRolePerm(k, 'approve', v, 'Approve Tasks') }
+        get: k => App.canApprove(k), set: (k, v) => App.setRolePerm(k, 'approve', v, 'Approve Tasks') },
+      { title: 'Rename Tasks', desc: 'Can change a task’s name from the Edit Task dialog.',
+        get: k => App.canEditTaskName(k), set: (k, v) => App.setRolePerm(k, 'editName', v, 'Rename Tasks') },
+      { title: 'Remove Tasks', danger: true, desc: 'Can drop a task from an episode’s pipeline.',
+        get: k => App.canRemoveTask(k), set: (k, v) => App.setRolePerm(k, 'removeTask', v, 'Remove Tasks') }
     ]},
     { title: 'Pipeline Oversight', desc: 'High-level access to shows and scheduling.', items: [
+      { title: 'Change the Schedule', desc: 'Can move task dates — in the Edit Task dialog and by dragging bars on the Timeline — for every department, not just their own.',
+        get: k => App.canEditSchedule(k), set: (k, v) => App.setRolePerm(k, 'editSchedule', v, 'Change the Schedule') },
       { title: 'Manage Shows', danger: true, desc: 'Can create new shows — and permanently remove a show together with all of its episodes.',
         get: k => App.canManageShows(k), set: (k, v) => App.setRolePerm(k, 'manageShows', v, 'Manage Shows') }
     ]},

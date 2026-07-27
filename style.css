@@ -33,6 +33,58 @@
   --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
+/* ----------------------------------------------------------------- themes
+   Each theme re-declares the palette above; nothing else in the sheet needs
+   to know which one is active. Set from the preferences menu, which writes
+   data-theme onto <html> (see App.applyTheme). "midnight" is the default
+   declared in :root, so it needs no block of its own. */
+:root[data-theme="graphite"] {
+  --bg: #131314; --bg-2: #191a1b; --surface: #1f2021; --surface-2: #26282a; --surface-3: #303234;
+  --row: #1f2021; --row-alt: #232527; --hover: #2e3134;
+  --border: rgba(255,255,255,.07); --border-2: rgba(255,255,255,.13);
+  --text: #eceef0; --text-2: #b2b6bb; --text-3: #7c8288;
+  --accent: #2fbf9f; --accent-2: #1f9c80;
+}
+:root[data-theme="nord"] {
+  --bg: #242933; --bg-2: #2e3440; --surface: #333a48; --surface-2: #3b4252; --surface-3: #434c5e;
+  --row: #333a48; --row-alt: #39404f; --hover: #4c566a;
+  --border: rgba(255,255,255,.08); --border-2: rgba(255,255,255,.15);
+  --text: #eceff4; --text-2: #d8dee9; --text-3: #97a1b4;
+  --accent: #5e81ac; --accent-2: #4c6f96;
+}
+:root[data-theme="indigo"] {
+  --bg: #0f0d1a; --bg-2: #171327; --surface: #1d1830; --surface-2: #251f3c; --surface-3: #2f2749;
+  --row: #1d1830; --row-alt: #211b35; --hover: #332a52;
+  --border: rgba(255,255,255,.08); --border-2: rgba(255,255,255,.15);
+  --text: #ece9f7; --text-2: #b3adcb; --text-3: #7f7899;
+  --accent: #8b5cf6; --accent-2: #6d38e0;
+}
+:root[data-theme="forest"] {
+  --bg: #0c1310; --bg-2: #111a16; --surface: #16211c; --surface-2: #1c2a23; --surface-3: #24352c;
+  --row: #16211c; --row-alt: #1a2620; --hover: #26382f;
+  --border: rgba(255,255,255,.07); --border-2: rgba(255,255,255,.14);
+  --text: #e6efe9; --text-2: #a9bdb1; --text-3: #74897e;
+  --accent: #d9a441; --accent-2: #b8862c;
+}
+:root[data-theme="daylight"] {
+  --bg: #f4f6fa; --bg-2: #ffffff; --surface: #ffffff; --surface-2: #f1f4f9; --surface-3: #e5eaf2;
+  --row: #ffffff; --row-alt: #f7f9fc; --hover: #e9eef6;
+  --border: rgba(16,24,40,.10); --border-2: rgba(16,24,40,.18);
+  --text: #171a21; --text-2: #4a5164; --text-3: #79808f;
+  --accent: #4f5bd5; --accent-2: #3a45b0;
+  --shadow: 0 12px 34px rgba(16,24,40,.14);
+}
+/* the timeline's weekend/zebra shading is a white wash tuned for a dark
+   canvas — invert it so it still reads on the light theme */
+:root[data-theme="daylight"] .grid-col.weekend,
+:root[data-theme="daylight"] .thead-cell.secondary.weekend { background: rgba(16,24,40,.045); }
+:root[data-theme="daylight"] .g-row.sub { background: rgba(16,24,40,.035); }
+:root[data-theme="daylight"] .pn-row { background: rgba(16,24,40,.02); }
+/* background-color only — the base rule's transparent border + content-box
+   clip is what gives the thumb its inset, and the shorthand would reset it */
+:root[data-theme="daylight"] ::-webkit-scrollbar-thumb { background-color: #c3ccdb; }
+:root[data-theme="daylight"] ::-webkit-scrollbar-thumb:hover { background-color: #a8b4c8; }
+
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -110,6 +162,15 @@ button { font-family: inherit; cursor: pointer; }
 }
 .prefs-btn:hover { background: var(--hover); color: var(--text); border-color: var(--accent); }
 .prefs-note { font-size: 12px; color: var(--text-3); padding: 4px 10px 10px; }
+/* a second section in the popover (Appearance) — ruled off from the rows above */
+.prefs-title.sep { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 10px; }
+.prefs-select {
+  flex: none; max-width: 160px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border-2); border-radius: 8px; padding: 5px 8px;
+  font-size: 11.5px; font-weight: 700; font-family: inherit; cursor: pointer;
+}
+.prefs-select:hover { border-color: var(--accent); }
+.prefs-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,108,255,.18); }
 
 /* Create Project steps — a little wider than a confirm, and scrollable when a
    department has a long template list */
@@ -850,6 +911,9 @@ body.gantt-dragging { user-select: none; }
 }
 .login-div::before, .login-div::after { content: ''; flex: 1; height: 1px; background: var(--border-2); }
 .login-dev { display: flex; gap: 8px; width: 100%; }
+/* email + access code don't fit side by side — stack them */
+.login-dev.stacked { flex-direction: column; }
+.login-dev.stacked .btn-primary { width: 100%; padding: 10px; }
 .login-input {
   flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border-2); border-radius: 9px;
   padding: 10px 12px; font-size: 13px; color: var(--text); font-family: inherit; outline: none;

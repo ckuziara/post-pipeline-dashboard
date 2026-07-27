@@ -190,11 +190,11 @@ window.App = window.App || {};
       return body;
     },
 
-    async devLogin(email) {
+    async devLogin(email, code) {
       const r = await fetch('/auth/dev', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
+        body: JSON.stringify({ email, code })
       });
       if (!r.ok) throw new Error((await r.json()).error || 'sign-in failed');
       location.href = location.pathname;   // reboot signed in (drops ?err=…)
