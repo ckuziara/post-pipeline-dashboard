@@ -25,16 +25,31 @@ window.App = window.App || {};
   };
 
   // ---- permission helpers shared by the mutators ----
-  function guardEdit(epId, key) {
+  function findTask(epId, key) {
     const ep = App.state.data.episodes.find(e => e.id === epId);
     const su = ep && App.subitem(ep, key);
-    if (!su) return null;
-    if (!App.canEditTask(App.state.role, su)) {
+    return su ? { ep, su } : null;
+  }
+  // department-scoped gate: may this role touch the task at all?
+  function guardEdit(epId, key) {
+    const g = findTask(epId, key);
+    if (!g) return null;
+    if (!App.canEditTask(App.state.role, g.su)) {
       const d = App.roleDept(App.state.role);
       App.toast('Your role can only edit ' + (d ? App.dept(d).label : 'permitted') + ' tasks', true);
       return null;
     }
-    return { ep, su };
+    return g;
+  }
+  // scheduling is its own right and spans departments (see App.canEditSchedule)
+  function guardSchedule(epId, key) {
+    const g = findTask(epId, key);
+    if (!g) return null;
+    if (!App.canEditSchedule(App.state.role)) {
+      App.toast('Only Producers, Managers and Post Operations can change the schedule', true);
+      return null;
+    }
+    return g;
   }
 
   App.setStatus = function (epId, key, status) {
@@ -50,24 +65,37 @@ window.App = window.App || {};
   };
 
   App.applyTaskEdit = function (epId, key, { name, status, start, due, assignee }) {
-    const g = guardEdit(epId, key); if (!g) return;
-    if (status === 'approved' && g.su.status !== 'approved' && !App.canApprove(App.state.role)) {
+    const g = findTask(epId, key); if (!g) return;
+    const role = App.state.role;
+    // Each field has its own right; anything the role lacks is left untouched
+    // rather than blocking the save. A department owner can still move their
+    // task's status on, and a scheduler can still redate another team's task.
+    const canTouch = App.canEditTask(role, g.su);
+    const canName = App.canEditTaskName(role), canSched = App.canEditSchedule(role);
+    if (!canTouch && !canSched) {
+      const d = App.roleDept(role);
+      App.toast('Your role can only edit ' + (d ? App.dept(d).label : 'permitted') + ' tasks', true);
+      return;
+    }
+    if (canTouch && status === 'approved' && g.su.status !== 'approved' && !App.canApprove(role)) {
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
     const wasApproved = g.su.status === 'approved';
     App.mutate(d => {
       const e = d.episodes.find(x => x.id === epId);
       e.names = e.names || {}; e.dates = e.dates || {};
-      e.names[key] = name; e.dates[key] = { start, due }; e.statuses[key] = status;
+      if (canName) e.names[key] = name;
+      if (canSched) e.dates[key] = { start, due };
+      if (canTouch) e.statuses[key] = status;
       // assignee is only passed when the editor holds the assign-owners privilege
-      if (assignee !== undefined && App.canAssignOwners(App.state.role)) {
+      if (assignee !== undefined && canTouch && App.canAssignOwners(role)) {
         e.assignees = e.assignees || {};
         if (assignee) e.assignees[key] = assignee; else delete e.assignees[key];
       }
       App.refreshReadiness(e);
     });
-    App.toast('Saved “' + name + '”');
-    if (status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
+    App.toast('Saved “' + (canName ? name : g.su.name) + '”');
+    if (canTouch && status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
   };
 
   /* Approval is what turns delivered work into an asset the next department can
@@ -92,7 +120,7 @@ window.App = window.App || {};
   // this only fires on a genuine bug or a very fast gesture); dependency
   // ordering is a soft rule — the move still applies, but the user is warned.
   App.moveTask = function (epId, key, newStart, newDue) {
-    const g = guardEdit(epId, key); if (!g) return;
+    const g = guardSchedule(epId, key); if (!g) return;
     const pipe = App.pipelineFor(g.ep);
     const task = pipe.find(t => t.key === key);
     const minDays = (task && task.minDays) || 1;
@@ -327,7 +355,10 @@ window.App = window.App || {};
   };
 
   App.removeTask = function (epId, key) {
-    const g = guardEdit(epId, key); if (!g) return;
+    const g = findTask(epId, key); if (!g) return;
+    if (!App.canRemoveTask(App.state.role)) {
+      App.toast('Only Producers and Managers can remove tasks', true); return;
+    }
     App.mutate(d => {
       const e = d.episodes.find(x => x.id === epId);
       e.removed = e.removed || []; if (!e.removed.includes(key)) e.removed.push(key);
@@ -602,6 +633,27 @@ window.App = window.App || {};
             }, o.label)))
         ]);
       };
+      // a <select> row — for settings with more options than a segmented
+      // control can hold at this width (themes)
+      const selRow = (title, key, def, options, onChange) => {
+        const cur = App.prefs.get(key, def);
+        const sel = el('select.prefs-select');
+        options.forEach(o => {
+          const opt = document.createElement('option');
+          opt.value = o.v; opt.textContent = o.label;
+          if (o.v === cur) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        sel.addEventListener('click', e => e.stopPropagation());
+        sel.addEventListener('change', () => {
+          App.prefs.set(key, sel.value);
+          if (onChange) onChange(sel.value);
+        });
+        return el('.prefs-row', { style: { cursor: 'default' } }, [
+          el('.prefs-row-title', null, title), sel
+        ]);
+      };
+
       // a row of plain action buttons (no persisted switch) — for one-shot
       // commands like expand-all or resetting a layout
       const actionRow = (title, actions) => el('.prefs-row', { style: { cursor: 'default' } }, [
@@ -643,9 +695,18 @@ window.App = window.App || {};
         review: 'Reviews', admin: 'Admin' })[view] || 'Quick';
       const rows = viewRows[view] ? viewRows[view]() : [];
 
+      // Appearance applies to the whole tracker, so it sits in its own section
+      // below the view-scoped rows and shows up on every tab.
+      const themeRow = selRow('Theme', 'theme', 'midnight', App.THEMES, () => {
+        App.applyTheme();
+        this.open();        // rebuild the popover so it repaints in the new palette
+        App.render();       // anything that samples the palette (timeline labels)
+      });
+
       const pop = el('.prefs-pop', { onclick: e => e.stopPropagation() },
-        [el('.prefs-title', null, label + ' preferences')].concat(
-          rows.length ? rows : [el('.prefs-note', null, 'No display options for this view.')]));
+        [el('.prefs-title', null, label + ' preferences')]
+          .concat(rows.length ? rows : [el('.prefs-note', null, 'No display options for this view.')])
+          .concat([el('.prefs-title.sep', null, 'Appearance'), themeRow]));
       const r = document.getElementById('brand-logo').getBoundingClientRect();
       pop.style.top = (r.bottom + 8) + 'px';
       pop.style.left = Math.max(8, r.left) + 'px';
