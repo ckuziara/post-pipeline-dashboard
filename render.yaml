@@ -22,8 +22,10 @@ services:
         value: moonbug.com
       - key: ADMIN_EMAILS
         value: chris.kuziara@moonbug.com
-      - key: DEV_LOGIN             # start "true" so you can sign in; set "false" once Google SSO works
+      - key: DEV_LOGIN             # email sign-in; set "false" once Google SSO works
         value: "true"
+      - key: ACCESS_CODE           # REQUIRED while DEV_LOGIN is true on a public URL —
+        sync: false                # shared team code, else anyone with the link can sign in
       # NOTE: MASTER_PATH is deliberately NOT set here. The production-folder
       # automation (/api/folders, /api/task/*) and "open in app" actions need a
       # mounted LucidLink volume and a local desktop to spawn apps on, so they

@@ -33,7 +33,8 @@ const DEFAULT_CONFIG = {
   google: { clientId: '', clientSecret: '' },
   allowedDomain: 'moonbug.com',          // only this Workspace domain may sign in ('' = any)
   adminEmails: ['chris.kuziara@moonbug.com'],  // always treated as Producer (bootstrap)
-  databaseUrl: ''                        // Postgres connection string (Neon) → hosted mode
+  databaseUrl: '',                       // Postgres connection string (Neon) → hosted mode
+  accessCode: ''                         // shared team code required by the email sign-in
 };
 
 function loadConfig() {
@@ -51,17 +52,33 @@ function loadConfig() {
   if (ENV.ADMIN_EMAILS) cfg.adminEmails = ENV.ADMIN_EMAILS.split(',').map(s => s.trim()).filter(Boolean);
   if (ENV.DEV_LOGIN !== undefined) cfg.devLogin = ENV.DEV_LOGIN === 'true';
   if (ENV.DATABASE_URL) cfg.databaseUrl = ENV.DATABASE_URL;
+  if (ENV.ACCESS_CODE) cfg.accessCode = ENV.ACCESS_CODE;
 
   // Local dev only: persist a generated secret so sessions survive a restart.
   // (In a hosted deploy SESSION_SECRET is set, so we never reach this.)
   if (!cfg.sessionSecret) {
     cfg.sessionSecret = crypto.randomBytes(32).toString('hex');
     try {
-      const toSave = Object.assign({}, cfg); delete toSave.databaseUrl;
+      const toSave = Object.assign({}, cfg);
+      delete toSave.databaseUrl; delete toSave.accessCode;
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(toSave, null, 2));
     } catch (e) { /* read-only fs — fine, secret just lives for this run */ }
   }
   return cfg;
+}
+
+// Constant-time compare so the code can't be guessed a character at a time.
+// Both sides are hashed first, which also sidesteps length leakage.
+function codeMatches(given) {
+  const h = (s) => crypto.createHash('sha256').update(String(s || '')).digest();
+  return crypto.timingSafeEqual(h(given), h(config.accessCode));
+}
+// Who may use the email sign-in: the configured Workspace domain, plus the
+// bootstrap admins (who might be on another domain).
+function emailAllowed(email) {
+  if (!config.allowedDomain) return true;
+  return email.endsWith('@' + config.allowedDomain) ||
+         config.adminEmails.map(e => e.toLowerCase()).includes(email);
 }
 const config = loadConfig();
 const PORT = ENV.PORT || config.port;
@@ -346,6 +363,7 @@ const server = http.createServer(async (req, res) => {
       if (!s) return sendJson(res, 401, {
         error: 'not signed in',
         devLogin: config.devLogin,
+        needsCode: !!config.accessCode,
         googleConfigured: googleConfigured()
       });
       return sendJson(res, 200, {
@@ -375,6 +393,15 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse(await readBody(req) || '{}');
       const email = String(body.email || '').trim().toLowerCase();
       if (!/^\S+@\S+\.\S+$/.test(email)) return sendJson(res, 400, { error: 'enter a valid email' });
+      // Without Google SSO this endpoint is the only gate, so it enforces both
+      // the shared team code and the allowed domain — otherwise anyone who
+      // finds the URL could sign in as an admin.
+      if (config.accessCode && !codeMatches(body.code)) {
+        return sendJson(res, 403, { error: 'Wrong access code' });
+      }
+      if (!emailAllowed(email)) {
+        return sendJson(res, 403, { error: 'Only @' + config.allowedDomain + ' accounts can sign in' });
+      }
       const name = email.split('@')[0].split(/[._-]/).map(w => w[0] ? w[0].toUpperCase() + w.slice(1) : w).join(' ');
       res.setHeader('Set-Cookie', sessionCookie(createSession({ email, name, picture: '', via: 'dev' }), { secure: isSecure(req) }));
       return sendJson(res, 200, { ok: true });
@@ -781,8 +808,12 @@ const server = http.createServer(async (req, res) => {
     if (config.host !== '127.0.0.1' && lan) console.log('  • Team (LAN):   http://' + lan.address + ':' + PORT + '/');
     console.log('  • Storage:      ' + storage.kind);
     console.log('  • Google SSO:   ' + (googleConfigured() ? 'configured ✓' : 'not configured — dev sign-in active'));
-    if (config.devLogin && storage.kind === 'postgres') {
-      console.log('  ⚠ DEV_LOGIN is ON in a hosted deploy — set DEV_LOGIN=false once Google SSO works, or anyone with the URL can sign in.');
+    console.log('  • Email sign-in: ' + (!config.devLogin ? 'off'
+      : config.accessCode ? 'on, access code required' : 'on, NO ACCESS CODE'));
+    if (config.devLogin && !config.accessCode && storage.kind === 'postgres') {
+      console.log('  ⚠ SECURITY: email sign-in is open on a hosted deploy — anyone with the URL');
+      console.log('    can sign in as any ' + (config.allowedDomain || 'valid') + ' address, including an admin.');
+      console.log('    Set ACCESS_CODE (shared team code), or DEV_LOGIN=false once Google SSO works.');
     }
   });
 })();

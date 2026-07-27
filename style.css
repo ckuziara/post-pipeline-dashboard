@@ -850,6 +850,9 @@ body.gantt-dragging { user-select: none; }
 }
 .login-div::before, .login-div::after { content: ''; flex: 1; height: 1px; background: var(--border-2); }
 .login-dev { display: flex; gap: 8px; width: 100%; }
+/* email + access code don't fit side by side — stack them */
+.login-dev.stacked { flex-direction: column; }
+.login-dev.stacked .btn-primary { width: 100%; padding: 10px; }
 .login-input {
   flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border-2); border-radius: 9px;
   padding: 10px 12px; font-size: 13px; color: var(--text); font-family: inherit; outline: none;

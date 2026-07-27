@@ -531,8 +531,13 @@ window.App = window.App || {};
     const el = App.el, opts = App.api.loginOpts || {};
     const err = new URLSearchParams(location.search).get('err');
     const emailInput = el('input.login-input', { type: 'email', placeholder: 'you@moonbug.com' });
-    const devSubmit = () => App.api.devLogin(emailInput.value).catch(e => App.toast(e.message, true));
+    const codeInput = opts.needsCode
+      ? el('input.login-input', { type: 'password', placeholder: 'Team access code' })
+      : null;
+    const devSubmit = () => App.api.devLogin(emailInput.value, codeInput ? codeInput.value : undefined)
+      .catch(e => App.toast(e.message, true));
     emailInput.addEventListener('keydown', e => { if (e.key === 'Enter') devSubmit(); });
+    if (codeInput) codeInput.addEventListener('keydown', e => { if (e.key === 'Enter') devSubmit(); });
 
     document.body.appendChild(el('.login-screen', null, el('.login-card', null, [
       el('.login-logo', null, '🎬'),
@@ -544,8 +549,9 @@ window.App = window.App || {};
         [el('span.login-g', { html: G_LOGO }), 'Sign in with Google']),
       (!opts.googleConfigured ? el('.login-hint', null, 'Google SSO isn’t configured yet — the server owner can enable it (see README). Use the team sign-in below for now.') : null),
       (opts.devLogin ? el('.login-div', null, el('span', null, 'or')) : null),
-      (opts.devLogin ? el('.login-dev', null, [
+      (opts.devLogin ? el('.login-dev' + (codeInput ? '.stacked' : ''), null, [
         emailInput,
+        codeInput,
         el('button.btn-primary', { onclick: devSubmit }, 'Sign in')
       ]) : null)
     ])));
