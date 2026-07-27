@@ -134,17 +134,22 @@ window.App = window.App || {};
   /* Roles. Three oversight roles + one role per department. Permission flags:
      approve = may set a task to Approved; editAll = may edit any task; admin = sees
      the Admin page; manageShows = may add/remove shows; dept = limits editing to that
-     department's tasks (dept roles cannot approve). */
+     department's tasks (dept roles cannot approve).
+     Structural rights — renaming a task, removing it, and moving its dates — are
+     separate and deliberately narrow: they reshape the plan itself rather than
+     record progress against it. Producers and Managers hold all three; Post
+     Operations also owns scheduling (across every department, since that's the
+     coordinating job), so it carries editSchedule without editAll. */
   App.ROLES = [
-    { key: 'producer',  label: 'Producer',        icon: '🎬', view: 'timeline',  approve: true, editAll: true, admin: true, manageShows: true, hint: 'Full access — all tasks, shows & admin' },
-    { key: 'manager',   label: 'Manager',         icon: '🧭', view: 'dashboard', approve: true, editAll: true, admin: true, hint: 'Oversight, approvals & admin' },
+    { key: 'producer',  label: 'Producer',        icon: '🎬', view: 'timeline',  approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, hint: 'Full access — all tasks, shows & admin' },
+    { key: 'manager',   label: 'Manager',         icon: '🧭', view: 'dashboard', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, hint: 'Oversight, approvals & admin' },
     { key: 'director',  label: 'Director',        icon: '🎯', view: 'review',    approve: true, editAll: true, hint: 'Review & approve cuts' },
     { key: 'creative',  label: 'Creative',        icon: '✏️', view: 'board', dept: 'creative',  hint: 'Creative department tasks' },
     { key: 'music',     label: 'Music',           icon: '🎵', view: 'board', dept: 'music',     hint: 'Music department tasks' },
     { key: 'animation', label: 'Animation',       icon: '🎞️', view: 'board', dept: 'animation', hint: 'Animation department tasks' },
     { key: 'audio',     label: 'Audio Post',      icon: '🎧', view: 'board', dept: 'audio',     hint: 'Audio Post department tasks' },
     { key: 'video',     label: 'Video Post',      icon: '📹', view: 'board', dept: 'video',     hint: 'Video Post department tasks' },
-    { key: 'ops',       label: 'Post Operations', icon: '📦', view: 'board', dept: 'ops',       hint: 'Post Operations tasks' },
+    { key: 'ops',       label: 'Post Operations', icon: '📦', view: 'board', dept: 'ops', editSchedule: true, hint: 'Post Operations tasks & scheduling' },
     { key: 'qc',        label: 'QC',              icon: '✅', view: 'board', dept: 'qc',        hint: 'QC tasks' }
   ];
   App.role = (k) => App.ROLES.find(r => r.key === k) || App.ROLES[0];
@@ -173,6 +178,13 @@ window.App = window.App || {};
     if (r.dept && task) return task.dept === r.dept;
     return false;
   };
+  /* Structural rights, checked on top of canEditTask (which stays the
+     department-scoped "may I touch this task at all" gate for status, owners
+     and files). These three are NOT department-scoped: a holder may reshape any
+     task, because a plan change in one department moves work in the next. */
+  App.canEditTaskName = (k) => App.rolePerm(k, 'editName', App.role(k).editName);
+  App.canRemoveTask   = (k) => App.rolePerm(k, 'removeTask', App.role(k).removeTask);
+  App.canEditSchedule = (k) => App.rolePerm(k, 'editSchedule', App.role(k).editSchedule);
   // status choices a role may set (non-approvers can't choose Approved)
   App.statusOptionsFor = (k) => App.canApprove(k) ? App.STATUS_ORDER : App.STATUS_ORDER.filter(s => s !== 'approved');
 
@@ -605,6 +617,29 @@ window.App = window.App || {};
       set: (k, v) => { p[k] = v; try { localStorage.setItem(PKEY, JSON.stringify(p)); } catch (e) {} }
     };
   })();
+
+  /* Themes — each is a named set of CSS-variable overrides living in
+     style.css under :root[data-theme="…"]; switching one only swaps that
+     attribute, so every surface, border and accent follows at once. Like the
+     other view preferences this is per-device (localStorage), not shared
+     board data — one person's theme never lands on a teammate's screen. */
+  App.THEMES = [
+    { v: 'midnight', label: 'Midnight (default)' },
+    { v: 'graphite', label: 'Graphite' },
+    { v: 'nord',     label: 'Nord' },
+    { v: 'indigo',   label: 'Indigo' },
+    { v: 'forest',   label: 'Forest' },
+    { v: 'daylight', label: 'Daylight (light)' }
+  ];
+  App.applyTheme = function () {
+    const want = App.prefs.get('theme', 'midnight');
+    const key = App.THEMES.some(t => t.v === want) ? want : 'midnight';
+    document.documentElement.setAttribute('data-theme', key);
+    return key;
+  };
+  // deferred script: the document element already exists, so applying here
+  // paints the right palette on the very first frame (no flash of default)
+  App.applyTheme();
 
   /* ---------------------------------------------------------------------------
      Shared hover tooltip — a single fixed-position element positioned by

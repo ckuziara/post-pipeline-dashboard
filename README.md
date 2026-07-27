@@ -101,6 +101,7 @@ cookies, so no session store is needed either.
    - `DATABASE_URL` — the Neon string from step 1
    - `SESSION_SECRET` — any long random string (keep it stable; changing it
      signs everyone out)
+   - `ACCESS_CODE` — **required** while `DEV_LOGIN` is `true` (see below)
    - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — from the SSO step below
      (leave blank at first; team sign-in still works)
    - `ADMIN_EMAILS`, `ALLOWED_DOMAIN` — already defaulted in `render.yaml`
@@ -111,9 +112,25 @@ works out of the box with Neon (and RDS/Aurora). If you later point this at an
 on-prem Postgres using a **self-signed** certificate, set `PGSSL_NO_VERIFY=true`
 to skip verification — only do that on a trusted network.
 
-> ⚠ **Security:** `DEV_LOGIN` defaults to `true` so you can sign in before SSO
-> is wired up — but on a public URL that lets *anyone with the link* sign in.
-> Configure Google SSO (below) and set **`DEV_LOGIN=false`** as soon as you can.
+### ⚠ Securing the email sign-in (when you can't use Google SSO yet)
+
+The email sign-in (`DEV_LOGIN=true`) asks only for an address — so on a public
+URL, *anyone who finds the link* could sign in as an admin. Two protections,
+both on by default once configured:
+
+- **`ACCESS_CODE`** — a shared code the whole team types alongside their email.
+  Pick your own memorable phrase — don't reuse an example from these docs.
+  Compared in constant time, so it can't be guessed character-by-character.
+  **Always set this on a public deploy that doesn't have SSO yet.**
+- **`ALLOWED_DOMAIN`** — the email must end in `@moonbug.com` (or be listed in
+  `ADMIN_EMAILS`), so a leaked code alone isn't enough.
+
+The server prints which protections are active at startup and warns loudly if
+email sign-in is exposed without a code. Once Google SSO is working, set
+`DEV_LOGIN=false` and the email box disappears entirely.
+
+> Rotating the code just means changing `ACCESS_CODE` in Render — existing
+> sessions stay valid (they're signed with `SESSION_SECRET`, which is separate).
 
 > Notes on the free tier: Render free web services **spin down after ~15 min
 > idle** (first request then takes ~1 min to wake) — fine for an internal tool.

@@ -307,7 +307,9 @@ window.App = window.App || {};
             const suKey = bar.dataset.suKey || row.dataset.suKey;
             const ep = epId && App.state.data.episodes.find(x => x.id === epId);
             const su = ep && suKey && App.subitem(ep, suKey);
-            ok = !!(su && App.canEditTask(App.state.role, su));
+            // dragging a bar reschedules it, so it's the schedule right that
+            // matters here — not the department-scoped edit gate
+            ok = !!(su && App.canEditSchedule(App.state.role));
             this._adjustableCache.set(bar, ok);
           }
           bar.classList.toggle('adjustable', ok);
@@ -355,7 +357,7 @@ window.App = window.App || {};
         if (!epId || !suKey) return;
         const ep = App.state.data.episodes.find(x => x.id === epId);
         const su = ep && App.subitem(ep, suKey);
-        if (!su || !App.canEditTask(App.state.role, su)) return;   // a plain click still surfaces the permission toast
+        if (!su || !App.canEditSchedule(App.state.role)) return;   // a plain click still opens the dialog, which explains the lock
 
         e.preventDefault();
         hideTip();
@@ -1086,12 +1088,23 @@ window.App = window.App || {};
   function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
   // Opaque department wash for the sticky label column — it must stay solid
   // (never rgba) or bars scrolling underneath show through the sticky column.
-  const SUB_LABEL_BASE = hexToRgb('#1e212a');   // matches --surface-2
+  // The base is the live --surface-2, sampled once per theme so the blend
+  // follows whichever palette is active instead of a baked-in dark value.
+  let _labelBase = { theme: null, rgb: [30, 33, 42] };
+  function subLabelBase() {
+    const theme = document.documentElement.getAttribute('data-theme') || '';
+    if (_labelBase.theme !== theme) {
+      const v = getComputedStyle(document.documentElement).getPropertyValue('--surface-2').trim();
+      _labelBase = { theme, rgb: /^#[0-9a-f]{6}$/i.test(v) ? hexToRgb(v) : [30, 33, 42] };
+    }
+    return _labelBase.rgb;
+  }
   function deptLabelBg(deptHex) {
     const [dr, dg, db] = hexToRgb(deptHex);
+    const base = subLabelBase();
     const t = 0.16;
     const mix = (b, d) => Math.round(b * (1 - t) + d * t);
-    return 'rgb(' + mix(SUB_LABEL_BASE[0], dr) + ',' + mix(SUB_LABEL_BASE[1], dg) + ',' + mix(SUB_LABEL_BASE[2], db) + ')';
+    return 'rgb(' + mix(base[0], dr) + ',' + mix(base[1], dg) + ',' + mix(base[2], db) + ')';
   }
   function shade(hex, amt) {
     const [r, g, b] = hexToRgb(hex);

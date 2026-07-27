@@ -225,7 +225,10 @@ window.App = window.App || {};
     editWrap.addEventListener('change', e => { if (e.target.tagName === 'SELECT') leave(); });
     editWrap.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type === 'text') { e.preventDefault(); leave(); } });
     refresh();
-    return el('.et-row' + (opts.locked ? '.locked' : ''), null, [
+    // a locked row never opens, so its hint would stay buried in editWrap —
+    // surface it as the row's tooltip instead (explains *why* it's locked)
+    return el('.et-row' + (opts.locked ? '.locked' : ''),
+      opts.locked && opts.hint ? { title: opts.hint } : null, [
       el('.et-label', null, labelText),
       el('.et-control', null, [display, editWrap])
     ]);
@@ -237,7 +240,14 @@ window.App = window.App || {};
       const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
       const su = App.subitem(ep, key); if (!su) return;
       const role = App.state.role;
-      if (!App.canEditTask(role, su)) {
+      // structural rights — reshaping the plan, as opposed to reporting on it
+      const canName = App.canEditTaskName(role);
+      const canSched = App.canEditSchedule(role);
+      const canRemove = App.canRemoveTask(role);
+      // `canTouch` is the department gate (status, owner, files). Schedulers get
+      // in regardless — Post Operations reschedules other departments' work.
+      const canTouch = App.canEditTask(role, su);
+      if (!canTouch && !canSched) {
         const d = App.roleDept(role);
         App.toast('Your role can only edit ' + (d ? App.dept(d).label : 'permitted') + ' tasks', true);
         return;
@@ -320,13 +330,19 @@ window.App = window.App || {};
           el('span.ctx-dept', null, App.dept(su.dept).label)
         ]),
         el('.et-list', null, [
-          editRow('Task name', nameInput, () => nameInput.value),
+          editRow('Task name', nameInput, () => nameInput.value, {
+            locked: !canName, hint: canName ? null : 'Only Producers and Managers can rename a task'
+          }),
           editRow('Status', statusSel, statusDisplay, {
-            locked: lockedApproved,
-            hint: lockedApproved ? 'Only Producer, Director or Manager can change an approved task' : (canApprove ? null : 'Your role cannot set tasks to Approved')
+            locked: lockedApproved || !canTouch,
+            hint: !canTouch ? 'Only the ' + App.dept(su.dept).label + ' team can update this task’s status'
+              : lockedApproved ? 'Only Producer, Director or Manager can change an approved task'
+              : (canApprove ? null : 'Your role cannot set tasks to Approved')
           }),
           editRow('Owner', ownerSel, ownerDisplay, { locked: !canAssign, hint: ownerHint }),
-          editRow('Schedule', schedControl, schedDisplay)
+          editRow('Schedule', schedControl, schedDisplay, {
+            locked: !canSched, hint: canSched ? null : 'Only Producers, Managers and Post Operations can change the schedule'
+          })
         ]),
         // LucidLink version control — only for tasks flagged version-controlled
         // in the pipeline (enabled in Pipeline Presets, not here)
@@ -341,16 +357,16 @@ window.App = window.App || {};
 
       const footer = [
         el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
-        el('button.btn-danger', {
+        (canRemove ? el('button.btn-danger', {
           onclick: () => App.confirm('Remove “' + su.name + '” from ' + ep.code + '?',
             () => { App.removeTask(epId, key); App.modal.close(); },
             { title: 'Remove task', yesLabel: 'Remove', onNo: () => App.editTask.open(epId, key) })
-        }, '🗑 Remove'),
+        }, '🗑 Remove') : null),
         el('button.btn-primary', {
           onclick: () => {
             const s = startInput.value, d = dueInput.value;
-            if (!nameInput.value.trim()) { App.toast('Task name is required', true); return; }
-            if (!(s && d && d >= s)) { App.toast('Check the dates', true); return; }
+            if (canName && !nameInput.value.trim()) { App.toast('Task name is required', true); return; }
+            if (canSched && !(s && d && d >= s)) { App.toast('Check the dates', true); return; }
             App.applyTaskEdit(epId, key, {
               name: nameInput.value.trim(),
               status: statusSel.disabled ? su.status : statusSel.value,
