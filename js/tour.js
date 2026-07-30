@@ -537,7 +537,7 @@ window.App = window.App || {};
         // ---- 10. admin: archive & restore a show ----
         await step(async () => {
           this.say('Archive a wrapped show without losing its history');
-          const showsTab = [...document.querySelectorAll('.adm-role')].find(b => /^📚Shows$|Shows/.test(b.textContent));
+          const showsTab = [...document.querySelectorAll('.adm-role')].find(b => /Shows/.test(b.textContent));
           await this.moveToEl(showsTab, 800);
           await this.clickEl(showsTab);
           await this.sleep(700);

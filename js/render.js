@@ -36,6 +36,7 @@ window.App = window.App || {};
     // guard: only admins may sit on the Admin view
     if (App.state.view === 'admin' && !App.isAdminRole(App.state.role)) App.state.view = 'timeline';
 
+    renderBrandMark();
     renderViewTabs();
     renderRoleSelect();
 
@@ -68,15 +69,24 @@ window.App = window.App || {};
     App.state._lastRenderedView = App.state.view;
   };
 
+  // the brand mark doubles as the preferences button: clapper normally, gear
+  // on hover (both from the icon set, so they match whatever theme is active)
+  function renderBrandMark() {
+    const film = document.getElementById('logo-film');
+    const cog = document.getElementById('logo-cog');
+    if (film && !film.firstChild) film.appendChild(App.icon('clapper', { size: 17 }));
+    if (cog && !cog.firstChild) cog.appendChild(App.icon('gear', { size: 17 }));
+  }
+
   function renderViewTabs() {
     const box = document.getElementById('view-tabs'); box.innerHTML = '';
-    const tabs = [['timeline', '📊', 'Timeline'], ['board', '▦', 'Board'], ['dashboard', '🧭', 'Dashboard']];
-    if (App.state.role === 'director') tabs.push(['review', '🎯', 'Reviews']);
-    if (App.isAdminRole(App.state.role)) tabs.push(['admin', '🛠', 'Admin']);
+    const tabs = [['timeline', 'chart', 'Timeline'], ['board', 'grid', 'Board'], ['dashboard', 'compass', 'Dashboard']];
+    if (App.state.role === 'director') tabs.push(['review', 'target', 'Reviews']);
+    if (App.isAdminRole(App.state.role)) tabs.push(['admin', 'tools', 'Admin']);
     tabs.forEach(([v, ic, lbl]) => {
       box.appendChild(el('button.view-tab' + (App.state.view === v ? '.active' : ''),
         { 'data-view': v, onclick: () => { App.state.view = v; App.render(); } },
-        [el('span.ic', null, ic), lbl]));
+        [App.icon(ic, { cls: 'ic' }), lbl]));
     });
   }
 
@@ -99,16 +109,21 @@ window.App = window.App || {};
     // else is pinned to the role their directory entry gives them
     const canSwitch = !user || user.admin;
     if (canSwitch) {
+      // a native <option> can only hold text, so the role's icon rides in the
+      // chip beside the select rather than inside it (which is also how we
+      // avoid the OS's own emoji artwork leaking back in)
+      const cur = App.role(App.state.role);
+      box.appendChild(App.icon(cur.ico, { cls: 'role-ic', title: cur.label }));
       const sel = el('select.role-dd', { title: 'View as role' });
       App.ROLES.forEach(r => {
-        const o = document.createElement('option'); o.value = r.key; o.textContent = r.icon + '  ' + r.label;
+        const o = document.createElement('option'); o.value = r.key; o.textContent = r.label;
         if (r.key === App.state.role) o.selected = true; sel.appendChild(o);
       });
       sel.addEventListener('change', e => App.setRole(e.target.value));
       box.appendChild(sel);
     } else {
       const r = App.role(App.state.role);
-      box.appendChild(el('span.role-pin', { title: 'Your pipeline role' }, r.icon + '  ' + r.label));
+      box.appendChild(el('span.role-pin', { title: 'Your pipeline role' }, [App.icon(r.ico), ' ' + r.label]));
     }
 
     // resetting the shared board is an admin move
@@ -192,10 +207,10 @@ window.App = window.App || {};
   // ---- Director: ready-for-review queue ----
   function reviewQueue(episodes) {
     const wrap = el('div');
-    wrap.appendChild(el('.section-title', null, '🎯 Ready for Review — director queue'));
+    wrap.appendChild(el('.section-title', null, [App.icon('target'), ' Ready for Review — director queue']));
     const items = [];
     episodes.forEach(ep => App.subsView(ep).forEach(su => { if (su.status === 'review') items.push({ ep, su }); }));
-    if (!items.length) return wrap.appendChild(el('.empty', null, 'Nothing is waiting for review right now. 🎉')), wrap;
+    if (!items.length) return wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' Nothing is waiting for review right now.'])), wrap;
 
     const list = el('.risk-list');
     // sort order comes from the Reviews tab's own preferences popover

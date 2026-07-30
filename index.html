@@ -6,8 +6,11 @@
 <title>Post Pipeline — Episodic Post-Production Tracker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<!-- Inter is the default UI face; the other four are only referenced by the
+     expressive themes (Playful/Tech/Bookshop/Wireframe) in style.css. -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Nunito:wght@400;600;700;800&family=Space+Grotesk:wght@400;500;700&family=Spectral:ital,wght@0,400;0,600;0,700;1,400&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<script src="js/icons.js" defer></script>
 <script src="js/state.js" defer></script>
 <script src="js/api.js" defer></script>
 <script src="js/seed.js" defer></script>
@@ -30,8 +33,10 @@
     <header id="topbar">
       <div class="brand">
         <button class="brand-logo" id="brand-logo" aria-label="Preferences">
-          <span class="logo-film">🎬</span>
-          <span class="logo-cog">⚙️</span>
+          <!-- filled by js/render.js from the icon set (js/icons.js) so the
+               mark follows the active theme's stroke weight -->
+          <span class="logo-film" id="logo-film"></span>
+          <span class="logo-cog" id="logo-cog"></span>
         </button>
         <div>
           <div class="brand-name">Post Pipeline</div>

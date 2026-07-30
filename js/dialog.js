@@ -40,7 +40,7 @@ window.App = window.App || {};
     App.modal.open(el('.modal-card.confirm-card', { onclick: e => e.stopPropagation() }, [
       el('.modal-head', null, [
         el('.modal-head-main', null, [
-          el('span.modal-ic', null, opts.icon || '⚠️'),
+          App.icon(opts.icon || 'warn', { cls: 'modal-ic' }),
           el('div', null, el('.modal-title', null, opts.title || 'Are you sure?'))
         ]),
         el('button.modal-x', { onclick: cancel, title: 'Close' }, '✕')
@@ -126,10 +126,10 @@ window.App = window.App || {};
           if (r.notice) list.appendChild(el('.fp-notice', null, 'ⓘ ' + r.notice));
           r.dirs.forEach(name => list.appendChild(
             el('button.fp-item', { onclick: () => go(r.path.replace(/\/$/, '') + '/' + name) },
-              [el('span.fp-ic', null, '📁'), el('span.fp-name', null, name), el('span.fp-arrow', null, '›')])));
+              [App.icon('folder', { cls: 'fp-ic' }), el('span.fp-name', null, name), el('span.fp-arrow', null, '›')])));
           (r.files || []).forEach(f => list.appendChild(
             el('button.fp-item', { 'data-file': f.name, onclick: () => select(f.name, f.size) },
-              [el('span.fp-ic', null, '📄'), el('span.fp-name', null, f.name),
+              [App.icon('file', { cls: 'fp-ic' }), el('span.fp-name', null, f.name),
                el('span.fp-size', null, f.size ? fmtBytes(f.size) : '')])));
           if (!r.dirs.length && !(r.files || []).length) {
             list.appendChild(el('.fp-empty', null, files
@@ -138,7 +138,7 @@ window.App = window.App || {};
           }
         } catch (e) {
           list.innerHTML = '';
-          list.appendChild(el('.fp-error', null, '⚠ ' + e.message));
+          list.appendChild(el('.fp-error', null, [App.icon('warn'), ' ' + e.message]));
           chooseBtn.disabled = true;   // don't let a folder we couldn't read be chosen
         }
       };
@@ -146,7 +146,7 @@ window.App = window.App || {};
       App.modal.open(el('.modal-card.fp-card', { onclick: e => e.stopPropagation() }, [
         el('.modal-head', null, [
           el('.modal-head-main', null, [
-            el('span.modal-ic', null, '📂'),
+            App.icon('folderOpen', { cls: 'modal-ic' }),
             el('div', null, [
               el('.modal-title', null, opts.title || 'Choose master directory'),
               el('.modal-subtitle', null, opts.subtitle || (files
@@ -182,7 +182,7 @@ window.App = window.App || {};
     return el('.modal-card' + (cls ? '.' + cls : ''), { onclick: (e) => e.stopPropagation() }, [
       el('.modal-head', null, [
         el('.modal-head-main', null, [
-          el('span.modal-ic', null, icon),
+          App.icon(icon, { cls: 'modal-ic' }),
           el('div', null, [el('.modal-title', null, title), subtitle ? el('.modal-subtitle', null, subtitle) : null])
         ]),
         el('button.modal-x', { onclick: () => App.modal.close(), title: 'Close' }, '✕')
@@ -208,7 +208,7 @@ window.App = window.App || {};
       display.innerHTML = '';
       const v = renderDisplay();
       display.appendChild((v == null || v === '') ? el('span.et-empty', null, '—') : (typeof v === 'string' ? el('span', null, v) : v));
-      if (!opts.locked) display.appendChild(el('span.et-pencil', null, '✎'));
+      if (!opts.locked) display.appendChild(App.icon('pencil', { cls: 'et-pencil' }));
     };
     const enter = () => {
       if (opts.locked) return;
@@ -291,7 +291,7 @@ window.App = window.App || {};
         if (s && d && d >= s) {
           const days = App.diffDays(d, s) + 1;
           rangePill.classList.remove('bad');
-          rangePill.appendChild(el('span.range-ic', null, '📅'));
+          rangePill.appendChild(App.icon('calendar', { cls: 'range-ic' }));
           rangePill.appendChild(el('span.range-txt', null, App.fmtRange(s, d) + ', ' + App.parseDate(d).getFullYear()));
           rangePill.appendChild(el('span.range-days', null, days + (days === 1 ? ' day' : ' days')));
         } else {
@@ -310,7 +310,7 @@ window.App = window.App || {};
         const s = startInput.value, d = dueInput.value;
         if (s && d && d >= s) {
           const days = App.diffDays(d, s) + 1;
-          return el('span.et-sched', null, [el('span.range-ic', null, '📅'), App.fmtRange(s, d) + ', ' + App.parseDate(d).getFullYear() + '  ·  ' + days + (days === 1 ? ' day' : ' days')]);
+          return el('span.et-sched', null, [App.icon('calendar', { cls: 'range-ic' }), App.fmtRange(s, d) + ', ' + App.parseDate(d).getFullYear() + '  ·  ' + days + (days === 1 ? ' day' : ' days')]);
         }
         return el('span.et-empty', null, 'Set dates');
       };
@@ -361,7 +361,7 @@ window.App = window.App || {};
           onclick: () => App.confirm('Remove “' + su.name + '” from ' + ep.code + '?',
             () => { App.removeTask(epId, key); App.modal.close(); },
             { title: 'Remove task', yesLabel: 'Remove', onNo: () => App.editTask.open(epId, key) })
-        }, '🗑 Remove') : null),
+        }, [App.icon('trash'), ' Remove']) : null),
         el('button.btn-primary', {
           onclick: () => {
             const s = startInput.value, d = dueInput.value;
@@ -375,10 +375,10 @@ window.App = window.App || {};
             });
             App.modal.close();
           }
-        }, '💾 Save Changes')
+        }, [App.icon('save'), ' Save Changes'])
       ];
 
-      App.modal.open(card('✎', 'Edit Task', 'Update task details and schedule', sections, footer));
+      App.modal.open(card('pencil', 'Edit Task', 'Update task details and schedule', sections, footer));
     }
   };
 
@@ -454,7 +454,7 @@ window.App = window.App || {};
         el('span.pipe-num', null, i + 1),
         el('span.pipe-dot', { style: { background: dep.color }, title: tip(dep.label) }),
         el('span.pipe-name-ro', null, t.name || '—'),
-        (t.vc ? el('span.pipe-vc-tag', { title: tip('LucidLink version control enabled') }, '🔒') : null),
+        (t.vc ? App.icon('lock', { cls: 'pipe-vc-tag', title: 'LucidLink version control enabled' }) : null),
         el('span.pipe-deps-sum', { title: tip(depNames.join(', ')) }, depNames.length ? '◷ ' + depNames.join(', ') : ''),
         el('span.pipe-dur', { title: tip('Nominal ' + t.days + ' days · minimum ' + t.minDays) }, t.days + 'd'),
         moveBtns(i, '.hov')
@@ -490,7 +490,7 @@ window.App = window.App || {};
       const vcToggle = App.connectorEnabled('lucidlink') ? el('button.pipe-vc' + (t.vc ? '.on' : ''), {
         type: 'button', title: tip(t.vc ? 'Version control ON — click to turn off' : 'Enable LucidLink version control for this task'),
         onclick: (e) => { e.stopPropagation(); t.vc = !t.vc; renderPipe(); onChange(); }
-      }, '🔒') : null;
+      }, App.icon('lock')) : null;
 
       return el('.pipe-row.editing', null, [
         el('span.pipe-num', null, i + 1),
@@ -515,7 +515,7 @@ window.App = window.App || {};
               editingKey = null;
               renderPipe(); onChange();
             }
-          }, '🗑')
+          }, App.icon('trash'))
         ])
       ]);
     }
@@ -633,14 +633,14 @@ window.App = window.App || {};
         recPill.innerHTML = '';
         endFeedback.innerHTML = '';
         if (!rec) {   // dependency cycle — the dep picker prevents this, but belt & braces
-          recPill.appendChild(el('span', { style: { color: 'var(--danger)' } }, '⚠ Dependency cycle in the pipeline'));
+          recPill.appendChild(el('span', { style: { color: 'var(--danger)' } }, [App.icon('warn'), ' Dependency cycle in the pipeline']));
           return;
         }
         if (!targetTouched) endInput.value = rec.end;
         const target = endInput.value || rec.end;
 
         const recDays = App.diffDays(rec.end, start) + 1;
-        recPill.appendChild(el('span.range-ic', null, '📅'));
+        recPill.appendChild(App.icon('calendar', { cls: 'range-ic' }));
         recPill.appendChild(el('span.range-txt', null, 'Recommended finish: ' + App.fmtDate(rec.end) + ', ' + App.parseDate(rec.end).getFullYear()));
         recPill.appendChild(el('span.range-days', null, recDays + ' days · ' + pipe.length + ' tasks × ' + epCount + ' ep'));
         if (target !== rec.end) {                 // manual squeeze/extend — compare vs recommended
@@ -655,13 +655,13 @@ window.App = window.App || {};
           endFeedback.textContent = '✓ On the recommended schedule';
         } else if (target < floor.end) {
           endFeedback.className = 'end-feedback bad';
-          endFeedback.textContent = '⛔ Impossible — even with every task at its minimum time the earliest finish is ' +
+          endFeedback.textContent = 'Impossible — even with every task at its minimum time the earliest finish is ' +
             App.fmtDate(floor.end) + ', ' + App.parseDate(floor.end).getFullYear() + '. It will be clamped to that.';
         } else if (target < rec.end) {
           const solved = App.solveScale(pipe, start, epCount, cadence, target);
           const giveUp = 100 - Math.round(solved.scale * 100);
           endFeedback.className = 'end-feedback warn';
-          endFeedback.textContent = '⚡ Squeezed fairly — every task gives up ' + giveUp +
+          endFeedback.textContent = 'Squeezed fairly — every task gives up ' + giveUp +
             '% of its squeezable slack; no task goes below its minimum';
         } else {
           const solved = App.solveScale(pipe, start, epCount, cadence, target);
@@ -761,7 +761,7 @@ window.App = window.App || {};
         }, '＋ Create Show')
       ];
 
-      App.modal.open(card('🎬', 'Add New Show', 'Plan the schedule and customize the pipeline', sections, footer, 'wide'));
+      App.modal.open(card('clapper', 'Add New Show', 'Plan the schedule and customize the pipeline', sections, footer, 'wide'));
     }
   };
 })();

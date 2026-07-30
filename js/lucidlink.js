@@ -191,7 +191,7 @@ window.App = window.App || {};
       const proj = this.get(epId, suKey); if (!proj || !proj.lock) return;
       App.confirm('Releases ' + proj.lock.userName + '’s lock without saving their working copy, and quarantines it (read-only) so a late sync can’t overwrite the master.',
         () => this._doForceUnlock(epId, suKey),
-        { title: 'Force unlock this file?', yesLabel: 'Force unlock', icon: '🔓' });
+        { title: 'Force unlock this file?', yesLabel: 'Force unlock', icon: 'unlock' });
     },
 
     async _doForceUnlock(epId, suKey) {
@@ -228,7 +228,7 @@ window.App = window.App || {};
       const k = CKEY(epId, suKey);
 
       box.appendChild(el('.vc-inline-head', null, [
-        el('span.vc-inline-ic', null, '🔒'),
+        App.icon('lock', { cls: 'vc-inline-ic' }),
         el('span.vc-inline-title', null, 'LucidLink Version Control'),
         el('span.vc-source-mini' + (App.lucid.isLive() ? '.live' : ''), null, App.lucid.isLive() ? 'Live API' : 'Mock')
       ]));
@@ -248,13 +248,13 @@ window.App = window.App || {};
           el('span.vc-inline-ver', null, 'v' + proj.version + ' · ' + last.file)
         ])
       ];
-      if (proj.lock) bodyEls.push(el('.vc-lockinfo', null, '🔒 ' + (mine ? 'You' : proj.lock.userName) + ' · ' + proj.lock.workingFile));
+      if (proj.lock) bodyEls.push(el('.vc-lockinfo', null, [App.icon('lock'), ' ' + (mine ? 'You' : proj.lock.userName) + ' · ' + proj.lock.workingFile]));
 
       // action zone
       if (syncing) {
         const s = this._syncing;
         bodyEls.push(el('.vc-sync', null, [
-          el('.vc-sync-label', null, '⚠ Syncing… do not close (' + s.mb + ' MB left)'),
+          el('.vc-sync-label', null, [App.icon('warn'), ' Syncing… do not close (' + s.mb + ' MB left)']),
           el('.vc-bar', null, el('.vc-bar-fill', { style: { width: s.pct + '%' } }))
         ]));
       } else if (busy) {
@@ -264,7 +264,7 @@ window.App = window.App || {};
         if (!proj.lock) actions.push(el('button.btn-primary.vc-btn', { onclick: () => this.checkout(epId, suKey) }, '↧ Open (check out)'));
         else if (mine) actions.push(el('button.btn-primary.vc-btn', { onclick: () => this.checkIn(epId, suKey) }, '↥ Check in'));
         else {
-          actions.push(el('span.vc-lockedby', null, '🔒 Locked by ' + proj.lock.userName));
+          actions.push(el('span.vc-lockedby', null, [App.icon('lock'), ' Locked by ' + proj.lock.userName]));
           if (canManage) actions.push(el('button.btn-ghost.vc-btn.vc-force', { onclick: () => this.forceUnlock(epId, suKey) }, 'Force unlock'));
         }
         bodyEls.push(el('.vc-actions', null, actions));
@@ -310,7 +310,7 @@ window.App = window.App || {};
 
       card.appendChild(el('.modal-head', null, [
         el('.modal-head-main', null, [
-          el('span.modal-ic', null, '🔒'),
+          App.icon('lock', { cls: 'modal-ic' }),
           el('div', null, [
             el('.modal-title', null, 'LucidLink Version Control'),
             el('.modal-subtitle', null, showName + ' · ' + items.length + ' version-controlled subtask' + (items.length === 1 ? '' : 's'))
@@ -359,7 +359,7 @@ window.App = window.App || {};
       if (syncing) {
         const s = this._syncing;
         actions = el('.vc-sync', null, [
-          el('.vc-sync-label', null, '⚠ Syncing… do not close (' + s.mb + ' MB left)'),
+          el('.vc-sync-label', null, [App.icon('warn'), ' Syncing… do not close (' + s.mb + ' MB left)']),
           el('.vc-bar', null, el('.vc-bar-fill', { style: { width: s.pct + '%' } }))
         ]);
       } else if (busy) {
@@ -369,7 +369,7 @@ window.App = window.App || {};
       } else if (mine) {
         actions = el('.vc-actions', null, el('button.btn-primary.vc-btn', { onclick: () => this.checkIn(ep.id, su.key) }, '↥ Check in'));
       } else {
-        const btns = [el('span.vc-lockedby', null, '🔒 Locked')];
+        const btns = [el('span.vc-lockedby', null, [App.icon('lock'), ' Locked'])];
         if (App.canManageShows(App.state.role)) btns.push(el('button.btn-ghost.vc-btn.vc-force', { onclick: () => this.forceUnlock(ep.id, su.key) }, 'Force unlock'));
         actions = el('.vc-actions', null, btns);
       }
@@ -406,7 +406,7 @@ window.App = window.App || {};
       if (!locks.length) return null;
       const mine = locks.some(l => this.isMine(l.lock));
       return el('span.vc-flag' + (mine ? '.mine' : ''), { title: locks.length + ' file' + (locks.length === 1 ? '' : 's') + ' checked out in LucidLink' },
-        '🔒 ' + locks.length);
+        [App.icon('lock'), ' ' + locks.length]);
     }
   };
 

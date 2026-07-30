@@ -150,7 +150,7 @@ window.App = window.App || {};
       e.dates[key] = { start: newStart, due: newDue };
       App.refreshReadiness(e);
     });
-    if (warnings.length) App.toast('⚠ “' + g.su.name + '”: ' + warnings.join('; '), true);
+    if (warnings.length) App.toast('“' + g.su.name + '”: ' + warnings.join('; '), true);
     else App.toast('“' + g.su.name + '” → ' + App.fmtRange(newStart, newDue));
   };
 
@@ -254,7 +254,7 @@ window.App = window.App || {};
     App.confirm('Reset all department and status colours & names to their defaults?', () => {
       App.mutate(d => { delete d.workflow; });
       App.toast('Workflow settings reset to defaults');
-    }, { title: 'Reset workflow settings', yesLabel: 'Reset', icon: '↺' });
+    }, { title: 'Reset workflow settings', yesLabel: 'Reset', icon: 'gear' });
   };
 
   // ---- Shows & episodes archive (Admin → Workflow → Shows) ----
@@ -571,10 +571,10 @@ window.App = window.App || {};
     if (codeInput) codeInput.addEventListener('keydown', e => { if (e.key === 'Enter') devSubmit(); });
 
     document.body.appendChild(el('.login-screen', null, el('.login-card', null, [
-      el('.login-logo', null, '🎬'),
+      App.icon('clapper', { cls: 'login-logo', size: 26 }),
       el('.login-title', null, 'Post Pipeline'),
       el('.login-sub', null, 'Episodic post-production tracker'),
-      (err ? el('.login-err', null, '⚠ ' + err) : null),
+      (err ? el('.login-err', null, [App.icon('warn'), ' ' + err]) : null),
       el('a.login-google' + (opts.googleConfigured ? '' : '.disabled'),
         { href: opts.googleConfigured ? '/auth/google' : null },
         [el('span.login-g', { html: G_LOGO }), 'Sign in with Google']),
@@ -591,7 +591,7 @@ window.App = window.App || {};
   function notInDirectoryScreen() {
     const el = App.el, me = App.api.me;
     document.body.appendChild(el('.login-screen', null, el('.login-card', null, [
-      el('.login-logo', null, '🔒'),
+      App.icon('lock', { cls: 'login-logo', size: 26 }),
       el('.login-title', null, 'Almost there'),
       el('.login-sub', { style: { maxWidth: '300px' } },
         'You’re signed in as ' + me.email + ', but that address isn’t in the team directory yet. ' +
@@ -733,7 +733,7 @@ window.App = window.App || {};
 
     document.getElementById('btn-reset').addEventListener('click', () => {
       App.confirm('Reset everything to the reference demo board? All current data will be replaced for the whole team.',
-        () => App.resetData(), { title: 'Reset board', yesLabel: 'Reset', icon: '↺' });
+        () => App.resetData(), { title: 'Reset board', yesLabel: 'Reset', icon: 'gear' });
     });
     document.getElementById('brand-logo').addEventListener('click', e => {
       e.stopPropagation();

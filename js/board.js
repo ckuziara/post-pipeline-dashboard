@@ -18,7 +18,7 @@ window.App = window.App || {};
     showManager() {
       const bar = el('.show-manager');
       if (App.connectorEnabled('lucidlink')) {
-        bar.appendChild(el('button.btn-vc', { onclick: () => App.vc.open(), title: 'LucidLink checkout / check-in & file locking' }, '🔒 Version Control'));
+        bar.appendChild(el('button.btn-vc', { onclick: () => App.vc.open(), title: 'LucidLink checkout / check-in & file locking' }, [App.icon('lock'), ' Version Control']));
       }
       if (App.canManageShows(App.state.role)) bar.appendChild(el('button.btn-addshow', { onclick: () => App.addShow.open() }, '＋ Add show'));
       return bar;
@@ -101,8 +101,8 @@ window.App = window.App || {};
           el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color) } }, ep.code),
           el('span.ep-title', null, ep.title),
           el('span.ep-show', null, show.name),
-          (overdue ? el('span.risk-flag', { title: overdueTip }, '⚠ ' + overdue + ' overdue') : null),
-          (blocked ? el('span.risk-flag', { title: blockedTip, style: { color: '#ffce8e', background: 'rgba(253,171,61,.14)', borderColor: 'rgba(253,171,61,.3)' } }, '⛔ ' + blocked + ' blocked') : null),
+          (overdue ? el('span.risk-flag', { title: overdueTip }, [App.icon('warn'), ' ' + overdue + ' overdue']) : null),
+          (blocked ? el('span.risk-flag', { title: blockedTip, style: { color: '#ffce8e', background: 'rgba(253,171,61,.14)', borderColor: 'rgba(253,171,61,.3)' } }, [App.icon('blocked'), ' ' + blocked + ' blocked']) : null),
           (App.vc && App.vc.boardBadge(ep))
         ]),
         el('.ep-right', null, [
@@ -149,7 +149,7 @@ window.App = window.App || {};
           el('.cell.c-name', { style: { cursor: 'pointer' }, title: 'Edit task', onclick: (e) => { e.stopPropagation(); App.editTask.open(ep.id, su.key); } }, [
             el('span.num', null, i + 1),
             el('span', null, su.name),
-            el('span.edit-hint', null, '✎')
+            App.icon('pencil', { cls: 'edit-hint' })
           ]),
           el('.cell.c-dept', null, el('span.dept-chip', null, [
             el('span.dot', { style: { background: dep.color } }), dep.label
@@ -163,7 +163,7 @@ window.App = window.App || {};
             onclick: (e) => { e.stopPropagation(); App.board.openStatusPop(e.currentTarget, ep, su.key); }
           }, [
             document.createTextNode(st.label),
-            (blocked ? el('span.blk', { title: 'Waiting on a dependency' }, '⛔') : null)
+            (blocked ? App.icon('blocked', { cls: 'blk', title: 'Waiting on a dependency' }) : null)
           ])),
           el('.cell.c-date' + (overdue ? '.overdue' : ''), null, App.fmtDate(su.start)),
           el('.cell.c-date' + (overdue ? '.overdue' : ''), null, App.fmtDate(su.due)),
@@ -205,7 +205,7 @@ window.App = window.App || {};
       const startable = App.isStartable(ep, key);
       const blocked = App.isBlocked(ep, key);
       pop.appendChild(el('.pop-note', null,
-        blocked ? '⛔ Waiting on: ' + (App.pTask(ep, key) || { deps: [] }).deps.filter(d => (ep.statuses[d] || 'not_started') !== 'approved').map(d => App.taskNameFor(ep, d)).join(', ')
+        blocked ? 'Waiting on: ' + (App.pTask(ep, key) || { deps: [] }).deps.filter(d => (ep.statuses[d] || 'not_started') !== 'approved').map(d => App.taskNameFor(ep, d)).join(', ')
         : startable ? '✓ All dependencies approved — ready to start' : 'Dependencies approved'));
       document.body.appendChild(pop);
       // Position after paint so offsetHeight/offsetWidth are real.
