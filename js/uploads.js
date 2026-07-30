@@ -22,7 +22,7 @@ window.App = window.App || {};
     Documents: ['pdf', 'doc', 'docx', 'txt', 'csv', 'xlsx', 'pptx', 'key', 'rtf']
   };
   const CAT_ORDER = ['Folders', 'Video', 'Audio', 'Images', 'Documents', 'External Links', 'Other'];
-  const CAT_ICON = { Folders: '📁', Video: '🎬', Audio: '🎵', Images: '🖼️', Documents: '📄', 'External Links': '🔗', Other: '📦' };
+  const CAT_ICON = { Folders: 'folder', Video: 'clapper', Audio: 'music', Images: 'image', Documents: 'file', 'External Links': 'link', Other: 'package' };
 
   function categorize(ext) {
     for (const cat in TYPES) if (TYPES[cat].includes(ext)) return cat;
@@ -223,7 +223,7 @@ window.App = window.App || {};
       const canEdit = App.canEditTask(App.state.role, su);
 
       box.appendChild(el('.su-head', null, [
-        el('span.su-ic', null, '📎'),
+        App.icon('paperclip', { cls: 'su-ic' }),
         el('span.su-title', null, 'Attachments'),
         el('span.su-count', null, items.length ? String(items.length) : '')
       ]));
@@ -255,7 +255,7 @@ window.App = window.App || {};
         const linkIn = el('input.su-link-in', { type: 'text', placeholder: 'Paste an external link (Frame.io, Drive, Aspera…)',
           onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); const v = linkIn.value; linkIn.value = ''; this.addLink(epId, suKey, v); } } });
         box.appendChild(el('.su-linkrow', null, [
-          el('span.su-link-ic', null, '🔗'), linkIn,
+          App.icon('link', { cls: 'su-link-ic' }), linkIn,
           el('button.su-btn.ghost', { onclick: () => { const v = linkIn.value; linkIn.value = ''; this.addLink(epId, suKey, v); } }, 'Add')
         ]));
       }
@@ -270,7 +270,7 @@ window.App = window.App || {};
         const list = byCat[cat]; if (!list || !list.length) return;
         const catEl = el('.su-cat', null, [
           el('.su-cat-head', null, [
-            el('span.su-cat-ic', null, CAT_ICON[cat]),
+            App.icon(CAT_ICON[cat], { cls: 'su-cat-ic' }),
             el('span.su-cat-name', null, cat),
             el('span.su-cat-count', null, String(list.length))
           ])
@@ -280,9 +280,9 @@ window.App = window.App || {};
           if (a.kind === 'folder') meta.push((a.fileCount || 0) + ' file' + (a.fileCount === 1 ? '' : 's'));
           if (a.sizeLabel) meta.push(a.sizeLabel);
           meta.push(a.byName, App.fmtDate(a.at.slice(0, 10)));
-          if (a.kind !== 'folder' && a.folder) meta.push('📁 ' + a.folder);
+          if (a.kind !== 'folder' && a.folder) meta.push(a.folder);
           catEl.appendChild(el('.su-file', { title: a.link }, [
-            el('span.su-file-kind', null, a.kind === 'link' ? '🔗' : a.kind === 'folder' ? '📁' : '📄'),
+            App.icon(a.kind === 'link' ? 'link' : a.kind === 'folder' ? 'folder' : 'file', { cls: 'su-file-kind' }),
             el('.su-file-main', null, [
               el('.su-file-name', null, a.name),
               el('.su-file-meta', null, meta.join('  ·  '))

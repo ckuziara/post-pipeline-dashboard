@@ -19,12 +19,12 @@ window.App = window.App || {};
   const KEY = (epId, taskKey) => epId + '::' + taskKey;
 
   const EXT_ICON = {
-    mov: '🎬', mp4: '🎬', mxf: '🎬', prproj: '🎬', aep: '🎬', r3d: '🎬', braw: '🎬',
-    wav: '🎵', mp3: '🎵', aif: '🎵', aiff: '🎵', ptx: '🎵',
-    jpg: '🖼️', jpeg: '🖼️', png: '🖼️', psd: '🖼️', ai: '🖼️', tif: '🖼️', exr: '🖼️',
-    pdf: '📄', doc: '📄', docx: '📄', txt: '📄', csv: '📄', xlsx: '📄', fdx: '📄'
+    mov: 'clapper', mp4: 'clapper', mxf: 'clapper', prproj: 'clapper', aep: 'clapper', r3d: 'clapper', braw: 'clapper',
+    wav: 'music', mp3: 'music', aif: 'music', aiff: 'music', ptx: 'music',
+    jpg: 'image', jpeg: 'image', png: 'image', psd: 'image', ai: 'image', tif: 'image', exr: 'image',
+    pdf: 'file', doc: 'file', docx: 'file', txt: 'file', csv: 'file', xlsx: 'file', fdx: 'file'
   };
-  const iconFor = (name, isDir) => isDir ? '📁' : (EXT_ICON[String(name).split('.').pop().toLowerCase()] || '📦');
+  const iconFor = (name, isDir) => isDir ? 'folder' : (EXT_ICON[String(name).split('.').pop().toLowerCase()] || 'package');
 
   /* ---- software per department -------------------------------------------
      Create Project asks which application first, then shows only that app's
@@ -37,18 +37,18 @@ window.App = window.App || {};
      If an extension guess here is wrong, nothing is lost — every app's template
      list ends with "Show every template", so a mismatch can't block anyone. */
   const SOFTWARE = {
-    gdocs:    { label: 'Google Docs',          kind: 'online',  icon: '📝',
+    gdocs:    { label: 'Google Docs',          kind: 'online',  icon: 'note',
                 gallery: 'https://docs.google.com/document/u/0/',     blank: 'https://docs.google.com/document/create' },
-    gsheets:  { label: 'Google Sheets',        kind: 'online',  icon: '📊',
+    gsheets:  { label: 'Google Sheets',        kind: 'online',  icon: 'chart',
                 gallery: 'https://docs.google.com/spreadsheets/u/0/', blank: 'https://docs.google.com/spreadsheets/create' },
-    logic:    { label: 'Logic Pro X',          kind: 'desktop', icon: '🎹', ext: ['logicx', 'logic'] },
-    protools: { label: 'Pro Tools',            kind: 'desktop', icon: '🎚', ext: ['ptx', 'ptt', 'ptf'] },
-    audition: { label: 'Adobe Audition',       kind: 'desktop', icon: '🎧', ext: ['sesx'] },
-    resolve:  { label: 'DaVinci Resolve',      kind: 'desktop', icon: '🎨', ext: ['drp', 'drt'] },
-    premiere: { label: 'Adobe Premiere Pro',   kind: 'desktop', icon: '🎬', ext: ['prproj'] },
-    ae:       { label: 'Adobe After Effects',  kind: 'desktop', icon: '✨', ext: ['aep', 'aet'] },
-    nuke:     { label: 'Foundry Nuke',         kind: 'desktop', icon: '🧩', ext: ['nk', 'nknc'] },
-    vantage:  { label: 'Vantage (Telestream)', kind: 'desktop', icon: '⚙️', ext: ['xml', 'vwf'] }
+    logic:    { label: 'Logic Pro X',          kind: 'desktop', icon: 'piano', ext: ['logicx', 'logic'] },
+    protools: { label: 'Pro Tools',            kind: 'desktop', icon: 'sliders', ext: ['ptx', 'ptt', 'ptf'] },
+    audition: { label: 'Adobe Audition',       kind: 'desktop', icon: 'headphones', ext: ['sesx'] },
+    resolve:  { label: 'DaVinci Resolve',      kind: 'desktop', icon: 'palette', ext: ['drp', 'drt'] },
+    premiere: { label: 'Adobe Premiere Pro',   kind: 'desktop', icon: 'clapper', ext: ['prproj'] },
+    ae:       { label: 'Adobe After Effects',  kind: 'desktop', icon: 'sparkle', ext: ['aep', 'aet'] },
+    nuke:     { label: 'Foundry Nuke',         kind: 'desktop', icon: 'puzzle', ext: ['nk', 'nknc'] },
+    vantage:  { label: 'Vantage (Telestream)', kind: 'desktop', icon: 'gear', ext: ['xml', 'vwf'] }
   };
   const DEPT_SOFTWARE = {
     creative:  ['gdocs', 'gsheets'],
@@ -154,7 +154,7 @@ window.App = window.App || {};
     _project(ep, su, d) {
       const wrap = el('.ws-block');
       wrap.appendChild(el('.ws-head', null, [
-        el('.modal-section-title', { style: { margin: '0' } }, '🎛 Project'),
+        el('.modal-section-title', { style: { margin: '0' } }, [App.icon('mixer'), ' Project']),
         el('span.ws-path', { title: d.absolute.work }, d.deliverable + '/')
       ]));
 
@@ -177,7 +177,7 @@ window.App = window.App || {};
       }
       actions.appendChild(el('button.btn-ghost.ws-btn', {
         onclick: () => this._open({ which: 'work' })
-      }, '📂 Open folder'));
+      }, [App.icon('folderOpen'), ' Open folder']));
       wrap.appendChild(actions);
 
       if (projects.length) {
@@ -186,7 +186,7 @@ window.App = window.App || {};
           list.appendChild(el('button.ws-item', {
             onclick: () => this._open({ which: 'work', name: f.name })
           }, [
-            el('span.ws-ic', null, iconFor(f.name, false)),
+            App.icon(iconFor(f.name, false), { cls: 'ws-ic' }),
             el('span.ws-name', null, f.name),
             el('span.ws-meta', null, fmtSize(f.size)),
             el('span.ws-go', null, '↗')
@@ -208,7 +208,7 @@ window.App = window.App || {};
       App.modal.open(el('.modal-card.confirm-card.ws-step', { onclick: e => e.stopPropagation() }, [
         el('.modal-head', null, [
           el('.modal-head-main', null, [
-            el('span.modal-ic', null, icon),
+            App.icon(icon, { cls: 'modal-ic' }),
             el('div', null, [
               el('.modal-title', null, title),
               el('.modal-subtitle', null, subtitle)
@@ -245,7 +245,7 @@ window.App = window.App || {};
 
       if (!apps.length) {
         // Animation is N/A — no templated software, so just prepare the folder
-        return this._step('🎛', 'Create project', deptLabel + ' has no templated software configured.',
+        return this._step('mixer', 'Create project', deptLabel + ' has no templated software configured.',
           el('.ws-note', null, deptLabel + ' work isn’t template-driven, so there’s nothing to copy. ' +
             'Post Pipeline can still create and open the working folder for you.'),
           [
@@ -260,7 +260,7 @@ window.App = window.App || {};
         list.appendChild(el('button.ws-item', {
           onclick: () => (sw.kind === 'online' ? this._onlinePicker(d, sw) : this._templatePicker(d, sw))
         }, [
-          el('span.ws-ic', null, sw.icon),
+          App.icon(sw.icon, { cls: 'ws-ic' }),
           el('span.ws-name', null, sw.label),
           el('span.ws-meta', null, sw.kind === 'online'
             ? 'template gallery'
@@ -269,7 +269,7 @@ window.App = window.App || {};
         ]));
       });
 
-      this._step('🎛', 'Create project', 'Which application? — ' + deptLabel + ' · ' + d.deliverable, list, [
+      this._step('mixer', 'Create project', 'Which application? — ' + deptLabel + ' · ' + d.deliverable, list, [
         el('button.btn-ghost', { onclick: () => this._back() }, 'Cancel'),
         el('button.btn-ghost', { onclick: () => this._makeProject(null) }, 'Just make the folder')
       ]);
@@ -284,7 +284,7 @@ window.App = window.App || {};
         title: t.source === 'show' ? 'This show’s own version, overriding the studio template' : 'Studio template library',
         onclick: () => this._makeProject(t.name, t.source)
       }, [
-        el('span.ws-ic', null, iconFor(t.name, false)),
+        App.icon(iconFor(t.name, false), { cls: 'ws-ic' }),
         el('span.ws-name', null, t.name),
         // only call out the exception — studio templates are the norm
         (t.source === 'show' ? el('span.ws-chip.ok', null, 'show') : null),
@@ -325,12 +325,12 @@ window.App = window.App || {};
           .catch(() => { window.open(url, '_blank', 'noopener'); App.toast('Opened ' + label); });
       };
       list.appendChild(el('button.ws-item', { onclick: () => open(sw.gallery, sw.label + ' template gallery') }, [
-        el('span.ws-ic', null, '🗂'),
+        App.icon('folderOpen', { cls: 'ws-ic' }),
         el('span.ws-name', null, 'Browse the ' + sw.label + ' template gallery'),
         el('span.ws-go', null, '↗')
       ]));
       list.appendChild(el('button.ws-item', { onclick: () => open(sw.blank, 'a blank ' + sw.label) }, [
-        el('span.ws-ic', null, sw.icon),
+        App.icon(sw.icon, { cls: 'ws-ic' }),
         el('span.ws-name', null, 'Start a blank ' + sw.label),
         el('span.ws-go', null, '↗')
       ]));
@@ -368,7 +368,7 @@ window.App = window.App || {};
       const priorVersions = d.deps.filter(x => x.sameFolder);
       const ready = deps.filter(x => x.items.length || App.taskLinks(ep.id, x.key).length).length;
       wrap.appendChild(el('.ws-head', null, [
-        el('.modal-section-title', { style: { margin: '0' } }, '📥 Assets'),
+        el('.modal-section-title', { style: { margin: '0' } }, [App.icon('download'), ' Assets']),
         el('span.ws-path', null, deps.length ? ready + ' of ' + deps.length + ' ready' : 'no incoming assets')
       ]));
 
@@ -404,7 +404,7 @@ window.App = window.App || {};
             title: f.path,
             onclick: () => this._openDep(dep, f.name)
           }, [
-            el('span.ws-ic', null, iconFor(f.name, f.dir)),
+            App.icon(iconFor(f.name, f.dir), { cls: 'ws-ic' }),
             el('span.ws-name', null, f.name),
             el('span.ws-meta', null, f.dir ? 'folder' : fmtSize(f.size)),
             el('span.ws-go', null, '↗')
@@ -412,7 +412,7 @@ window.App = window.App || {};
           links.forEach(l => list.appendChild(el('a.ws-item', {
             href: l.url, target: '_blank', rel: 'noopener noreferrer', title: l.url
           }, [
-            el('span.ws-ic', null, '🔗'),
+            App.icon('link', { cls: 'ws-ic' }),
             el('span.ws-name', null, l.url.replace(/^https?:\/\//, '')),
             el('span.ws-meta', null, 'link'),
             el('span.ws-go', null, '↗')
@@ -443,7 +443,7 @@ window.App = window.App || {};
     _deliver(ep, su, d) {
       const wrap = el('.ws-block');
       wrap.appendChild(el('.ws-head', null, [
-        el('.modal-section-title', { style: { margin: '0' } }, '📤 Deliver'),
+        el('.modal-section-title', { style: { margin: '0' } }, [App.icon('upload'), ' Deliver']),
         el('span.ws-path', { title: d.absolute.mezzanine }, '!!_Mezzanine/' + d.deliverable + '/')
       ]));
 
@@ -455,7 +455,7 @@ window.App = window.App || {};
 
       const status = el('.ws-progress');
       const drop = el('.ws-drop', null, [
-        el('.ws-drop-main', null, '📤  Drop files here to deliver'),
+        el('.ws-drop-main', null, [App.icon('upload'), '  Drop files here to deliver']),
         el('.ws-drop-sub', null, 'or click to browse the volume — held in !!_Mezzanine/' +
           d.deliverable + ' until this task is approved')
       ]);
@@ -483,14 +483,14 @@ window.App = window.App || {};
       wrap.appendChild(el('.ws-actions', null, [
         // big media is already on the mount — copy it in place instead of
         // pushing gigabytes through the browser
-        el('button.btn-ghost.ws-btn', { onclick: () => this._pickFromMount() }, '🗄 Pick from the volume'),
-        el('button.btn-ghost.ws-btn', { onclick: () => this._addLink() }, '🔗 Add a link')
+        el('button.btn-ghost.ws-btn', { onclick: () => this._pickFromMount() }, [App.icon('archive'), ' Pick from the volume']),
+        el('button.btn-ghost.ws-btn', { onclick: () => this._addLink() }, [App.icon('link'), ' Add a link'])
       ]));
 
       const fileRow = (f, which) => el('button.ws-item', {
         onclick: () => this._open({ which, name: f.name })
       }, [
-        el('span.ws-ic', null, iconFor(f.name, f.dir)),
+        App.icon(iconFor(f.name, f.dir), { cls: 'ws-ic' }),
         el('span.ws-name', null, f.name),
         el('span.ws-meta', null, f.dir ? 'folder' : fmtSize(f.size)),
         el('span.ws-go', null, '↗')
@@ -504,7 +504,7 @@ window.App = window.App || {};
         const list = el('.ws-list');
         mezz.forEach(f => list.appendChild(fileRow(f, 'mezzanine')));
         links.forEach(l => list.appendChild(el('.ws-item.static', null, [
-          el('span.ws-ic', null, '🔗'),
+          App.icon('link', { cls: 'ws-ic' }),
           el('a.ws-name', { href: l.url, target: '_blank', rel: 'noopener noreferrer' }, l.url.replace(/^https?:\/\//, '')),
           el('span.ws-meta', null, l.by),
           el('button.ws-x', { title: 'Remove link', onclick: () => { App.removeTaskLink(ep.id, su.key, l.id); this._render(); } }, '✕')
@@ -608,7 +608,7 @@ window.App = window.App || {};
       App.modal.open(el('.modal-card.confirm-card', { onclick: e => e.stopPropagation() }, [
         el('.modal-head', null, [
           el('.modal-head-main', null, [
-            el('span.modal-ic', null, '🔗'),
+            App.icon('link', { cls: 'modal-ic' }),
             el('div', null, [
               el('.modal-title', null, 'Add a link'),
               el('.modal-subtitle', null, 'For assets that live somewhere else — Frame.io, Drive, Aspera')

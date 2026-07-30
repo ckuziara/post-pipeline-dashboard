@@ -445,7 +445,7 @@ window.App = window.App || {};
 
       const tip = dragTipEl(); tip.innerHTML = '';
       tip.appendChild(el('span.tip-dot', { style: { background: broken ? '#ff5b6e' : '#5fb0f0' } }));
-      tip.appendChild(document.createTextNode(App.fmtRange(newStart, newDue) + (broken ? ' ⚠ breaks a dependency' : '')));
+      tip.appendChild(document.createTextNode(App.fmtRange(newStart, newDue) + (broken ? ' — breaks a dependency' : '')));
       tip.style.display = 'flex';
       tip.style.left = e.clientX + 'px';
       tip.style.top = (e.clientY - 38) + 'px';
@@ -575,7 +575,7 @@ window.App = window.App || {};
         el('.l-sub', null, [
           el('span.code', null, ep.code),
           el('span', null, '· ' + App.fmtRange(App.epStart(ep), App.epDue(ep))),
-          (overdue ? el('span', { style: { color: '#ff8a95', fontWeight: '700' } }, '· ⚠ ' + overdue) : null)
+          (overdue ? el('span', { style: { color: '#ff8a95', fontWeight: '700' } }, ['· ', App.icon('warn'), ' ' + overdue]) : null)
         ])
       ]));
 
@@ -592,7 +592,7 @@ window.App = window.App || {};
         }
       }, [
         el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, ep.title),
-        (blocked ? el('span.blk', { title: blocked + ' blocked' }, '⛔') : null)
+        (blocked ? App.icon('blocked', { cls: 'blk', title: blocked + ' blocked' }) : null)
       ]);
       if (!delivered && prog > 0) {
         bar.appendChild(el('', { style: {
@@ -615,7 +615,7 @@ window.App = window.App || {};
         style: { left: sl + 'px', width: sw + 'px', background: dep.color, color: pickInk(dep.color) }
       }, [
         el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, labelText || su.name),
-        (App.isRiskBlocked(ep, su.key) ? el('span.blk', { title: 'In progress while a dependency is unapproved' }, '⛔') : null)
+        (App.isRiskBlocked(ep, su.key) ? App.icon('blocked', { cls: 'blk', title: 'In progress while a dependency is unapproved' }) : null)
       ]);
       sbar.dataset.episodeId = ep.id;
       sbar.dataset.suKey = su.key;
@@ -812,7 +812,7 @@ window.App = window.App || {};
               style: { left: sl + 'px', width: sw + 'px', background: dep.color, color: pickInk(dep.color) }
             }, [
               el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, ep.code),
-              (App.isRiskBlocked(ep, su.key) ? el('span.blk', { title: 'In progress while a dependency is unapproved' }, '⛔') : null)
+              (App.isRiskBlocked(ep, su.key) ? App.icon('blocked', { cls: 'blk', title: 'In progress while a dependency is unapproved' }) : null)
             ]);
             sbar.dataset.episodeId = ep.id;                 // per-bar identity: one line holds many episodes
             sbar.dataset.suKey = su.key;
@@ -958,7 +958,7 @@ window.App = window.App || {};
         input,
         swatches,
         el('.pn-editor-actions', null, [
-          el('button.pn-del', { onclick: () => { pop._commit = null; this.closeNoteEditor(); App.removeNote(showId, id); } }, '🗑 Delete'),
+          el('button.pn-del', { onclick: () => { pop._commit = null; this.closeNoteEditor(); App.removeNote(showId, id); } }, [App.icon('trash'), ' Delete']),
           el('button.pn-done', { onclick: () => this.closeNoteEditor() }, 'Done')
         ])
       ]);

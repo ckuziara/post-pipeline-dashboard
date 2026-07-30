@@ -141,16 +141,16 @@ window.App = window.App || {};
      Operations also owns scheduling (across every department, since that's the
      coordinating job), so it carries editSchedule without editAll. */
   App.ROLES = [
-    { key: 'producer',  label: 'Producer',        icon: '🎬', view: 'timeline',  approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, hint: 'Full access — all tasks, shows & admin' },
-    { key: 'manager',   label: 'Manager',         icon: '🧭', view: 'dashboard', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, hint: 'Oversight, approvals & admin' },
-    { key: 'director',  label: 'Director',        icon: '🎯', view: 'review',    approve: true, editAll: true, hint: 'Review & approve cuts' },
-    { key: 'creative',  label: 'Creative',        icon: '✏️', view: 'board', dept: 'creative',  hint: 'Creative department tasks' },
-    { key: 'music',     label: 'Music',           icon: '🎵', view: 'board', dept: 'music',     hint: 'Music department tasks' },
-    { key: 'animation', label: 'Animation',       icon: '🎞️', view: 'board', dept: 'animation', hint: 'Animation department tasks' },
-    { key: 'audio',     label: 'Audio Post',      icon: '🎧', view: 'board', dept: 'audio',     hint: 'Audio Post department tasks' },
-    { key: 'video',     label: 'Video Post',      icon: '📹', view: 'board', dept: 'video',     hint: 'Video Post department tasks' },
-    { key: 'ops',       label: 'Post Operations', icon: '📦', view: 'board', dept: 'ops', editSchedule: true, hint: 'Post Operations tasks & scheduling' },
-    { key: 'qc',        label: 'QC',              icon: '✅', view: 'board', dept: 'qc',        hint: 'QC tasks' }
+    { key: 'producer',  label: 'Producer',        ico: 'clapper', view: 'timeline',  approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, hint: 'Full access — all tasks, shows & admin' },
+    { key: 'manager',   label: 'Manager',         ico: 'compass', view: 'dashboard', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, hint: 'Oversight, approvals & admin' },
+    { key: 'director',  label: 'Director',        ico: 'target', view: 'review',    approve: true, editAll: true, hint: 'Review & approve cuts' },
+    { key: 'creative',  label: 'Creative',        ico: 'pencil', view: 'board', dept: 'creative',  hint: 'Creative department tasks' },
+    { key: 'music',     label: 'Music',           ico: 'music', view: 'board', dept: 'music',     hint: 'Music department tasks' },
+    { key: 'animation', label: 'Animation',       ico: 'film', view: 'board', dept: 'animation', hint: 'Animation department tasks' },
+    { key: 'audio',     label: 'Audio Post',      ico: 'headphones', view: 'board', dept: 'audio',     hint: 'Audio Post department tasks' },
+    { key: 'video',     label: 'Video Post',      ico: 'camera', view: 'board', dept: 'video',     hint: 'Video Post department tasks' },
+    { key: 'ops',       label: 'Post Operations', ico: 'package', view: 'board', dept: 'ops', editSchedule: true, hint: 'Post Operations tasks & scheduling' },
+    { key: 'qc',        label: 'QC',              ico: 'checkBadge', view: 'board', dept: 'qc',        hint: 'QC tasks' }
   ];
   App.role = (k) => App.ROLES.find(r => r.key === k) || App.ROLES[0];
   // Role capabilities are data-driven (Admin → Access Control) with the ROLES
@@ -622,20 +622,45 @@ window.App = window.App || {};
      style.css under :root[data-theme="…"]; switching one only swaps that
      attribute, so every surface, border and accent follows at once. Like the
      other view preferences this is per-device (localStorage), not shared
-     board data — one person's theme never lands on a teammate's screen. */
+     board data — one person's theme never lands on a teammate's screen.
+
+     Three attributes get written to <html>, and each does a different job:
+       data-theme  the palette (every theme has one)
+       data-mode   'dark' | 'light' — drives the handful of overlays that are
+                   tuned for a dark canvas (weekend shading, zebra rows)
+       data-skin   'expressive' opts a theme into the structural rules too:
+                   font, corner radii, border weight and card shadow, so the
+                   UI itself changes shape and not just colour.
+
+     STATUS COLOURS ARE DELIBERATELY OUT OF SCOPE. No theme may re-declare
+     --st-* : Not Started / Ready to Start / In Progress / Ready for Review /
+     Approved must read identically in every theme, because people scan the
+     board by those colours. Status cells and legend swatches are painted from
+     App.STATUSES in JS (with pickInk picking readable ink), so a theme can
+     restyle their shape but never their hue. */
   App.THEMES = [
-    { v: 'midnight', label: 'Midnight (default)' },
-    { v: 'graphite', label: 'Graphite' },
-    { v: 'nord',     label: 'Nord' },
-    { v: 'indigo',   label: 'Indigo' },
-    { v: 'forest',   label: 'Forest' },
-    { v: 'daylight', label: 'Daylight (light)' }
+    { v: 'midnight', label: 'Midnight (default)', mode: 'dark' },
+    { v: 'graphite', label: 'Graphite',           mode: 'dark' },
+    { v: 'nord',     label: 'Nord',               mode: 'dark' },
+    { v: 'indigo',   label: 'Indigo',             mode: 'dark' },
+    { v: 'forest',   label: 'Forest',             mode: 'dark' },
+    { v: 'daylight', label: 'Daylight',           mode: 'light' },
+    // expressive skins — these restyle the furniture as well as the palette
+    { v: 'moppets',   label: 'Playful',        mode: 'light', skin: 'expressive' },
+    { v: 'cardio',    label: 'Tech',           mode: 'dark',  skin: 'expressive' },
+    { v: 'bookshop',  label: 'Bookshop',       mode: 'light', skin: 'expressive' },
+    { v: 'retro',     label: 'Wireframe',      mode: 'light', skin: 'expressive' },
+    { v: 'botanical', label: 'Botanical',      mode: 'light', skin: 'expressive' }
   ];
   App.applyTheme = function () {
     const want = App.prefs.get('theme', 'midnight');
-    const key = App.THEMES.some(t => t.v === want) ? want : 'midnight';
-    document.documentElement.setAttribute('data-theme', key);
-    return key;
+    const t = App.THEMES.find(x => x.v === want) || App.THEMES[0];
+    const root = document.documentElement;
+    root.setAttribute('data-theme', t.v);
+    root.setAttribute('data-mode', t.mode || 'dark');
+    if (t.skin) root.setAttribute('data-skin', t.skin);
+    else root.removeAttribute('data-skin');
+    return t.v;
   };
   // deferred script: the document element already exists, so applying here
   // paints the right palette on the very first frame (no flash of default)
@@ -760,7 +785,10 @@ window.App = window.App || {};
   App.toast = function (msg, isError) {
     const root = document.getElementById('toast-root');
     if (!root) return;
-    const t = App.el('div.toast' + (isError ? '.error' : ''), null, msg);
+    // error toasts get the warning mark here rather than every caller
+    // hand-prefixing a '⚠' into its message copy
+    const t = App.el('div.toast' + (isError ? '.error' : ''), null,
+      isError ? [App.icon('warn'), ' ' + msg] : msg);
     root.appendChild(t);
     setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, isError ? 5000 : 2800);
   };

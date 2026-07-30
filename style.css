@@ -31,6 +31,23 @@
   --radius-sm: 7px;
   --shadow: 0 12px 34px rgba(0,0,0,.46);
   --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  /* Structural knobs, only consumed by [data-skin="expressive"] themes. The
+     defaults mirror today's look so the six plain palettes are untouched. */
+  --r-card: 10px;                 /* panels, cards, popovers, modals   */
+  --r-ctl: 8px;                   /* buttons, inputs, selects, chips   */
+  --r-bar: 5px;                   /* timeline bars & status cells      */
+  --ring: 1px;                    /* border weight on cards/controls   */
+  --ring-color: var(--border);
+  --lift: var(--shadow);          /* card elevation                    */
+  --page-art: none;               /* optional gradient over the canvas */
+  --card-blur: none;              /* glass themes set a blur           */
+
+  /* Icon drawing (js/icons.js). One line set, re-weighted per theme — this is
+     what lets the same glyph feel native in Wireframe and in Bookshop. */
+  --icon-stroke: 1.7;
+  --icon-cap: round;
+  --icon-join: round;
 }
 
 /* ----------------------------------------------------------------- themes
@@ -75,15 +92,196 @@
   --shadow: 0 12px 34px rgba(16,24,40,.14);
 }
 /* the timeline's weekend/zebra shading is a white wash tuned for a dark
-   canvas — invert it so it still reads on the light theme */
-:root[data-theme="daylight"] .grid-col.weekend,
-:root[data-theme="daylight"] .thead-cell.secondary.weekend { background: rgba(16,24,40,.045); }
-:root[data-theme="daylight"] .g-row.sub { background: rgba(16,24,40,.035); }
-:root[data-theme="daylight"] .pn-row { background: rgba(16,24,40,.02); }
+   canvas — invert it for every light theme (data-mode, not a theme name) */
+:root[data-mode="light"] .grid-col.weekend,
+:root[data-mode="light"] .thead-cell.secondary.weekend { background: rgba(16,24,40,.045); }
+:root[data-mode="light"] .g-row.sub { background: rgba(16,24,40,.035); }
+:root[data-mode="light"] .pn-row { background: rgba(16,24,40,.02); }
 /* background-color only — the base rule's transparent border + content-box
    clip is what gives the thumb its inset, and the shorthand would reset it */
-:root[data-theme="daylight"] ::-webkit-scrollbar-thumb { background-color: #c3ccdb; }
-:root[data-theme="daylight"] ::-webkit-scrollbar-thumb:hover { background-color: #a8b4c8; }
+:root[data-mode="light"] ::-webkit-scrollbar-thumb { background-color: #c3ccdb; }
+:root[data-mode="light"] ::-webkit-scrollbar-thumb:hover { background-color: #a8b4c8; }
+
+/* ------------------------------------------------- expressive skins ------
+   These five go further than a palette: they also set the typeface, corner
+   radii, border weight and card elevation, which the [data-skin="expressive"]
+   block below applies. None of them touch --st-* — status colour coding is
+   identical in every theme (see App.THEMES). */
+:root[data-theme="moppets"] {              /* Playful — cream on teal */
+  --bg: #89c7b6; --bg-2: #fdf6e3; --surface: #fdf6e3; --surface-2: #f7ecd2; --surface-3: #f0cd9a;
+  --row: #fdf6e3; --row-alt: #faf1dd; --hover: #f5e6c8;
+  --border: rgba(74,74,74,.14); --border-2: rgba(74,74,74,.24);
+  --text: #4a4a4a; --text-2: #6b6660; --text-3: #948d84;
+  --accent: #e78c45; --accent-2: #d67a33; --accent-ink: #fff;
+  --font: 'Nunito', system-ui, sans-serif;
+  --r-card: 18px; --r-ctl: 999px; --r-bar: 999px;
+  --lift: 0 6px 22px rgba(74,74,74,.13);
+}
+:root[data-theme="cardio"] {               /* Tech — charcoal + lime, very round */
+  --bg: #1a1a1a; --bg-2: #262626; --surface: #2f2f2f; --surface-2: #383838; --surface-3: #434343;
+  --row: #2f2f2f; --row-alt: #343434; --hover: #454545;
+  --border: rgba(255,255,255,.09); --border-2: rgba(255,255,255,.17);
+  --text: #f2f2ee; --text-2: #bdbdb6; --text-3: #8a8a84;
+  --accent: #d9e112; --accent-2: #b8bf10; --accent-ink: #1a1a1a;
+  --font: 'Space Grotesk', system-ui, sans-serif;
+  --r-card: 26px; --r-ctl: 999px; --r-bar: 999px;
+  --lift: 0 8px 30px rgba(0,0,0,.5);
+}
+:root[data-theme="bookshop"] {             /* Bookshop — pastel glass, serif */
+  --bg: #ece7f7; --bg-2: #f6f3fd; --surface: #f7f4fd; --surface-2: #efeaf9; --surface-3: #e3ddf3;
+  --row: #f7f4fd; --row-alt: #f2eefb; --hover: #e7e1f6;
+  --border: rgba(44,46,93,.12); --border-2: rgba(255,255,255,.75);
+  --text: #2c2e5d; --text-2: #5b5e91; --text-3: #8a8db8;
+  --accent: #2c2e5d; --accent-2: #3d407a; --accent-ink: #fff;
+  --font: 'Spectral', Georgia, serif;
+  --r-card: 22px; --r-ctl: 13px; --r-bar: 9px;
+  --lift: 0 8px 32px rgba(31,38,135,.10);
+  --page-art: linear-gradient(135deg, #ffe3d4 0%, #e6e1f9 45%, #d4e5ff 100%);
+  --card-bg: rgba(255,255,255,.62); --card-blur: blur(10px);
+}
+:root[data-theme="retro"] {                /* Wireframe — hard black rules, mono */
+  --bg: #f2e8d5; --bg-2: #f7f0e2; --surface: #ffffff; --surface-2: #f7f0e2; --surface-3: #efe3cc;
+  --row: #ffffff; --row-alt: #faf5ea; --hover: #ffe9a8;
+  --border: #111111; --border-2: #111111;
+  --text: #111111; --text-2: #3a3a3a; --text-3: #6f6f6f;
+  --accent: #ff5c39; --accent-2: #e04a29; --accent-ink: #111111;
+  --font: 'Space Mono', ui-monospace, Menlo, monospace;
+  --r-card: 0px; --r-ctl: 0px; --r-bar: 0px;
+  --ring: 2px; --ring-color: #111111;
+  --lift: 4px 4px 0 #111111;
+}
+:root[data-theme="botanical"] {            /* Botanical — sage on soft green */
+  --bg: #eaf3e0; --bg-2: #f2f6ed; --surface: #ffffff; --surface-2: #f2f6ed; --surface-3: #e5ecd9;
+  --row: #ffffff; --row-alt: #f7faf4; --hover: #e5ecd9;
+  --border: rgba(51,77,53,.13); --border-2: rgba(51,77,53,.24);
+  --text: #334d35; --text-2: #4f6b51; --text-3: #7d9280;
+  --accent: #6a946d; --accent-2: #567a58; --accent-ink: #fff;
+  --font: 'Nunito', system-ui, sans-serif;
+  --r-card: 16px; --r-ctl: 10px; --r-bar: 8px;
+  --lift: 0 4px 24px rgba(152,172,116,.20);
+}
+
+/* ---- the structural layer: only expressive themes opt in ----
+   Everything here reads the vars above, so adding a sixth skin is a palette
+   block and nothing more. Deliberately NOT restyled: .status-cell (status
+   coding stays pixel-identical), and anything that must stay a circle
+   (avatars, dots, switches, swatches). */
+:root[data-skin="expressive"] body { background-image: var(--page-art); background-attachment: fixed; }
+
+/* cards, panels, popovers */
+:root[data-skin="expressive"] .gantt,
+:root[data-skin="expressive"] .ep-group,
+:root[data-skin="expressive"] .widget,
+:root[data-skin="expressive"] .show-manager,
+:root[data-skin="expressive"] .adm-add,
+:root[data-skin="expressive"] .adm-permcard,
+:root[data-skin="expressive"] .adm-card,
+:root[data-skin="expressive"] .adm-table,
+:root[data-skin="expressive"] .modal-card,
+:root[data-skin="expressive"] .prefs-pop,
+:root[data-skin="expressive"] .pn-editor,
+:root[data-skin="expressive"] .status-pop,
+:root[data-skin="expressive"] .dep-menu,
+:root[data-skin="expressive"] .login-card,
+:root[data-skin="expressive"] .kpi {
+  border-radius: var(--r-card);
+  border-width: var(--ring);
+  border-style: solid;
+  border-color: var(--ring-color);
+  box-shadow: var(--lift);
+}
+/* Glass only where it can't hurt legibility: the big content surfaces. Modals,
+   popovers and the sticky timeline rails stay fully opaque — a translucent
+   sticky rail would let the bars underneath bleed through it. */
+:root[data-skin="expressive"] .widget,
+:root[data-skin="expressive"] .adm-permcard,
+:root[data-skin="expressive"] .adm-card,
+:root[data-skin="expressive"] .adm-table,
+:root[data-skin="expressive"] .kpi,
+:root[data-skin="expressive"] .show-manager {
+  background-color: var(--card-bg, var(--surface));
+  -webkit-backdrop-filter: var(--card-blur);
+  backdrop-filter: var(--card-blur);
+}
+/* the timeline/board bodies scroll inside their card, so keep the clip */
+:root[data-skin="expressive"] .gantt,
+:root[data-skin="expressive"] .ep-group,
+:root[data-skin="expressive"] .widget { overflow: hidden; }
+
+/* controls */
+:root[data-skin="expressive"] .btn-primary,
+:root[data-skin="expressive"] .btn-ghost,
+:root[data-skin="expressive"] .btn-danger,
+:root[data-skin="expressive"] .adm-btn,
+:root[data-skin="expressive"] .btn-addshow,
+:root[data-skin="expressive"] .prefs-btn,
+:root[data-skin="expressive"] .prefs-select,
+:root[data-skin="expressive"] .prefs-seg,
+:root[data-skin="expressive"] .prefs-seg .seg,
+:root[data-skin="expressive"] .fld,
+:root[data-skin="expressive"] .filter,
+:root[data-skin="expressive"] .adm-search,
+:root[data-skin="expressive"] .login-input,
+:root[data-skin="expressive"] #search,
+:root[data-skin="expressive"] .view-tab,
+:root[data-skin="expressive"] .role-dd,
+:root[data-skin="expressive"] .ghost { border-radius: var(--r-ctl); }
+
+/* chips & pills */
+:root[data-skin="expressive"] .dept-chip,
+:root[data-skin="expressive"] .stage-chip,
+:root[data-skin="expressive"] .ep-code,
+:root[data-skin="expressive"] .dep-chip,
+:root[data-skin="expressive"] .dep-tag,
+:root[data-skin="expressive"] .adm-role-chip { border-radius: var(--r-ctl); }
+
+/* timeline bars & producer notes (status cells intentionally excluded) */
+:root[data-skin="expressive"] .bar,
+:root[data-skin="expressive"] .phase-bar,
+:root[data-skin="expressive"] .pn-note { border-radius: var(--r-bar); }
+
+/* accent-filled controls need theme-aware ink — lime-on-white is unreadable */
+:root[data-skin="expressive"] .btn-primary,
+:root[data-skin="expressive"] .btn-addshow,
+:root[data-skin="expressive"] .adm-btn.primary,
+:root[data-skin="expressive"] .prefs-seg .seg.active,
+:root[data-skin="expressive"] .pn-done,
+:root[data-skin="expressive"] .view-tab.active { color: var(--accent-ink, #fff); }
+
+/* Wireframe: buttons get the same hard offset as the cards, and lose it when
+   pressed so the click reads physically */
+:root[data-theme="retro"] .btn-primary,
+:root[data-theme="retro"] .btn-addshow,
+:root[data-theme="retro"] .adm-btn,
+:root[data-theme="retro"] .prefs-btn,
+:root[data-theme="retro"] .view-tab.active {
+  border: 2px solid #111; box-shadow: 3px 3px 0 #111;
+}
+:root[data-theme="retro"] .btn-primary:active,
+:root[data-theme="retro"] .btn-addshow:active,
+:root[data-theme="retro"] .adm-btn:active,
+:root[data-theme="retro"] .prefs-btn:active { box-shadow: 0 0 0 #111; transform: translate(2px, 2px); }
+/* mono is wide — let the timeline's label rail breathe */
+:root[data-theme="retro"] .g-label .l-title { font-size: 10.5px; }
+
+/* ---- icons ----
+   .ico is an inline box the size of the surrounding text; the svg inside
+   inherits colour via currentColor and its weight from the theme vars. */
+.ico { display: inline-flex; align-items: center; justify-content: center; flex: none; line-height: 0; }
+.ico-svg {
+  stroke-width: var(--icon-stroke);
+  stroke-linecap: var(--icon-cap);
+  stroke-linejoin: var(--icon-join);
+  overflow: visible;                     /* keeps thick Wireframe strokes from clipping */
+}
+/* Per-theme re-weighting. Equal-specificity selectors, so ORDER MATTERS:
+   the light-mode baseline goes first and the named themes override it. */
+:root[data-mode="light"]     { --icon-stroke: 1.8; }   /* hairlines wash out on light */
+:root[data-theme="cardio"]   { --icon-stroke: 1.5; }
+:root[data-theme="moppets"]  { --icon-stroke: 2; }
+:root[data-theme="botanical"]{ --icon-stroke: 1.8; }
+:root[data-theme="bookshop"] { --icon-stroke: 1.3; }   /* engraved, to suit the serif */
+:root[data-theme="retro"]    { --icon-stroke: 2.2; --icon-cap: butt; --icon-join: miter; }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }

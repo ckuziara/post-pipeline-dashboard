@@ -43,16 +43,16 @@ window.App = window.App || {};
     box.appendChild(head('Admin — System Configuration', 'Select a management scope below to configure the tracker.'));
     const n = App.state.data.people.length;
     const cards = [
-      { ic: '👥', tint: 'blue', title: 'User Directory & Teams', primary: true,
+      { ic: 'users', tint: 'blue', title: 'User Directory & Teams', primary: true,
         desc: 'Manage the team roster, assign pipeline roles and check each member’s live task load. Currently ' + n + ' team member' + (n === 1 ? '' : 's') + '.',
         btn: 'Manage Users', onclick: () => go('directory') },
-      { ic: '🔑', tint: 'purple', title: 'Access Control & Privileges',
+      { ic: 'key', tint: 'purple', title: 'Access Control & Privileges',
         desc: 'Configure what each role can do — approving tasks, assigning owners, managing shows and admin access.',
         btn: 'Configure Roles', onclick: () => go('roles') },
-      { ic: '🗂', tint: 'green', title: 'Workflow & Status Settings',
+      { ic: 'folderOpen', tint: 'green', title: 'Workflow & Status Settings',
         desc: 'Rename and recolour task statuses and departments across the whole tracker. Pipelines themselves are customised per show when it’s created.',
         btn: 'Configure Workflow', onclick: () => go('workflow') },
-      { ic: '📜', tint: 'amber', title: 'Audit & Event Logs',
+      { ic: 'scroll', tint: 'amber', title: 'Audit & Event Logs',
         desc: 'A timestamped record of every change made across the tracker, for project auditing.',
         btn: 'Coming soon', soon: true }
     ];
@@ -60,7 +60,7 @@ window.App = window.App || {};
     cards.forEach(c => {
       grid.appendChild(el('.adm-card' + (c.primary ? '.primary' : ''), null, [
         el('.adm-card-top', null, [
-          el('span.adm-card-ic.' + c.tint, null, c.ic),
+          App.icon(c.ic, { cls: 'adm-card-ic ' + c.tint }),
           el('span.adm-card-title', null, c.title)
         ]),
         el('.adm-card-desc', null, c.desc),
@@ -80,7 +80,7 @@ window.App = window.App || {};
 
     // search (kept in admin state so it survives re-renders; rows rebuilt
     // locally on input so the field never loses focus)
-    const search = el('input.adm-search', { type: 'text', placeholder: '🔍  Search team members…', value: App.state.admin.q });
+    const search = el('input.adm-search', { type: 'text', placeholder: 'Search team members…', value: App.state.admin.q });
     box.appendChild(search);
 
     // live task load per person: active / total assigned (archived excluded)
@@ -193,7 +193,7 @@ window.App = window.App || {};
       el('.cell.adm-actions', null, editing
         ? [el('button.btn-mini', { onclick: e => { e.stopPropagation(); App.state.admin.editing = null; App.render(); }, title: 'Done editing' }, '✓'),
            el('button.btn-mini.danger', { onclick: e => { e.stopPropagation(); App.removePerson(p.id); }, title: 'Remove user' }, '✕')]
-        : el('span.adm-edit-hint', null, '✎'))
+        : App.icon('pencil', { cls: 'adm-edit-hint' }))
     ]);
     return row;
   }
@@ -238,11 +238,11 @@ window.App = window.App || {};
     App.ROLES.forEach(r => {
       side.appendChild(el('button.adm-role' + (roleKey === r.key ? '.active' : ''), {
         onclick: () => { App.state.admin.role = r.key; App.render(); }
-      }, [el('span.adm-role-ic', null, r.icon), r.label]));
+      }, [App.icon(r.ico, { cls: 'adm-role-ic' }), r.label]));
     });
 
     const panel = el('.adm-perms');
-    if (locked) panel.appendChild(el('.adm-note', null, '🔒 The Producer role always keeps full access, so nobody can be locked out.'));
+    if (locked) panel.appendChild(el('.adm-note', null, [App.icon('lock'), ' The Producer role always keeps full access, so nobody can be locked out.']));
     PERMS.forEach(cat => {
       const card = el('.adm-permcard');
       card.appendChild(el('.adm-permcard-head', null, [
@@ -306,10 +306,10 @@ window.App = window.App || {};
     const layout = el('.adm-split');
     const side = el('.adm-side');
     side.appendChild(el('.adm-side-label', null, 'Workflow'));
-    [['statuses', '🎨', 'Task statuses'], ['departments', '🏷️', 'Departments'], ['pipelines', '🧬', 'Pipelines'], ['shows', '📚', 'Shows'], ['storage', '🗂', 'Storage'], ['connectors', '🔌', 'Connectors']].forEach(([k, ic, lbl]) => {
+    [['statuses', 'palette', 'Task statuses'], ['departments', 'tag', 'Departments'], ['pipelines', 'pipeline', 'Pipelines'], ['shows', 'book', 'Shows'], ['storage', 'folderOpen', 'Storage'], ['connectors', 'plug', 'Connectors']].forEach(([k, ic, lbl]) => {
       side.appendChild(el('button.adm-role' + (tab === k ? '.active' : ''), {
         onclick: () => { App.state.admin.wfTab = k; App.render(); }
-      }, [el('span.adm-role-ic', null, ic), lbl]));
+      }, [App.icon(ic, { cls: 'adm-role-ic' }), lbl]));
     });
 
     // the pipeline editor's rows need real width for their columns (name,
@@ -359,14 +359,14 @@ window.App = window.App || {};
           input.value = p;
           App.setMasterPath(p);
         })
-      }, '📂 Browse…'),
-      el('button.btn-primary', { onclick: save }, '💾 Save'),
+      }, [App.icon('folderOpen'), ' Browse…']),
+      el('button.btn-primary', { onclick: save }, [App.icon('save'), ' Save']),
       cur ? el('button.btn-ghost', { onclick: () => App.setMasterPath('') }, 'Clear') : null
     ]));
     card.appendChild(
       !cur ? el('.adm-name-sub', { style: { padding: '0 4px 12px' } }, 'Not set — folder creation is off until a path is saved.')
       : cur[0] !== '/' ? el('.fp-error', { style: { padding: '0 4px 12px' } },
-          '⚠ That’s a relative path, so the server can’t find it. It needs to start with “/” — probably /Volumes/' + cur + '. Use Browse… to pick it.')
+          'That’s a relative path, so the server can’t find it. It needs to start with “/” — probably /Volumes/' + cur + '. Use Browse… to pick it.')
       : el('.adm-name-sub', { style: { padding: '0 4px 12px' } }, 'Shows are created at ' + cur + '/<CODE>_<ShowName>/'));
     wrap.appendChild(card);
 
@@ -452,7 +452,7 @@ window.App = window.App || {};
     const conn = el('.wf-add', { style: { flexDirection: 'column', alignItems: 'stretch', gap: '8px', opacity: live ? '1' : '.5', pointerEvents: live ? 'auto' : 'none' } }, [
       el('label.fld-label', null, 'API base URL'), urlIn,
       el('label.fld-label', { style: { marginTop: '4px' } }, 'Service Account key'), keyIn,
-      el('.fld-hint', null, live && !App.lucid.real._ready() ? '⚠ Enter the URL and key to activate live calls — until then actions will error.' : 'The key is never written to the shared board; the backend holds the real Service Account.')
+      el('.fld-hint', null, live && !App.lucid.real._ready() ? 'Enter the URL and key to activate live calls — until then actions will error.' : 'The key is never written to the shared board; the backend holds the real Service Account.')
     ]);
     card.appendChild(conn);
     return card;
@@ -533,7 +533,7 @@ window.App = window.App || {};
         ]),
         el('.preset-actions', null, [
           el('button.btn-mini', { title: 'Edit preset',
-            onclick: () => { App.state.admin.presetDraft = JSON.parse(JSON.stringify(p)); App.render(); } }, '✎'),
+            onclick: () => { App.state.admin.presetDraft = JSON.parse(JSON.stringify(p)); App.render(); } }, App.icon('pencil')),
           el('button.btn-mini', { title: 'Duplicate preset', onclick: () => App.duplicatePipelinePreset(p.id) }, '⧉'),
           el('button.btn-mini.danger', { title: 'Delete preset', onclick: () => App.deletePipelinePreset(p.id) }, '✕')
         ])
@@ -597,7 +597,7 @@ window.App = window.App || {};
           editor.closeMenus();
           if (App.savePipelinePreset(draft)) { App.state.admin.presetDraft = null; App.render(); }
         }
-      }, '💾 Save pipeline')
+      }, [App.icon('save'), ' Save pipeline'])
     ]));
     wrap.appendChild(cardEl);
     return wrap;
@@ -643,9 +643,9 @@ window.App = window.App || {};
             ? el('button.btn-mini', {
                 title: 'Create any of this show’s production folders that are missing',
                 onclick: (e) => { e.stopPropagation(); App.rebuildShowFolders(s.id); }
-              }, '🗂 Rebuild folders')
+              }, [App.icon('folderOpen'), ' Rebuild folders'])
             : null),
-          el('button.btn-mini', { onclick: (e) => { e.stopPropagation(); App.setShowArchived(s.id, true); } }, '🗄 Archive show')
+          el('button.btn-mini', { onclick: (e) => { e.stopPropagation(); App.setShowArchived(s.id, true); } }, [App.icon('archive'), ' Archive show'])
         ])
       ]));
       if (isOpen) sEps.forEach(ep => {
@@ -654,7 +654,7 @@ window.App = window.App || {};
           el('span.ep-arch-title', null, ep.title),
           el('span.ep-arch-dates', null, App.fmtRange(App.epStart(ep), App.epDue(ep))),
           el('.arch-actions', null,
-            el('button.btn-mini', { onclick: () => App.setEpisodeArchived(ep.id, true) }, '🗄'))
+            el('button.btn-mini', { onclick: () => App.setEpisodeArchived(ep.id, true) }, App.icon('archive')))
         ]));
       });
     });
@@ -664,7 +664,7 @@ window.App = window.App || {};
     // ---- archive ----
     const arch = el('.adm-permcard');
     arch.appendChild(el('.adm-permcard-head', null, [
-      el('.adm-permcard-title', null, '🗄 Archive'),
+      el('.adm-permcard-title', null, [App.icon('archive'), ' Archive']),
       el('.adm-permcard-desc', null, 'Restore brings content back exactly as it was. Deleting is permanent and can’t be undone.')
     ]));
     const archList = el('.wf-list');
