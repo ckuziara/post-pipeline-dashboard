@@ -483,7 +483,10 @@ window.App = window.App || {};
       }
 
       d.bar.classList.remove('dragging', 'warn');
-      if (d.curStart !== d.origStart || d.curDue !== d.origDue) App.moveTask(d.epId, d.suKey, d.curStart, d.curDue);
+      if (d.curStart !== d.origStart || d.curDue !== d.origDue) {
+        App.track.feature('timeline.dragReschedule');
+        App.moveTask(d.epId, d.suKey, d.curStart, d.curDue);
+      }
     },
 
     // Called by App.render() before the view is torn down. The isConnected

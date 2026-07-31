@@ -60,6 +60,7 @@ window.App = window.App || {};
     }
     const wasApproved = g.su.status === 'approved';
     App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = status; App.refreshReadiness(e); });
+    App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: g.su.status, to: status });
     App.toast(g.su.name + ' → ' + App.status(status).label);
     if (status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
   };
@@ -94,6 +95,14 @@ window.App = window.App || {};
       }
       App.refreshReadiness(e);
     });
+    // record only the fields that actually moved, so the log reads as a diff
+    const changed = {};
+    if (canName && name !== g.su.name) changed.name = { from: g.su.name, to: name };
+    if (canSched && (start !== g.su.start || due !== g.su.due)) changed.schedule = { from: g.su.start + '→' + g.su.due, to: start + '→' + due };
+    if (canTouch && status !== g.su.status) changed.status = { from: g.su.status, to: status };
+    if (Object.keys(changed).length) {
+      App.track.audit('task.edit', { episode: g.ep.code, task: g.su.name, changed });
+    }
     App.toast('Saved “' + (canName ? name : g.su.name) + '”');
     if (canTouch && status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
   };
@@ -150,6 +159,13 @@ window.App = window.App || {};
       e.dates[key] = { start: newStart, due: newDue };
       App.refreshReadiness(e);
     });
+    if (newStart !== g.su.start || newDue !== g.su.due) {
+      App.track.audit('task.reschedule', {
+        episode: g.ep.code, task: g.su.name,
+        from: g.su.start + '→' + g.su.due, to: newStart + '→' + newDue,
+        brokeDependency: warnings.length > 0
+      });
+    }
     if (warnings.length) App.toast('“' + g.su.name + '”: ' + warnings.join('; '), true);
     else App.toast('“' + g.su.name + '” → ' + App.fmtRange(newStart, newDue));
   };
@@ -161,6 +177,7 @@ window.App = window.App || {};
       const cur = d.assignPriv || App.defaultAssignPriv();
       d.assignPriv = allowed ? [...new Set([...cur, roleKey])] : cur.filter(k => k !== roleKey);
     });
+    App.track.audit('perm.change', { role: roleKey, permission: 'Assign Task Owners', allowed });
     App.toast(App.role(roleKey).label + (allowed ? ' can now assign owners' : ' can no longer assign owners'));
   };
 
@@ -174,6 +191,7 @@ window.App = window.App || {};
       d.rolePerms[roleKey] = d.rolePerms[roleKey] || {};
       d.rolePerms[roleKey][perm] = allowed;
     });
+    App.track.audit('perm.change', { role: roleKey, permission: label || perm, allowed });
     App.toast(label + (allowed ? ' enabled' : ' disabled') + ' for ' + App.role(roleKey).label);
   };
 
@@ -205,6 +223,7 @@ window.App = window.App || {};
       d.workflow.statuses = d.workflow.statuses || {};
       d.workflow.statuses[key] = Object.assign({}, d.workflow.statuses[key], patch);
     });
+    App.track.audit('workflow.status', { status: key, patch });
   };
 
   App.setDeptStyle = function (key, patch) {
@@ -216,6 +235,7 @@ window.App = window.App || {};
       d.workflow.departments = d.workflow.departments || {};
       d.workflow.departments[key] = Object.assign({}, d.workflow.departments[key], patch);
     });
+    App.track.audit('workflow.department', { department: key, patch });
   };
 
   const DEPT_PALETTE = ['#7a5cff', '#2ec4b6', '#e07a5f', '#f2b134', '#5f8fff', '#d65db1', '#3ec46d', '#ff8f6b'];
@@ -232,6 +252,7 @@ window.App = window.App || {};
       d.workflow.departments = d.workflow.departments || {};
       d.workflow.departments[key] = { label, color };
     });
+    App.track.audit('workflow.deptAdd', { department: label });
     App.toast('Added department “' + label + '”');
   };
 
@@ -242,6 +263,7 @@ window.App = window.App || {};
                   App.ROLES.some(r => r.dept === key);
     const remove = () => {
       App.mutate(d => { if (d.workflow && d.workflow.departments) delete d.workflow.departments[key]; });
+      App.track.audit('workflow.deptRemove', { department: key });
       App.toast('Department removed');
     };
     if (!inUse) return remove();
@@ -253,6 +275,7 @@ window.App = window.App || {};
     if (!guardAdmin()) return;
     App.confirm('Reset all department and status colours & names to their defaults?', () => {
       App.mutate(d => { delete d.workflow; });
+      App.track.audit('workflow.reset', {});
       App.toast('Workflow settings reset to defaults');
     }, { title: 'Reset workflow settings', yesLabel: 'Reset', icon: 'gear' });
   };
@@ -267,6 +290,7 @@ window.App = window.App || {};
       const t = d.shows.find(x => x.id === showId);
       if (archived) t.archived = true; else delete t.archived;
     });
+    App.track.audit(archived ? 'show.archive' : 'show.restore', { show: s.name });
     if (archived && App.state.filters.show === showId) { App.state.filters.show = 'all'; App.render(); }
     App.toast((archived ? 'Archived “' : 'Restored “') + s.name + '”');
   };
@@ -278,6 +302,7 @@ window.App = window.App || {};
       const t = d.episodes.find(x => x.id === epId);
       if (archived) t.archived = true; else delete t.archived;
     });
+    App.track.audit(archived ? 'episode.archive' : 'episode.restore', { episode: ep.code, title: ep.title });
     App.toast((archived ? 'Archived ' : 'Restored ') + ep.code + ' — ' + ep.title);
   };
 
@@ -291,6 +316,7 @@ window.App = window.App || {};
         d.shows = d.shows.filter(x => x.id !== showId);
         d.episodes = d.episodes.filter(e => e.showId !== showId);
       });
+      App.track.audit('show.delete', { show: s.name, episodes: n });
       App.toast('Deleted “' + s.name + '”');
     }, { title: 'Delete show' });
   };
@@ -301,6 +327,7 @@ window.App = window.App || {};
     if (!ep || !App.isEpArchived(ep)) { App.toast('Only archived episodes can be deleted', true); return; }
     App.confirm('Permanently delete ' + ep.code + ' — “' + ep.title + '”? This can’t be undone.', () => {
       App.mutate(d => { d.episodes = d.episodes.filter(x => x.id !== epId); });
+      App.track.audit('episode.delete', { episode: ep.code, title: ep.title });
       App.toast('Deleted ' + ep.code);
     }, { title: 'Delete episode' });
   };
@@ -364,6 +391,7 @@ window.App = window.App || {};
       e.removed = e.removed || []; if (!e.removed.includes(key)) e.removed.push(key);
       App.refreshReadiness(e);
     });
+    App.track.audit('task.remove', { episode: g.ep.code, task: g.su.name });
     App.toast('Removed “' + g.su.name + '”');
   };
 
@@ -395,6 +423,7 @@ window.App = window.App || {};
         });
       });
     });
+    App.track.audit('show.create', { show: name, code, type, episodes: epNames.length, tasks: pipeline.length });
     App.toast('Created “' + name + '” with ' + epNames.length + ' episode' + (epNames.length === 1 ? '' : 's'));
     // Build the whole production structure up front — shared folders plus every
     // episode's department tree. The server reads the show and its episodes from
@@ -447,6 +476,7 @@ window.App = window.App || {};
         d.shows = d.shows.filter(s => s.id !== showId);
         d.episodes = d.episodes.filter(e => e.showId !== showId);
       });
+      App.track.audit('show.remove', { show: show.name });
       if (App.state.filters.show === showId) App.state.filters.show = 'all';
       App.render();
       App.toast('Removed “' + show.name + '”');
@@ -464,6 +494,7 @@ window.App = window.App || {};
       s.notes = s.notes || [];
       s.notes.push(Object.assign({ id, text: '', color: '#f6be00' }, note));
     });
+    App.track.audit('note.add', { show: (App.show(showId) || {}).name });
     return id;
   };
   App.updateNote = function (showId, id, patch) {
@@ -480,11 +511,14 @@ window.App = window.App || {};
       const s = d.shows.find(x => x.id === showId);
       if (s && s.notes) s.notes = s.notes.filter(x => x.id !== id);
     });
+    App.track.audit('note.remove', { show: (App.show(showId) || {}).name });
   };
 
   // ---- team / admin ----
   App.setPersonRole = function (id, role) {
+    const was = App.person(id);
     App.mutate(d => { const p = d.people.find(x => x.id === id); if (p) p.role = role; });
+    App.track.audit('person.role', { person: was ? was.name : id, from: was ? was.role : null, to: role });
     App.toast('Role updated');
   };
   App.renamePerson = function (id, name) {
@@ -509,6 +543,7 @@ window.App = window.App || {};
     email = (email || '').trim();
     if (email && !/^\S+@\S+\.\S+$/.test(email)) { App.toast('Enter a valid work email', true); return; }
     App.mutate(d => { d.people.push({ id: App.uid(), name, role, email, integrations: {}, color: PERSON_PALETTE[d.people.length % PERSON_PALETTE.length] }); });
+    App.track.audit('person.add', { person: name, role, email });
     App.toast(name + ' added as ' + App.role(role).label);
   };
   App.removePerson = function (id) {
@@ -518,6 +553,7 @@ window.App = window.App || {};
         d.people = d.people.filter(x => x.id !== id);
         d.episodes.forEach(e => { if (e.assignees) Object.keys(e.assignees).forEach(k => { if (e.assignees[k] === id) delete e.assignees[k]; }); });
       });
+      App.track.audit('person.remove', { person: p.name, role: p.role });
       if (App.state.filters.person === id) { App.state.filters.person = 'all'; App.render(); }
       App.toast(p.name + ' removed');
     }, { title: 'Remove team member', yesLabel: 'Remove' });

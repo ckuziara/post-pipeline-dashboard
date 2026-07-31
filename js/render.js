@@ -66,6 +66,10 @@ window.App = window.App || {};
 
     // Restore scroll after the browser has painted the new content
     if (savedScroll > 0) requestAnimationFrame(() => { if (view) view.scrollTop = savedScroll; });
+    // Which views each role actually works in. Deduped to once a minute inside
+    // App.track, so the constant re-renders here cost one event, not hundreds.
+    App.track && App.track.feature('view.' + App.state.view);
+    if (App.state.view === 'admin') App.track.feature('admin.' + (App.state.admin.view || 'hub'));
     App.state._lastRenderedView = App.state.view;
   };
 

@@ -19,7 +19,15 @@ window.App = window.App || {};
       document.addEventListener('keydown', this._esc);
       const f = card.querySelector('input,select'); if (f) setTimeout(() => f.focus(), 30);
     },
-    close() { if (this._ov) { this._ov.remove(); this._ov = null; document.removeEventListener('keydown', this._esc); } }
+    close() {
+      if (!this._ov) return;          // nothing open — open() calls this defensively
+      // A flow still open as the modal goes away was abandoned: the user walked
+      // away without saving. Hooking it here (rather than on each dialog's close
+      // button) catches Esc, a backdrop click and the ✕ alike; a successful save
+      // closes its own flow first, so this only ever sees genuine drop-offs.
+      this._ov.remove(); this._ov = null; document.removeEventListener('keydown', this._esc);
+      App.track && App.track.abandonOpenFlows && App.track.abandonOpenFlows();
+    }
   };
 
   /* ---- confirmation prompt ----
@@ -252,6 +260,7 @@ window.App = window.App || {};
         App.toast('Your role can only edit ' + (d ? App.dept(d).label : 'permitted') + ' tasks', true);
         return;
       }
+      App.track.feature('task.editDialog', { dept: su.dept });
       const canApprove = App.canApprove(role);
       const lockedApproved = su.status === 'approved' && !canApprove;
 
@@ -373,12 +382,14 @@ window.App = window.App || {};
               start: s, due: d,
               assignee: canAssign ? ownerSel.value : undefined
             });
+            App.track.flowDone('Task edit', true);
             App.modal.close();
           }
         }, [App.icon('save'), ' Save Changes'])
       ];
 
       App.modal.open(card('pencil', 'Edit Task', 'Update task details and schedule', sections, footer));
+      App.track.flowStart('Task edit', { dept: su.dept });   // after open(): its defensive close() must not cancel this
     }
   };
 
@@ -554,6 +565,7 @@ window.App = window.App || {};
   App.addShow = {
     open() {
       if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
+      App.track.feature('show.addDialog');
 
       // working copy of the pipeline this show will own — reloaded when the
       // show type or preset changes (each type has its own default task set,
@@ -755,6 +767,7 @@ window.App = window.App || {};
             const scale = target === rec.end ? 1 : App.solveScale(pipe, start, epCount, cadence, target).scale;
             const pipeline = pipe.map(t => ({ key: t.key, name: t.name.trim() || t.key, dept: t.dept, days: t.days, minDays: t.minDays, deps: t.deps.slice() }));
             App.createShow({ name, code, type: typeSel.value, epNames, pipeline, startIso: start, cadence, scale });
+            App.track.flowDone('Create show', true, { episodes: epNames.length });
             editor.closeMenus();
             App.modal.close();
           }
@@ -762,6 +775,7 @@ window.App = window.App || {};
       ];
 
       App.modal.open(card('clapper', 'Add New Show', 'Plan the schedule and customize the pipeline', sections, footer, 'wide'));
+      App.track.flowStart('Create show');   // after open() for the same reason
     }
   };
 })();
