@@ -543,11 +543,16 @@ window.App = window.App || {};
       const line = el('.ws-prog-line', null, 'Preparing…');
       statusBox.appendChild(line);
 
+      App.track.flowStart('LucidLink delivery', { files: files.length });
       let token;
       try {
         const prep = await App.api.deliverPrepare({ epId: m.epId, taskKey: m.taskKey, pipeline: App.pipelineFor(ep) });
         token = prep.token;
-      } catch (e) { line.textContent = '⚠ ' + e.message; line.classList.add('err'); return; }
+      } catch (e) {
+        App.track.error('lucidlink.prepareFailed', { flow: 'LucidLink delivery', message: e.message });
+        App.track.flowDone('LucidLink delivery', false, { reason: 'prepare failed' });
+        line.textContent = '⚠ ' + e.message; line.classList.add('err'); return;
+      }
 
       let done = 0;
       for (const f of files) {
@@ -557,11 +562,14 @@ window.App = window.App || {};
           done++;
           if (r.filed !== f.name) App.toast('Filed as ' + r.filed + ' (a file of that name was already there)');
         } catch (e) {
+          App.track.error('lucidlink.uploadFailed', { flow: 'LucidLink delivery', file: f.name, message: e.message });
+          App.track.flowDone('LucidLink delivery', false, { reason: 'upload failed', delivered: done });
           line.textContent = '⚠ ' + f.name + ': ' + e.message;
           line.classList.add('err');
           return;
         }
       }
+      App.track.flowDone('LucidLink delivery', true, { files: done });
       line.textContent = '✓ Delivered ' + done + ' file' + (done === 1 ? '' : 's');
       line.classList.add('ok');
       this.reload();

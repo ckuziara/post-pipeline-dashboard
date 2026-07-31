@@ -114,14 +114,24 @@ function makeFileStore() {
   };
 }
 
+// One pool shared by the board store and the activity log — a hosted Postgres
+// (Neon's free tier especially) counts connections, so we never open a second.
+let pgPool = null;
+function getPgPool(connectionString) {
+  if (!pgPool) {
+    const { Pool } = require('pg');   // lazy — only a hosted deploy needs the dependency
+    // Verify the server certificate by default — Neon (and RDS/Aurora) present
+    // certs from a public CA, so this just works and protects the connection
+    // from interception. An on-prem Postgres with a self-signed cert can opt out
+    // with PGSSL_NO_VERIFY=true rather than us weakening it for everyone.
+    const ssl = { rejectUnauthorized: ENV.PGSSL_NO_VERIFY !== 'true' };
+    pgPool = new Pool({ connectionString, ssl, max: 5 });
+  }
+  return pgPool;
+}
+
 function makePgStore(connectionString) {
-  const { Pool } = require('pg');   // lazy — only a hosted deploy needs the dependency
-  // Verify the server certificate by default — Neon (and RDS/Aurora) present
-  // certs from a public CA, so this just works and protects the connection
-  // from interception. An on-prem Postgres with a self-signed cert can opt out
-  // with PGSSL_NO_VERIFY=true rather than us weakening it for everyone.
-  const ssl = { rejectUnauthorized: ENV.PGSSL_NO_VERIFY !== 'true' };
-  const pool = new Pool({ connectionString, ssl, max: 5 });
+  const pool = getPgPool(connectionString);
   return {
     kind: 'postgres',
     async init() {
@@ -156,6 +166,324 @@ function makePgStore(connectionString) {
 }
 
 const storage = config.databaseUrl ? makePgStore(config.databaseUrl) : makeFileStore();
+
+/* ------------------------------------------------- activity log (2 backends)
+   Append-only, and deliberately NOT part of board state: the board blob is
+   re-sent on every save, so folding a growing log into it would balloon each
+   write. Two kinds of row share the table:
+     audit — a change to the data (who renamed/rescheduled/approved what)
+     usage — a feature was used (which views and tools each role actually opens)
+   Capped so it can never grow without bound on a free-tier database. */
+const ACTIVITY_PATH = path.join(DATA_DIR, 'activity.json');
+const ACTIVITY_CAP = 20000;
+
+function makeFileActivity() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  let rows = readJson(ACTIVITY_PATH, []);
+  let dirty = false;
+  // Batch disk writes: a burst of usage pings shouldn't mean a write each.
+  setInterval(() => { if (dirty) { dirty = false; try { writeJson(ACTIVITY_PATH, rows); } catch (e) {} } }, 2000).unref();
+  return {
+    kind: 'json file',
+    async init() {},
+    async append(entries) {
+      entries.forEach(e => rows.push(e));
+      if (rows.length > ACTIVITY_CAP) rows = rows.slice(-ACTIVITY_CAP);
+      dirty = true;
+    },
+    async query({ kind, role, dept, email, action, since, limit, offset }) {
+      let out = rows;
+      if (kind) out = out.filter(r => r.kind === kind);
+      if (role) out = out.filter(r => r.role === role);
+      if (dept) out = out.filter(r => r.dept === dept);
+      if (email) out = out.filter(r => r.email === email);
+      if (action) out = out.filter(r => r.action === action);
+      if (since) out = out.filter(r => r.ts >= since);
+      const total = out.length;
+      out = out.slice().reverse().slice(offset || 0, (offset || 0) + (limit || 100));  // newest first
+      return { total, rows: out };
+    },
+    async stats(since, prevSince, filt) {
+      let src = prevSince ? rows.filter(r => r.ts >= prevSince) : rows;
+      if (filt && filt.role) src = src.filter(r => r.role === filt.role);
+      if (filt && filt.dept) src = src.filter(r => r.dept === filt.dept);
+      return aggregate(src, since);
+    }
+  };
+}
+
+function makePgActivity(connectionString) {
+  const pool = getPgPool(connectionString);
+  return {
+    kind: 'postgres',
+    async init() {
+      await pool.query(
+        'CREATE TABLE IF NOT EXISTS activity_log (' +
+        'id bigserial PRIMARY KEY, ts timestamptz NOT NULL DEFAULT now(), ' +
+        'email text, role text, kind text NOT NULL, action text NOT NULL, detail jsonb)'
+      );
+      // added after the first release — existing deployments migrate in place
+      await pool.query('ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS dept text');
+      await pool.query('CREATE INDEX IF NOT EXISTS activity_ts_idx ON activity_log (ts DESC)');
+    },
+    async append(entries) {
+      for (const e of entries) {
+        await pool.query(
+          'INSERT INTO activity_log (ts, email, role, dept, kind, action, detail) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)',
+          [e.ts, e.email, e.role, e.dept, e.kind, e.action, JSON.stringify(e.detail || {})]
+        );
+      }
+      // trim to the cap — cheap, and only when we're plausibly over it
+      await pool.query(
+        'DELETE FROM activity_log WHERE id < (SELECT COALESCE(MAX(id),0) - $1 FROM activity_log)', [ACTIVITY_CAP]
+      );
+    },
+    async query({ kind, role, dept, email, action, since, limit, offset }) {
+      const w = [], p = [];
+      const add = (sql, v) => { p.push(v); w.push(sql.replace('?', '$' + p.length)); };
+      if (kind) add('kind = ?', kind);
+      if (role) add('role = ?', role);
+      if (dept) add('dept = ?', dept);
+      if (email) add('email = ?', email);
+      if (action) add('action = ?', action);
+      if (since) add('ts >= ?', since);
+      const where = w.length ? ' WHERE ' + w.join(' AND ') : '';
+      const cnt = await pool.query('SELECT count(*)::int AS n FROM activity_log' + where, p);
+      const r = await pool.query(
+        'SELECT ts, email, role, dept, kind, action, detail FROM activity_log' + where +
+        ' ORDER BY id DESC LIMIT $' + (p.length + 1) + ' OFFSET $' + (p.length + 2),
+        p.concat([limit || 100, offset || 0])
+      );
+      return { total: cnt.rows[0].n, rows: r.rows.map(x => ({ ...x, ts: new Date(x.ts).toISOString() })) };
+    },
+    async stats(since, prevSince, filt) {
+      const w = [], p = [];
+      const add = (sql, v) => { p.push(v); w.push(sql.replace('?', '$' + p.length)); };
+      if (prevSince) add('ts >= ?', prevSince);
+      if (filt && filt.role) add('role = ?', filt.role);
+      if (filt && filt.dept) add('dept = ?', filt.dept);
+      const where = w.length ? ' WHERE ' + w.join(' AND ') : '';
+      const r = await pool.query('SELECT ts, email, role, dept, kind, action, detail FROM activity_log' + where, p);
+      return aggregate(r.rows.map(x => ({ ...x, ts: new Date(x.ts).toISOString() })), since);
+    }
+  };
+}
+
+/* Shared roll-up so both backends report identically.
+   `rows` covers the current window PLUS an equal window before it, and `since`
+   is the boundary — so every headline number ships with what it was last period
+   and the page can talk in trends rather than totals. Series are bucketed by day
+   (or by week once the range is long enough that daily points turn to noise). */
+function aggregate(rows, since) {
+  const mondayOf = (iso) => {
+    const d = new Date(iso + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+    return d.toISOString().slice(0, 10);
+  };
+
+  const cur = since ? rows.filter(r => r.ts >= since) : rows;
+  const prev = since ? rows.filter(r => r.ts < since) : [];
+
+  /* Sessions are derived, not tracked: a browser can't be relied on to report
+     when a session ended (tabs get closed, laptops sleep). Group one person's
+     events in time order and split wherever they went quiet for 30 minutes —
+     the standard idle-timeout definition. A lone event isn't a measurable
+     session, so it's counted but contributes no duration. */
+  const IDLE_MS = 30 * 60 * 1000;
+  const sessionize = (src) => {
+    const byUser = {};
+    src.forEach(r => { if (r.email) (byUser[r.email] = byUser[r.email] || []).push(Date.parse(r.ts)); });
+    let count = 0, totalMs = 0, measurable = 0;
+    Object.values(byUser).forEach(times => {
+      times.sort((a, b) => a - b);
+      let start = times[0], last = times[0];
+      const close = () => {
+        count++;
+        if (last > start) { totalMs += last - start; measurable++; }
+      };
+      for (let i = 1; i < times.length; i++) {
+        if (times[i] - last > IDLE_MS) { close(); start = times[i]; }
+        last = times[i];
+      }
+      close();
+    });
+    return { sessions: count, avgMs: measurable ? Math.round(totalMs / measurable) : 0 };
+  };
+
+  /* Friction, all derived from the flow.* / error events the client emits.
+       abandonment — flows opened but closed without saving
+       ttc         — how long the ones that DID complete took (median + p90)
+       errors      — failures, as a rate against the attempts of the same flow */
+  const frictionOf = (src) => {
+    const flows = {}, errors = {};
+    const F = (name) => (flows[name] = flows[name] || { started: 0, completed: 0, abandoned: 0, times: [] });
+    src.forEach(r => {
+      const flow = (r.detail && r.detail.flow) || null;
+      if (r.action === 'flow.start' && flow) F(flow).started++;
+      else if (r.action === 'flow.complete' && flow) {
+        const f = F(flow); f.completed++;
+        if (typeof (r.detail || {}).ms === 'number') f.times.push(r.detail.ms);
+      } else if (r.action === 'flow.abandon' && flow) F(flow).abandoned++;
+      else if (r.kind === 'error') {
+        const e = errors[r.action] = errors[r.action] || { count: 0, flow: flow || null };
+        e.count++;
+      }
+    });
+    const pctl = (arr, p) => {
+      if (!arr.length) return null;
+      const a = arr.slice().sort((x, y) => x - y);
+      return a[Math.min(a.length - 1, Math.floor(p * a.length))];
+    };
+    return {
+      flows: Object.keys(flows).map(name => {
+        const f = flows[name];
+        const closed = f.completed + f.abandoned;
+        return {
+          flow: name, started: f.started, completed: f.completed, abandoned: f.abandoned,
+          abandonRate: closed ? Math.round(f.abandoned / closed * 100) : 0,
+          medianMs: pctl(f.times, 0.5), p90Ms: pctl(f.times, 0.9), samples: f.times.length
+        };
+      }).sort((a, b) => (b.completed + b.abandoned) - (a.completed + a.abandoned)),
+      errors: Object.keys(errors).map(action => {
+        // rate against the attempts of the flow the error belongs to, when known
+        const f = errors[action].flow && flows[errors[action].flow];
+        const attempts = f ? f.started : 0;
+        return {
+          action, count: errors[action].count, flow: errors[action].flow,
+          attempts, rate: attempts ? Math.round(errors[action].count / attempts * 100) : null
+        };
+      }).sort((a, b) => b.count - a.count)
+    };
+  };
+
+  const tally = (src) => {
+    const byRole = {}, byAction = {}, byRoleAction = {}, byDept = {}, users = new Set();
+    let usage = 0, audit = 0, errors = 0;
+    src.forEach(r => {
+      const role = r.role || 'unknown';
+      if (r.kind === 'error') errors++; else if (r.kind === 'audit') audit++; else usage++;
+      if (r.email) users.add(r.email);
+      byRole[role] = (byRole[role] || 0) + 1;
+      if (r.dept) byDept[r.dept] = (byDept[r.dept] || 0) + 1;
+      byAction[r.action] = (byAction[r.action] || 0) + 1;
+      byRoleAction[role] = byRoleAction[role] || {};
+      byRoleAction[role][r.action] = (byRoleAction[role][r.action] || 0) + 1;
+    });
+    const sess = sessionize(src);
+    return { total: src.length, usage, audit, errors, users: users.size,
+             byRole, byAction, byRoleAction, byDept,
+             sessions: sess.sessions, avgSessionMs: sess.avgMs };
+  };
+
+  const now = tally(cur), before = tally(prev);
+
+  // --- time series over the current window ---
+  const dayKeys = [...new Set(cur.map(r => r.ts.slice(0, 10)))].sort();
+  const spanDays = dayKeys.length > 1
+    ? Math.round((Date.parse(dayKeys[dayKeys.length - 1]) - Date.parse(dayKeys[0])) / 86400000) + 1
+    : 1;
+  const bucket = spanDays > 70 ? 'week' : 'day';
+  const keyOf = (ts) => bucket === 'week' ? mondayOf(ts.slice(0, 10)) : ts.slice(0, 10);
+
+  // a continuous axis — gaps are real information ("nobody used it that day")
+  const buckets = [];
+  if (dayKeys.length) {
+    const step = bucket === 'week' ? 7 : 1;
+    let c = new Date((bucket === 'week' ? mondayOf(dayKeys[0]) : dayKeys[0]) + 'T00:00:00Z');
+    const last = keyOf(dayKeys[dayKeys.length - 1]);
+    for (let i = 0; i < 400; i++) {
+      const k = c.toISOString().slice(0, 10);
+      buckets.push(k);
+      if (k >= last) break;
+      c.setUTCDate(c.getUTCDate() + step);
+    }
+  }
+  const idx = {}; buckets.forEach((b, i) => { idx[b] = i; });
+  const zeros = () => new Array(buckets.length).fill(0);
+
+  const series = { total: zeros(), usage: zeros(), audit: zeros(), errors: zeros(), users: zeros(), byRole: {}, byAction: {} };
+  const seenPerBucket = buckets.map(() => new Set());
+  const dauPerBucket = buckets.map(() => ({}));      // bucket → role → Set(email)
+  cur.forEach(r => {
+    const i = idx[keyOf(r.ts)]; if (i === undefined) return;
+    const role = r.role || 'unknown';
+    series.total[i]++;
+    if (r.kind === 'error') series.errors[i]++; else if (r.kind === 'audit') series.audit[i]++; else series.usage[i]++;
+    if (r.email) {
+      seenPerBucket[i].add(r.email);
+      (dauPerBucket[i][role] = dauPerBucket[i][role] || new Set()).add(r.email);
+    }
+    (series.byRole[role] = series.byRole[role] || zeros())[i]++;
+    (series.byAction[r.action] = series.byAction[r.action] || zeros())[i]++;
+  });
+  seenPerBucket.forEach((s, i) => { series.users[i] = s.size; });
+
+  /* Daily Active Users, per role. DAU is a *daily* figure, so it's the mean of
+     the active-day buckets rather than the window's distinct-user count — which
+     would just grow with the range and stop being comparable. */
+  const activeIdx = buckets.map((_, i) => i).filter(i => series.total[i] > 0);
+  const dauByRole = {};
+  Object.keys(now.byRole).forEach(role => {
+    const perDay = activeIdx.map(i => (dauPerBucket[i][role] ? dauPerBucket[i][role].size : 0));
+    const live = perDay.filter(n => n > 0);
+    dauByRole[role] = live.length ? +(live.reduce((a, b) => a + b, 0) / live.length).toFixed(1) : 0;
+  });
+  const dau = activeIdx.length
+    ? +(activeIdx.map(i => series.users[i]).reduce((a, b) => a + b, 0) / activeIdx.length).toFixed(1) : 0;
+
+  // "Top feature leveraged" — the busiest *feature* (a usage event), not an audit
+  // row, since audit rows record data changes rather than a tool being reached for.
+  const featureCounts = {};
+  cur.forEach(r => { if (r.kind === 'usage' && !r.action.startsWith('flow.')) featureCounts[r.action] = (featureCounts[r.action] || 0) + 1; });
+  const featureRank = Object.keys(featureCounts).sort((a, b) => featureCounts[b] - featureCounts[a]);
+  const featureTotal = Object.values(featureCounts).reduce((a, b) => a + b, 0);
+  const topFeature = featureRank.length
+    ? { action: featureRank[0], count: featureCounts[featureRank[0]],
+        share: featureTotal ? Math.round(featureCounts[featureRank[0]] / featureTotal * 100) : 0 }
+    : null;
+
+  const prevFeature = {};
+  prev.forEach(r => { if (r.kind === 'usage' && !r.action.startsWith('flow.')) prevFeature[r.action] = (prevFeature[r.action] || 0) + 1; });
+
+  return {
+    bucket, buckets, series,
+    total: now.total, usage: now.usage, audit: now.audit, errors: now.errors, users: now.users,
+    sessions: now.sessions, avgSessionMs: now.avgSessionMs,
+    dau, dauByRole, topFeature, featureCounts,
+    byRole: now.byRole, byAction: now.byAction, byRoleAction: now.byRoleAction, byDept: now.byDept,
+    friction: frictionOf(cur),
+    // the comparison window — absent when the caller asked for all time
+    prev: since ? {
+      total: before.total, usage: before.usage, audit: before.audit, errors: before.errors,
+      users: before.users, sessions: before.sessions, avgSessionMs: before.avgSessionMs,
+      byRole: before.byRole, byAction: before.byAction, featureCounts: prevFeature,
+      // DAU on the same daily-mean basis as the current window, so the two are
+      // directly comparable (a distinct-user count would scale with the range)
+      ...(() => {
+        const days = {}, allDays = {};
+        prev.forEach(r => {
+          if (!r.email) return;
+          const d = r.ts.slice(0, 10), role = r.role || 'unknown';
+          ((days[d] = days[d] || {})[role] = days[d][role] || new Set()).add(r.email);
+          (allDays[d] = allDays[d] || new Set()).add(r.email);
+        });
+        const byRoleOut = {};
+        Object.keys(before.byRole).forEach(role => {
+          const per = Object.values(days).map(x => (x[role] ? x[role].size : 0)).filter(n => n > 0);
+          byRoleOut[role] = per.length ? +(per.reduce((a, b) => a + b, 0) / per.length).toFixed(1) : 0;
+        });
+        const perDay = Object.values(allDays).map(s => s.size);
+        return {
+          dauByRole: byRoleOut,
+          dau: perDay.length ? +(perDay.reduce((a, b) => a + b, 0) / perDay.length).toFixed(1) : 0
+        };
+      })(),
+      friction: frictionOf(prev)
+    } : null
+  };
+}
+
+const activity = config.databaseUrl ? makePgActivity(config.databaseUrl) : makeFileActivity();
 
 /* ------------------------------------------------- live update fan-out ---- */
 // Plain-HTTP Server-Sent Events — no extra dependency, works through Render's
@@ -784,6 +1112,63 @@ const server = http.createServer(async (req, res) => {
         broadcastVersion(result.version);
         return sendJson(res, 200, { version: result.version });
       }
+
+      /* ---- activity log ---- */
+      // Anyone signed in may append (that's how their own usage is recorded),
+      // but the identity and timestamp come from the session and the clock here
+      // — never from the client, so a row can't be forged onto someone else.
+      if (route === 'POST /api/activity') {
+        const s = getSession(req);
+        const body = JSON.parse(await readBody(req) || '{}');
+        const list = Array.isArray(body.events) ? body.events.slice(0, 200) : [];
+        if (!list.length) return sendJson(res, 200, { ok: true, stored: 0 });
+        const now = new Date().toISOString();
+        const entries = list
+          .filter(e => e && typeof e.action === 'string')
+          .map(e => ({
+            ts: now,
+            email: s.email,
+            role: typeof e.role === 'string' ? e.role.slice(0, 40) : null,
+            dept: typeof e.dept === 'string' ? e.dept.slice(0, 40) : null,
+            kind: e.kind === 'audit' ? 'audit' : e.kind === 'error' ? 'error' : 'usage',
+            action: e.action.slice(0, 80),
+            detail: e.detail && typeof e.detail === 'object' ? e.detail : {}
+          }));
+        await activity.append(entries);
+        return sendJson(res, 200, { ok: true, stored: entries.length });
+      }
+
+      // Reading the log is an admin matter — it names who did what.
+      if (route === 'GET /api/activity' || route === 'GET /api/activity/stats') {
+        const s = getSession(req);
+        if (!config.adminEmails.map(e => e.toLowerCase()).includes(s.email)) {
+          return sendJson(res, 403, { error: 'Only admins can read the activity log' });
+        }
+        const q = url.searchParams;
+        // `hours` carries the 24h horizon; `days` the longer ones. One window
+        // length in ms drives both the range and its comparison period.
+        const hours = parseFloat(q.get('hours') || '0');
+        const days = parseInt(q.get('days') || '0', 10);
+        const winMs = hours > 0 ? hours * 3600000 : days > 0 ? days * 86400000 : 0;
+        const since = winMs ? new Date(Date.now() - winMs).toISOString() : null;
+        const filt = { role: q.get('role') || null, dept: q.get('dept') || null };
+        if (route === 'GET /api/activity/stats') {
+          // pull an equal window before `since` too, so every figure has a
+          // previous-period counterpart to trend against
+          const prevSince = winMs ? new Date(Date.now() - winMs * 2).toISOString() : null;
+          return sendJson(res, 200, await activity.stats(since, prevSince, filt));
+        }
+        return sendJson(res, 200, await activity.query({
+          kind: q.get('kind') || null,
+          role: filt.role,
+          dept: filt.dept,
+          email: q.get('email') || null,
+          action: q.get('action') || null,
+          since,
+          limit: Math.min(parseInt(q.get('limit') || '100', 10) || 100, 500),
+          offset: parseInt(q.get('offset') || '0', 10) || 0
+        }));
+      }
       return sendJson(res, 404, { error: 'unknown api route' });
     }
 
@@ -799,6 +1184,9 @@ const server = http.createServer(async (req, res) => {
 (async () => {
   try { await storage.init(); }
   catch (e) { console.error('Storage init failed:', e.message); process.exit(1); }
+  // the log is a nice-to-have: a failure here must never stop the tracker
+  try { await activity.init(); }
+  catch (e) { console.error('Activity log init failed (logging disabled):', e.message); }
 
   server.listen(PORT, config.host, () => {
     const nets = os.networkInterfaces();

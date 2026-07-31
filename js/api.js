@@ -139,6 +139,27 @@ window.App = window.App || {};
       return body;
     },
 
+    /* ---- activity log (Admin → Audit & Event Logs; admin-only to read) ---- */
+    async activity(params) {
+      const q = new URLSearchParams();
+      Object.keys(params || {}).forEach(k => { if (params[k] !== '' && params[k] != null) q.set(k, params[k]); });
+      const r = await fetch('/api/activity?' + q, { cache: 'no-store' });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not read the activity log');
+      return body;
+    },
+    // `q` is the segment: { days | hours, role, dept }. A bare number is still
+    // accepted so older callers keep working.
+    async activityStats(q) {
+      const params = (typeof q === 'object' && q) ? q : { days: q };
+      const usp = new URLSearchParams();
+      Object.keys(params).forEach(k => { if (params[k] !== '' && params[k] != null) usp.set(k, params[k]); });
+      const r = await fetch('/api/activity/stats?' + usp, { cache: 'no-store' });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not read usage statistics');
+      return body;
+    },
+
     /* ---- per-subtask workspace (Project / Assets / Deliver) ----
        All of these POST because the server needs the pipeline to resolve a task's
        folder, and seed shows don't carry one in stored state. */

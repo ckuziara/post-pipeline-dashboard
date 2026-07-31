@@ -15,12 +15,17 @@ window.App = window.App || {};
         return wrap;
       }
       const v = App.state.admin.view;
-      wrap.appendChild(v === 'directory' ? directory() : v === 'roles' ? accessControl() : v === 'workflow' ? workflow() : hub());
+      wrap.appendChild(v === 'directory' ? directory() : v === 'roles' ? accessControl()
+        : v === 'workflow' ? workflow() : v === 'logs' ? logs() : hub());
       return wrap;
     }
   };
 
-  const go = (view) => { App.state.admin.view = view; App.state.admin.editing = null; App.render(); };
+  const go = (view) => {
+    // provisioning has no modal to close, so navigating away is its abandonment
+    App.track && App.track.abandonOpenFlows && App.track.abandonOpenFlows();
+    App.state.admin.view = view; App.state.admin.editing = null; App.render();
+  };
 
   function crumb(current) {
     return el('.adm-crumb', null, [
@@ -53,8 +58,8 @@ window.App = window.App || {};
         desc: 'Rename and recolour task statuses and departments across the whole tracker. Pipelines themselves are customised per show when it’s created.',
         btn: 'Configure Workflow', onclick: () => go('workflow') },
       { ic: 'scroll', tint: 'amber', title: 'Audit & Event Logs',
-        desc: 'A timestamped record of every change made across the tracker, for project auditing.',
-        btn: 'Coming soon', soon: true }
+        desc: 'A timestamped record of every change made across the tracker, plus which features each role actually uses.',
+        btn: 'View Logs', onclick: () => go('logs') }
     ];
     const grid = el('.adm-cards');
     cards.forEach(c => {
@@ -116,6 +121,11 @@ window.App = window.App || {};
 
     // add a member
     const nameInput = el('input.fld', { type: 'text', placeholder: 'New team member name', style: { maxWidth: '220px' } });
+    // provisioning has no modal, so the flow starts at first keystroke and is
+    // abandoned if they navigate away from the directory without adding anyone
+    nameInput.addEventListener('input', () => {
+      if (nameInput.value.trim()) App.track.flowStart('User provisioning');
+    }, { once: true });
     const emailInput = el('input.fld', { type: 'email', placeholder: 'Work email', style: { maxWidth: '220px' } });
     let newRole = 'creative';
     box.appendChild(el('.adm-add', null, [
@@ -128,6 +138,7 @@ window.App = window.App || {};
             if (!nameInput.value.trim()) { App.toast('Enter a name', true); return; }
             if (!emailInput.value.trim()) { App.toast('Enter a work email', true); return; }
             App.addPerson(nameInput.value.trim(), newRole, emailInput.value.trim());
+            App.track.flowDone('User provisioning', true);
           }
         }, '＋ Add member')
       ])
@@ -704,6 +715,523 @@ window.App = window.App || {};
     wrapP.appendChild(arch);
     return wrapP;
   }
+
+  /* ------------------------------------------- audit & event logs ------- */
+  /* Two readings of one event stream (see js/track.js):
+       Activity — the audit trail: who changed what, when.
+       Feature Usage — which parts of the tool each role actually reaches for,
+                       to steer what gets built next.
+     Both fetch on demand and render into a placeholder, since App.admin.render()
+     is synchronous. */
+
+  // human labels for the action keys the tracker emits
+  const ACTION_LABELS = {
+    'task.status': 'Task status changed', 'task.edit': 'Task edited',
+    'task.reschedule': 'Task rescheduled', 'task.remove': 'Task removed',
+    'show.create': 'Show created', 'show.remove': 'Show removed', 'show.delete': 'Show deleted',
+    'show.archive': 'Show archived', 'show.restore': 'Show restored',
+    'episode.archive': 'Episode archived', 'episode.restore': 'Episode restored', 'episode.delete': 'Episode deleted',
+    'person.add': 'Team member added', 'person.remove': 'Team member removed', 'person.role': 'Role reassigned',
+    'perm.change': 'Permission changed',
+    'workflow.status': 'Status style changed', 'workflow.department': 'Department style changed',
+    'workflow.deptAdd': 'Department added', 'workflow.deptRemove': 'Department removed',
+    'workflow.reset': 'Workflow reset',
+    'note.add': 'Producer note added', 'note.remove': 'Producer note removed',
+    'view.timeline': 'Timeline view', 'view.board': 'Board view', 'view.dashboard': 'Dashboard view',
+    'view.admin': 'Admin view', 'view.review': 'Review queue',
+    'admin.hub': 'Admin hub', 'admin.directory': 'User directory', 'admin.roles': 'Access control',
+    'admin.workflow': 'Workflow settings', 'admin.logs': 'Audit logs',
+    'task.editDialog': 'Edit Task dialog', 'timeline.dragReschedule': 'Timeline drag-reschedule',
+    'lucidlink.delivered': 'LucidLink upload', 'lucidlink.uploadFailed': 'LucidLink upload failed',
+    'lucidlink.prepareFailed': 'LucidLink prepare failed',
+    'flow.start': 'Workflow started', 'flow.complete': 'Workflow completed', 'flow.abandon': 'Workflow abandoned',
+    'view.workspace': 'Task workspace', 'admin.logs': 'Audit logs'
+  };
+  const actionLabel = (a) => ACTION_LABELS[a] || a;
+
+  function relTime(iso) {
+    const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    if (s < 604800) return Math.floor(s / 86400) + 'd ago';
+    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  // Flatten an event's detail object into one readable line.
+  function detailText(d) {
+    if (!d || typeof d !== 'object') return '';
+    const bits = [];
+    Object.keys(d).forEach(k => {
+      const v = d[k];
+      if (v == null || v === '' || k === 'changed') return;
+      if (typeof v === 'object') return;
+      bits.push(k + ': ' + v);
+    });
+    if (d.changed && typeof d.changed === 'object') {
+      Object.keys(d.changed).forEach(f => {
+        const c = d.changed[f];
+        bits.push(c && c.from !== undefined ? f + ' ' + c.from + ' → ' + c.to : f);
+      });
+    }
+    return bits.join('  ·  ');
+  }
+
+  function logs() {
+    const box = el('div');
+    box.appendChild(crumb('Audit & Event Logs'));
+    const st = App.state.admin;
+    st.logTab = st.logTab || 'activity';
+    st.logDays = st.logDays == null ? 30 : st.logDays;
+
+    box.appendChild(head('Audit & Event Logs',
+      'Every change made across the tracker, and which features each role uses.'));
+
+    // range + tab controls
+    const tabs = el('.adm-tabs', null, [
+      el('button.adm-tab' + (st.logTab === 'activity' ? '.active' : ''),
+        { onclick: () => { st.logTab = 'activity'; App.render(); } }, 'Activity'),
+      el('button.adm-tab' + (st.logTab === 'usage' ? '.active' : ''),
+        { onclick: () => { st.logTab = 'usage'; App.render(); } }, 'Feature Usage')
+    ]);
+    const rangeSel = el('select.filter');
+    [[7, 'Last 7 days'], [30, 'Last 30 days'], [90, 'Last 90 days'], [0, 'All time']].forEach(([v, label]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = label;
+      if (v === st.logDays) o.selected = true; rangeSel.appendChild(o);
+    });
+    rangeSel.addEventListener('change', e => { st.logDays = parseInt(e.target.value, 10); App.render(); });
+    // the Feature Usage tab has its own segmentation bar (horizon lives there),
+    // so this range control belongs to the Activity tab alone
+    box.appendChild(el('.adm-logbar', null, [tabs,
+      st.logTab === 'usage' ? null : el('.adm-logbar-right', null, rangeSel)]));
+
+    const panel = el('.adm-logpanel', null, el('.adm-empty', null, 'Loading…'));
+    box.appendChild(panel);
+    (st.logTab === 'usage' ? renderUsage : renderActivity)(panel, st);
+    return box;
+  }
+
+  function fail(panel, e) {
+    panel.innerHTML = '';
+    panel.appendChild(el('.adm-empty', null, 'Could not load the log — ' + e.message));
+  }
+
+  function renderActivity(panel, st) {
+    const filters = st.logFilters = st.logFilters || { kind: 'audit', role: '', action: '' };
+    let offset = 0, loaded = [];
+
+    const draw = (total) => {
+      panel.innerHTML = '';
+
+      const kindSel = el('select.filter');
+      [['', 'All events'], ['audit', 'Changes only'], ['usage', 'Feature usage only']].forEach(([v, l]) => {
+        const o = document.createElement('option'); o.value = v; o.textContent = l;
+        if (v === filters.kind) o.selected = true; kindSel.appendChild(o);
+      });
+      kindSel.addEventListener('change', e => { filters.kind = e.target.value; App.render(); });
+
+      const roleSel2 = el('select.filter');
+      [['', 'All roles']].concat(App.ROLES.map(r => [r.key, r.label])).forEach(([v, l]) => {
+        const o = document.createElement('option'); o.value = v; o.textContent = l;
+        if (v === filters.role) o.selected = true; roleSel2.appendChild(o);
+      });
+      roleSel2.addEventListener('change', e => { filters.role = e.target.value; App.render(); });
+
+      panel.appendChild(el('.adm-logfilters', null, [
+        kindSel, roleSel2,
+        el('span.adm-logcount', null, total + ' event' + (total === 1 ? '' : 's'))
+      ]));
+
+      if (!loaded.length) {
+        panel.appendChild(el('.adm-empty', null, 'No activity recorded yet for this range.'));
+        return;
+      }
+
+      const table = el('.adm-table');
+      table.appendChild(el('.adm-logrow.head', null, [
+        el('.cell', null, 'When'), el('.cell', null, 'Who'), el('.cell', null, 'Role'),
+        el('.cell', null, 'Event'), el('.cell', null, 'Details')
+      ]));
+      loaded.forEach(r => {
+        const person = (App.state.data.people || []).find(p => (p.email || '').toLowerCase() === (r.email || '').toLowerCase());
+        table.appendChild(el('.adm-logrow', null, [
+          el('.cell.adm-when', { title: new Date(r.ts).toLocaleString() }, relTime(r.ts)),
+          el('.cell.adm-who', null, person ? person.name : (r.email || '—')),
+          el('.cell', null, el('span.adm-role-chip', null, r.role ? App.role(r.role).label : '—')),
+          el('.cell', null, [
+            el('span.adm-kind.' + (r.kind === 'audit' ? 'audit' : 'usage'), null, r.kind === 'audit' ? 'change' : 'usage'),
+            el('span', null, actionLabel(r.action))
+          ]),
+          el('.cell.adm-detail', { title: detailText(r.detail) }, detailText(r.detail))
+        ]));
+      });
+      panel.appendChild(table);
+
+      if (loaded.length < total) {
+        panel.appendChild(el('button.adm-btn', {
+          style: { marginTop: '12px' },
+          onclick: (e) => { e.target.textContent = 'Loading…'; offset = loaded.length; load(true); }
+        }, 'Load older events'));
+      }
+    };
+
+    const load = (append) => {
+      App.api.activity({
+        kind: filters.kind, role: filters.role,
+        days: st.logDays || '', limit: 100, offset
+      }).then(r => {
+        loaded = append ? loaded.concat(r.rows) : r.rows;
+        draw(r.total);
+      }).catch(e => fail(panel, e));
+    };
+    load(false);
+  }
+
+  /* The usage view answers "where is the tool actually being used, and is that
+     changing?" — so every figure is paired with the previous equal-length period
+     and the page leads with trends rather than standing totals. */
+  /* ---- Feature Usage: the product-decision view ----
+     Every figure is scoped by the segmentation bar (role / department / horizon)
+     and paired with the previous equal-length window, so the page reads as
+     "what changed and where are people stuck" rather than a pile of totals. */
+  function renderUsage(panel, st) {
+    const seg = st.seg = st.seg || { role: '', dept: '', hours: 0, days: 30 };
+    const query = { role: seg.role, dept: seg.dept };
+    if (seg.hours) query.hours = seg.hours; else query.days = seg.days;
+
+    App.api.activityStats(query).then(s => {
+      panel.innerHTML = '';
+      panel.appendChild(segmentBar(seg, s));
+      if (!s.total) {
+        panel.appendChild(el('.adm-empty', null, 'No activity recorded for this segment. Widen the horizon or clear a filter.'));
+        return;
+      }
+      const C = App.charts;
+      const pct = (now, prev) => prev ? Math.round((now - prev) / prev * 100) : (now ? 100 : null);
+      const horizonLabel = seg.hours ? 'vs previous 24h' : 'vs previous ' + seg.days + ' days';
+
+      /* ---- 1. KPI scorecards ---- */
+      const cards = el('.adm-kpi-row');
+
+      // DAU by role — the headline is the overall daily average; the breakdown
+      // underneath is what makes it actionable ("Producers are in daily, QC isn't")
+      const dauRoles = Object.keys(s.dauByRole)
+        .filter(r => s.dauByRole[r] > 0)
+        .sort((a, b) => s.dauByRole[b] - s.dauByRole[a]).slice(0, 4);
+      const prevDau = s.prev ? s.prev.dau : null;
+      cards.appendChild(kpiCard({
+        label: 'Daily Active Users', value: s.dau, sub: 'avg per active day',
+        delta: s.prev ? pct(s.dau, prevDau) : null, deltaNote: horizonLabel,
+        spark: s.series.users, color: C.seriesColor(0),
+        rows: dauRoles.map(r => ({ label: roleName(r), value: s.dauByRole[r] }))
+      }));
+
+      // Top feature leveraged
+      const tf = s.topFeature;
+      const tfPrev = tf && s.prev ? (s.prev.featureCounts || {})[tf.action] || 0 : 0;
+      cards.appendChild(kpiCard({
+        label: 'Top Feature Leveraged',
+        value: tf ? actionLabel(tf.action) : '—', valueSmall: true,
+        sub: tf ? tf.count.toLocaleString() + ' opens · ' + tf.share + '% of all usage' : '',
+        delta: tf && s.prev ? pct(tf.count, tfPrev) : null, deltaNote: horizonLabel,
+        spark: tf ? (s.series.byAction[tf.action] || []) : [], color: C.seriesColor(1)
+      }));
+
+      // Total events fired
+      cards.appendChild(kpiCard({
+        label: 'Total Events Fired', value: s.total.toLocaleString(),
+        sub: s.usage.toLocaleString() + ' usage · ' + s.audit.toLocaleString() + ' changes',
+        delta: s.prev ? pct(s.total, s.prev.total) : null, deltaNote: horizonLabel,
+        spark: s.series.total, color: C.seriesColor(2)
+      }));
+
+      // Average session time
+      cards.appendChild(kpiCard({
+        label: 'Avg Session Time', value: fmtDur(s.avgSessionMs),
+        sub: s.sessions.toLocaleString() + ' session' + (s.sessions === 1 ? '' : 's') + ' · 30-min idle cut-off',
+        delta: s.prev ? pct(s.avgSessionMs, s.prev.avgSessionMs) : null, deltaNote: horizonLabel,
+        spark: null, color: C.seriesColor(3)
+      }));
+      panel.appendChild(cards);
+
+      /* ---- 2. Feature adoption ---- */
+      // A named shortlist, so the question is "is adoption sticking?" for the
+      // features we actually care about — not whatever happens to rank today.
+      const WATCH = [
+        { action: 'timeline.dragReschedule', label: 'Timeline dragging' },
+        { action: 'note.add', label: 'Notes creation' },
+        { action: 'lucidlink.delivered', label: 'LucidLink uploads' },
+        { action: 'task.editDialog', label: 'Task editing' }
+      ];
+      const watched = WATCH
+        .map((wf, i) => ({ label: wf.label, values: s.series.byAction[wf.action] || null, color: C.seriesColor(i) }))
+        .filter(x => x.values);
+      const adopt = chartCard('Feature adoption over time',
+        'Tracked features per ' + s.bucket + '. A line flattening out is adoption stalling.');
+      if (watched.length) {
+        adopt.appendChild(C.lineChart(s.buckets, watched, { height: 200 }));
+        adopt.appendChild(C.legend(watched));
+      } else {
+        adopt.appendChild(el('.adm-empty', null, 'None of the tracked features were used in this segment yet.'));
+      }
+      panel.appendChild(adopt);
+
+      // Popularity ranking — what to prioritise
+      const ranked = Object.keys(s.featureCounts || {})
+        .sort((a, b) => s.featureCounts[b] - s.featureCounts[a]).slice(0, 12);
+      if (ranked.length) {
+        const totalFeat = Object.values(s.featureCounts).reduce((a, b) => a + b, 0);
+        const popCard = chartCard('Feature popularity',
+          'Most to least used, across this segment — the top of this list is where effort pays back.');
+        popCard.appendChild(C.barChart(ranked.map(a => ({
+          label: actionLabel(a), value: s.featureCounts[a],
+          share: totalFeat ? Math.round(s.featureCounts[a] / totalFeat * 100) : 0
+        })), { unit: 'opens' }));
+        panel.appendChild(popCard);
+      }
+
+      /* ---- 3. Friction & usability ---- */
+      panel.appendChild(frictionSection(s, seg, pct));
+
+      /* ---- 4. Who uses what (kept — the role × feature matrix) ---- */
+      const roleKeys = Object.keys(s.byRole).sort((a, b) => s.byRole[b] - s.byRole[a]);
+      const topActions = Object.keys(s.featureCounts || {}).sort((a, b) => s.featureCounts[b] - s.featureCounts[a]).slice(0, 8);
+      if (topActions.length && roleKeys.length) {
+        const rows = roleKeys.slice(0, 8).map(rk => ({ key: rk, label: roleName(rk) }));
+        const cols = topActions.map(a => ({ label: actionLabel(a), short: shortLabel(actionLabel(a)) }));
+        const matrix = rows.map(r => topActions.map(a => (s.byRoleAction[r.key] || {})[a] || 0));
+        const hCard = chartCard('Who uses what',
+          'Darker means that role leans on that feature more. The empty cells are the story too.');
+        hCard.appendChild(C.heatmap(rows, cols, matrix));
+        panel.appendChild(hCard);
+
+        const tableWrap = el('.adm-tableview', { style: { display: 'none' } });
+        const tbl = el('.adm-table');
+        tbl.appendChild(el('.adm-logrow.head.adm-usagerow', null,
+          [el('.cell', null, 'Role')].concat(cols.map(c => el('.cell', null, c.short)))));
+        rows.forEach((r, i) => {
+          tbl.appendChild(el('.adm-logrow.adm-usagerow', null,
+            [el('.cell', null, r.label)].concat(matrix[i].map(v => el('.cell', null, String(v))))));
+        });
+        tableWrap.appendChild(tbl);
+        const toggle = el('button.adm-btn', {
+          onclick: () => {
+            const open = tableWrap.style.display !== 'none';
+            tableWrap.style.display = open ? 'none' : '';
+            toggle.textContent = open ? 'Show as table' : 'Hide table';
+          }
+        }, 'Show as table');
+        hCard.appendChild(el('div', { style: { padding: '0 18px 14px' } }, [toggle, tableWrap]));
+      }
+    }).catch(e => fail(panel, e));
+  }
+
+  const avgOf = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+  const roleName = (rk) => rk === 'unknown' ? 'Unknown' : App.role(rk).label;
+
+  function fmtDur(ms) {
+    if (!ms) return '—';
+    const s = Math.round(ms / 1000);
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm ' + (s % 60) + 's';
+    return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+  }
+
+  /* Segmentation bar — role, department and time horizon. Changing any of these
+     re-queries the server so every section below is scoped identically. */
+  function segmentBar(seg, s) {
+    const apply = () => App.render();
+    const bar = el('.adm-segbar');
+
+    const horizons = [[24, 0, 'Last 24h'], [0, 7, '7 days'], [0, 30, '30 days'], [0, 90, '90 days']];
+    bar.appendChild(el('.adm-seg-group', null, [
+      el('span.adm-seg-lab', null, 'Horizon'),
+      el('.adm-seg-pills', null, horizons.map(([h, d, label]) =>
+        el('button.adm-seg-pill' + ((seg.hours === h && seg.days === d) ? '.active' : ''), {
+          onclick: () => { seg.hours = h; seg.days = d; apply(); }
+        }, label)))
+    ]));
+
+    const roleSel = el('select.filter');
+    [['', 'All roles']].concat(App.ROLES.map(r => [r.key, r.label])).forEach(([v, l]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = l;
+      if (v === seg.role) o.selected = true; roleSel.appendChild(o);
+    });
+    roleSel.addEventListener('change', e => { seg.role = e.target.value; apply(); });
+    bar.appendChild(el('.adm-seg-group', null, [el('span.adm-seg-lab', null, 'Role'), roleSel]));
+
+    const deptSel = el('select.filter');
+    [['', 'All departments']].concat(Object.keys(App.DEPARTMENTS).map(k => [k, App.dept(k).label])).forEach(([v, l]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = l;
+      if (v === seg.dept) o.selected = true; deptSel.appendChild(o);
+    });
+    deptSel.addEventListener('change', e => { seg.dept = e.target.value; apply(); });
+    bar.appendChild(el('.adm-seg-group', null, [el('span.adm-seg-lab', null, 'Department'), deptSel]));
+
+    const active = (seg.role ? 1 : 0) + (seg.dept ? 1 : 0);
+    const right = el('.adm-seg-right', null, [
+      el('span.adm-seg-count', null, s.total.toLocaleString() + ' events in view')
+    ]);
+    if (active) {
+      right.appendChild(el('button.adm-btn.adm-seg-clear', {
+        onclick: () => { seg.role = ''; seg.dept = ''; apply(); }
+      }, 'Clear filters'));
+    }
+    bar.appendChild(right);
+    return bar;
+  }
+
+  /* Friction: three questions in one section — do things fail, do people give
+     up, and how long does the work take? All three come from the same flow.*
+     and error events, so they stay consistent with each other. */
+  function frictionSection(s, seg, pct) {
+    const f = s.friction || { flows: [], errors: [] };
+    const pf = (s.prev && s.prev.friction) || { flows: [], errors: [] };
+    const prevFlow = (name) => pf.flows.find(x => x.flow === name) || null;
+
+    const wrap = el('.adm-permcard.adm-chartcard.adm-friction');
+    wrap.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'Friction & usability'),
+      el('.adm-permcard-desc', null, 'Where the tool fights back: failures, drop-offs, and how long core work takes.')
+    ]));
+
+    // --- error rates ---
+    const errBox = el('.adm-fr-block');
+    errBox.appendChild(el('.adm-fr-h', null, 'Error rates'));
+    if (!f.errors.length) {
+      errBox.appendChild(el('.adm-fr-none', null, [App.icon('check', { cls: 'adm-fr-ok' }), ' No failures recorded in this segment.']));
+    } else {
+      const grid = el('.adm-fr-grid');
+      f.errors.slice(0, 4).forEach(e => {
+        const prev = pf.errors.find(x => x.action === e.action);
+        const d = prev ? pct(e.count, prev.count) : null;
+        // more errors is worse, so the delta's polarity is inverted here
+        grid.appendChild(el('.adm-fr-card' + (e.rate != null && e.rate >= 10 ? '.bad' : ''), null, [
+          el('.adm-fr-card-top', null, [
+            el('.adm-fr-n', null, e.rate != null ? e.rate + '%' : String(e.count)),
+            d == null ? null : el('span.adm-delta.' + (d > 0 ? 'down' : 'up'), null, (d > 0 ? '▲ +' : '▼ ') + d + '%')
+          ]),
+          el('.adm-fr-lab', null, actionLabel(e.action)),
+          el('.adm-fr-sub', null, e.rate != null
+            ? e.count + ' of ' + e.attempts + ' attempts failed'
+            : e.count + ' occurrence' + (e.count === 1 ? '' : 's'))
+        ]));
+      });
+      errBox.appendChild(grid);
+    }
+    wrap.appendChild(errBox);
+
+    // --- abandoned actions ---
+    const abBox = el('.adm-fr-block');
+    abBox.appendChild(el('.adm-fr-h', null, 'Abandoned actions'));
+    const closed = f.flows.filter(x => x.completed + x.abandoned > 0);
+    if (!closed.length) {
+      abBox.appendChild(el('.adm-fr-none', null, 'No tracked workflows were started in this segment yet.'));
+    } else {
+      closed.slice(0, 6).forEach(fl => {
+        const prev = prevFlow(fl.flow);
+        const d = prev && prev.abandonRate != null ? fl.abandonRate - prev.abandonRate : null;
+        const total = fl.completed + fl.abandoned;
+        abBox.appendChild(el('.adm-fr-row', null, [
+          el('.adm-fr-row-lab', null, [
+            el('span.adm-fr-flow', null, fl.flow),
+            el('span.adm-fr-sub', null, fl.abandoned + ' of ' + total + ' closed without saving')
+          ]),
+          // completed vs abandoned as one part-to-whole bar (2px surface gap)
+          el('.adm-fr-bar', null, [
+            el('.adm-fr-bar-done', { style: { width: (fl.completed / total * 100) + '%' } }),
+            el('.adm-fr-bar-drop', { style: { width: (fl.abandoned / total * 100) + '%' } })
+          ]),
+          el('.adm-fr-row-val', null, [
+            el('span.adm-fr-pct' + (fl.abandonRate >= 40 ? '.bad' : ''), null, fl.abandonRate + '%'),
+            d == null || d === 0 ? null
+              : el('span.adm-delta.' + (d > 0 ? 'down' : 'up'), null, (d > 0 ? '▲ +' : '▼ ') + d + 'pt')
+          ])
+        ]));
+      });
+      abBox.appendChild(el('.viz-legend', null, [
+        legendKey('Saved', 'var(--viz-up)'), legendKey('Abandoned', 'var(--viz-down)')
+      ]));
+    }
+    wrap.appendChild(abBox);
+
+    // --- time to completion ---
+    const ttcBox = el('.adm-fr-block');
+    ttcBox.appendChild(el('.adm-fr-h', null, 'Time to completion'));
+    const timed = f.flows.filter(x => x.medianMs != null);
+    if (!timed.length) {
+      ttcBox.appendChild(el('.adm-fr-none', null, 'No completed workflows have been timed in this segment yet.'));
+    } else {
+      const grid = el('.adm-fr-grid');
+      timed.slice(0, 4).forEach(fl => {
+        const prev = prevFlow(fl.flow);
+        // slower is worse, so this delta is inverted too
+        const d = prev && prev.medianMs ? pct(fl.medianMs, prev.medianMs) : null;
+        grid.appendChild(el('.adm-fr-card', null, [
+          el('.adm-fr-card-top', null, [
+            el('.adm-fr-n', null, fmtDur(fl.medianMs)),
+            d == null || d === 0 ? null
+              : el('span.adm-delta.' + (d > 0 ? 'down' : 'up'), null, (d > 0 ? '▲ +' : '▼ ') + d + '%')
+          ]),
+          el('.adm-fr-lab', null, fl.flow),
+          el('.adm-fr-sub', null, 'median · p90 ' + fmtDur(fl.p90Ms) + ' · n=' + fl.samples)
+        ]));
+      });
+      ttcBox.appendChild(grid);
+    }
+    wrap.appendChild(ttcBox);
+    return wrap;
+  }
+
+  function legendKey(label, color) {
+    return el('span.viz-legend-item', null, [
+      el('span.viz-legend-key', { style: { background: color } }), el('span', null, label)
+    ]);
+  }
+
+  // trim a long feature label for a cramped axis, without clipping mid-word
+  function shortLabel(s) {
+    if (s.length <= 16) return s;
+    const cut = s.slice(0, 15);
+    const sp = cut.lastIndexOf(' ');
+    return (sp > 8 ? cut.slice(0, sp) : cut) + '…';
+  }
+
+  function chartCard(title, desc) {
+    const card = el('.adm-permcard.adm-chartcard');
+    card.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, title),
+      el('.adm-permcard-desc', null, desc)
+    ]));
+    return card;
+  }
+
+  /* A KPI scorecard: headline value, delta against the previous window, an
+     optional sparkline, and an optional per-role breakdown. */
+  function kpiCard(o) {
+    const head = el('.adm-kpi-top', null, [
+      el('.adm-kpi-v' + (o.valueSmall ? '.small' : ''), null, String(o.value)),
+      o.delta == null ? null
+        : el('span.adm-delta.' + (o.delta > 0 ? 'up' : o.delta < 0 ? 'down' : 'flat'),
+            { title: o.deltaNote },
+            (o.delta > 0 ? '▲ +' : o.delta < 0 ? '▼ ' : '') + o.delta + '%')
+    ]);
+    const card = el('.adm-kpi', null, [
+      el('.adm-kpi-l', null, o.label),
+      head,
+      o.sub ? el('.adm-kpi-sub', null, o.sub) : null,
+      o.delta == null ? null : el('.adm-kpi-note', null, o.deltaNote)
+    ]);
+    if (o.spark && o.spark.length > 1) card.appendChild(App.charts.sparkline(o.spark, { color: o.color, height: 28 }));
+    if (o.rows && o.rows.length) {
+      card.appendChild(el('.adm-kpi-rows', null, o.rows.map(r => el('.adm-kpi-row2', null, [
+        el('span.adm-kpi-rk', null, r.label), el('span.adm-kpi-rv', null, String(r.value))
+      ]))));
+    }
+    return card;
+  }
+
 
   /* ------------------------------------------------------------ helpers */
   function roleSelect(value, onChange) {
