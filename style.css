@@ -1872,6 +1872,12 @@ select.fld { cursor: pointer; }
   flex: none; font-size: 10.5px; font-weight: 700; color: var(--text-2);
   background: var(--surface-3); border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px;
 }
+/* a task's waiting period (lag) — reads as a gap before the duration pill */
+.pipe-lag {
+  flex: none; font-size: 10.5px; font-weight: 700; color: #ffce8e;
+  background: rgba(253,171,61,.14); border: 1px solid rgba(253,171,61,.3);
+  border-radius: 12px; padding: 2px 8px;
+}
 .pipe-row.compact .pipe-move { flex: none; flex-direction: row; gap: 3px; }
 .pipe-row.compact .pipe-move.hov { opacity: 0; transition: opacity .12s; }
 .pipe-row.compact:hover .pipe-move.hov { opacity: 1; }

@@ -221,7 +221,9 @@ window.App = window.App || {};
     { key: 'sfx_v3',        name: 'SFX V3',        dept: 'audio',     start: '2026-02-16', due: '2026-02-20', deps: ['final_lrc', 'sfx_v2'],              status: 'not_started' },
     { key: 'subtitle',      name: 'Subtitle',      dept: 'video',     start: '2025-12-23', due: '2026-02-10', deps: ['scripts', 'final_lrc'],             status: 'not_started' },
     { key: 'deliverys',     name: 'Deliverys',     dept: 'ops',       start: '2026-02-10', due: '2026-02-21', deps: ['final_lrc', 'sfx_v3', 'subtitle'],  status: 'not_started' },
-    { key: 'qc',            name: 'QC',            dept: 'qc',        start: '2026-02-11', due: '2026-02-22', deps: ['deliverys'],                         status: 'not_started' }
+    { key: 'qc',            name: 'QC',            dept: 'qc',        start: '2026-02-11', due: '2026-02-22', deps: ['deliverys'],                         status: 'not_started' },
+    // Publication milestone: a single date four weeks past QC (see `lag`).
+    { key: 'live_date',     name: 'Live Date',     dept: 'ops',       start: '2026-03-22', due: '2026-03-22', deps: ['qc'], lag: 28,                       status: 'not_started' }
   ];
   App.TASK = (key) => App.TEMPLATE.find(t => t.key === key);
   App.taskName = (key) => { const t = App.TASK(key); return t ? t.name : key; };
@@ -236,7 +238,9 @@ window.App = window.App || {};
   App.defaultPipeline = function () {
     return App.TEMPLATE.map(t => {
       const days = App.diffDays(t.due, t.start) + 1;
-      return { key: t.key, name: t.name, dept: t.dept, days, minDays: Math.max(1, Math.ceil(days / 2)), deps: t.deps.slice() };
+      const p = { key: t.key, name: t.name, dept: t.dept, days, minDays: Math.max(1, Math.ceil(days / 2)), deps: t.deps.slice() };
+      if (t.lag) p.lag = t.lag;   // only carried when set, so existing pipelines are unchanged
+      return p;
     });
   };
   // Live-action shows skip the animation stages and run a leaner post pipeline.
@@ -254,7 +258,9 @@ window.App = window.App || {};
     { key: 'online_conform', name: 'Online Conform',  dept: 'video',    days: 3, minDays: 2, deps: ['color_grade', 'vfx_cleanup', 'final_mix'] },
     { key: 'subtitle',       name: 'Subtitle',        dept: 'ops',      days: 3, minDays: 2, deps: ['picture_lock'] },
     { key: 'deliverys',      name: 'Deliverys',       dept: 'ops',      days: 2, minDays: 1, deps: ['online_conform', 'subtitle'] },
-    { key: 'qc',             name: 'QC',              dept: 'qc',       days: 2, minDays: 1, deps: ['deliverys'] }
+    { key: 'qc',             name: 'QC',              dept: 'qc',       days: 2, minDays: 1, deps: ['deliverys'] },
+    // Publication milestone: a single date four weeks past QC (see `lag`).
+    { key: 'live_date',      name: 'Live Date',       dept: 'ops',      days: 1, minDays: 1, deps: ['qc'], lag: 28 }
   ];
   App.defaultPipelineFor = function (type) {
     if (type === 'live_action') return App.LIVE_PIPELINE.map(t => ({ ...t, deps: t.deps.slice() }));
@@ -306,6 +312,10 @@ window.App = window.App || {};
   // Forward pass: each task starts the day after its last dependency finishes
   // (or on startIso if unblocked). Returns { dates: {key:{start,due}}, end } —
   // `end` is the critical-path finish — or null if the deps contain a cycle.
+  // An optional `lag` holds a task back instead: it starts that many days after
+  // its dependency's finish rather than the next day, which is how a fixed
+  // waiting period is expressed (Live Date sits 4 weeks past QC). The lag is a
+  // commitment to an outside party, so squeeze/stretch never scales it.
   App.schedulePipeline = function (pipeline, startIso, scale) {
     const order = App.topoSort(pipeline); if (!order) return null;
     const byKey = {}; pipeline.forEach(t => { byKey[t.key] = t; });
@@ -315,7 +325,7 @@ window.App = window.App || {};
       let s = startIso;
       t.deps.forEach(d => {
         if (!dates[d]) return;
-        const next = App.shiftIso(dates[d].due, 1);
+        const next = App.shiftIso(dates[d].due, t.lag > 0 ? t.lag : 1);
         if (next > s) s = next;
       });
       const due = App.shiftIso(s, App.taskDuration(t, scale) - 1);
