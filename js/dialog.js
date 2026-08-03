@@ -409,6 +409,56 @@ window.App = window.App || {};
     const pipeCount = el('span.count-badge');
     const pipeList = el('.pipe-list');
 
+    /* ---- undo / redo ----
+       Snapshots of the whole task list, taken before each structural change
+       (add, remove, reorder, dependency edits). Restoring splices the saved
+       tasks back into the SAME array rather than swapping in a new one: Add
+       Show holds its own reference to this array and reads it when the show is
+       created, so replacing it would silently create the show from pre-undo
+       state. Free-text/number edits aren't recorded — snapshotting per
+       keystroke would bury the structural steps people actually want back. */
+    const clonePipe = (p) => p.map(t => Object.assign({}, t, { deps: t.deps.slice() }));
+    const HISTORY_LIMIT = 50;
+    let undoStack = [], redoStack = [];
+
+    const undoBtn = el('button.btn-icon.pipe-hist', {
+      type: 'button', title: tip('Undo'),
+      onclick: (e) => { e.stopPropagation(); undo(); }
+    }, '↶');
+    const redoBtn = el('button.btn-icon.pipe-hist', {
+      type: 'button', title: tip('Redo'),
+      onclick: (e) => { e.stopPropagation(); redo(); }
+    }, '↷');
+    function refreshHistory() {
+      undoBtn.disabled = !undoStack.length;
+      redoBtn.disabled = !redoStack.length;
+    }
+    // call immediately BEFORE mutating `pipe`
+    function snapshot() {
+      undoStack.push({ pipe: clonePipe(pipe), editingKey });
+      if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
+      redoStack = [];
+      refreshHistory();
+    }
+    function restore(entry) {
+      pipe.length = 0;
+      clonePipe(entry.pipe).forEach(t => pipe.push(t));   // in place — see note above
+      editingKey = pipe.some(t => t.key === entry.editingKey) ? entry.editingKey : null;
+      renderPipe(); onChange();
+      refreshHistory();
+    }
+    function undo() {
+      if (!undoStack.length) return;
+      redoStack.push({ pipe: clonePipe(pipe), editingKey });
+      restore(undoStack.pop());
+    }
+    function redo() {
+      if (!redoStack.length) return;
+      undoStack.push({ pipe: clonePipe(pipe), editingKey });
+      restore(redoStack.pop());
+    }
+    refreshHistory();
+
     // would adding `candidate` as a dependency of `t` create a cycle?
     const dependsOn = (fromKey, onKey) => {
       const seen = new Set();
@@ -430,7 +480,7 @@ window.App = window.App || {};
       options.forEach(p => {
         depMenu.appendChild(el('button.dep-menu-item', {
           type: 'button',
-          onclick: (e) => { e.stopPropagation(); t.deps.push(p.key); closeDepMenu(); renderPipe(); onChange(); }
+          onclick: (e) => { e.stopPropagation(); snapshot(); t.deps.push(p.key); closeDepMenu(); renderPipe(); onChange(); }
         }, [el('span.dot', { style: { background: App.dept(p.dept).color } }), p.name]));
       });
       document.body.appendChild(depMenu);
@@ -451,11 +501,22 @@ window.App = window.App || {};
     // whole weeks read better than "28d" for the long waits a lag is used for
     const lagLabel = (n) => (n % 7 === 0 ? (n / 7) + 'w' : n + 'd');
 
+    /* Row number that becomes an insert button on hover, so a task can be added
+       anywhere in the order rather than only appended. Same 20px footprint
+       either way, so revealing it never shifts the row. */
+    const leadCell = (i) => el('.pipe-lead', null, [
+      el('span.pipe-num', null, i + 1),
+      el('button.pipe-insert', {
+        type: 'button', title: tip('Add a task below'),
+        onclick: (e) => { e.stopPropagation(); addTask(i + 1); }
+      }, '＋')
+    ]);
+
     const moveBtns = (i, extraCls) => el('.pipe-move' + (extraCls || ''), null, [
       el('button.btn-move', { type: 'button', disabled: i === 0, title: tip('Move up'),
-        onclick: (e) => { e.stopPropagation(); [pipe[i - 1], pipe[i]] = [pipe[i], pipe[i - 1]]; renderPipe(); } }, '▲'),
+        onclick: (e) => { e.stopPropagation(); snapshot(); [pipe[i - 1], pipe[i]] = [pipe[i], pipe[i - 1]]; renderPipe(); } }, '▲'),
       el('button.btn-move', { type: 'button', disabled: i === pipe.length - 1, title: tip('Move down'),
-        onclick: (e) => { e.stopPropagation(); [pipe[i], pipe[i + 1]] = [pipe[i + 1], pipe[i]]; renderPipe(); } }, '▼')
+        onclick: (e) => { e.stopPropagation(); snapshot(); [pipe[i], pipe[i + 1]] = [pipe[i + 1], pipe[i]]; renderPipe(); } }, '▼')
     ]);
 
     function compactRow(t, i) {
@@ -465,7 +526,7 @@ window.App = window.App || {};
         title: tip('Click to edit'),
         onclick: () => { editingKey = t.key; renderPipe(); }
       }, [
-        el('span.pipe-num', null, i + 1),
+        leadCell(i),
         el('span.pipe-dot', { style: { background: dep.color }, title: tip(dep.label) }),
         el('span.pipe-name-ro', null, t.name || '—'),
         (t.vc ? App.icon('lock', { cls: 'pipe-vc-tag', title: 'LucidLink version control enabled' }) : null),
@@ -490,7 +551,7 @@ window.App = window.App || {};
             dep ? dep.name : dk,
             el('button.dep-tag-x', {
               type: 'button', title: tip('Remove dependency'),
-              onclick: () => { t.deps = t.deps.filter(k => k !== dk); renderPipe(); onChange(); }
+              onclick: () => { snapshot(); t.deps = t.deps.filter(k => k !== dk); renderPipe(); onChange(); }
             }, '✕')
           ]);
         }),
@@ -508,7 +569,7 @@ window.App = window.App || {};
       }, App.icon('lock')) : null;
 
       return el('.pipe-row.editing', null, [
-        el('span.pipe-num', null, i + 1),
+        leadCell(i),
         moveBtns(i),
         el('input.fld.fld-name', { type: 'text', value: t.name, placeholder: 'Task name',
           oninput: (e) => { t.name = e.target.value; } }),
@@ -528,6 +589,7 @@ window.App = window.App || {};
           el('button.btn-row-x', {
             type: 'button', title: tip('Remove task'),
             onclick: () => {
+              snapshot();
               pipe.splice(i, 1);
               pipe.forEach(p => { p.deps = p.deps.filter(k => k !== t.key); });
               editingKey = null;
@@ -545,12 +607,16 @@ window.App = window.App || {};
       pipe.forEach((t, i) => pipeList.appendChild(t.key === editingKey ? editRow(t, i) : compactRow(t, i)));
     }
 
-    function addTask() {
+    // `at` is the index to insert at; omitted (the header ＋) appends.
+    function addTask(at) {
+      snapshot();
       const key = 'task_' + App.uid().slice(0, 6);
-      pipe.push({ key, name: 'New Task', dept: 'creative', days: 5, minDays: 2, deps: [], vc: false });
+      const idx = typeof at === 'number' ? Math.max(0, Math.min(at, pipe.length)) : pipe.length;
+      pipe.splice(idx, 0, { key, name: 'New Task', dept: 'creative', days: 5, minDays: 2, deps: [], vc: false });
       editingKey = key;
       renderPipe(); onChange();
-      pipeList.scrollTop = pipeList.scrollHeight;
+      const row = pipeList.querySelector('.pipe-row.editing');
+      if (row) row.scrollIntoView({ block: 'nearest' });   // an inserted row may be anywhere in the list
       const fld = pipeList.querySelector('.pipe-row.editing .fld-name');
       if (fld) { fld.focus(); fld.select(); }
     }
@@ -558,8 +624,11 @@ window.App = window.App || {};
     renderPipe();
     return {
       list: pipeList, count: pipeCount, addTask, render: renderPipe,
+      undoBtn, redoBtn, undo, redo,
       getPipe: () => pipe,
-      setPipe: (p) => { pipe = p; editingKey = null; renderPipe(); },
+      // a wholesale swap (different show type or preset) starts a new history —
+      // undoing back into a pipeline that's no longer on screen would confuse
+      setPipe: (p) => { pipe = p; editingKey = null; undoStack = []; redoStack = []; refreshHistory(); renderPipe(); },
       closeMenus: closeDepMenu
     };
   };
@@ -711,18 +780,22 @@ window.App = window.App || {};
           '“days” is the nominal duration, “min” the floor it can be squeezed to. Dependencies gate when a task can start. Click a task to edit it.'),
         editor.list
       ]);
-      addTaskBtn.style.display = 'none';
+      // the pipeline controls only make sense once the section is expanded
+      const pipeTools = [editor.undoBtn, editor.redoBtn, addTaskBtn];
+      pipeTools.forEach(b => { b.style.display = 'none'; });
       const pipeToggle = el('.pipe-toggle', {
         onclick: () => {
           pipeOpen = !pipeOpen;
           pipeChev.classList.toggle('open', pipeOpen);
           pipeBody.style.display = pipeOpen ? '' : 'none';
-          addTaskBtn.style.display = pipeOpen ? '' : 'none';
+          pipeTools.forEach(b => { b.style.display = pipeOpen ? '' : 'none'; });
         }
       }, [
         pipeChev,
         el('span.pipe-toggle-lbl', null, 'Customize Pipeline Tasks'),
         editor.count,
+        editor.undoBtn,
+        editor.redoBtn,
         addTaskBtn
       ]);
 

@@ -1822,6 +1822,11 @@ select.fld { cursor: pointer; }
   border-radius: 8px; font-size: 15px; line-height: 1; cursor: pointer; font-family: inherit; padding: 0;
 }
 .btn-icon:hover { background: var(--hover); border-color: var(--accent); color: var(--accent); }
+/* undo / redo — slightly smaller than ＋, and clearly inert with nothing to
+   reverse rather than hidden, so the control's position never jumps */
+.btn-icon.pipe-hist { width: 26px; height: 26px; font-size: 13px; }
+.btn-icon.pipe-hist:disabled { opacity: .32; cursor: default; }
+.btn-icon.pipe-hist:disabled:hover { background: var(--surface-3); border-color: var(--border-2); color: var(--text); }
 
 .pipe-head { display: flex; align-items: center; justify-content: space-between; margin-top: 18px; }
 .pipe-head .pipe-title { display: flex; align-items: center; gap: 8px; margin: 0; }
@@ -1835,7 +1840,11 @@ select.fld { cursor: pointer; }
 .pipe-toggle:hover { background: var(--hover); border-color: var(--border-2); }
 .pipe-toggle .chev { color: var(--text-2); font-size: 10px; transition: transform .15s; }
 .pipe-toggle .chev.open { transform: rotate(90deg); }
-.pipe-toggle .btn-icon { margin-left: auto; }
+/* only the first button pushes right, so the tool group stays together
+   (several `margin-left:auto` items would each absorb free space and spread) */
+.pipe-toggle .btn-icon { margin-left: 0; }
+.pipe-toggle .btn-icon:first-of-type { margin-left: auto; }
+.preset-pipe-bar .btn-icon:first-of-type { margin-left: auto; }
 .pipe-body { margin-top: 8px; }
 .pipe-list { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow-y: auto; padding-right: 2px; }
 
@@ -1852,7 +1861,7 @@ select.fld { cursor: pointer; }
    those inputs lower than the label-less Name/Dept/Deps fields. Small controls
    (number, move arrows, actions) stay vertically centred. */
 .pipe-row.editing { border-color: var(--accent); background: rgba(91,108,255,.06); align-items: end; }
-.pipe-row.editing .pipe-num,
+.pipe-row.editing .pipe-lead,
 .pipe-row.editing .pipe-move,
 .pipe-row.editing .pipe-actions { align-self: center; }
 
@@ -1897,6 +1906,22 @@ select.fld { cursor: pointer; }
 }
 .btn-done:hover { background: rgba(0,200,117,.12); }
 .pipe-num { font-size: 11px; color: var(--text-3); font-weight: 700; text-align: right; }
+/* Lead cell: the row number, swapping to an insert-below ＋ on hover. Both sit
+   stacked in the same box so the swap never changes the row's width. */
+.pipe-lead { position: relative; width: 20px; height: 18px; flex: none; }
+.pipe-lead .pipe-num,
+.pipe-lead .pipe-insert {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  transition: opacity .12s;
+}
+.pipe-lead .pipe-insert {
+  opacity: 0; padding: 0; border: 1px solid var(--border-2); border-radius: 5px;
+  background: var(--surface-3); color: var(--text-2); font-size: 12px; line-height: 1; cursor: pointer;
+}
+.pipe-row:hover .pipe-lead .pipe-num { opacity: 0; }
+.pipe-row:hover .pipe-lead .pipe-insert { opacity: 1; }
+.pipe-lead .pipe-insert:hover { background: var(--accent); border-color: transparent; color: #fff; }
+.pipe-lead .pipe-insert:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
 .pipe-move { display: flex; flex-direction: column; gap: 2px; }
 .btn-move {
   background: var(--surface-3); border: 1px solid var(--border); color: var(--text-2);
