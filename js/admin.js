@@ -595,6 +595,8 @@ window.App = window.App || {};
     cardEl.appendChild(el('.preset-pipe-bar', null, [
       el('span.pipe-toggle-lbl', null, 'Pipeline tasks'),
       editor.count,
+      editor.undoBtn,
+      editor.redoBtn,
       el('button.btn-icon', { type: 'button', title: 'Add task', onclick: () => editor.addTask() }, '＋')
     ]));
     cardEl.appendChild(el('.preset-pipe-body', null, editor.list));
