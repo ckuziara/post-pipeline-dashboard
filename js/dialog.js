@@ -444,9 +444,12 @@ window.App = window.App || {};
     }
 
     const numFld = (t, prop, min) => el('input.fld.fld-num', {
-      type: 'number', value: String(t[prop]), min: String(min), max: '365',
+      type: 'number', value: String(t[prop] != null ? t[prop] : min), min: String(min), max: '365',
       onchange: (e) => { t[prop] = Math.max(min, Math.min(365, parseInt(e.target.value) || min)); e.target.value = t[prop]; onChange(); }
     });
+
+    // whole weeks read better than "28d" for the long waits a lag is used for
+    const lagLabel = (n) => (n % 7 === 0 ? (n / 7) + 'w' : n + 'd');
 
     const moveBtns = (i, extraCls) => el('.pipe-move' + (extraCls || ''), null, [
       el('button.btn-move', { type: 'button', disabled: i === 0, title: tip('Move up'),
@@ -467,6 +470,7 @@ window.App = window.App || {};
         el('span.pipe-name-ro', null, t.name || '—'),
         (t.vc ? App.icon('lock', { cls: 'pipe-vc-tag', title: 'LucidLink version control enabled' }) : null),
         el('span.pipe-deps-sum', { title: tip(depNames.join(', ')) }, depNames.length ? '◷ ' + depNames.join(', ') : ''),
+        (t.lag ? el('span.pipe-lag', { title: tip('Waits ' + t.lag + ' days after ' + (depNames.join(', ') || 'its dependency') + ' finishes') }, '+' + lagLabel(t.lag)) : null),
         el('span.pipe-dur', { title: tip('Nominal ' + t.days + ' days · minimum ' + t.minDays) }, t.days + 'd'),
         moveBtns(i, '.hov')
       ]);
@@ -511,6 +515,9 @@ window.App = window.App || {};
         deptSel,
         el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'days'), numFld(t, 'days', 1)]),
         el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'min'), numFld(t, 'minDays', 1)]),
+        // days to wait after the dependencies finish before this task starts
+        el('.pipe-days', { title: tip('Days to wait after this task’s dependencies finish before it starts — 0 = start the next day') },
+          [el('span.pipe-days-lbl', null, 'wait'), numFld(t, 'lag', 0)]),
         depsBox,
         el('.pipe-actions', null, [
           vcToggle,
@@ -765,7 +772,14 @@ window.App = window.App || {};
             const rec = App.scheduleShow(pipe, start, epCount, cadence, 1);
             const target = endInput.value || rec.end;
             const scale = target === rec.end ? 1 : App.solveScale(pipe, start, epCount, cadence, target).scale;
-            const pipeline = pipe.map(t => ({ key: t.key, name: t.name.trim() || t.key, dept: t.dept, days: t.days, minDays: t.minDays, deps: t.deps.slice() }));
+            // keep the optional flags the editor can set — dropping them here
+            // silently discarded a task's lag and its version-control toggle
+            const pipeline = pipe.map(t => {
+              const o = { key: t.key, name: t.name.trim() || t.key, dept: t.dept, days: t.days, minDays: t.minDays, deps: t.deps.slice() };
+              if (t.lag) o.lag = t.lag;
+              if (t.vc) o.vc = true;
+              return o;
+            });
             App.createShow({ name, code, type: typeSel.value, epNames, pipeline, startIso: start, cadence, scale });
             App.track.flowDone('Create show', true, { episodes: epNames.length });
             editor.closeMenus();
