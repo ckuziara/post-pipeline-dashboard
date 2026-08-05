@@ -703,12 +703,21 @@ window.App = window.App || {};
       // Which rows belong to which tab. Each entry returns the rows for that
       // view; anything without an entry falls through to the empty note.
       const viewRows = {
-        timeline: () => [
-          segRow('Sort timeline by', 'timelineSort', 'department',
-            [{ v: 'episode', label: 'Episode' }, { v: 'department', label: 'Department' }, { v: 'show', label: 'Show' }]),
-          prefRow('Latch scrolling', 'latchScroll', false, () => App.render()),
-          prefRow('Hide weekends', 'hideWeekends', true, () => App.render())
-        ],
+        /* The timeline is a pivot over two dimensions — a row's bar is simply
+           that row's own span, so bars aren't separately choosable. Defaults
+           come from App.timelineAxes() rather than literals so a previously-set
+           view carries over. Dropdowns rather than segmented toggles because
+           three options don't fit the popover width. */
+        timeline: () => {
+          const axes = App.timelineAxes();
+          const dims = (...keys) => keys.map(k => ({ v: k, label: App.TL_DIMS[k].label }));
+          return [
+            selRow('Y axis', 'timelineRows2', axes.rows, dims('show', 'episode', 'department'), () => App.render()),
+            selRow('Sub bars', 'timelineSub', axes.sub, dims('task', 'episode', 'department'), () => App.render()),
+            prefRow('Latch scrolling', 'latchScroll', false, () => App.render()),
+            prefRow('Hide weekends', 'hideWeekends', true, () => App.render())
+          ];
+        },
         board: () => [
           actionRow('All episode groups', [
             { label: 'Expand', run: () => App.visibleEpisodes().forEach(ep => { App.state.expanded[ep.id] = true; }) },
