@@ -168,23 +168,8 @@ window.App = window.App || {};
       // single show is in view (nonsensical mixed across shows on "All shows").
       if (App.state.filters.show !== 'all') this.producerNotesLane(body, App.state.filters.show, startIso, dw, xOf);
 
-      const sort = App.prefs.get('timelineSort', 'department');
-      const byStart = (a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1;
-      if (sort === 'show') {
-        // one row per show; matching tasks across its episodes share a line
-        const byShow = {};
-        episodes.forEach(ep => (byShow[ep.showId] = byShow[ep.showId] || []).push(ep));
-        Object.values(byShow)
-          .map(eps => eps.sort(byStart))
-          .sort((a, b) => byStart(a[0], b[0]))
-          .forEach(eps => this.showRow(body, App.show(eps[0].showId), eps, startIso, dw, timeW, xOf));
-      } else if (sort === 'episode') {
-        // one row per episode; expand into department-grouped, stacked task rows
-        episodes.slice().sort(byStart).forEach(ep => this.episodeStackedRow(body, ep, startIso, dw, timeW, xOf));
-      } else {
-        // 'department': one row per episode; expand into one row per task
-        episodes.slice().sort(byStart).forEach(ep => this.episodeRow(body, ep, startIso, dw, timeW, xOf));
-      }
+      // Rows / bars / sub-bars are three chosen dimensions — see App.timelineAxes
+      this.pivot(body, episodes, App.timelineAxes(), xOf, dw);
 
       inner.appendChild(body);
       scroll.appendChild(inner);
@@ -551,7 +536,10 @@ window.App = window.App || {};
         style: { position: 'sticky', left: '0', zIndex: '9', width: LABEL_W + 'px', minWidth: LABEL_W + 'px',
                  background: 'var(--bg-2)', borderRight: '1px solid var(--border-2)', display: 'flex',
                  alignItems: 'center', padding: '0 14px', fontSize: '11px', fontWeight: '700', color: 'var(--text-3)' }
-      }, App.prefs.get('timelineSort', 'department') === 'show' ? 'SHOW / TASK' : 'EPISODE / SUBITEM'));
+      }, (() => {                        // corner names the pivot, e.g. "SHOW / EPISODE"
+        const a = App.timelineAxes();
+        return (App.TL_DIMS[a.rows].label + ' / ' + App.TL_DIMS[a.sub].label).toUpperCase();
+      })()));
       const cols = el('', { style: { width: (ctx.totalCols * ctx.dw) + 'px' } });
       cols.appendChild(buildSegRow(ctx, tier.primary, 'primary'));
       cols.appendChild(buildSegRow(ctx, tier.secondary, 'secondary'));
@@ -560,56 +548,7 @@ window.App = window.App || {};
       return head;
     },
 
-    // Shared episode summary row (the collapsed/top line for both the
-    // Department and Episode sorts). Returns the .g-row element.
-    epTopRow(ep, xOf, dw) {
-      const show = App.show(ep.showId);
-      const expanded = !!App.state.ganttExpanded[ep.id];
-      const prog = App.progressPct(ep);
-      const blocked = App.epBlockedCount(ep), overdue = App.epOverdueCount(ep);
-
-      const row = el('.g-row');
-      row.dataset.episodeId = ep.id;
-      row.appendChild(el('.g-label', null, [
-        el('.l-title', null, [
-          el('span.chev' + (expanded ? '.open' : ''), null, '▶'),
-          el('span', null, ep.title)
-        ]),
-        el('.l-sub', null, [
-          el('span.code', null, ep.code),
-          el('span', null, '· ' + App.fmtRange(App.epStart(ep), App.epDue(ep))),
-          (overdue ? el('span', { style: { color: '#ff8a95', fontWeight: '700' } }, ['· ', App.icon('warn'), ' ' + overdue]) : null)
-        ])
-      ]));
-
-      const track = el('.g-track');
-      const s = App.epStart(ep), d = App.epDue(ep);
-      const left = xOf(s), width = xOf.width(s, d);
-      const delivered = App.isDelivered(ep);
-      const bar = el('.bar' + (delivered ? '.delivered' : ''), {
-        title: ep.code + ' · ' + ep.title + ' — ' + prog + '% · ' + App.epStatusLabel(ep),
-        style: {
-          left: left + 'px', width: width + 'px',
-          background: 'linear-gradient(90deg,' + show.color + ',' + shade(show.color, -16) + ')',
-          color: pickInk(show.color)
-        }
-      }, [
-        el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, ep.title),
-        (blocked ? App.icon('blocked', { cls: 'blk', title: blocked + ' blocked' }) : null)
-      ]);
-      if (!delivered && prog > 0) {
-        bar.appendChild(el('', { style: {
-          position: 'absolute', left: '0', top: '0', bottom: '0', width: prog + '%',
-          background: 'rgba(255,255,255,.22)', borderRadius: '6px', pointerEvents: 'none'
-        } }));
-      }
-      attachBar(bar, epBarStatus(ep));
-      track.appendChild(bar);
-      row.appendChild(track);
-      return row;
-    },
-
-    // draw one task bar into a sub-row track (shared by both episode sorts)
+    // draw one real task bar into a track (single-cell pivot groups)
     taskBar(track, ep, su, dep, xOf, dw, labelText) {
       const sl = xOf(su.start), sw = xOf.width(su.start, su.due);
       const done = su.status === 'approved';
@@ -627,203 +566,191 @@ window.App = window.App || {};
       return sbar;
     },
 
-    // "Department" sort: one row per episode; expand → one row per task, in
-    // pipeline order, each labelled with its department.
-    episodeRow(body, ep, startIso, dw, timeW, xOf) {
-      body.appendChild(this.epTopRow(ep, xOf, dw));
-      if (!App.state.ganttExpanded[ep.id]) return;
+    /* ---- pivot engine ----
+       Every visible {episode, subitem} pair is a "cell". Rows group cells by
+       the row dimension; inside a row, bars group its cells by the bar
+       dimension (each bar spanning its members' earliest start → latest due);
+       expanding splits the row by the sub dimension. A dimension is just a way
+       to key/name/colour a cell, so all combinations share one code path
+       instead of a hand-written case per pairing. */
 
-      App.subsView(ep).sort((a, b) => a.start < b.start ? -1 : 1).forEach(su => {
-        const srow = el('.g-row.sub');
-        srow.dataset.episodeId = ep.id;
-        srow.dataset.suKey = su.key;
-        const dep = App.dept(su.dept);
-        srow.appendChild(el('.g-label', { title: dep.label + ' — ' + su.name }, [
-          el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } }, [
-            el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } }),
-            el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, su.name),
-            el('span', { style: { color: 'var(--text-3)', fontWeight: '500', fontSize: '9px', marginLeft: 'auto', paddingLeft: '6px', flex: 'none' } }, dep.label)
-          ])
-        ]));
-        const st = el('.g-track');
-        this.taskBar(st, ep, su, dep, xOf, dw);
-        srow.appendChild(st);
-        body.appendChild(srow);
-      });
+    // key / name / colour a cell under one dimension
+    dimOf(dim, c) {
+      if (dim === 'show') return { key: c.show.id, name: c.show.name, color: c.show.color, kind: 'show' };
+      if (dim === 'episode') return { key: c.ep.id, name: c.ep.code, note: c.ep.title, color: c.show.color, kind: 'episode' };
+      if (dim === 'department') { const d = App.dept(c.su.dept); return { key: c.su.dept, name: d.label, color: d.color, kind: 'department' }; }
+      const d = App.dept(c.su.dept);
+      return { key: c.su.key, name: c.su.name, color: d.color, kind: 'task' };
     },
 
-    // "Episode" sort (modelled on the studio's wall planner): one row per
-    // episode; expand → tasks grouped by department in pipeline order. Each
-    // department with 2+ tasks gets a faint phase-span header showing where it
-    // starts and ends, with its tasks stacked directly beneath — tasks that
-    // don't overlap in time share a row so parallel work reads at a glance.
-    episodeStackedRow(body, ep, startIso, dw, timeW, xOf) {
-      body.appendChild(this.epTopRow(ep, xOf, dw));
-      if (!App.state.ganttExpanded[ep.id]) return;
-
-      const subs = App.subsView(ep);
-      const byKey = {}; subs.forEach(su => { byKey[su.key] = su; });
-      // department order = order of first appearance in the pipeline
-      const deptOrder = [];
-      App.pipelineFor(ep).forEach(t => { if (byKey[t.key] && !deptOrder.includes(t.dept)) deptOrder.push(t.dept); });
-
-      deptOrder.forEach(dk => {
-        const dep = App.dept(dk);
-        const items = subs.filter(su => su.dept === dk).sort((a, b) => a.start < b.start ? -1 : 1);
-        if (!items.length) return;
-        const [dr, dg, db] = hexToRgb(dep.color);
-        const wash = 'linear-gradient(rgba(' + dr + ',' + dg + ',' + db + ',.07), rgba(' + dr + ',' + dg + ',' + db + ',.07)), rgba(0,0,0,.16)';
-        const multi = items.length > 1;
-
-        // phase-span header row (only worth it for a multi-task department)
-        if (multi) {
-          const gStart = items.reduce((m, x) => x.start < m ? x.start : m, items[0].start);
-          const gDue = items.reduce((m, x) => x.due > m ? x.due : m, items[0].due);
-          const hrow = el('.g-row.sub.phase', { style: { background: wash } });
-          hrow.appendChild(el('.g-label', { title: dep.label + ' phase', style: { background: deptLabelBg(dep.color) } }, [
-            el('.l-title', { style: { fontWeight: '700', fontSize: '10.5px' } }, [
-              el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } }),
-              el('span', null, dep.label)
-            ])
-          ]));
-          const ht = el('.g-track');
-          const hl = xOf(gStart), hw = xOf.width(gStart, gDue);
-          ht.appendChild(el('.phase-bar', {
-            title: dep.label + ' — ' + App.fmtRange(gStart, gDue) + ' · ' + items.length + ' tasks',
-            style: { left: hl + 'px', width: hw + 'px',
-              background: 'rgba(' + dr + ',' + dg + ',' + db + ',.15)',
-              borderColor: 'rgba(' + dr + ',' + dg + ',' + db + ',.55)' }
-          }));
-          hrow.appendChild(ht);
-          body.appendChild(hrow);
-        }
-
-        // interval-stack: a task shares a row unless it overlaps the last one
-        const levels = [];
-        items.forEach(su => {
-          const lvl = levels.find(l => su.start > l.lastDue);
-          if (lvl) { lvl.lastDue = su.due; lvl.items.push(su); }
-          else levels.push({ lastDue: su.due, items: [su] });
-        });
-        levels.forEach((lvl, li) => {
-          const srow = el('.g-row.sub', { style: { background: wash } });
-          srow.appendChild(el('.g-label', { style: { background: deptLabelBg(dep.color) } },
-            el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } },
-              multi
-                ? []                       // continuation row — no marker on the Y axis
-                : [el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } }),
-                   el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, dep.label)]
-            )
-          ));
-          const st = el('.g-track');
-          lvl.items.forEach(su => this.taskBar(st, ep, su, dep, xOf, dw));
-          srow.appendChild(st);
-          body.appendChild(srow);
-        });
+    buildCells(episodes) {
+      const cells = [];
+      episodes.forEach(ep => {
+        const show = App.show(ep.showId);
+        App.subsView(ep).forEach(su => cells.push({ ep, su, show }));
       });
+      return cells;
     },
 
-    // "Sort by show": one top row per show; expanding lists the pipeline tasks
-    // once, each line holding a bar per episode. Bars that would overlap in
-    // time spill onto continuation rows (↳) stacked beneath.
-    showRow(body, show, eps, startIso, dw, timeW, xOf) {
-      const expKey = 'show:' + show.id;
-      const expanded = !!App.state.ganttExpanded[expKey];
-      let min = '9999', max = '0000', delivered = true, prog = 0;
-      eps.forEach(ep => {
-        const s = App.epStart(ep), d = App.epDue(ep);
-        if (s < min) min = s; if (d > max) max = d;
-        if (!App.isDelivered(ep)) delivered = false;
-        prog += App.progressPct(ep);
+    // group cells by a dimension, keeping first-appearance order and recording
+    // each group's span plus how much of it is approved (for the % overlay)
+    groupCells(cells, dim) {
+      const map = new Map();
+      cells.forEach(c => {
+        const d = this.dimOf(dim, c);
+        let g = map.get(d.key);
+        if (!g) { g = Object.assign({}, d, { cells: [], start: c.su.start, due: c.su.due, done: 0 }); map.set(d.key, g); }
+        g.cells.push(c);
+        if (c.su.start < g.start) g.start = c.su.start;
+        if (c.su.due > g.due) g.due = c.su.due;
+        if (c.su.status === 'approved') g.done++;
       });
-      prog = Math.round(prog / eps.length);
+      return [...map.values()].sort((a, b) => a.start < b.start ? -1 : (a.start > b.start ? 1 : 0));
+    },
 
-      const row = el('.g-row');
-      row.dataset.episodeId = expKey;                       // expansion key via the shared click handler
-      row.appendChild(el('.g-label', null, [
-        el('.l-title', null, [
-          el('span.chev' + (expanded ? '.open' : ''), null, '▶'),
-          el('span', null, show.name)
-        ]),
-        el('.l-sub', null, [
-          el('span.code', null, eps.length + ' episode' + (eps.length === 1 ? '' : 's')),
-          el('span', null, '· ' + App.fmtRange(min, max))
-        ])
-      ]));
+    // interval-stack groups so non-overlapping ones share a visual line
+    stackGroups(groups) {
+      const levels = [];
+      groups.forEach(g => {
+        const l = levels.find(x => g.start > x.lastDue);
+        if (l) { l.lastDue = g.due; l.groups.push(g); }
+        else levels.push({ lastDue: g.due, groups: [g] });
+      });
+      return levels;
+    },
 
-      const track = el('.g-track');
-      const left = xOf(min), width = xOf.width(min, max);
+    /* One bar for a group. A single-cell group is a real task, so it keeps the
+       task-bar behaviour (status colour dot, click-to-edit, drag-to-reschedule);
+       an aggregate gets a % complete overlay instead. */
+    pivotBar(track, g, xOf, dw, isSub) {
+      if (g.cells.length === 1 && (g.kind === 'task' || isSub)) {
+        const c = g.cells[0];
+        return this.taskBar(track, c.ep, c.su, App.dept(c.su.dept), xOf, dw, g.name);
+      }
+      const pct = Math.round(100 * g.done / g.cells.length);
+      const delivered = pct === 100;
       const bar = el('.bar' + (delivered ? '.delivered' : ''), {
-        title: show.name + ' — ' + eps.length + ' episode' + (eps.length === 1 ? '' : 's') + ' · ' + prog + '% complete',
+        title: g.name + ' — ' + g.cells.length + ' task' + (g.cells.length === 1 ? '' : 's') +
+               ' · ' + pct + '% · ' + App.fmtRange(g.start, g.due),
         style: {
-          left: left + 'px', width: width + 'px',
-          background: 'linear-gradient(90deg,' + show.color + ',' + shade(show.color, -16) + ')',
-          color: pickInk(show.color)
+          left: xOf(g.start) + 'px', width: xOf.width(g.start, g.due) + 'px',
+          background: 'linear-gradient(90deg,' + g.color + ',' + shade(g.color, -16) + ')',
+          color: pickInk(g.color)
         }
-      }, [el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, show.name)]);
-      if (!delivered && prog > 0) {
+      }, [el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, g.name)]);
+      if (!delivered && pct > 0) {
         bar.appendChild(el('', { style: {
-          position: 'absolute', left: '0', top: '0', bottom: '0', width: prog + '%',
+          position: 'absolute', left: '0', top: '0', bottom: '0', width: pct + '%',
           background: 'rgba(255,255,255,.22)', borderRadius: '6px', pointerEvents: 'none'
         } }));
       }
-      attachBar(bar, delivered ? { color: '#00c875', label: 'Delivered' } : { color: '#fdab3d', label: prog + '% complete' });
+      attachBar(bar, delivered ? { color: '#00c875', label: 'Delivered' } : { color: '#fdab3d', label: pct + '% complete' });
       track.appendChild(bar);
-      row.appendChild(track);
-      body.appendChild(row);
-      if (!expanded) return;
+      return bar;
+    },
 
-      App.pipelineFor(eps[0]).forEach(t => {
-        const items = [];
-        eps.forEach(ep => {
-          const su = App.subsView(ep).find(x => x.key === t.key);
-          if (su) items.push({ ep, su });
+    /* One bar per actual task instance, for the expanded lines. Labelled by
+       whichever dimension the line itself isn't — a task line shows episode
+       codes; an episode or department line shows task names — and kept as
+       single-cell groups so pivotBar routes them through taskBar (clickable,
+       draggable). */
+    cellGroups(cells, subDim) {
+      const labelDim = subDim === 'task' ? 'episode' : 'task';
+      return cells.map(c => ({
+        key: c.ep.id + '::' + c.su.key,
+        name: this.dimOf(labelDim, c).name,
+        color: App.dept(c.su.dept).color,
+        kind: 'cell', cells: [c],
+        start: c.su.start, due: c.su.due,
+        done: c.su.status === 'approved' ? 1 : 0
+      })).sort((a, b) => a.start < b.start ? -1 : (a.start > b.start ? 1 : 0));
+    },
+
+    /* Lines for a set of groups. `opts.deptLines` keeps each department on its
+       own line instead of packing bars purely by time — otherwise one
+       department's tasks scatter across whichever line had a free slot, which
+       makes a single department impossible to follow across the row. Only if a
+       department overlaps itself does it take a second line. */
+    pivotLines(body, groups, xOf, dw, opts) {
+      let levels;
+      if (opts.deptLines) {
+        const order = [], byDept = new Map();
+        groups.forEach(g => {
+          const dk = g.cells[0].su.dept;
+          if (!byDept.has(dk)) { byDept.set(dk, []); order.push(dk); }
+          byDept.get(dk).push(g);
         });
-        if (!items.length) return;
+        levels = [];
+        order.forEach(dk => this.stackGroups(byDept.get(dk)).forEach(l => levels.push(Object.assign(l, { dept: dk }))));
+      } else {
+        levels = this.stackGroups(groups);
+      }
 
-        // interval stacking: same line while bars don't overlap, else new level
-        items.sort((a, b) => a.su.start < b.su.start ? -1 : 1);
-        const levels = [];
-        items.forEach(it => {
-          const lvl = levels.find(l => it.su.start > l.lastDue);
-          if (lvl) { lvl.lastDue = it.su.due; lvl.items.push(it); }
-          else levels.push({ lastDue: it.su.due, items: [it] });
+      levels.forEach((lvl, li) => {
+        const dep = lvl.dept ? App.dept(lvl.dept) : null;
+        const row = el('.g-row' + (opts.sub ? '.sub' : ''), {
+          style: dep ? { background: deptWash(dep.color) } : (opts.rowStyle || null)
         });
+        if (opts.expKey && li === 0) row.dataset.episodeId = opts.expKey;
+        // the row's own label on the first line; every dept line is also tagged
+        // with its department, since that's what the line now represents
+        const kids = li === 0 ? opts.label(dep) : (dep ? el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } }, [
+          el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } }),
+          el('span', { style: { color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis' } }, dep.label)
+        ]) : el('.l-title', null, []));
+        row.appendChild(el('.g-label', {
+          title: li === 0 ? opts.title : (dep ? dep.label : null),
+          style: dep ? { background: deptLabelBg(dep.color) } : (opts.labelStyle || null)
+        }, kids));
+        const track = el('.g-track');
+        lvl.groups.forEach(g => this.pivotBar(track, g, xOf, dw, opts.sub));
+        row.appendChild(track);
+        body.appendChild(row);
+      });
+    },
 
-        // a faint wash of the department's own colour, layered over the usual
-        // dark sub-row base — adjacent same-dept rows blend into one band, and
-        // the hue shift at a department change reads as a soft divider
-        const dep = App.dept(t.dept);
-        const [dr, dg, db] = hexToRgb(dep.color);
-        const deptWash = 'linear-gradient(rgba(' + dr + ',' + dg + ',' + db + ',.07), rgba(' + dr + ',' + dg + ',' + db + ',.07)), rgba(0,0,0,.16)';
-        levels.forEach((lvl, li) => {
-          const srow = el('.g-row.sub', { style: { background: deptWash } });
-          srow.appendChild(el('.g-label', { title: dep.label + ' — ' + t.name, style: { background: deptLabelBg(dep.color) } }, [
-            el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } }, li === 0 ? [
-              el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } }),
-              el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, t.name),
-              el('span', { style: { color: 'var(--text-3)', fontWeight: '500', fontSize: '9px', marginLeft: 'auto', paddingLeft: '6px', flex: 'none' } }, dep.label)
-            ] : [])   // continuation row — no marker on the Y axis
-          ]));
+    pivot(body, episodes, axes, xOf, dw) {
+      const cells = this.buildCells(episodes);
+      this.groupCells(cells, axes.rows).forEach(rg => {
+        const expKey = 'pv:' + axes.rows + ':' + rg.key;
+        const expanded = !!App.state.ganttExpanded[expKey];
+        const pct = Math.round(100 * rg.done / rg.cells.length);
 
-          const st = el('.g-track');
-          lvl.items.forEach(({ ep, su }) => {
-            const sl = xOf(su.start), sw = xOf.width(su.start, su.due);
-            const done = su.status === 'approved';
-            const sbar = el('.bar' + (done ? '.delivered' : ''), {
-              title: ep.code + ' · ' + su.name + ' — ' + App.status(su.status).label + ' · ' + App.fmtRange(su.start, su.due),
-              style: { left: sl + 'px', width: sw + 'px', background: dep.color, color: pickInk(dep.color) }
-            }, [
-              el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, ep.code),
-              (App.isRiskBlocked(ep, su.key) ? App.icon('blocked', { cls: 'blk', title: 'In progress while a dependency is unapproved' }) : null)
-            ]);
-            sbar.dataset.episodeId = ep.id;                 // per-bar identity: one line holds many episodes
-            sbar.dataset.suKey = su.key;
-            attachBar(sbar, { color: App.status(su.status).color, label: App.status(su.status).label });
-            st.appendChild(sbar);
+        // the row's bar IS the row's own span — [rg] is a single group, so this
+        // is always one line with one summary bar
+        const count = axes.rows === 'show'
+          ? new Set(rg.cells.map(c => c.ep.id)).size + ' episode' + (new Set(rg.cells.map(c => c.ep.id)).size === 1 ? '' : 's')
+          : rg.cells.length + ' task' + (rg.cells.length === 1 ? '' : 's');
+        this.pivotLines(body, [rg], xOf, dw, {
+          expKey,
+          title: rg.name + ' — ' + pct + '% complete',
+          label: () => [
+            el('.l-title', null, [
+              el('span.chev' + (expanded ? '.open' : ''), null, '▶'),
+              el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, rg.name)
+            ]),
+            el('.l-sub', null, [
+              el('span.code', null, rg.note || count),
+              el('span', null, '· ' + App.fmtRange(rg.start, rg.due))
+            ])
+          ]
+        });
+        if (!expanded) return;
+
+        // expanded: split the row by the sub dimension, one entry per line, with
+        // each department kept to its own line (see pivotLines deptLines)
+        this.groupCells(rg.cells, axes.sub).forEach(sg => {
+          this.pivotLines(body, this.cellGroups(sg.cells, axes.sub), xOf, dw, {
+            sub: true, deptLines: true,
+            title: sg.name,
+            // the trailing department tag is dropped when the line already IS a
+            // department, which would otherwise print the same name twice
+            label: (dep) => el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } }, [
+              (dep ? el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } }) : null),
+              el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, sg.name),
+              (dep && axes.sub !== 'department' ? el('span', { style: { color: 'var(--text-3)', fontWeight: '500', fontSize: '9px', marginLeft: 'auto', paddingLeft: '6px', flex: 'none' } }, dep.label) : null)
+            ])
           });
-          srow.appendChild(st);
-          body.appendChild(srow);
         });
       });
     },
@@ -1082,11 +1009,6 @@ window.App = window.App || {};
   }
   function hideDragTip() { if (App._gDragTip) App._gDragTip.style.display = 'none'; }
 
-  function epBarStatus(ep) {
-    const map = { working: 'in_progress', review: 'review', pending: 'not_started', delivered: 'approved' };
-    const sk = map[App.epGroup(ep)] || 'not_started';
-    return { color: App.STATUSES[sk].color, label: App.STATUSES[sk].label };
-  }
 
   function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
   // Opaque department wash for the sticky label column — it must stay solid
@@ -1101,6 +1023,13 @@ window.App = window.App || {};
       _labelBase = { theme, rgb: /^#[0-9a-f]{6}$/i.test(v) ? hexToRgb(v) : [30, 33, 42] };
     }
     return _labelBase.rgb;
+  }
+  // A faint wash of the department's own colour over the dark sub-row base:
+  // adjacent same-dept rows blend into one band, and the hue shift where the
+  // department changes reads as a soft divider without drawing a line.
+  function deptWash(deptHex) {
+    const [r, g, b] = hexToRgb(deptHex);
+    return 'linear-gradient(rgba(' + r + ',' + g + ',' + b + ',.07), rgba(' + r + ',' + g + ',' + b + ',.07)), rgba(0,0,0,.16)';
   }
   function deptLabelBg(deptHex) {
     const [dr, dg, db] = hexToRgb(deptHex);

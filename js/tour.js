@@ -204,7 +204,7 @@ window.App = window.App || {};
 
       const speed = (opts && opts.speed) || 1;
       const maxGap = (opts && opts.maxGap) || Infinity;
-      const sortBefore = App.prefs.get('timelineSort', 'department');
+      const axesBefore = App.timelineAxes();   // restored in the finally block below
       const filtersBefore = JSON.parse(JSON.stringify(App.state.filters));
       const snapshot = JSON.parse(JSON.stringify(App.state.data));
       if (App.api && App.api._pollTimer) { clearInterval(App.api._pollTimer); App.api._pollTimer = null; }
@@ -310,7 +310,7 @@ window.App = window.App || {};
       } finally {
         App.state.data = snapshot;
         App.state.filters = filtersBefore;
-        App.prefs.set('timelineSort', sortBefore);
+        App.prefs.set('timelineRows', axesBefore.rows); App.prefs.set('timelineBars', axesBefore.bars);
         App.state.ganttExpanded = {}; App.state.expanded = {};
         if (App.state.admin) App.state.admin.presetDraft = null;
         App.save();
@@ -326,7 +326,7 @@ window.App = window.App || {};
       if (this.playing) return;
       this.playing = true; this._abort = false;
       this.ensure();
-      const sortBefore = App.prefs.get('timelineSort', 'department');
+      const axesBefore = App.timelineAxes();   // restored in the finally block below
       const filtersBefore = JSON.parse(JSON.stringify(App.state.filters));
       // snapshot the whole board so every change the tour makes — new show,
       // dragged task, new pipeline preset, archived show, flipped permission —
@@ -575,7 +575,7 @@ window.App = window.App || {};
 
         // ---- 12. outro ----
         await step(async () => {
-          App.prefs.set('timelineSort', sortBefore);
+          App.prefs.set('timelineRows', axesBefore.rows); App.prefs.set('timelineBars', axesBefore.bars);
           App.state.view = 'timeline'; App.state.ganttExpanded = {}; App.render();
           App.gantt.centerToday && App.gantt.centerToday();
           await this.moveTo(window.innerWidth / 2, window.innerHeight * 0.45, 1100);
@@ -588,7 +588,7 @@ window.App = window.App || {};
         // matter how the run ended (completed or stopped early)
         App.state.data = snapshot;
         App.state.filters = filtersBefore;
-        App.prefs.set('timelineSort', sortBefore);
+        App.prefs.set('timelineRows', axesBefore.rows); App.prefs.set('timelineBars', axesBefore.bars);
         App.state.view = 'timeline'; App.state.ganttExpanded = {}; App.state.expanded = {};
         App.state.admin.presetDraft = null;
         App.save();

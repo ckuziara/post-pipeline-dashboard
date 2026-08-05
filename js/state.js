@@ -585,6 +585,7 @@ window.App = window.App || {};
     role: 'producer',
     filters: { show: 'all', dept: 'all', person: 'all', q: '' },
     admin: { view: 'hub', role: 'producer', q: '', editing: null },  // admin page sub-navigation
+    planning: { view: 'hub', editing: null, variant: 'C', selected: [] },  // planning module sub-navigation
     expanded: {},                     // episodeId -> bool (board)
     ganttExpanded: {},                // episodeId -> bool (timeline subitem drill-down)
     zoom: 16,                         // px per day on the timeline
@@ -627,6 +628,33 @@ window.App = window.App || {};
       set: (k, v) => { p[k] = v; try { localStorage.setItem(PKEY, JSON.stringify(p)); } catch (e) {} }
     };
   })();
+
+  /* The Timeline is a pivot over two chosen dimensions:
+       rows: 'show' | 'episode' | 'department'  — what one Y-axis row groups,
+             and therefore what its single summary bar spans
+       sub:  'task' | 'episode'                 — what a row expands into
+     Bars aren't separately choosable: a row's bar is that row's own span, so
+     the two always agree. Retired keys (`timelineSort`, `timelineBars`) are
+     still read as defaults so an existing view carries over. */
+  App.TL_DIMS = {
+    show:       { label: 'Show' },
+    episode:    { label: 'Episode' },
+    department: { label: 'Department' },
+    task:       { label: 'Task' }
+  };
+  const LEGACY_SORT = {
+    department: { rows: 'episode', sub: 'task' },
+    episode:    { rows: 'episode', sub: 'task' },
+    show:       { rows: 'show',    sub: 'task' }
+  };
+  App.timelineAxes = function () {
+    const was = LEGACY_SORT[App.prefs.get('timelineSort', 'department')] || LEGACY_SORT.department;
+    const legacyBars = App.prefs.get('timelineBars', null);   // the retired two-axis key
+    return {
+      rows: App.prefs.get('timelineRows2', legacyBars === 'show' ? 'show' : was.rows),
+      sub: App.prefs.get('timelineSub', was.sub)
+    };
+  };
 
   /* Themes — each is a named set of CSS-variable overrides living in
      style.css under :root[data-theme="…"]; switching one only swaps that

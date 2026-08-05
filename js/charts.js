@@ -339,6 +339,76 @@ window.App = window.App || {};
       });
     },
 
+    /* Vertical stacked columns — for "how much of this total came from where"
+       over time. Used by the planning report for internal crew vs contractor
+       head-days per week: the stack height is total demand, the split is the
+       hiring decision, and both matter at once.
+       labels: x-axis ticks. series: [{ label, color, values[] }] bottom-up.
+       opts.capacity draws a dashed ceiling line (internal capacity). */
+    stackedBars(labels, series, opts) {
+      opts = opts || {};
+      const box = document.createElement('div');
+      box.className = 'viz-chart';
+      return mount(box, (w) => {
+        const h = opts.height || 190, padB = 22, padT = 10, padL = 34;
+        const svg = svgEl('svg', { width: w, height: h, viewBox: '0 0 ' + w + ' ' + h, class: 'viz-svg' });
+        const n = labels.length;
+        if (!n || !series.length) return svg;
+
+        const totals = labels.map((_, i) => series.reduce((s, ser) => s + (ser.values[i] || 0), 0));
+        const max = niceMax(Math.max(1, ...totals, opts.capacity || 0));
+        const plotW = Math.max(20, w - padL - 6), plotH = h - padT - padB;
+        const Y = (v) => padT + plotH - (v / max) * plotH;
+        const step = plotW / n;
+        const bw = Math.max(2, Math.min(26, step * 0.68));
+
+        // horizontal gridlines + y labels, so the stack heights stay readable
+        [0, 0.5, 1].forEach(f => {
+          const v = max * f, y = Y(v);
+          svg.appendChild(svgEl('line', { x1: padL, y1: y, x2: padL + plotW, y2: y, class: 'viz-grid' }));
+          const t = svgEl('text', { x: padL - 6, y: y + 3.5, class: 'viz-val', 'text-anchor': 'end' });
+          t.textContent = String(Math.round(v)); svg.appendChild(t);
+        });
+
+        labels.forEach((lab, i) => {
+          const cx = padL + step * i + step / 2;
+          let acc = 0;
+          series.forEach((ser, si) => {
+            const v = ser.values[i] || 0;
+            if (v <= 0) return;
+            const y0 = Y(acc), y1 = Y(acc + v);
+            svg.appendChild(svgEl('rect', {
+              x: cx - bw / 2, y: y1, width: bw, height: Math.max(1, y0 - y1),
+              fill: ser.color || seriesColor(si), rx: 2
+            }));
+            acc += v;
+          });
+          // every other tick when they'd collide
+          if (n <= 14 || i % Math.ceil(n / 14) === 0) {
+            const t = svgEl('text', { x: cx, y: h - 7, class: 'viz-lab', 'text-anchor': 'middle' });
+            t.textContent = lab; svg.appendChild(t);
+          }
+          const hit = svgEl('rect', { x: cx - step / 2, y: padT, width: step, height: plotH, fill: 'transparent' });
+          hit.addEventListener('pointerenter', (e) => showTip(e.clientX, e.clientY,
+            series.map((ser, si) => ({ label: ser.label, value: ser.values[i] || 0, color: ser.color || seriesColor(si) }))
+              .concat([{ label: 'total', value: totals[i], color: 'transparent' }]), lab));
+          hit.addEventListener('pointerleave', hideTip);
+          svg.appendChild(hit);
+        });
+
+        if (opts.capacity) {
+          const y = Y(opts.capacity);
+          svg.appendChild(svgEl('line', {
+            x1: padL, y1: y, x2: padL + plotW, y2: y,
+            stroke: 'var(--danger)', 'stroke-width': '1.5', 'stroke-dasharray': '5 4', 'stroke-opacity': '0.8'
+          }));
+          const t = svgEl('text', { x: padL + plotW, y: y - 5, class: 'viz-val', 'text-anchor': 'end', fill: 'var(--danger)' });
+          t.textContent = opts.capacityLabel || 'capacity'; svg.appendChild(t);
+        }
+        return svg;
+      });
+    },
+
     // legend — always present for ≥2 series; mirrors the mark (line key)
     legend(series) {
       const box = document.createElement('div');
