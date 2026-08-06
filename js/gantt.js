@@ -96,9 +96,16 @@ window.App = window.App || {};
       const wrap = el('.gantt' + (App.prefs.get('latchScroll', false) ? '.latch' : ''));
       if (!episodes.length) { wrap.appendChild(el('.empty', null, 'No episodes match the current filters.')); return wrap; }
 
+      // Only the Episode sort draws the end-of-episode milestones, and there
+      // the window has to run out to the last Live Date or they fall off the
+      // end. The other two sorts stop at the work: a show line would carry
+      // every episode's dates at once, and a department line has no episode to
+      // pin them to.
+      const sort = App.prefs.get('timelineSort', 'department');
+      const marks = sort === 'episode';
       let min = '9999', max = '0000';
       episodes.forEach(ep => {
-        const s = App.epStart(ep), d = App.epDue(ep);
+        const s = App.epStart(ep), d = marks ? App.epFinal(ep) : App.epDue(ep);
         if (s < min) min = s; if (d > max) max = d;
       });
       const start = mondayOf(App.addDays(App.parseDate(min), -2));
@@ -168,7 +175,6 @@ window.App = window.App || {};
       // single show is in view (nonsensical mixed across shows on "All shows").
       if (App.state.filters.show !== 'all') this.producerNotesLane(body, App.state.filters.show, startIso, dw, xOf);
 
-      const sort = App.prefs.get('timelineSort', 'department');
       const byStart = (a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1;
       if (sort === 'show') {
         // one row per show; matching tasks across its episodes share a line
@@ -226,6 +232,14 @@ window.App = window.App || {};
       const self = this;
 
       const handleClick = (e) => {
+        const mark = e.target.closest('.ms-day.clickable');
+        if (mark) {
+          e.stopPropagation();                     // the document handler would close it again
+          const ep = App.state.data.episodes.find(x => x.id === mark.dataset.episodeId);
+          if (ep) self.openDeliveryPop(mark, ep);
+          return;
+        }
+
         const bar = e.target.closest('.bar');
         const label = e.target.closest('.g-label');
 
@@ -606,8 +620,86 @@ window.App = window.App || {};
       }
       attachBar(bar, epBarStatus(ep));
       track.appendChild(bar);
+      this.milestoneMarks(track, ep, xOf, dw);
       row.appendChild(track);
       return row;
+    },
+
+    // Delivery Date and Live Date, pinned past the end of the episode's work.
+    // Each occupies its single day on the grid — a red D and a blue LD — so
+    // they read as dated events on the calendar rather than annotations
+    // floating beside the bar. Not tasks: nothing to drag or click into.
+    milestoneMarks(track, ep, xOf, dw) {
+      App.epMilestones(ep).forEach(m => {
+        // the delivery opens its asset panel; the live date has nothing behind it
+        const clickable = m.key === 'delivery_date' && App.deliveryAssets(ep).length > 0;
+        const mark = el('.ms-day.ms-' + m.key + (clickable ? '.clickable' : ''), {
+          style: { left: xOf(m.date) + 'px', width: xOf.width(m.date, m.date) + 'px' },
+          title: m.name + ' — ' + App.fmtDate(m.date) + ' · ' + m.buffer + ' days after ' +
+                 (m.after === 'qc' ? 'QC' : 'delivery') + (clickable ? '\nClick for delivery assets' : '')
+        }, el('span.ms-tag', null, m.key === 'live_date' ? 'LD' : 'D'));
+        if (clickable) mark.dataset.episodeId = ep.id;
+        track.appendChild(mark);
+      });
+    },
+
+    // ---- delivery assets panel ----
+    // What has to be in hand on the Delivery Date, and where each piece has
+    // got to. Read-only: the dates and statuses live with the tasks that own
+    // them, this is just the delivery-day view of them.
+    closeDeliveryPop() { if (this._dlvPop) { this._dlvPop.remove(); this._dlvPop = null; } },
+    openDeliveryPop(mark, ep) {
+      this.closeDeliveryPop();
+      const assets = App.deliveryAssets(ep);
+      if (!assets.length) return;
+      const ms = App.epMilestone(ep, 'delivery_date');
+      const r = mark.getBoundingClientRect();
+
+      const pop = el('.dlv-pop', { onclick: (e) => e.stopPropagation() }, [
+        el('.dlv-head', null, [
+          el('.dlv-title', null, 'Delivery Assets'),
+          el('.dlv-sub', null, ep.code + ' · ' + App.fmtDate(ms.date))
+        ])
+      ]);
+      assets.forEach(a => {
+        // the chip reports the upload, not the task: files on the volume are
+        // what the delivery is made of. The task's own status is the subtitle.
+        const parts = [];
+        if (a.files) parts.push(a.files + ' file' + (a.files === 1 ? '' : 's'));
+        if (a.links) parts.push(a.links + ' link' + (a.links === 1 ? '' : 's'));
+        pop.appendChild(el('.dlv-row', null, [
+          el('.dlv-what', null, [
+            el('.dlv-dept', null, [
+              el('span.dot', { style: { background: a.dept.color } }),
+              a.dept.label
+            ]),
+            el('.dlv-asset', null, a.label),
+            el('.dlv-meta', null, a.count ? parts.join(' · ') : 'nothing uploaded yet')
+          ]),
+          a.count
+            ? el('span.ws-chip.ok', { title: a.su.name + ' — ' + App.status(a.su.status).label },
+                '✓ ' + a.count + ' asset' + (a.count === 1 ? '' : 's'))
+            : el('span.ws-chip.pending', { title: a.su.name + ' — ' + App.status(a.su.status).label }, '⏳ Pending')
+        ]));
+      });
+
+      const outstanding = assets.filter(a => !a.count);
+      pop.appendChild(el('.pop-note', null, outstanding.length
+        ? 'Not ready to deliver — no assets uploaded for ' + outstanding.map(a => a.label).join(' or ')
+        : '✓ All delivery assets uploaded'));
+
+      document.body.appendChild(pop);
+      // same flip/clamp as the board's status picker: position after paint so
+      // the measured height is real, flip up near the bottom edge
+      requestAnimationFrame(() => {
+        const ph = pop.offsetHeight, pw = pop.offsetWidth;
+        const flipUp = r.bottom + ph + 8 > window.innerHeight;
+        let left = r.left + r.width / 2 - pw / 2;
+        if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+        pop.style.top = Math.max(8, flipUp ? r.top - ph - 6 : r.bottom + 6) + 'px';
+        pop.style.left = Math.max(8, left) + 'px';
+      });
+      this._dlvPop = pop;
     },
 
     // draw one task bar into a sub-row track (shared by every sort)

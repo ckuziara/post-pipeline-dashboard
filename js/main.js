@@ -717,7 +717,10 @@ window.App = window.App || {};
         ],
         dashboard: () => [
           actionRow('Widget layout', [
-            { label: 'Reset to default', run: () => App.prefs.set('dashOrder', null) }
+            { label: 'Reset to default', run: () => {
+              App.prefs.set(App.dashboard.orderKey(), null);
+              App.prefs.set(App.dashboard.sizeKey(), null);
+            } }
           ])
         ],
         review: () => [
@@ -759,7 +762,7 @@ window.App = window.App || {};
     if (App.api.online) {
       let remote = null;
       try { remote = await App.api.pull(); } catch (e) { /* fall through to local */ }
-      if (remote) { App.state.data = remote; App.save(); }
+      if (remote) { App.state.data = App.migrate(remote); App.save(); }
       else { App.load(); App.api.push(); }                  // fresh server: seed it
       if (!applyIdentity()) { notInDirectoryScreen(); return; }
       App.api.startPolling();
@@ -777,10 +780,15 @@ window.App = window.App || {};
     });
     document.addEventListener('click', () => {
       App.board.closePop && App.board.closePop();
+      App.gantt.closeDeliveryPop && App.gantt.closeDeliveryPop();
       App.prefsMenu.close();
     });
     document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') { App.board.closePop && App.board.closePop(); App.prefsMenu.close(); }
+      if (e.key === 'Escape') {
+        App.board.closePop && App.board.closePop();
+        App.gantt.closeDeliveryPop && App.gantt.closeDeliveryPop();
+        App.prefsMenu.close();
+      }
     });
     App.render();
   }

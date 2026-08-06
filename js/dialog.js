@@ -600,11 +600,27 @@ window.App = window.App || {};
       ]);
     }
 
+    /* The two end-of-episode milestones, shown after the last task so the
+       pipeline reads as the whole story. They aren't tasks and aren't part of
+       `pipe`: no duration, no department, nothing to edit, reorder or remove —
+       they're listed here purely so it's clear every episode ends with them
+       and how far past the work they sit. */
+    const milestoneRow = (m) => el('.pipe-row.compact.milestone', {
+      title: tip(m.name + ' — always ' + m.buffer + ' days after ' +
+        (m.after === 'qc' ? 'QC finishes' : 'the delivery date') + '. Every episode has one; it cannot be edited or removed.')
+    }, [
+      el('.pipe-lead', null, el('span.pipe-ms-pin', null, '◆')),
+      el('span.pipe-name-ro', null, m.name),
+      el('span.pipe-deps-sum', null, 'fixed date · not a task'),
+      el('span.pipe-lag', null, '+' + lagLabel(m.buffer))
+    ]);
+
     function renderPipe() {
       closeDepMenu();
       pipeCount.textContent = pipe.length;
       pipeList.innerHTML = '';
       pipe.forEach((t, i) => pipeList.appendChild(t.key === editingKey ? editRow(t, i) : compactRow(t, i)));
+      App.MILESTONES.forEach(m => pipeList.appendChild(milestoneRow(m)));
     }
 
     // `at` is the index to insert at; omitted (the header ＋) appends.

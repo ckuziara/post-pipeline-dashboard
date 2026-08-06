@@ -676,6 +676,40 @@ button.ghost:hover { background: var(--hover); color: var(--text); }
 .g-row.sub .bar { height: 12px; font-size: 9px; border-radius: 4px; }
 .bar .bar-out { position: absolute; left: calc(100% + 8px); color: var(--text-2); font-weight: 600; font-size: 10px; }
 .bar.delivered { opacity: .55; }
+/* End-of-episode milestones (Delivery Date, Live Date). Each claims its own
+   day column so it reads as a dated event on the calendar — red D for the
+   delivery, blue LD for going live — rather than a marker floating beside the
+   bar. Fixed dates, so there is nothing to drag or open. */
+.ms-day {
+  position: absolute; top: 50%; transform: translateY(-50%); height: 17px;
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+  border-radius: 3px; cursor: default; z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+.ms-day .ms-tag {
+  font-size: 9.5px; font-weight: 800; letter-spacing: .02em; color: #fff;
+  line-height: 1; pointer-events: none;
+}
+.ms-day.ms-delivery_date { background: #e2445c; }
+.ms-day.ms-live_date { background: #2f6fed; }
+.ms-day.clickable { cursor: pointer; }
+.ms-day.clickable:hover { filter: brightness(1.15); outline: 1.5px solid rgba(255,255,255,.5); outline-offset: -1.5px; }
+
+/* delivery-assets panel — what has to be in hand on the Delivery Date */
+.dlv-pop {
+  position: fixed; z-index: 200; width: 268px; background: var(--surface-2);
+  border: 1px solid var(--border-2); border-radius: 10px; box-shadow: var(--shadow);
+  padding: 10px; display: flex; flex-direction: column; gap: 2px;
+  animation: popIn .1s ease;
+}
+.dlv-head { padding: 0 2px 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.dlv-title { font-size: 12px; font-weight: 700; }
+.dlv-sub { font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
+.dlv-row { display: flex; align-items: center; gap: 10px; padding: 6px 2px; }
+.dlv-what { min-width: 0; flex: 1; }
+.dlv-dept { display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px; }
+.dlv-dept .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.dlv-asset { font-size: 12px; font-weight: 600; margin-top: 2px; }
+.dlv-meta { font-size: 10px; color: var(--text-3); margin-top: 1px; }
 /* Task bars carry no status dot (too little room) — the live states are marked
    with a hairline ring in the status colour instead, set inline per bar. Drawn
    as an outline rather than a shadow or border so it neither fights .dragging's
@@ -847,6 +881,11 @@ body.gantt-dragging { user-select: none; }
 .ep-meta .m-val { font-size: 12px; font-weight: 700; white-space: nowrap; }
 .ep-meta.status-meta { width: 100px; }
 .ep-meta.stage-meta { width: 120px; }
+/* Delivery / Live dates — the first thing to give up its space, since the
+   episode title matters more and the Timeline shows these dates too */
+.ep-meta.dates-meta { width: 118px; }
+.ep-meta.dates-meta .m-val { font-size: 11.5px; color: var(--text-2); }
+@media (max-width: 1100px) { .ep-meta.dates-meta { display: none; } }
 .ep-prog { width: 120px; flex: none; display: flex; flex-direction: column; align-items: center; }
 .prog-track { width: 100%; height: 7px; border-radius: 5px; background: var(--surface-3); overflow: hidden; }
 .prog-fill { height: 100%; border-radius: 5px; background: linear-gradient(90deg, #00c875, #2bd38a); }
@@ -1893,6 +1932,11 @@ select.fld { cursor: pointer; }
   background: rgba(253,171,61,.14); border: 1px solid rgba(253,171,61,.3);
   border-radius: 12px; padding: 2px 8px;
 }
+/* mandatory end-of-episode milestones — listed, but nothing to interact with */
+.pipe-row.milestone { cursor: default; border-style: dashed; opacity: .85; }
+.pipe-row.milestone:hover { background: none; border-color: var(--border); }
+.pipe-row.milestone .pipe-deps-sum { font-style: italic; }
+.pipe-ms-pin { display: block; line-height: 18px; text-align: center; font-size: 9px; color: var(--text-3); }
 .pipe-row.compact .pipe-move { flex: none; flex-direction: row; gap: 3px; }
 .pipe-row.compact .pipe-move.hov { opacity: 0; transition: opacity .12s; }
 .pipe-row.compact:hover .pipe-move.hov { opacity: 1; }
