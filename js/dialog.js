@@ -6,6 +6,7 @@ window.App = window.App || {};
 (function () {
   'use strict';
   const el = (s, p, c) => App.el(s, p, c);
+  const EP_MAX = 100;   // most episodes a single Add Show can create at once
 
   // ---- overlay ----
   App.modal = {
@@ -403,6 +404,7 @@ window.App = window.App || {};
     const tip = (opts && opts.tooltips === false) ? () => null : (text) => text;
     let pipe = initialPipe;
     let editingKey = null;
+    let confirmKey = null;      // task awaiting the inline remove confirmation
     let depMenu = null;
     const closeDepMenu = () => { if (depMenu) { depMenu.remove(); depMenu = null; document.removeEventListener('click', closeDepMenu); } };
 
@@ -422,11 +424,11 @@ window.App = window.App || {};
     let undoStack = [], redoStack = [];
 
     const undoBtn = el('button.btn-icon.pipe-hist', {
-      type: 'button', title: tip('Undo'),
+      type: 'button', title: tip('Undo (' + App.shortcutLabel('Z') + ')'),
       onclick: (e) => { e.stopPropagation(); undo(); }
     }, '↶');
     const redoBtn = el('button.btn-icon.pipe-hist', {
-      type: 'button', title: tip('Redo'),
+      type: 'button', title: tip('Redo (' + App.shortcutLabel('\u21e7Z') + ')'),
       onclick: (e) => { e.stopPropagation(); redo(); }
     }, '↷');
     function refreshHistory() {
@@ -588,13 +590,7 @@ window.App = window.App || {};
           }, '✓'),
           el('button.btn-row-x', {
             type: 'button', title: tip('Remove task'),
-            onclick: () => {
-              snapshot();
-              pipe.splice(i, 1);
-              pipe.forEach(p => { p.deps = p.deps.filter(k => k !== t.key); });
-              editingKey = null;
-              renderPipe(); onChange();
-            }
+            onclick: () => removeTask(t, i)
           }, App.icon('trash'))
         ])
       ]);
@@ -619,8 +615,82 @@ window.App = window.App || {};
       closeDepMenu();
       pipeCount.textContent = pipe.length;
       pipeList.innerHTML = '';
-      pipe.forEach((t, i) => pipeList.appendChild(t.key === editingKey ? editRow(t, i) : compactRow(t, i)));
+      pipe.forEach((t, i) => pipeList.appendChild(
+        t.key === confirmKey ? confirmRow(t, i)
+        : t.key === editingKey ? editRow(t, i)
+        : compactRow(t, i)));
       App.MILESTONES.forEach(m => pipeList.appendChild(milestoneRow(m)));
+    }
+
+    /* ---- removing a task, and the dependencies it leaves behind ----
+       Deleting a task in the middle of a chain orphans everything downstream:
+       delete Blocking and Animation is left with nothing to wait for, so it
+       jumps to the front of the schedule. Rather than silently dropping those
+       links, list the affected tasks and offer to pass the deleted task's own
+       dependencies down to them — Animation → Layout, keeping the order the
+       pipeline actually meant. Inheriting upstream deps can't create a cycle:
+       they already sit above the task being removed.
+       A task nothing depends on is deleted without ceremony. */
+    const nameOf = (key) => { const p = pipe.find(x => x.key === key); return p ? (p.name || 'Untitled') : key; };
+
+    function applyRemove(t, i, reconnect) {
+      snapshot();
+      const inherit = t.deps.slice();
+      pipe.splice(i, 1);
+      pipe.forEach(p => {
+        if (!p.deps.includes(t.key)) return;
+        p.deps = p.deps.filter(k => k !== t.key);
+        if (reconnect) inherit.forEach(k => { if (k !== p.key && !p.deps.includes(k)) p.deps.push(k); });
+      });
+      editingKey = null; confirmKey = null;
+      renderPipe(); onChange();
+    }
+
+    function removeTask(t, i) {
+      // nothing downstream to strand — just go
+      if (!pipe.some(p => p.key !== t.key && p.deps.includes(t.key))) { applyRemove(t, i, false); return; }
+      confirmKey = t.key;
+      renderPipe();
+      const row = pipeList.querySelector('.pipe-confirm');
+      if (row) row.scrollIntoView({ block: 'nearest' });
+    }
+
+    /* The prompt replaces the row in place rather than opening a modal: this
+       editor is itself inside a dialog (Add Show / Admin), and App.modal only
+       holds one card at a time — a modal here would tear its own host down. */
+    function confirmRow(t, i) {
+      const dependents = pipe.filter(p => p.key !== t.key && p.deps.includes(t.key));
+      const inherit = t.deps.slice();
+      const label = t.name || 'this task';
+      const many = dependents.length > 1;
+
+      return el('.pipe-row.pipe-confirm', null, [
+        el('.pc-msg', null, [
+          App.icon('warn', { cls: 'pc-ic' }),
+          el('span', null, 'Removing ' + label + ' leaves ' + dependents.length + ' task' + (many ? 's' : '') +
+            ' with nothing to wait for. Re-check ' + (many ? 'these' : 'this') + ':')
+        ]),
+        el('.dep-migrate', null, dependents.map(d => el('.dm-row', null, [
+          el('span.dot', { style: { background: App.dept(d.dept).color } }),
+          el('span.dm-name', null, d.name || 'Untitled'),
+          el('span.dm-arrow', null, '→'),
+          el('span.dm-new', null, inherit.length ? inherit.map(nameOf).join(', ') : 'nothing — free to start immediately')
+        ]))),
+        el('.pc-foot', null, [
+          el('span.pc-hint', null, inherit.length
+            ? 'Reconnect hands down ' + label + '’s own dependencies (' + inherit.map(nameOf).join(', ') + ').'
+            : label + ' waits on nothing, so there’s nothing to hand down.'),
+          el('button.btn-ghost.pc-btn', {
+            type: 'button', onclick: (e) => { e.stopPropagation(); confirmKey = null; renderPipe(); }
+          }, 'Cancel'),
+          (inherit.length ? el('button.btn-ghost.pc-btn', {
+            type: 'button', onclick: (e) => { e.stopPropagation(); applyRemove(t, i, false); }
+          }, 'Remove only') : null),
+          el('button.btn-danger.pc-btn', {
+            type: 'button', onclick: (e) => { e.stopPropagation(); applyRemove(t, i, !!inherit.length); }
+          }, inherit.length ? 'Reconnect and remove' : 'Remove')
+        ])
+      ]);
     }
 
     // `at` is the index to insert at; omitted (the header ＋) appends.
@@ -638,7 +708,11 @@ window.App = window.App || {};
     }
 
     renderPipe();
-    return {
+    /* Published so the global Cmd+Z / Cmd+Y handler can find the editor that's
+       on screen. There's only ever one — it lives inside a dialog, and dialogs
+       don't stack. No teardown hook to unregister from, so the handler checks
+       `list.isConnected` instead: a closed dialog's list is detached. */
+    const api = {
       list: pipeList, count: pipeCount, addTask, render: renderPipe,
       undoBtn, redoBtn, undo, redo,
       getPipe: () => pipe,
@@ -647,6 +721,8 @@ window.App = window.App || {};
       setPipe: (p) => { pipe = p; editingKey = null; undoStack = []; redoStack = []; refreshHistory(); renderPipe(); },
       closeMenus: closeDepMenu
     };
+    App._pipeEditor = api;
+    return api;
   };
 
   // ---- Add Show ----
@@ -699,10 +775,10 @@ window.App = window.App || {};
         editor.setPipe(pipe);
         updateSchedule();
       }
-      const countInput = el('input.fld', { type: 'number', value: '3', min: '1', max: '30' });
+      const countInput = el('input.fld', { type: 'number', value: '3', min: '1', max: '100' });
       const epList = el('.ep-name-list');
       const rebuildEps = () => {
-        const n = Math.max(1, Math.min(30, parseInt(countInput.value) || 1));
+        const n = Math.max(1, Math.min(EP_MAX, parseInt(countInput.value) || 1));
         const existing = [...epList.querySelectorAll('input')].map(i => i.value);
         epList.innerHTML = '';
         for (let i = 0; i < n; i++) {
@@ -727,7 +803,7 @@ window.App = window.App || {};
       const readPlan = () => ({
         start: startInput.value || App.isoDate(App.today()),
         cadence: Math.max(1, parseInt(cadenceInput.value) || 14),
-        epCount: Math.max(1, Math.min(30, parseInt(countInput.value) || 1))
+        epCount: Math.max(1, Math.min(EP_MAX, parseInt(countInput.value) || 1))
       });
 
       function updateSchedule() {
@@ -775,6 +851,12 @@ window.App = window.App || {};
       }
 
       countInput.addEventListener('input', () => { rebuildEps(); updateSchedule(); });
+      // snap an over-the-cap number back on blur, so the field can't keep
+      // claiming 250 while the schedule below it is quietly planning 100
+      countInput.addEventListener('change', () => {
+        const n = Math.max(1, Math.min(EP_MAX, parseInt(countInput.value) || 1));
+        if (String(n) !== countInput.value) { countInput.value = n; rebuildEps(); updateSchedule(); }
+      });
       startInput.addEventListener('change', updateSchedule);
       cadenceInput.addEventListener('change', updateSchedule);
       endInput.addEventListener('change', () => { targetTouched = true; updateSchedule(); });

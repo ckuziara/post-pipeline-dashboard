@@ -167,6 +167,103 @@ function makePgStore(connectionString) {
 
 const storage = config.databaseUrl ? makePgStore(config.databaseUrl) : makeFileStore();
 
+/* ------------------------------------------------- board backups (2 backends)
+   Point-in-time copies of the whole board, kept in the database rather than
+   downloaded — so a backup is available to whoever needs it from wherever they
+   are, and taking one doesn't depend on someone remembering to file a JSON
+   somewhere. Snapshots are made server-side from the stored state, never from
+   what a client posts, so a stale or half-loaded tab can't record a bad copy.
+
+   Capped: a board blob is small but not free, and a hosted free tier isn't the
+   place for unbounded history. The oldest are dropped past the cap.
+   `meta` holds the row summary so listing never has to read the blobs. */
+const BACKUP_PATH = path.join(DATA_DIR, 'backups.json');
+const BACKUP_CAP = 20;
+
+function backupMeta(data) {
+  return {
+    shows: ((data && data.shows) || []).length,
+    episodes: ((data && data.episodes) || []).length,
+    bytes: Buffer.byteLength(JSON.stringify(data || null))
+  };
+}
+
+function makeFileBackups() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  let rows = readJson(BACKUP_PATH, []);
+  const save = () => { try { writeJson(BACKUP_PATH, rows); } catch (e) {} };
+  return {
+    kind: 'json file',
+    async init() {},
+    async create({ label, email, version, data }) {
+      const row = {
+        id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 8),
+        ts: new Date().toISOString(), email, label: label || null, version,
+        meta: backupMeta(data), data
+      };
+      rows.push(row);
+      if (rows.length > BACKUP_CAP) rows = rows.slice(-BACKUP_CAP);
+      save();
+      return { id: row.id, ts: row.ts, email, label: row.label, version, meta: row.meta };
+    },
+    async list() {
+      return rows.slice().reverse().map(r =>
+        ({ id: r.id, ts: r.ts, email: r.email, label: r.label, version: r.version, meta: r.meta }));
+    },
+    async get(id) { return rows.find(r => r.id === id) || null; },
+    async remove(id) { const n = rows.length; rows = rows.filter(r => r.id !== id); save(); return n !== rows.length; }
+  };
+}
+
+function makePgBackups(connectionString) {
+  const pool = getPgPool(connectionString);
+  return {
+    kind: 'postgres',
+    async init() {
+      await pool.query(
+        'CREATE TABLE IF NOT EXISTS board_backups (' +
+        'id bigserial PRIMARY KEY, ts timestamptz NOT NULL DEFAULT now(), ' +
+        'email text, label text, version int, meta jsonb, data jsonb NOT NULL)'
+      );
+      await pool.query('CREATE INDEX IF NOT EXISTS board_backups_ts_idx ON board_backups (ts DESC)');
+    },
+    async create({ label, email, version, data }) {
+      const meta = backupMeta(data);
+      const r = await pool.query(
+        'INSERT INTO board_backups (email, label, version, meta, data) VALUES ($1,$2,$3,$4::jsonb,$5::jsonb) ' +
+        'RETURNING id, ts, email, label, version, meta',
+        [email, label || null, version, JSON.stringify(meta), JSON.stringify(data)]
+      );
+      // drop the oldest past the cap, so history can't grow without bound
+      await pool.query(
+        'DELETE FROM board_backups WHERE id NOT IN (SELECT id FROM board_backups ORDER BY ts DESC LIMIT $1)',
+        [BACKUP_CAP]
+      );
+      const row = r.rows[0];
+      return { id: String(row.id), ts: row.ts, email: row.email, label: row.label, version: row.version, meta: row.meta };
+    },
+    async list() {
+      // deliberately omits `data` — the list is metadata only
+      const r = await pool.query(
+        'SELECT id, ts, email, label, version, meta FROM board_backups ORDER BY ts DESC LIMIT $1', [BACKUP_CAP]);
+      return r.rows.map(x => ({ id: String(x.id), ts: x.ts, email: x.email, label: x.label, version: x.version, meta: x.meta }));
+    },
+    async get(id) {
+      if (!/^\d+$/.test(String(id))) return null;
+      const r = await pool.query('SELECT id, ts, email, label, version, meta, data FROM board_backups WHERE id = $1', [id]);
+      const row = r.rows[0];
+      return row ? Object.assign({}, row, { id: String(row.id) }) : null;
+    },
+    async remove(id) {
+      if (!/^\d+$/.test(String(id))) return false;
+      const r = await pool.query('DELETE FROM board_backups WHERE id = $1', [id]);
+      return !!r.rowCount;
+    }
+  };
+}
+
+const backups = config.databaseUrl ? makePgBackups(config.databaseUrl) : makeFileBackups();
+
 /* ------------------------------------------------- activity log (2 backends)
    Append-only, and deliberately NOT part of board state: the board blob is
    re-sent on every save, so folding a growing log into it would balloon each
@@ -1113,6 +1210,60 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { version: result.version });
       }
 
+      /* ---- board backups ----
+         Admin-only throughout: a backup is the whole board, and restoring one
+         overwrites everyone's work. Snapshots are taken from stored state here
+         rather than from a posted body, so what gets kept is always what the
+         server actually holds. */
+      if (route.startsWith('GET /api/backups') || route.startsWith('POST /api/backups') ||
+          route.startsWith('DELETE /api/backups')) {
+        const s = getSession(req);
+        if (!config.adminEmails.map(e => e.toLowerCase()).includes(s.email)) {
+          return sendJson(res, 403, { error: 'Only admins can manage board backups' });
+        }
+
+        if (route === 'GET /api/backups') {
+          return sendJson(res, 200, { cap: BACKUP_CAP, backups: await backups.list() });
+        }
+
+        if (route === 'POST /api/backups') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          const cur = await storage.get();
+          if (!cur.data) return sendJson(res, 400, { error: 'There’s no board to back up yet' });
+          const row = await backups.create({
+            label: String(body.label || '').slice(0, 120) || null,
+            email: s.email, version: cur.version, data: cur.data
+          });
+          return sendJson(res, 200, row);
+        }
+
+        /* Restoring is itself a destructive write, so the board as it stands is
+           snapshotted first — that auto-backup is the way out of a restore that
+           turned out to be the wrong one. The board's version keeps counting up
+           (it isn't rewound), so every open tab sees a change and re-pulls. */
+        if (route === 'POST /api/backups/restore') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          const row = await backups.get(String(body.id || ''));
+          if (!row) return sendJson(res, 404, { error: 'That backup no longer exists' });
+          const cur = await storage.get();
+          if (cur.data) {
+            await backups.create({
+              label: 'Before restoring ' + new Date(row.ts).toISOString().slice(0, 16).replace('T', ' '),
+              email: s.email, version: cur.version, data: cur.data
+            });
+          }
+          const result = await storage.put(cur.version, row.data);
+          if (!result.ok) return sendJson(res, 409, result.current);
+          broadcastVersion(result.version);
+          return sendJson(res, 200, { version: result.version, restored: row.id });
+        }
+
+        if (route === 'DELETE /api/backups') {
+          const ok = await backups.remove(String(url.searchParams.get('id') || ''));
+          return sendJson(res, ok ? 200 : 404, ok ? { ok: true } : { error: 'That backup no longer exists' });
+        }
+      }
+
       /* ---- activity log ---- */
       // Anyone signed in may append (that's how their own usage is recorded),
       // but the identity and timestamp come from the session and the clock here
@@ -1187,6 +1338,9 @@ const server = http.createServer(async (req, res) => {
   // the log is a nice-to-have: a failure here must never stop the tracker
   try { await activity.init(); }
   catch (e) { console.error('Activity log init failed (logging disabled):', e.message); }
+  // likewise backups — the board must still serve if the table can't be made
+  try { await backups.init(); }
+  catch (e) { console.error('Backup store init failed (backups disabled):', e.message); }
 
   server.listen(PORT, config.host, () => {
     const nets = os.networkInterfaces();

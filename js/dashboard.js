@@ -342,13 +342,20 @@ window.App = window.App || {};
 
     /* Priority — what to pick up, in the order to pick it up. Grouped by how
        soon it's due rather than listed flat, so "two things are late" reads at
-       a glance instead of having to compare dates. A department role sees only
-       its own queue; oversight roles see the whole slate with a department chip
-       on each line. Empty groups are dropped: no row for Overdue is the
-       clearest way to say nothing is overdue. */
+       a glance instead of having to compare dates. Empty groups are dropped: no
+       row for Overdue is the clearest way to say nothing is overdue.
+
+       Scoped to the signed-in person's own assignments. It's a personal to-do
+       list, not a department report — a lead shouldn't have to pick their own
+       work out of their whole team's. Anyone we can't match to a directory
+       person (offline demo, an admin who isn't on the team list) has no
+       assignments to filter by, so they keep the old department queue. */
     priority(m, size) {
+      const meId = App.state.user && App.state.user.personId;
       const dept = App.roleDept(App.state.role);
-      const scoped = dept ? m.subs.filter(x => x.su.dept === dept) : m.subs;
+      const scoped = meId ? m.subs.filter(x => x.su.assignee === meId)
+                    : dept ? m.subs.filter(x => x.su.dept === dept)
+                    : m.subs;
       const todayIso = App.isoDate(App.today());
       const weekIso = App.shiftIso(todayIso, 7);
 
@@ -364,14 +371,19 @@ window.App = window.App || {};
       });
       Object.keys(buckets).forEach(k => buckets[k].sort((a, b) => a.su.due < b.su.due ? -1 : 1));
 
+      // own work can span departments, so each line says which one it's in
+      const showDept = meId ? true : !dept;
       const groups = PRIORITY_GROUPS.filter(g => buckets[g.key].length)
-        .map(g => this.priorityGroup(g, buckets[g.key], !dept, size));
+        .map(g => this.priorityGroup(g, buckets[g.key], showDept, size));
       const open = scoped.filter(x => x.su.status !== 'approved').length;
 
       return {
         title: 'Priority',
-        sub: (dept ? App.dept(dept).label : 'across the slate') + ' · ' + open + ' open',
-        body: groups.length ? el('.pr-list', null, groups) : el('.dw-calm', null, 'Nothing outstanding — all clear.')
+        sub: (meId ? 'Assigned to you' : dept ? App.dept(dept).label : 'across the slate') + ' · ' + open + ' open',
+        body: groups.length ? el('.pr-list', null, groups)
+          : el('.dw-calm', null, meId && !scoped.length
+              ? 'Nothing assigned to you right now.'
+              : 'Nothing outstanding — all clear.')
       };
     },
 

@@ -141,16 +141,16 @@ window.App = window.App || {};
      Operations also owns scheduling (across every department, since that's the
      coordinating job), so it carries editSchedule without editAll. */
   App.ROLES = [
-    { key: 'producer',  label: 'Producer',        ico: 'clapper', view: 'timeline',  approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, hint: 'Full access — all tasks, shows & admin' },
-    { key: 'manager',   label: 'Manager',         ico: 'compass', view: 'dashboard', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, hint: 'Oversight, approvals & admin' },
-    { key: 'director',  label: 'Director',        ico: 'target', view: 'review',    approve: true, editAll: true, hint: 'Review & approve cuts' },
-    { key: 'creative',  label: 'Creative',        ico: 'pencil', view: 'board', dept: 'creative',  hint: 'Creative department tasks' },
-    { key: 'music',     label: 'Music',           ico: 'music', view: 'board', dept: 'music',     hint: 'Music department tasks' },
-    { key: 'animation', label: 'Animation',       ico: 'film', view: 'board', dept: 'animation', hint: 'Animation department tasks' },
-    { key: 'audio',     label: 'Audio Post',      ico: 'headphones', view: 'board', dept: 'audio',     hint: 'Audio Post department tasks' },
-    { key: 'video',     label: 'Video Post',      ico: 'camera', view: 'board', dept: 'video',     hint: 'Video Post department tasks' },
-    { key: 'ops',       label: 'Post Operations', ico: 'package', view: 'board', dept: 'ops', editSchedule: true, hint: 'Post Operations tasks & scheduling' },
-    { key: 'qc',        label: 'QC',              ico: 'checkBadge', view: 'board', dept: 'qc',        hint: 'QC tasks' }
+    { key: 'producer',  label: 'Producer',        ico: 'clapper', approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, hint: 'Full access — all tasks, shows & admin' },
+    { key: 'manager',   label: 'Manager',         ico: 'compass', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, hint: 'Oversight, approvals & admin' },
+    { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, hint: 'Review & approve cuts' },
+    { key: 'creative',  label: 'Creative',        ico: 'pencil', dept: 'creative',  hint: 'Creative department tasks' },
+    { key: 'music',     label: 'Music',           ico: 'music', dept: 'music',     hint: 'Music department tasks' },
+    { key: 'animation', label: 'Animation',       ico: 'film', dept: 'animation', hint: 'Animation department tasks' },
+    { key: 'audio',     label: 'Audio Post',      ico: 'headphones', dept: 'audio',     hint: 'Audio Post department tasks' },
+    { key: 'video',     label: 'Video Post',      ico: 'camera', dept: 'video',     hint: 'Video Post department tasks' },
+    { key: 'ops',       label: 'Post Operations', ico: 'package', dept: 'ops', editSchedule: true, hint: 'Post Operations tasks & scheduling' },
+    { key: 'qc',        label: 'QC',              ico: 'checkBadge', dept: 'qc',        hint: 'QC tasks' }
   ];
   App.role = (k) => App.ROLES.find(r => r.key === k) || App.ROLES[0];
   // Role capabilities are data-driven (Admin → Access Control) with the ROLES
@@ -429,6 +429,12 @@ window.App = window.App || {};
     return App.fmtDate(a) + ' – ' + App.fmtDate(b);
   };
 
+  /* Keyboard shortcuts read in the platform's own idiom — ⌘ on a Mac, Ctrl
+     everywhere else — so a hint never tells someone to press a key they
+     haven't got. */
+  App.isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  App.shortcutLabel = (keys) => (App.isMac ? '⌘' : 'Ctrl+') + keys;
+
   App.uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
   App.initials = (name) => name.split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
 
@@ -643,7 +649,7 @@ window.App = window.App || {};
      State
   --------------------------------------------------------------------------- */
   App.state = {
-    view: 'timeline',                 // timeline | board | dashboard
+    view: 'dashboard',                // timeline | board | dashboard — every role starts here
     role: 'producer',
     filters: { show: 'all', dept: 'all', person: 'all', q: '' },
     admin: { view: 'hub', role: 'producer', q: '', editing: null },  // admin page sub-navigation
@@ -691,13 +697,215 @@ window.App = window.App || {};
     try { stored = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { stored = null; }
     App.state.data = App.migrate((stored && stored.episodes && stored.episodes.length) ? stored : App.seedData());
   };
-  App.resetData = function () {
-    App.state.data = App.seedData();
+  /* ---------------------------------------------------------------------------
+     Board history — undo / redo, scoped to your own edits.
+
+     This is a SHARED board, so an undo must never be a rewind. Restoring a
+     whole-board snapshot would quietly revert whatever a teammate changed in
+     the meantime, which is worse than not having undo at all. Instead each
+     mutation is recorded as a set of precise before/after values, addressed by
+     path — "this episode's status for this task", not "the board".
+
+     Undo then does two things:
+       · it touches only the paths YOUR action changed, leaving everything
+         else — including a teammate's concurrent edits — exactly as it is;
+       · it refuses if the value it's about to revert is no longer the value it
+         wrote. Someone else has moved that task since, and silently stamping
+         over their work is the one thing undo must not do.
+
+     Session-only, in memory, capped. The activity log is not rewound: an undo
+     is a new change, not an erasure of what happened.
+  --------------------------------------------------------------------------- */
+  const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+  const same = (a, b) => JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b);
+  const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+  // arrays of records (shows, episodes, people) are matched by id, so an edit
+  // to one episode never reads as "the whole episodes list changed"
+  const keyed = (v) => Array.isArray(v) && v.every(x => x && typeof x === 'object' && typeof x.id === 'string');
+
+  function diffInto(before, after, path, out) {
+    if (before === after) return;
+    if (isObj(before) && isObj(after)) {
+      const keys = new Set(Object.keys(before).concat(Object.keys(after)));
+      keys.forEach(k => diffInto(before[k], after[k], path.concat(k), out));
+      return;
+    }
+    if (keyed(before) && keyed(after)) {
+      const b = new Map(), a = new Map();
+      before.forEach((x, i) => b.set(x.id, { x, i }));
+      after.forEach((x, i) => a.set(x.id, { x, i }));
+      new Set(Array.from(b.keys()).concat(Array.from(a.keys()))).forEach(id => {
+        const bv = b.get(id), av = a.get(id);
+        if (!bv) out.push({ path: path.concat([{ id }]), before: undefined, after: clone(av.x), at: av.i });
+        else if (!av) out.push({ path: path.concat([{ id }]), before: clone(bv.x), after: undefined, at: bv.i });
+        else diffInto(bv.x, av.x, path.concat([{ id }]), out);
+      });
+      return;
+    }
+    if (!same(before, after)) out.push({ path: path, before: clone(before), after: clone(after) });
+  }
+
+  function getAt(root, path) {
+    let cur = root;
+    for (let i = 0; i < path.length; i++) {
+      if (cur == null) return undefined;
+      const seg = path[i];
+      cur = (typeof seg === 'object')
+        ? (Array.isArray(cur) ? cur.find(x => x && x.id === seg.id) : undefined)
+        : cur[seg];
+    }
+    return cur;
+  }
+
+  // Writes one value back. Missing intermediate objects are rebuilt, so undoing
+  // a change that created `ep.dates` from nothing still lands.
+  function setAt(root, path, value, at) {
+    let parent = root;
+    for (let i = 0; i < path.length - 1; i++) {
+      const seg = path[i];
+      if (typeof seg === 'object') {
+        if (!Array.isArray(parent)) return false;
+        parent = parent.find(x => x && x.id === seg.id);
+      } else {
+        if (parent[seg] == null) parent[seg] = {};
+        parent = parent[seg];
+      }
+      if (parent == null) return false;
+    }
+    const last = path[path.length - 1];
+    if (typeof last === 'object') {
+      if (!Array.isArray(parent)) return false;
+      const i = parent.findIndex(x => x && x.id === last.id);
+      if (value === undefined) { if (i >= 0) parent.splice(i, 1); }
+      else if (i >= 0) parent[i] = value;
+      else parent.splice(Math.min(at == null ? parent.length : at, parent.length), 0, value);
+    } else if (value === undefined) {
+      delete parent[last];
+    } else {
+      parent[last] = value;
+    }
+    return true;
+  }
+
+  App.history = {
+    _undo: [], _redo: [],
+    LIMIT: 50,
+
+    record(label, changes) {
+      if (!changes.length) return;              // a no-op action isn't a history step
+      this._undo.push({ label: label || 'the last change', changes: changes });
+      if (this._undo.length > this.LIMIT) this._undo.shift();
+      this._redo.length = 0;                    // a new action forks the timeline
+    },
+    canUndo() { return this._undo.length > 0; },
+    canRedo() { return this._redo.length > 0; },
+    clear() { this._undo.length = 0; this._redo.length = 0; },
+
+    /* `dir` is 'before' to undo and 'after' to redo. Every value is checked
+       against what we expect to still be there before ANY of them is written,
+       so a refused step leaves the board completely untouched. */
+    _apply(entry, dir) {
+      const expect = dir === 'before' ? 'after' : 'before';
+      const stale = entry.changes.some(c => !same(getAt(App.state.data, c.path), c[expect]));
+      if (stale) return { ok: false, label: entry.label };
+      entry.changes.forEach(c => setAt(App.state.data, c.path, clone(c[dir]), c.at));
+      App.applyWorkflow && App.applyWorkflow();
+      App.save();
+      App.render();
+      return { ok: true, label: entry.label };
+    },
+    undo() {
+      if (!this._undo.length) return null;
+      const entry = this._undo[this._undo.length - 1];
+      const r = this._apply(entry, 'before');
+      if (!r.ok) return r;                      // left in place; the user can retry after looking
+      this._undo.pop(); this._redo.push(entry);
+      return r;
+    },
+    redo() {
+      if (!this._redo.length) return null;
+      const entry = this._redo[this._redo.length - 1];
+      const r = this._apply(entry, 'after');
+      if (!r.ok) return r;
+      this._redo.pop(); this._undo.push(entry);
+      return r;
+    }
+  };
+
+  /* `label` names the action for the undo toast — "Undid the reschedule".
+     The board is cloned before the change so the two can be diffed; at ~50KB
+     that's cheap next to the render the mutation triggers anyway. */
+  App.mutate = function (fn, label) {
+    const before = clone(App.state.data);
+    fn(App.state.data);
+    const changes = [];
+    diffInto(before, App.state.data, [], changes);
+    App.history.record(label, changes);
     App.save();
     App.render();
-    App.toast('Demo data reset to the reference board');
   };
-  App.mutate = function (fn) { fn(App.state.data); App.save(); App.render(); };
+
+  /* ---------------------------------------------------------------------------
+     Show backup — everything belonging to one show, as a JSON file.
+
+     Board data lives on the server, never in the repo, so a deploy can't touch
+     it — but a bad edit, a delete or a data migration can. This is the way to
+     take a copy before doing something irreversible. It's a snapshot for
+     safekeeping and inspection, NOT an importer: nothing in the app reads these
+     files back in, so restoring one is a manual job.
+
+     The show's own record and episodes are the substance; attachments and task
+     links are keyed by episode so they're filtered out of the board-wide maps.
+     `context` carries the workflow and the people referenced, so the file can
+     be read on its own without the rest of the board to decode it.
+  --------------------------------------------------------------------------- */
+  App.showBackup = function (showId) {
+    const d = App.state.data;
+    const show = d.shows.find(s => s.id === showId);
+    if (!show) return null;
+    const episodes = d.episodes.filter(e => e.showId === showId);
+    const epIds = episodes.map(e => e.id);
+    const mine = (map) => {
+      const out = {};
+      Object.keys(map || {}).forEach(k => { if (epIds.includes(String(k).split('::')[0])) out[k] = map[k]; });
+      return out;
+    };
+    // only the people actually referenced, so the file doesn't carry the whole directory
+    const used = new Set();
+    episodes.forEach(e => Object.values(e.assignees || {}).forEach(p => p && used.add(p)));
+
+    return {
+      format: 'postpipeline.show-backup',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      exportedBy: (App.state.user && App.state.user.name) || null,
+      show: show,
+      episodes: episodes,
+      attachments: mine(d.attachments),
+      taskLinks: mine(d.taskLinks),
+      context: {
+        workflow: d.workflow || null,
+        people: (d.people || []).filter(p => used.has(p.id))
+      }
+    };
+  };
+
+  App.downloadShowBackup = function (showId) {
+    const data = App.showBackup(showId);
+    if (!data) { App.toast('That show no longer exists', true); return; }
+    const slug = String(data.show.prefix || data.show.name || 'show')
+      .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'show';
+    const name = 'postpipeline_' + slug + '_' + App.isoDate(App.today()) + '.json';
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    // give the download a tick to start before the blob is thrown away
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    App.track && App.track.audit && App.track.audit('show.backup', { show: data.show.name, episodes: data.episodes.length });
+    App.toast('Backed up ' + data.show.name + ' — ' + data.episodes.length +
+      ' episode' + (data.episodes.length === 1 ? '' : 's'));
+  };
 
   /* Personal quick preferences — device-local (localStorage), deliberately NOT
      part of the shared board data so one user's view settings don't sync to
@@ -788,12 +996,16 @@ window.App = window.App || {};
     // pos: 'auto' (default) flips above/below to fit the viewport; 'below'
     // pins it under the target regardless of available space.
     show(target, text, pos) {
-      if (!text) return;
+      if (!text || !target.isConnected) return;
       const tip = this.ensure();
       tip.textContent = text;
       tip.classList.add('show');
       requestAnimationFrame(() => {
         if (!tip.classList.contains('show')) return;
+        // A re-render between the reveal and this frame detaches the target;
+        // its rect would then be all zeros and pin the tooltip to the top-left
+        // corner of the app, orphaned from whatever it was describing.
+        if (!target.isConnected) { this.hide(); return; }
         const r = target.getBoundingClientRect();
         const tw = tip.offsetWidth, th = tip.offsetHeight;
         let left = r.left + r.width / 2 - tw / 2;
@@ -809,9 +1021,17 @@ window.App = window.App || {};
     hide() {
       if (this.node) this.node.classList.remove('show');
     },
+    /* Called by App.render(): a redraw removes hovered elements without ever
+       firing their mouseleave, so anything still on the stack is stale and any
+       tooltip on screen is describing a node that no longer exists. */
+    reset() {
+      this._stack = [];
+      this.hide();
+    },
     // Only reveal if `target` is still the frontmost hovered element —
     // a slower ancestor timer firing after a nested element took over is a no-op.
     _reveal(target) {
+      this._stack = this._stack.filter(t => t.isConnected);   // drop anything a re-render took away
       if (this._stack[this._stack.length - 1] !== target) return;
       const info = this._info.get(target);
       if (info) this.show(target, info.text, info.pos);
@@ -833,7 +1053,14 @@ window.App = window.App || {};
         const top = this._stack[this._stack.length - 1];
         if (top) this._reveal(top);
       });
-      target.addEventListener('mousedown', () => this.hide());
+      // A click means the tooltip is no longer wanted — and the button may be
+      // about to remove itself (a modal ✕, a row that re-renders). Cancelling
+      // the pending timer as well as hiding stops it reappearing afterwards.
+      target.addEventListener('mousedown', () => {
+        clearTimeout(timer);
+        this._stack = this._stack.filter(t => t !== target);
+        this.hide();
+      });
     }
   };
 
