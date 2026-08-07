@@ -221,9 +221,7 @@ window.App = window.App || {};
     { key: 'sfx_v3',        name: 'SFX V3',        dept: 'audio',     start: '2026-02-16', due: '2026-02-20', deps: ['final_lrc', 'sfx_v2'],              status: 'not_started' },
     { key: 'subtitle',      name: 'Subtitle',      dept: 'video',     start: '2025-12-23', due: '2026-02-10', deps: ['scripts', 'final_lrc'],             status: 'not_started' },
     { key: 'deliverys',     name: 'Deliverys',     dept: 'ops',       start: '2026-02-10', due: '2026-02-21', deps: ['final_lrc', 'sfx_v3', 'subtitle'],  status: 'not_started' },
-    { key: 'qc',            name: 'QC',            dept: 'qc',        start: '2026-02-11', due: '2026-02-22', deps: ['deliverys'],                         status: 'not_started' },
-    // Publication milestone: a single date four weeks past QC (see `lag`).
-    { key: 'live_date',     name: 'Live Date',     dept: 'ops',       start: '2026-03-22', due: '2026-03-22', deps: ['qc'], lag: 28,                       status: 'not_started' }
+    { key: 'qc',            name: 'QC',            dept: 'qc',        start: '2026-02-11', due: '2026-02-22', deps: ['deliverys'],                         status: 'not_started' }
   ];
   App.TASK = (key) => App.TEMPLATE.find(t => t.key === key);
   App.taskName = (key) => { const t = App.TASK(key); return t ? t.name : key; };
@@ -258,9 +256,7 @@ window.App = window.App || {};
     { key: 'online_conform', name: 'Online Conform',  dept: 'video',    days: 3, minDays: 2, deps: ['color_grade', 'vfx_cleanup', 'final_mix'] },
     { key: 'subtitle',       name: 'Subtitle',        dept: 'ops',      days: 3, minDays: 2, deps: ['picture_lock'] },
     { key: 'deliverys',      name: 'Deliverys',       dept: 'ops',      days: 2, minDays: 1, deps: ['online_conform', 'subtitle'] },
-    { key: 'qc',             name: 'QC',              dept: 'qc',       days: 2, minDays: 1, deps: ['deliverys'] },
-    // Publication milestone: a single date four weeks past QC (see `lag`).
-    { key: 'live_date',      name: 'Live Date',       dept: 'ops',      days: 1, minDays: 1, deps: ['qc'], lag: 28 }
+    { key: 'qc',             name: 'QC',              dept: 'qc',       days: 2, minDays: 1, deps: ['deliverys'] }
   ];
   App.defaultPipelineFor = function (type) {
     if (type === 'live_action') return App.LIVE_PIPELINE.map(t => ({ ...t, deps: t.deps.slice() }));
@@ -502,6 +498,72 @@ window.App = window.App || {};
   App.epDue = function (ep) {
     return App.subitems(ep).reduce((m, s) => s.due > m ? s.due : m, '0000-00-00');
   };
+
+  /* ---------------------------------------------------------------------------
+     End-of-episode milestones.
+
+     Delivery Date and Live Date are NOT tasks: nobody works on them, they have
+     no duration, department, assignee or status. They are the two dates the
+     episode is committed to downstream, each a fixed buffer past the one
+     before it, so they can't be dragged, removed or edited — they simply move
+     when the work in front of them moves. Every episode has both.
+
+     `after` names what a milestone hangs off: 'qc' is the task key it follows,
+     anything else is a preceding milestone. Buffers are calendar days, the
+     same as a pipeline task's `lag`.
+  --------------------------------------------------------------------------- */
+  App.MILESTONES = [
+    { key: 'delivery_date', name: 'Delivery Date', short: 'Delivery', after: 'qc',            buffer: 2 },
+    { key: 'live_date',     name: 'Live Date',     short: 'Live',     after: 'delivery_date', buffer: 7 }
+  ];
+  App.isMilestoneKey = (key) => App.MILESTONES.some(m => m.key === key);
+
+  App.epMilestones = function (ep) {
+    const subs = App.subitems(ep);
+    if (!subs.length) return [];
+    // a pipeline without a QC step still gets its milestones — they hang off
+    // whatever finishes last instead
+    const qc = subs.find(s => s.key === 'qc');
+    const at = { qc: qc ? qc.due : subs.reduce((m, s) => s.due > m ? s.due : m, subs[0].due) };
+    return App.MILESTONES.map(m => {
+      at[m.key] = App.shiftIso(at[m.after] || at.qc, m.buffer);
+      return { key: m.key, name: m.name, short: m.short, after: m.after, buffer: m.buffer, date: at[m.key] };
+    });
+  };
+  App.epMilestone = function (ep, key) { return App.epMilestones(ep).find(m => m.key === key) || null; };
+
+  /* What the Delivery Date actually consists of: the assets that have to be in
+     hand on the day, and the pipeline task they're uploaded against. The asset
+     is named separately from the task because it's what the partner receives
+     ("Reports"), not what the studio calls the work ("QC"). A pipeline that
+     doesn't run one of these tasks simply doesn't list that asset.
+
+     Readiness is measured on the FILES, not the task's status: a task can sit
+     at Approved with nothing uploaded against it, and on delivery day what
+     matters is whether the assets are actually there. Counts attachments and
+     external links the same way the Workspace does. */
+  App.DELIVERY_ASSETS = [
+    { task: 'deliverys', label: 'Deliveries' },
+    { task: 'qc',        label: 'Reports' }
+  ];
+  App.deliveryAssets = function (ep) {
+    return App.DELIVERY_ASSETS.map(a => {
+      const su = App.subitem(ep, a.task);
+      if (!su) return null;
+      const files = (App.uploads && App.uploads.list(ep.id, su.key)) || [];
+      const links = (App.taskLinks && App.taskLinks(ep.id, su.key)) || [];
+      return {
+        label: a.label, su: su, dept: App.dept(su.dept),
+        files: files.length, links: links.length, count: files.length + links.length
+      };
+    }).filter(Boolean);
+  };
+  // the episode's true end — the last milestone, not the last piece of work.
+  // Used wherever a view needs to reserve room out to the Live Date.
+  App.epFinal = function (ep) {
+    const ms = App.epMilestones(ep);
+    return ms.length ? ms[ms.length - 1].date : App.epDue(ep);
+  };
   App.progressPct = function (ep) {
     const subs = App.subitems(ep);
     const sum = subs.reduce((a, s) => a + (App.status(s.status).weight || 0), 0);
@@ -602,10 +664,32 @@ window.App = window.App || {};
     catch (e) { console.error('save failed', e); }
     if (App.api && App.api.online) App.api.push();   // sync to the shared server store
   };
+  /* Boards saved before Delivery/Live became milestones still carry a
+     `live_date` *task* in their stored pipelines (and its per-episode date,
+     status and name overrides). Strip it wherever data enters — localStorage,
+     the shared server, a preset — so no board resurrects it. Idempotent, and
+     cheap enough to run on every ingress rather than tracking a schema
+     version. Everything else about the board is left exactly as found. */
+  App.migrate = function (data) {
+    if (!data) return data;
+    const drop = (pipe) => Array.isArray(pipe) ? pipe.filter(t => !App.isMilestoneKey(t.key)).map(t => {
+      if (t.deps && t.deps.some(App.isMilestoneKey)) t.deps = t.deps.filter(d => !App.isMilestoneKey(d));
+      return t;
+    }) : pipe;
+    (data.shows || []).forEach(s => { if (s.pipeline) s.pipeline = drop(s.pipeline); });
+    (data.pipelinePresets || []).forEach(p => { if (p.pipeline) p.pipeline = drop(p.pipeline); });
+    (data.episodes || []).forEach(ep => {
+      ['dates', 'statuses', 'names', 'assignees'].forEach(f => {
+        if (ep[f]) App.MILESTONES.forEach(m => { delete ep[f][m.key]; });
+      });
+      if (Array.isArray(ep.removed)) ep.removed = ep.removed.filter(k => !App.isMilestoneKey(k));
+    });
+    return data;
+  };
   App.load = function () {
     let stored = null;
     try { stored = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { stored = null; }
-    App.state.data = (stored && stored.episodes && stored.episodes.length) ? stored : App.seedData();
+    App.state.data = App.migrate((stored && stored.episodes && stored.episodes.length) ? stored : App.seedData());
   };
   App.resetData = function () {
     App.state.data = App.seedData();

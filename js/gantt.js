@@ -96,9 +96,16 @@ window.App = window.App || {};
       const wrap = el('.gantt' + (App.prefs.get('latchScroll', false) ? '.latch' : ''));
       if (!episodes.length) { wrap.appendChild(el('.empty', null, 'No episodes match the current filters.')); return wrap; }
 
+      // Only the Episode sort draws the end-of-episode milestones, and there
+      // the window has to run out to the last Live Date or they fall off the
+      // end. The other two sorts stop at the work: a show line would carry
+      // every episode's dates at once, and a department line has no episode to
+      // pin them to.
+      const sort = App.prefs.get('timelineSort', 'department');
+      const marks = sort === 'episode';
       let min = '9999', max = '0000';
       episodes.forEach(ep => {
-        const s = App.epStart(ep), d = App.epDue(ep);
+        const s = App.epStart(ep), d = marks ? App.epFinal(ep) : App.epDue(ep);
         if (s < min) min = s; if (d > max) max = d;
       });
       const start = mondayOf(App.addDays(App.parseDate(min), -2));
@@ -168,7 +175,6 @@ window.App = window.App || {};
       // single show is in view (nonsensical mixed across shows on "All shows").
       if (App.state.filters.show !== 'all') this.producerNotesLane(body, App.state.filters.show, startIso, dw, xOf);
 
-      const sort = App.prefs.get('timelineSort', 'department');
       const byStart = (a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1;
       if (sort === 'show') {
         // one row per show; matching tasks across its episodes share a line
@@ -182,8 +188,9 @@ window.App = window.App || {};
         // one row per episode; expand into department-grouped, stacked task rows
         episodes.slice().sort(byStart).forEach(ep => this.episodeStackedRow(body, ep, startIso, dw, timeW, xOf));
       } else {
-        // 'department': one row per episode; expand into one row per task
-        episodes.slice().sort(byStart).forEach(ep => this.episodeRow(body, ep, startIso, dw, timeW, xOf));
+        // 'department': one row per department, spanning every show in view;
+        // expand into one line per task, each holding a bar per episode
+        this.departmentRows(body, episodes, startIso, dw, timeW, xOf);
       }
 
       inner.appendChild(body);
@@ -225,6 +232,14 @@ window.App = window.App || {};
       const self = this;
 
       const handleClick = (e) => {
+        const mark = e.target.closest('.ms-day.clickable');
+        if (mark) {
+          e.stopPropagation();                     // the document handler would close it again
+          const ep = App.state.data.episodes.find(x => x.id === mark.dataset.episodeId);
+          if (ep) self.openDeliveryPop(mark, ep);
+          return;
+        }
+
         const bar = e.target.closest('.bar');
         const label = e.target.closest('.g-label');
 
@@ -551,7 +566,7 @@ window.App = window.App || {};
         style: { position: 'sticky', left: '0', zIndex: '9', width: LABEL_W + 'px', minWidth: LABEL_W + 'px',
                  background: 'var(--bg-2)', borderRight: '1px solid var(--border-2)', display: 'flex',
                  alignItems: 'center', padding: '0 14px', fontSize: '11px', fontWeight: '700', color: 'var(--text-3)' }
-      }, App.prefs.get('timelineSort', 'department') === 'show' ? 'SHOW / TASK' : 'EPISODE / SUBITEM'));
+      }, { show: 'SHOW / TASK', department: 'DEPARTMENT / TASK' }[App.prefs.get('timelineSort', 'department')] || 'EPISODE / SUBITEM'));
       const cols = el('', { style: { width: (ctx.totalCols * ctx.dw) + 'px' } });
       cols.appendChild(buildSegRow(ctx, tier.primary, 'primary'));
       cols.appendChild(buildSegRow(ctx, tier.secondary, 'secondary'));
@@ -605,50 +620,318 @@ window.App = window.App || {};
       }
       attachBar(bar, epBarStatus(ep));
       track.appendChild(bar);
+      this.milestoneMarks(track, ep, xOf, dw);
       row.appendChild(track);
       return row;
     },
 
-    // draw one task bar into a sub-row track (shared by both episode sorts)
-    taskBar(track, ep, su, dep, xOf, dw, labelText) {
+    // Delivery Date and Live Date, pinned past the end of the episode's work.
+    // Each occupies its single day on the grid — a red D and a blue LD — so
+    // they read as dated events on the calendar rather than annotations
+    // floating beside the bar. Not tasks: nothing to drag or click into.
+    milestoneMarks(track, ep, xOf, dw) {
+      App.epMilestones(ep).forEach(m => {
+        // the delivery opens its asset panel; the live date has nothing behind it
+        const clickable = m.key === 'delivery_date' && App.deliveryAssets(ep).length > 0;
+        const mark = el('.ms-day.ms-' + m.key + (clickable ? '.clickable' : ''), {
+          style: { left: xOf(m.date) + 'px', width: xOf.width(m.date, m.date) + 'px' },
+          title: m.name + ' — ' + App.fmtDate(m.date) + ' · ' + m.buffer + ' days after ' +
+                 (m.after === 'qc' ? 'QC' : 'delivery') + (clickable ? '\nClick for delivery assets' : '')
+        }, el('span.ms-tag', null, m.key === 'live_date' ? 'LD' : 'D'));
+        if (clickable) mark.dataset.episodeId = ep.id;
+        track.appendChild(mark);
+      });
+    },
+
+    // ---- delivery assets panel ----
+    // What has to be in hand on the Delivery Date, and where each piece has
+    // got to. Read-only: the dates and statuses live with the tasks that own
+    // them, this is just the delivery-day view of them.
+    closeDeliveryPop() { if (this._dlvPop) { this._dlvPop.remove(); this._dlvPop = null; } },
+    openDeliveryPop(mark, ep) {
+      this.closeDeliveryPop();
+      const assets = App.deliveryAssets(ep);
+      if (!assets.length) return;
+      const ms = App.epMilestone(ep, 'delivery_date');
+      const r = mark.getBoundingClientRect();
+
+      const pop = el('.dlv-pop', { onclick: (e) => e.stopPropagation() }, [
+        el('.dlv-head', null, [
+          el('.dlv-title', null, 'Delivery Assets'),
+          el('.dlv-sub', null, ep.code + ' · ' + App.fmtDate(ms.date))
+        ])
+      ]);
+      assets.forEach(a => {
+        // the chip reports the upload, not the task: files on the volume are
+        // what the delivery is made of. The task's own status is the subtitle.
+        const parts = [];
+        if (a.files) parts.push(a.files + ' file' + (a.files === 1 ? '' : 's'));
+        if (a.links) parts.push(a.links + ' link' + (a.links === 1 ? '' : 's'));
+        pop.appendChild(el('.dlv-row', null, [
+          el('.dlv-what', null, [
+            el('.dlv-dept', null, [
+              el('span.dot', { style: { background: a.dept.color } }),
+              a.dept.label
+            ]),
+            el('.dlv-asset', null, a.label),
+            el('.dlv-meta', null, a.count ? parts.join(' · ') : 'nothing uploaded yet')
+          ]),
+          a.count
+            ? el('span.ws-chip.ok', { title: a.su.name + ' — ' + App.status(a.su.status).label },
+                '✓ ' + a.count + ' asset' + (a.count === 1 ? '' : 's'))
+            : el('span.ws-chip.pending', { title: a.su.name + ' — ' + App.status(a.su.status).label }, '⏳ Pending')
+        ]));
+      });
+
+      const outstanding = assets.filter(a => !a.count);
+      pop.appendChild(el('.pop-note', null, outstanding.length
+        ? 'Not ready to deliver — no assets uploaded for ' + outstanding.map(a => a.label).join(' or ')
+        : '✓ All delivery assets uploaded'));
+
+      document.body.appendChild(pop);
+      // same flip/clamp as the board's status picker: position after paint so
+      // the measured height is real, flip up near the bottom edge
+      requestAnimationFrame(() => {
+        const ph = pop.offsetHeight, pw = pop.offsetWidth;
+        const flipUp = r.bottom + ph + 8 > window.innerHeight;
+        let left = r.left + r.width / 2 - pw / 2;
+        if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+        pop.style.top = Math.max(8, flipUp ? r.top - ph - 6 : r.bottom + 6) + 'px';
+        pop.style.left = Math.max(8, left) + 'px';
+      });
+      this._dlvPop = pop;
+    },
+
+    // draw one task bar into a sub-row track (shared by every sort)
+    // Task bars are often only a few pixels wide, so they carry no status dot —
+    // the label needs the room. Status instead reads from the bar itself:
+    // approved is greyed out, and every live state gets a hairline ring in its
+    // status colour. Not Started is left plain on purpose.
+    // `fill` overrides the bar colour, which the Department sort uses to paint
+    // by show instead — there the Y axis already carries the department, so
+    // the useful thing to read off a bar is which show it belongs to.
+    taskBar(track, ep, su, dep, xOf, dw, labelText, fill) {
       const sl = xOf(su.start), sw = xOf.width(su.start, su.due);
+      const st = App.status(su.status);
       const done = su.status === 'approved';
-      const sbar = el('.bar' + (done ? '.delivered' : ''), {
-        title: (labelText ? labelText + ' — ' : '') + su.name + ' — ' + App.status(su.status).label + ' · ' + App.fmtRange(su.start, su.due),
-        style: { left: sl + 'px', width: sw + 'px', background: dep.color, color: pickInk(dep.color) }
+      const ring = su.status === 'ready' || su.status === 'in_progress' || su.status === 'review';
+      const bg = fill || dep.color;
+      const sbar = el('.bar' + (done ? '.delivered' : '') + (ring ? '.st-ring' : ''), {
+        title: (labelText ? labelText + ' — ' : '') + su.name + ' — ' + st.label + ' · ' + App.fmtRange(su.start, su.due),
+        style: Object.assign(
+          { left: sl + 'px', width: sw + 'px', background: bg, color: pickInk(bg) },
+          ring ? { outlineColor: st.color } : null)
       }, [
         el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, labelText || su.name),
         (App.isRiskBlocked(ep, su.key) ? App.icon('blocked', { cls: 'blk', title: 'In progress while a dependency is unapproved' }) : null)
       ]);
       sbar.dataset.episodeId = ep.id;
       sbar.dataset.suKey = su.key;
-      attachBar(sbar, { color: App.status(su.status).color, label: App.status(su.status).label });
+      attachBar(sbar, { color: st.color, label: st.label }, false);
       track.appendChild(sbar);
       return sbar;
     },
 
-    // "Department" sort: one row per episode; expand → one row per task, in
-    // pipeline order, each labelled with its department.
-    episodeRow(body, ep, startIso, dw, timeW, xOf) {
-      body.appendChild(this.epTopRow(ep, xOf, dw));
-      if (!App.state.ganttExpanded[ep.id]) return;
+    // ---- shared building blocks for the two "many episodes on one line"
+    // sorts (Show and Department). Both put a task on the Y axis and the
+    // episodes running it on the board. ----
 
-      App.subsView(ep).sort((a, b) => a.start < b.start ? -1 : 1).forEach(su => {
-        const srow = el('.g-row.sub');
-        srow.dataset.episodeId = ep.id;
-        srow.dataset.suKey = su.key;
-        const dep = App.dept(su.dept);
-        srow.appendChild(el('.g-label', { title: dep.label + ' — ' + su.name }, [
-          el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } }, [
-            el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } }),
-            el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, su.name),
-            el('span', { style: { color: 'var(--text-3)', fontWeight: '500', fontSize: '9px', marginLeft: 'auto', paddingLeft: '6px', flex: 'none' } }, dep.label)
-          ])
+    // Fold a set of episodes into departments → tasks → the episode instances
+    // of each task. Department and task order both follow first appearance in
+    // the pipelines in view, so shows on different pipelines still interleave
+    // in a sensible reading order.
+    groupByDept(episodes) {
+      const order = [], byDept = {};
+      episodes.forEach(ep => {
+        const subs = {};
+        App.subsView(ep).forEach(su => { subs[su.key] = su; });
+        App.pipelineFor(ep).forEach(t => {
+          const su = subs[t.key];
+          if (!su) return;                                   // filtered out, or not on this episode
+          const dk = su.dept || t.dept;
+          let group = byDept[dk];
+          if (!group) { group = byDept[dk] = { keys: [], tasks: {} }; order.push(dk); }
+          if (!group.tasks[t.key]) { group.tasks[t.key] = { name: su.name, items: [] }; group.keys.push(t.key); }
+          group.tasks[t.key].items.push({ ep, su });
+        });
+      });
+      return { order, byDept };
+    },
+
+    // Every task in a group, flattened to a single {ep, su} list.
+    groupItems(group) {
+      return group.keys.reduce((all, k) => all.concat(group.tasks[k].items), []);
+    },
+
+    // A faint wash of the department's own colour over the usual dark sub-row
+    // base — adjacent same-dept rows blend into one band, and the hue shift at
+    // a department change reads as a soft divider.
+    deptWash(dep) {
+      const [r, g, b] = hexToRgb(dep.color);
+      return 'linear-gradient(rgba(' + r + ',' + g + ',' + b + ',.07), rgba(' + r + ',' + g + ',' + b + ',.07)), rgba(0,0,0,.16)';
+    },
+
+    deptDot(dep) {
+      return el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } });
+    },
+
+    // Faint span header marking where a department's work starts and ends.
+    phaseRow(body, dep, items, xOf, note) {
+      const gStart = items.reduce((m, x) => x.su.start < m ? x.su.start : m, items[0].su.start);
+      const gDue = items.reduce((m, x) => x.su.due > m ? x.su.due : m, items[0].su.due);
+      const [r, g, b] = hexToRgb(dep.color);
+      const hrow = el('.g-row.sub.phase', { style: { background: this.deptWash(dep) } });
+      hrow.appendChild(el('.g-label', { title: dep.label + ' phase', style: { background: deptLabelBg(dep.color) } }, [
+        el('.l-title', { style: { fontWeight: '700', fontSize: '10.5px' } }, [
+          this.deptDot(dep),
+          el('span', null, dep.label)
+        ])
+      ]));
+      const ht = el('.g-track');
+      ht.appendChild(el('.phase-bar', {
+        title: dep.label + ' — ' + App.fmtRange(gStart, gDue) + (note ? ' · ' + note : ''),
+        style: { left: xOf(gStart) + 'px', width: xOf.width(gStart, gDue) + 'px',
+          background: 'rgba(' + r + ',' + g + ',' + b + ',.15)',
+          borderColor: 'rgba(' + r + ',' + g + ',' + b + ',.55)' }
+      }));
+      hrow.appendChild(ht);
+      body.appendChild(hrow);
+    },
+
+    // One task on the Y axis, its episodes on the board: each {ep, su} drawn
+    // as an episode-coded bar in its show's colour — a line here mixes shows,
+    // and the department is already named on the axis. Bars spill onto
+    // continuation rows whenever two would overlap in time.
+    epTaskLines(body, dep, title, items, xOf, dw) {
+      const sorted = items.slice().sort((a, b) => a.su.start < b.su.start ? -1 : 1);
+      const levels = [];
+      sorted.forEach(it => {
+        const lvl = levels.find(l => it.su.start > l.lastDue);
+        if (lvl) { lvl.lastDue = it.su.due; lvl.items.push(it); }
+        else levels.push({ lastDue: it.su.due, items: [it] });
+      });
+
+      const wash = this.deptWash(dep);
+      levels.forEach((lvl, li) => {
+        const srow = el('.g-row.sub', { style: { background: wash } });
+        srow.appendChild(el('.g-label', { title: dep.label + ' — ' + title, style: { background: deptLabelBg(dep.color) } }, [
+          el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } }, li === 0 ? [
+            this.deptDot(dep),
+            el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, title)
+          ] : [])   // continuation row — no marker on the Y axis
         ]));
         const st = el('.g-track');
-        this.taskBar(st, ep, su, dep, xOf, dw);
+        // identity lives on each bar, not the row: one line holds many episodes
+        lvl.items.forEach(({ ep, su }) => {
+          const show = App.show(ep.showId);
+          this.taskBar(st, ep, su, dep, xOf, dw, ep.code, show && show.color);
+        });
         srow.appendChild(st);
         body.appendChild(srow);
+      });
+    },
+
+    // One department on the Y axis, its tasks on the board (the Episode and
+    // Show sorts both read this way). A department holding more than one task
+    // gets a phase-span header naming it, with its tasks stacked directly
+    // beneath — tasks that don't overlap in time share a line, so parallel
+    // work reads at a glance. `barLabel` names each bar; it varies because a
+    // show's line carries tasks from several episodes at once.
+    deptStackedLines(body, dep, items, xOf, dw, barLabel) {
+      const sorted = items.slice().sort((a, b) => a.su.start < b.su.start ? -1 : 1);
+      if (!sorted.length) return;
+      const multi = sorted.length > 1;
+
+      // phase-span header — only worth it for a multi-task department
+      if (multi) this.phaseRow(body, dep, sorted, xOf, sorted.length + ' tasks');
+
+      // interval-stack: a task shares a line unless it overlaps the last one
+      const levels = [];
+      sorted.forEach(it => {
+        const lvl = levels.find(l => it.su.start > l.lastDue);
+        if (lvl) { lvl.lastDue = it.su.due; lvl.items.push(it); }
+        else levels.push({ lastDue: it.su.due, items: [it] });
+      });
+
+      const wash = this.deptWash(dep);
+      levels.forEach(lvl => {
+        const srow = el('.g-row.sub', { style: { background: wash } });
+        srow.appendChild(el('.g-label', { title: dep.label, style: { background: deptLabelBg(dep.color) } },
+          el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } },
+            multi
+              ? []                       // the phase header above already names it
+              : [this.deptDot(dep),
+                 el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, dep.label)]
+          )
+        ));
+        const st = el('.g-track');
+        // identity lives on each bar, not the row: one line can hold many episodes
+        lvl.items.forEach(it => this.taskBar(st, it.ep, it.su, dep, xOf, dw, barLabel && barLabel(it)));
+        srow.appendChild(st);
+        body.appendChild(srow);
+      });
+    },
+
+    // "Department" sort: one top row per department, spanning every episode in
+    // view; expand → one line per task in that department, each line holding a
+    // bar per episode running it.
+    departmentRows(body, episodes, startIso, dw, timeW, xOf) {
+      const { order, byDept } = this.groupByDept(episodes);
+
+      order.forEach(dk => {
+        const dep = App.dept(dk), group = byDept[dk];
+        const all = this.groupItems(group);
+        if (!all.length) return;
+
+        const expKey = 'dept:' + dk;
+        const expanded = !!App.state.ganttExpanded[expKey];
+        let min = '9999', max = '0000', done = 0;
+        all.forEach(({ su }) => {
+          if (su.start < min) min = su.start;
+          if (su.due > max) max = su.due;
+          if (su.status === 'approved') done++;
+        });
+        const prog = Math.round(done / all.length * 100);
+        const epCount = new Set(all.map(x => x.ep.id)).size;
+        const complete = done === all.length;
+
+        const row = el('.g-row');
+        row.dataset.episodeId = expKey;                       // expansion key via the shared click handler
+        row.appendChild(el('.g-label', null, [
+          el('.l-title', null, [
+            el('span.chev' + (expanded ? '.open' : ''), null, '▶'),
+            this.deptDot(dep),
+            el('span', null, dep.label)
+          ]),
+          el('.l-sub', null, [
+            el('span.code', null, group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's')),
+            el('span', null, '· ' + epCount + ' ep' + (epCount === 1 ? '' : 's') + ' · ' + App.fmtRange(min, max))
+          ])
+        ]));
+
+        const track = el('.g-track');
+        const bar = el('.bar' + (complete ? '.delivered' : ''), {
+          title: dep.label + ' — ' + group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's') +
+                 ' across ' + epCount + ' episode' + (epCount === 1 ? '' : 's') + ' · ' + prog + '% complete',
+          style: {
+            left: xOf(min) + 'px', width: xOf.width(min, max) + 'px',
+            background: 'linear-gradient(90deg,' + dep.color + ',' + shade(dep.color, -16) + ')',
+            color: pickInk(dep.color)
+          }
+        }, [el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, dep.label)]);
+        if (!complete && prog > 0) {
+          bar.appendChild(el('', { style: {
+            position: 'absolute', left: '0', top: '0', bottom: '0', width: prog + '%',
+            background: 'rgba(255,255,255,.22)', borderRadius: '6px', pointerEvents: 'none'
+          } }));
+        }
+        attachBar(bar, complete ? { color: '#00c875', label: 'Complete' } : { color: '#fdab3d', label: prog + '% complete' });
+        track.appendChild(bar);
+        row.appendChild(track);
+        body.appendChild(row);
+        if (!expanded) return;
+
+        group.keys.forEach(k => this.epTaskLines(body, dep, group.tasks[k].name, group.tasks[k].items, xOf, dw));
       });
     },
 
@@ -661,71 +944,16 @@ window.App = window.App || {};
       body.appendChild(this.epTopRow(ep, xOf, dw));
       if (!App.state.ganttExpanded[ep.id]) return;
 
-      const subs = App.subsView(ep);
-      const byKey = {}; subs.forEach(su => { byKey[su.key] = su; });
-      // department order = order of first appearance in the pipeline
-      const deptOrder = [];
-      App.pipelineFor(ep).forEach(t => { if (byKey[t.key] && !deptOrder.includes(t.dept)) deptOrder.push(t.dept); });
-
-      deptOrder.forEach(dk => {
-        const dep = App.dept(dk);
-        const items = subs.filter(su => su.dept === dk).sort((a, b) => a.start < b.start ? -1 : 1);
-        if (!items.length) return;
-        const [dr, dg, db] = hexToRgb(dep.color);
-        const wash = 'linear-gradient(rgba(' + dr + ',' + dg + ',' + db + ',.07), rgba(' + dr + ',' + dg + ',' + db + ',.07)), rgba(0,0,0,.16)';
-        const multi = items.length > 1;
-
-        // phase-span header row (only worth it for a multi-task department)
-        if (multi) {
-          const gStart = items.reduce((m, x) => x.start < m ? x.start : m, items[0].start);
-          const gDue = items.reduce((m, x) => x.due > m ? x.due : m, items[0].due);
-          const hrow = el('.g-row.sub.phase', { style: { background: wash } });
-          hrow.appendChild(el('.g-label', { title: dep.label + ' phase', style: { background: deptLabelBg(dep.color) } }, [
-            el('.l-title', { style: { fontWeight: '700', fontSize: '10.5px' } }, [
-              el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } }),
-              el('span', null, dep.label)
-            ])
-          ]));
-          const ht = el('.g-track');
-          const hl = xOf(gStart), hw = xOf.width(gStart, gDue);
-          ht.appendChild(el('.phase-bar', {
-            title: dep.label + ' — ' + App.fmtRange(gStart, gDue) + ' · ' + items.length + ' tasks',
-            style: { left: hl + 'px', width: hw + 'px',
-              background: 'rgba(' + dr + ',' + dg + ',' + db + ',.15)',
-              borderColor: 'rgba(' + dr + ',' + dg + ',' + db + ',.55)' }
-          }));
-          hrow.appendChild(ht);
-          body.appendChild(hrow);
-        }
-
-        // interval-stack: a task shares a row unless it overlaps the last one
-        const levels = [];
-        items.forEach(su => {
-          const lvl = levels.find(l => su.start > l.lastDue);
-          if (lvl) { lvl.lastDue = su.due; lvl.items.push(su); }
-          else levels.push({ lastDue: su.due, items: [su] });
-        });
-        levels.forEach((lvl, li) => {
-          const srow = el('.g-row.sub', { style: { background: wash } });
-          srow.appendChild(el('.g-label', { style: { background: deptLabelBg(dep.color) } },
-            el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } },
-              multi
-                ? []                       // continuation row — no marker on the Y axis
-                : [el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } }),
-                   el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, dep.label)]
-            )
-          ));
-          const st = el('.g-track');
-          lvl.items.forEach(su => this.taskBar(st, ep, su, dep, xOf, dw));
-          srow.appendChild(st);
-          body.appendChild(srow);
-        });
+      const { order, byDept } = this.groupByDept([ep]);
+      order.forEach(dk => {
+        const group = byDept[dk];
+        this.deptStackedLines(body, App.dept(dk), this.groupItems(group), xOf, dw, null);
       });
     },
 
-    // "Sort by show": one top row per show; expanding lists the pipeline tasks
-    // once, each line holding a bar per episode. Bars that would overlap in
-    // time spill onto continuation rows (↳) stacked beneath.
+    // "Show" sort: one top row per show; expand → the show's departments on
+    // the Y axis with their tasks on the board, exactly as the Episode sort
+    // reads, but pooling every episode of the show onto the same lines.
     showRow(body, show, eps, startIso, dw, timeW, xOf) {
       const expKey = 'show:' + show.id;
       const expanded = !!App.state.ganttExpanded[expKey];
@@ -773,58 +1001,13 @@ window.App = window.App || {};
       body.appendChild(row);
       if (!expanded) return;
 
-      App.pipelineFor(eps[0]).forEach(t => {
-        const items = [];
-        eps.forEach(ep => {
-          const su = App.subsView(ep).find(x => x.key === t.key);
-          if (su) items.push({ ep, su });
-        });
-        if (!items.length) return;
-
-        // interval stacking: same line while bars don't overlap, else new level
-        items.sort((a, b) => a.su.start < b.su.start ? -1 : 1);
-        const levels = [];
-        items.forEach(it => {
-          const lvl = levels.find(l => it.su.start > l.lastDue);
-          if (lvl) { lvl.lastDue = it.su.due; lvl.items.push(it); }
-          else levels.push({ lastDue: it.su.due, items: [it] });
-        });
-
-        // a faint wash of the department's own colour, layered over the usual
-        // dark sub-row base — adjacent same-dept rows blend into one band, and
-        // the hue shift at a department change reads as a soft divider
-        const dep = App.dept(t.dept);
-        const [dr, dg, db] = hexToRgb(dep.color);
-        const deptWash = 'linear-gradient(rgba(' + dr + ',' + dg + ',' + db + ',.07), rgba(' + dr + ',' + dg + ',' + db + ',.07)), rgba(0,0,0,.16)';
-        levels.forEach((lvl, li) => {
-          const srow = el('.g-row.sub', { style: { background: deptWash } });
-          srow.appendChild(el('.g-label', { title: dep.label + ' — ' + t.name, style: { background: deptLabelBg(dep.color) } }, [
-            el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } }, li === 0 ? [
-              el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } }),
-              el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, t.name),
-              el('span', { style: { color: 'var(--text-3)', fontWeight: '500', fontSize: '9px', marginLeft: 'auto', paddingLeft: '6px', flex: 'none' } }, dep.label)
-            ] : [])   // continuation row — no marker on the Y axis
-          ]));
-
-          const st = el('.g-track');
-          lvl.items.forEach(({ ep, su }) => {
-            const sl = xOf(su.start), sw = xOf.width(su.start, su.due);
-            const done = su.status === 'approved';
-            const sbar = el('.bar' + (done ? '.delivered' : ''), {
-              title: ep.code + ' · ' + su.name + ' — ' + App.status(su.status).label + ' · ' + App.fmtRange(su.start, su.due),
-              style: { left: sl + 'px', width: sw + 'px', background: dep.color, color: pickInk(dep.color) }
-            }, [
-              el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, ep.code),
-              (App.isRiskBlocked(ep, su.key) ? App.icon('blocked', { cls: 'blk', title: 'In progress while a dependency is unapproved' }) : null)
-            ]);
-            sbar.dataset.episodeId = ep.id;                 // per-bar identity: one line holds many episodes
-            sbar.dataset.suKey = su.key;
-            attachBar(sbar, { color: App.status(su.status).color, label: App.status(su.status).label });
-            st.appendChild(sbar);
-          });
-          srow.appendChild(st);
-          body.appendChild(srow);
-        });
+      // departments on the Y axis, tasks on the board — the Episode sort's
+      // layout, widened to every episode of the show at once. Bars therefore
+      // lead with the episode code, since one line now mixes episodes.
+      const { order, byDept } = this.groupByDept(eps);
+      order.forEach(dk => {
+        this.deptStackedLines(body, App.dept(dk), this.groupItems(byDept[dk]), xOf, dw,
+          it => it.ep.code + ' · ' + it.su.name);
       });
     },
 
@@ -1051,8 +1234,8 @@ window.App = window.App || {};
     }
   };
 
-  function attachBar(bar, st) {
-    bar.appendChild(el('span.bar-dot', { style: { background: st.color } }));
+  function attachBar(bar, st, dot) {
+    if (dot !== false) bar.appendChild(el('span.bar-dot', { style: { background: st.color } }));
     bar.addEventListener('mouseenter', (e) => showTip(e, st.color, st.label));
     bar.addEventListener('mousemove', positionTip);
     bar.addEventListener('mouseleave', hideTip);

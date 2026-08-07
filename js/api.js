@@ -78,7 +78,7 @@ window.App = window.App || {};
         if (r.status === 409) {
           const s = await r.json();
           this.version = s.version;
-          App.state.data = s.data;
+          App.state.data = App.migrate(s.data);
           App.render();
           App.toast('Updated by a teammate — board refreshed', true);
         } else if (r.ok) {
@@ -96,7 +96,7 @@ window.App = window.App || {};
       if (ae && ae.classList && (ae.classList.contains('jr-block') || ae.classList.contains('pn-note-input'))) return;
       if (v <= this.version) return;
       const data = await this.pull();
-      if (data) { App.state.data = data; App.render(); }
+      if (data) { App.state.data = App.migrate(data); App.render(); }
     },
 
     // Instant path: a teammate's save broadcasts the new version over SSE.
