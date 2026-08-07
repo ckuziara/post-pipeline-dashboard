@@ -620,6 +620,84 @@ window.App = window.App || {};
   // Active shows with their episodes nested beneath; archive a whole show or
   // a single episode. The Archive card below holds everything archived, where
   // content can be restored — or permanently deleted.
+  /* ---- whole-board backups ----
+     Kept on the server, not downloaded: a snapshot is only useful if it's
+     there for whoever needs it, from wherever they are. The list loads async
+     (it's a round trip) and redraws itself in place, so the rest of the panel
+     doesn't wait on it. Admin-only, enforced server-side too. */
+  function backupsCard() {
+    const card = el('.adm-permcard');
+    card.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, [App.icon('archive'), ' Board backups']),
+      el('.adm-permcard-desc', null, 'A snapshot of the entire board — every show, episode, task and setting — stored in the ' +
+        'database. Take one before anything irreversible. Restoring replaces the board for everyone.')
+    ]));
+
+    const labelFld = el('input.fld', { type: 'text', placeholder: 'Optional label — e.g. before the Q3 re-plan', maxlength: '120' });
+    const nowBtn = el('button.adm-btn', null, 'Back up now');
+    card.appendChild(el('.adm-backup-bar', null, [labelFld, nowBtn]));
+
+    const list = el('.wf-list', null, el('.adm-empty', null, 'Loading…'));
+    card.appendChild(list);
+    // outside the list, so a redraw doesn't stack copies of it
+    const capNote = el('.adm-name-sub.adm-backup-cap');
+    card.appendChild(capNote);
+
+    const draw = (r) => {
+      list.innerHTML = '';
+      capNote.textContent = '';
+      if (!r.backups.length) { list.appendChild(el('.adm-empty', null, 'No backups yet.')); return; }
+      r.backups.forEach((b, i) => {
+        const when = new Date(b.ts);
+        const kb = Math.max(1, Math.round((b.meta && b.meta.bytes || 0) / 1024));
+        list.appendChild(el('.show-arch-row', null, [
+          el('span.show-arch-dot', { style: { background: i === 0 ? '#00c875' : 'var(--text-3)' } }),
+          el('div', { style: { minWidth: 0 } }, [
+            el('.adm-name', null, b.label || when.toLocaleString()),
+            el('.adm-name-sub', null, (b.label ? when.toLocaleString() + ' · ' : '') +
+              (b.meta ? b.meta.shows + ' shows · ' + b.meta.episodes + ' episodes · ' + kb + ' KB' : '') +
+              (b.email ? ' · ' + b.email : ''))
+          ]),
+          el('.arch-actions', null, [
+            el('button.btn-mini', {
+              title: 'Replace the current board with this snapshot',
+              onclick: () => App.confirm(
+                'This replaces the whole board — every show, episode and setting — with the snapshot from ' +
+                when.toLocaleString() + '. Everyone’s view changes immediately. The board as it stands now is ' +
+                'backed up first, so this can be undone.',
+                () => App.api.restoreBackup(b.id)
+                  .then(() => { App.toast('Board restored'); load(); })
+                  .catch(e => App.toast(e.message, true)),
+                { title: 'Restore this backup?', yesLabel: 'Restore board' })
+            }, '↩ Restore'),
+            el('button.btn-mini.danger', {
+              onclick: () => App.confirm('Delete this backup? The snapshot is gone for good.',
+                () => App.api.deleteBackup(b.id).then(load).catch(e => App.toast(e.message, true)),
+                { title: 'Delete backup?' })
+            }, '✕')
+          ])
+        ]));
+      });
+      capNote.textContent = 'The newest ' + r.cap + ' backups are kept; older ones drop off automatically.';
+    };
+
+    const load = () => App.api.backups().then(draw).catch(e => {
+      list.innerHTML = '';
+      list.appendChild(el('.adm-empty', null, 'Could not load backups — ' + e.message));
+    });
+
+    nowBtn.onclick = () => {
+      nowBtn.disabled = true; nowBtn.textContent = 'Backing up…';
+      App.api.backupNow(labelFld.value.trim())
+        .then(b => { labelFld.value = ''; App.toast('Board backed up — ' + b.meta.episodes + ' episodes'); return load(); })
+        .catch(e => App.toast(e.message, true))
+        .then(() => { nowBtn.disabled = false; nowBtn.textContent = 'Back up now'; });
+    };
+
+    load();
+    return card;
+  }
+
   function showsPanel() {
     const wrapP = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '18px' } });
     const shows = App.state.data.shows;
@@ -629,7 +707,8 @@ window.App = window.App || {};
     const act = el('.adm-permcard');
     act.appendChild(el('.adm-permcard-head', null, [
       el('.adm-permcard-title', null, 'Active shows'),
-      el('.adm-permcard-desc', null, 'Archiving hides a show or episode from every view without losing any of its data.' +
+      el('.adm-permcard-desc', null, 'Back up downloads a show and its episodes as a JSON file. ' +
+        'Archiving hides a show or episode from every view without losing any of its data.' +
         (App.masterPathSet() ? ' Rebuild only adds folders that are missing on the master directory — it never touches existing files.' : ''))
     ]));
     const actList = el('.wf-list');
@@ -658,6 +737,10 @@ window.App = window.App || {};
                 onclick: (e) => { e.stopPropagation(); App.rebuildShowFolders(s.id); }
               }, [App.icon('folderOpen'), ' Rebuild folders'])
             : null),
+          el('button.btn-mini', {
+            title: 'Download this show and all its episodes as a JSON file',
+            onclick: (e) => { e.stopPropagation(); App.downloadShowBackup(s.id); }
+          }, [App.icon('download'), ' Back up']),
           el('button.btn-mini', { onclick: (e) => { e.stopPropagation(); App.setShowArchived(s.id, true); } }, [App.icon('archive'), ' Archive show'])
         ])
       ]));
@@ -678,7 +761,7 @@ window.App = window.App || {};
     const arch = el('.adm-permcard');
     arch.appendChild(el('.adm-permcard-head', null, [
       el('.adm-permcard-title', null, [App.icon('archive'), ' Archive']),
-      el('.adm-permcard-desc', null, 'Restore brings content back exactly as it was. Deleting is permanent and can’t be undone.')
+      el('.adm-permcard-desc', null, 'Restore brings content back exactly as it was. Deleting is permanent and can’t be undone — take a backup first.')
     ]));
     const archList = el('.wf-list');
     const archShows = shows.filter(s => s.archived);
@@ -694,6 +777,10 @@ window.App = window.App || {};
           el('.adm-name-sub', null, 'Whole show · ' + n + ' episode' + (n === 1 ? '' : 's') + ' inside')
         ]),
         el('.arch-actions', null, [
+          el('button.btn-mini', {
+            title: 'Download this show and all its episodes as a JSON file',
+            onclick: () => App.downloadShowBackup(s.id)
+          }, [App.icon('download'), ' Back up']),
           el('button.btn-mini', { onclick: () => App.setShowArchived(s.id, false) }, '↩ Restore'),
           el('button.btn-mini.danger', { onclick: () => App.deleteShow(s.id) }, '✕ Delete')
         ])
@@ -715,6 +802,10 @@ window.App = window.App || {};
     });
     arch.appendChild(archList);
     wrapP.appendChild(arch);
+
+    // the whole-board safety net sits last — per-show tools first, big red button last
+    if (App.api && App.api.online && App.api.me && App.api.me.admin) wrapP.appendChild(backupsCard());
+
     return wrapP;
   }
 
@@ -731,7 +822,7 @@ window.App = window.App || {};
     'task.status': 'Task status changed', 'task.edit': 'Task edited',
     'task.reschedule': 'Task rescheduled', 'task.remove': 'Task removed',
     'show.create': 'Show created', 'show.remove': 'Show removed', 'show.delete': 'Show deleted',
-    'show.archive': 'Show archived', 'show.restore': 'Show restored',
+    'show.archive': 'Show archived', 'show.restore': 'Show restored', 'show.backup': 'Show backed up',
     'episode.archive': 'Episode archived', 'episode.restore': 'Episode restored', 'episode.delete': 'Episode deleted',
     'person.add': 'Team member added', 'person.remove': 'Team member removed', 'person.role': 'Role reassigned',
     'perm.change': 'Permission changed',

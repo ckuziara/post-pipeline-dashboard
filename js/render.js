@@ -31,7 +31,7 @@ window.App = window.App || {};
     App.vc && App.vc.syncOpen && App.vc.syncOpen();   // live-refresh the Version Control panel on state sync
     App.uploads && App.uploads._refresh && App.uploads._refresh();   // live-refresh the attachments section
     App.workspace && App.workspace.syncOpen && App.workspace.syncOpen();   // reflect a teammate's delivery
-    if (App.tooltip) { App.tooltip.hide(); App.tooltip._stack = []; }
+    if (App.tooltip) App.tooltip.reset();   // a redraw strips hovered nodes without firing mouseleave
 
     // guard: only admins may sit on the Admin view
     if (App.state.view === 'admin' && !App.isAdminRole(App.state.role)) App.state.view = 'timeline';
@@ -41,7 +41,13 @@ window.App = window.App || {};
     renderRoleSelect();
 
     const episodes = App.visibleEpisodes();
-    renderToolbar(episodes);
+    // Admin configures the tracker rather than looking at episodes, so the
+    // show/department/owner filters and the status legend have nothing to act
+    // on there — the whole strip goes rather than sitting empty.
+    const toolbar = document.getElementById('toolbar');
+    const wantToolbar = App.state.view !== 'admin';
+    toolbar.style.display = wantToolbar ? '' : 'none';
+    if (wantToolbar) renderToolbar(episodes); else toolbar.innerHTML = '';
     if (App.state.view === 'timeline') renderKpis(episodes);
     else document.getElementById('kpis').innerHTML = '';
 
@@ -133,13 +139,18 @@ window.App = window.App || {};
       box.appendChild(el('span.role-pin', { title: 'Your pipeline role' }, [App.icon(r.ico), ' ' + r.label]));
     }
 
-    // resetting the shared board is an admin move
-    const reset = document.getElementById('btn-reset');
-    if (reset) reset.style.display = canSwitch ? '' : 'none';
   }
 
   function renderToolbar(episodes) {
     const bar = document.getElementById('toolbar');
+    /* The toolbar is rebuilt wholesale on every render, and the search box is
+       what triggers most of those renders — so without this, typing tears the
+       caret out of the field mid-word. Remember where the cursor was and put
+       it back once the new field is in place. Also covers a render arriving
+       from a teammate's edit while someone is mid-search. */
+    const active = document.activeElement;
+    const searchFocused = !!active && active.id === 'search';
+    const caret = searchFocused ? [active.selectionStart, active.selectionEnd] : null;
     bar.innerHTML = '';
     const f = App.state.filters;
 
@@ -155,7 +166,8 @@ window.App = window.App || {};
     bar.appendChild(selectEl([['all', 'Everyone']].concat(App.state.data.people.filter(p => App.roleDept(p.role)).map(p => [p.id, p.name])),
       f.person, v => { f.person = v; App.render(); }));
 
-    const search = el('input#search', { type: 'text', placeholder: 'Search episodes…', value: f.q });
+    const search = el('input#search', {
+      type: 'text', placeholder: 'Search episodes…  ' + App.shortcutLabel('F'), value: f.q });
     search.addEventListener('input', e => { f.q = e.target.value; debouncedRender(); });
     bar.appendChild(search);
 
@@ -165,14 +177,20 @@ window.App = window.App || {};
       bar.appendChild(el('button.ghost', { onclick: () => App.gantt.centerToday(), title: 'Scroll to today' }, '⊙ Today'));
     }
 
-    // legend — departments on the timeline, statuses elsewhere
-    const legend = el('.legend');
+    /* Legend — Timeline only, where bars are colour-coded by show and there's
+       nothing else to decode them by. The Board and Dashboard label their
+       statuses on the chips themselves, so a key for them is just a second
+       row of noise above the work. */
     if (App.state.view === 'timeline') {
+      const legend = el('.legend');
       App.activeShows().forEach(s => legend.appendChild(legItem(s.color, s.name)));
-    } else {
-      App.STATUS_ORDER.forEach(sk => legend.appendChild(legItem(App.STATUSES[sk].color, App.STATUSES[sk].label)));
+      bar.appendChild(legend);
     }
-    bar.appendChild(legend);
+
+    if (searchFocused) {
+      search.focus();
+      try { search.setSelectionRange(caret[0], caret[1]); } catch (e) {}   // not all inputs allow it
+    }
   }
 
   function legItem(color, label) {

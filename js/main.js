@@ -59,7 +59,7 @@ window.App = window.App || {};
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
     const wasApproved = g.su.status === 'approved';
-    App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = status; App.refreshReadiness(e); });
+    App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = status; App.refreshReadiness(e); }, 'the status change');
     App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: g.su.status, to: status });
     App.toast(g.su.name + ' → ' + App.status(status).label);
     if (status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
@@ -94,7 +94,7 @@ window.App = window.App || {};
         if (assignee) e.assignees[key] = assignee; else delete e.assignees[key];
       }
       App.refreshReadiness(e);
-    });
+    }, 'the task edit');
     // record only the fields that actually moved, so the log reads as a diff
     const changed = {};
     if (canName && name !== g.su.name) changed.name = { from: g.su.name, to: name };
@@ -158,7 +158,7 @@ window.App = window.App || {};
       e.dates = e.dates || {};
       e.dates[key] = { start: newStart, due: newDue };
       App.refreshReadiness(e);
-    });
+    }, 'the reschedule');
     if (newStart !== g.su.start || newDue !== g.su.due) {
       App.track.audit('task.reschedule', {
         episode: g.ep.code, task: g.su.name,
@@ -289,7 +289,7 @@ window.App = window.App || {};
     App.mutate(d => {
       const t = d.shows.find(x => x.id === showId);
       if (archived) t.archived = true; else delete t.archived;
-    });
+    }, archived ? 'archiving the show' : 'restoring the show');
     App.track.audit(archived ? 'show.archive' : 'show.restore', { show: s.name });
     if (archived && App.state.filters.show === showId) { App.state.filters.show = 'all'; App.render(); }
     App.toast((archived ? 'Archived “' : 'Restored “') + s.name + '”');
@@ -301,7 +301,7 @@ window.App = window.App || {};
     App.mutate(d => {
       const t = d.episodes.find(x => x.id === epId);
       if (archived) t.archived = true; else delete t.archived;
-    });
+    }, archived ? 'archiving the episode' : 'restoring the episode');
     App.track.audit(archived ? 'episode.archive' : 'episode.restore', { episode: ep.code, title: ep.title });
     App.toast((archived ? 'Archived ' : 'Restored ') + ep.code + ' — ' + ep.title);
   };
@@ -326,7 +326,7 @@ window.App = window.App || {};
     const ep = App.state.data.episodes.find(x => x.id === epId);
     if (!ep || !App.isEpArchived(ep)) { App.toast('Only archived episodes can be deleted', true); return; }
     App.confirm('Permanently delete ' + ep.code + ' — “' + ep.title + '”? This can’t be undone.', () => {
-      App.mutate(d => { d.episodes = d.episodes.filter(x => x.id !== epId); });
+      App.mutate(d => { d.episodes = d.episodes.filter(x => x.id !== epId); }, 'deleting the episode');
       App.track.audit('episode.delete', { episode: ep.code, title: ep.title });
       App.toast('Deleted ' + ep.code);
     }, { title: 'Delete episode' });
@@ -390,7 +390,7 @@ window.App = window.App || {};
       const e = d.episodes.find(x => x.id === epId);
       e.removed = e.removed || []; if (!e.removed.includes(key)) e.removed.push(key);
       App.refreshReadiness(e);
-    });
+    }, 'removing the task');
     App.track.audit('task.remove', { episode: g.ep.code, task: g.su.name });
     App.toast('Removed “' + g.su.name + '”');
   };
@@ -564,9 +564,10 @@ window.App = window.App || {};
     App.state.role = role;
     const r = App.role(role), f = App.state.filters;
     f.person = 'all';
-    if (r.dept) { App.state.view = 'board'; f.dept = r.dept; }
-    else { f.dept = 'all'; App.state.view = r.view || 'timeline'; }
-    if (App.state.view === 'admin' && !App.isAdminRole(role)) App.state.view = 'timeline';
+    // every role lands on the Dashboard — it's the personal starting point
+    // (own priorities, journal, roll-ups) whatever the role goes on to do
+    App.state.view = 'dashboard';
+    if (r.dept) f.dept = r.dept; else f.dept = 'all';
     App.render();
   };
 
@@ -586,7 +587,7 @@ window.App = window.App || {};
     else return false;                                      // signed in but not in the directory
     App.state.baseRole = App.state.role;
     const r = App.role(App.state.role);
-    App.state.view = r.dept ? 'board' : (r.view || 'timeline');
+    App.state.view = 'dashboard';
     if (r.dept) App.state.filters.dept = r.dept;
     return true;
   }
@@ -770,10 +771,6 @@ window.App = window.App || {};
       App.load();                                           // no backend: localStorage mode
     }
 
-    document.getElementById('btn-reset').addEventListener('click', () => {
-      App.confirm('Reset everything to the reference demo board? All current data will be replaced for the whole team.',
-        () => App.resetData(), { title: 'Reset board', yesLabel: 'Reset', icon: 'gear' });
-    });
     document.getElementById('brand-logo').addEventListener('click', e => {
       e.stopPropagation();
       App.prefsMenu.toggle();
@@ -783,11 +780,73 @@ window.App = window.App || {};
       App.gantt.closeDeliveryPop && App.gantt.closeDeliveryPop();
       App.prefsMenu.close();
     });
+    /* ---- keyboard shortcuts ----
+       Every one of these is scoped to what's actually on screen: a shortcut
+       only fires if the thing it drives is present and reachable on the page
+       the user is looking at, and otherwise falls through to the browser. So
+       Cmd+Z is undo only where an undo history exists, and Cmd+F opens the
+       episode search only when that search box is in front of the user. */
+    const modalOpen = () => !!document.querySelector('.modal-overlay');
+    // the pipeline editor publishes itself while mounted; a closed dialog
+    // leaves its list detached, which is how we know it's gone
+    const liveEditor = () => {
+      const ed = App._pipeEditor;
+      return (ed && ed.list && ed.list.isConnected) ? ed : null;
+    };
+    const inTextField = (t) => !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
         App.board.closePop && App.board.closePop();
         App.gantt.closeDeliveryPop && App.gantt.closeDeliveryPop();
         App.prefsMenu.close();
+        return;
+      }
+
+      const mod = App.isMac ? e.metaKey : e.ctrlKey;
+      if (!mod || e.altKey) return;
+      const key = e.key.toLowerCase();
+
+      // Cmd+F — jump to the episode search. Skipped while a dialog covers it,
+      // where the browser's own find is the more useful thing to leave alone.
+      if (key === 'f') {
+        if (modalOpen()) return;
+        const box = document.getElementById('search');
+        if (!box || !box.offsetParent) return;      // not on this page / hidden
+        e.preventDefault();
+        box.focus();
+        box.select();
+        return;
+      }
+
+      /* Cmd+Z / Cmd+Shift+Z / Cmd+Y — undo & redo.
+
+         Two histories, and the one in front of you wins: with the pipeline
+         editor open the keys drive its task list, otherwise they drive the
+         board (a dragged bar, a status change, an archive). Typing is always
+         left to the browser so a text field keeps its own native undo. */
+      if (key === 'z' || key === 'y') {
+        if (inTextField(e.target)) return;
+        const redo = key === 'y' || e.shiftKey;
+        const ed = liveEditor();
+
+        if (ed) {
+          // an exhausted history isn't ours to swallow — hand the key back
+          if ((redo ? ed.redoBtn : ed.undoBtn).disabled) return;
+          e.preventDefault();
+          if (redo) ed.redo(); else ed.undo();
+          return;
+        }
+
+        if (redo ? !App.history.canRedo() : !App.history.canUndo()) return;
+        e.preventDefault();
+        const r = redo ? App.history.redo() : App.history.undo();
+        if (!r) return;
+        if (r.ok) App.toast((redo ? 'Redid ' : 'Undid ') + r.label);
+        // refused: a teammate has changed the same thing since. The step stays
+        // on the stack — once they're done, or once you've looked, try again.
+        else App.toast('Can’t ' + (redo ? 'redo' : 'undo') + ' ' + r.label +
+          ' — someone else has changed it since', true);
       }
     });
     App.render();
