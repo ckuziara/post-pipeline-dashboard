@@ -84,7 +84,7 @@ window.App = window.App || {};
   const PRIORITY_GROUPS = [
     { key: 'overdue',  label: 'Overdue',       sub: 'Past due, not done',       color: '#ff5b6e', open: true  },
     { key: 'today',    label: 'Due Today',     sub: 'Due by end of day',        color: '#fdab3d', open: true  },
-    { key: 'week',     label: 'Due This Week', sub: 'Ending within 7 days',     color: '#f6be00', open: true  },
+    { key: 'week',     label: 'Due This Week', sub: 'Before the week is out',   color: '#f6be00', open: true  },
     { key: 'upcoming', label: 'Upcoming',      sub: 'Due later',                color: '#00c875', open: false },
     { key: 'review',   label: 'In Review',     sub: 'Currently being reviewed', color: '#a25ddc', open: true  }
   ];
@@ -357,7 +357,10 @@ window.App = window.App || {};
                     : dept ? m.subs.filter(x => x.su.dept === dept)
                     : m.subs;
       const todayIso = App.isoDate(App.today());
-      const weekIso = App.shiftIso(todayIso, 7);
+      // "this week" means the calendar week you're in, not a rolling seven days
+      // — on a Thursday it's Friday and Sunday, not the whole of next week.
+      const today = App.today();
+      const weekIso = App.isoDate(App.addDays(today, 7 - (((today.getDay() + 6) % 7) + 1)));
 
       const buckets = {};
       PRIORITY_GROUPS.forEach(g => { buckets[g.key] = []; });
@@ -371,10 +374,8 @@ window.App = window.App || {};
       });
       Object.keys(buckets).forEach(k => buckets[k].sort((a, b) => a.su.due < b.su.due ? -1 : 1));
 
-      // own work can span departments, so each line says which one it's in
-      const showDept = meId ? true : !dept;
       const groups = PRIORITY_GROUPS.filter(g => buckets[g.key].length)
-        .map(g => this.priorityGroup(g, buckets[g.key], showDept, size));
+        .map(g => this.priorityGroup(g, buckets[g.key], size));
       const open = scoped.filter(x => x.su.status !== 'approved').length;
 
       return {
@@ -387,7 +388,7 @@ window.App = window.App || {};
       };
     },
 
-    priorityGroup(g, items, showDept, size) {
+    priorityGroup(g, items, size) {
       const pkey = 'dashPri:' + g.key;
       const open = App.prefs.get(pkey, g.open);
       const box = el('.pr-group', { style: { borderLeftColor: g.color } });
@@ -408,14 +409,12 @@ window.App = window.App || {};
         const cap = capOf('priority', size);
         items.slice(0, cap).forEach(({ ep, su }) => {
           const st = App.status(su.status);
-          const dep = App.dept(su.dept);
           rows.appendChild(el('.pr-row', {
             title: ep.title + ' — ' + su.name + ' · due ' + App.fmtDate(su.due),
             onclick: () => App.editTask.open(ep.id, su.key)
           }, [
             el('span.pr-code', null, ep.code),
             el('span.pr-task', null, '(' + su.name + ')'),
-            (showDept && size !== 'sm' ? el('span.pr-dept', null, [el('span.dot', { style: { background: dep.color } }), dep.label]) : null),
             el('span.pr-date', null, App.fmtDate(su.due)),
             el('span.pr-chip', { style: { background: st.color, color: st.ink } }, st.label)
           ]));

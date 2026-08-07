@@ -1082,8 +1082,6 @@ body.gantt-dragging { user-select: none; }
 .pr-row:hover { background: var(--hover); }
 .pr-code { font-size: 11.5px; font-weight: 700; flex: none; }
 .pr-task { font-size: 11.5px; color: var(--text-2); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pr-dept { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-3); flex: none; }
-.pr-dept .dot { width: 7px; height: 7px; border-radius: 50%; }
 .pr-date { font-size: 11px; color: var(--text-3); flex: none; margin-left: auto; white-space: nowrap; }
 .pr-chip {
   font-size: 10px; font-weight: 700; border-radius: 6px; padding: 3px 9px;
