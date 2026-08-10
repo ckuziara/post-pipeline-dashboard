@@ -30,6 +30,20 @@ window.App = window.App || {};
   }
   function clampZoom(z) { return Math.max(1.4, Math.min(60, z)); }
 
+  /* Telling a click apart from a drag or a hold.
+
+     A press that moves past DRAG_SLOP, or is held for HOLD_MS without moving,
+     was a gesture — not a click — so it must not also trigger the click action
+     (opening Edit Task). The browser fires `click` after `mouseup` regardless,
+     and it used to be swallowed by accident: applying a move re-rendered the
+     chart, destroying the element the click was headed for. A move that now
+     stops to ask for confirmation leaves the DOM in place, so the click landed
+     and Edit Task opened over the question. The suppression below is explicit
+     rather than relying on that. HOLD_MS is generous — a deliberate click can
+     be slow, and refusing to open Edit Task for one would feel broken. */
+  const DRAG_SLOP = 3;      // px of travel that makes it a drag
+  const HOLD_MS = 400;      // press longer than this reads as a grab, not a click
+
   /* How far one Ctrl+scroll event should zoom.
 
      A fixed step per event is what made this twitchy: a mouse wheel sends one
@@ -256,6 +270,10 @@ window.App = window.App || {};
       const self = this;
 
       const handleClick = (e) => {
+        // a drag or a hold just ended on this element — that gesture already had
+        // its effect, and it isn't "open Edit Task"
+        if (self._clickSuppressed) { e.stopPropagation(); return; }
+
         const mark = e.target.closest('.ms-day.clickable');
         if (mark) {
           e.stopPropagation();                     // the document handler would close it again
@@ -405,7 +423,7 @@ window.App = window.App || {};
         const task = pipe.find(t => t.key === suKey);
         const byKey = {}; App.subitems(ep).forEach(s => { byKey[s.key] = s; });
         this._drag = {
-          bar, epId, suKey, zone, startClientX: e.clientX,
+          bar, epId, suKey, zone, startClientX: e.clientX, startedAt: Date.now(), moved: false,
           origStart: su.start, origDue: su.due, curStart: su.start, curDue: su.due,
           minDays: (task && task.minDays) || 1,
           deps: (task ? task.deps : []).map(k => byKey[k]).filter(Boolean),
@@ -463,6 +481,8 @@ window.App = window.App || {};
         return;
       }
 
+      if (Math.abs(e.clientX - d.startClientX) > DRAG_SLOP) d.moved = true;
+
       let newStart = d.origStart, newDue = d.origDue;
       if (d.zone === 'move') {
         newStart = App.addVisibleDays(d.origStart, colDelta, hw);
@@ -511,12 +531,17 @@ window.App = window.App || {};
         return;
       }
 
+      // was this a gesture rather than a click? (see DRAG_SLOP / HOLD_MS)
+      const held = d.startedAt ? (Date.now() - d.startedAt) >= HOLD_MS : false;
+      const wasGesture = !!d.moved || held;
+      if (wasGesture) this.suppressNextClick();
+
       if (d.kind === 'note') {
         d.el.classList.remove('dragging');
         if (d.moved && (d.curStart !== d.origStart || d.curDue !== d.origDue)) {
           App.updateNote(d.showId, d.id, { start: d.curStart, due: d.curDue });
-        } else {
-          this.openNoteEditor(d.el);   // a click (no move) opens the editor
+        } else if (!wasGesture) {
+          this.openNoteEditor(d.el);   // a plain click opens the editor
         }
         return;
       }
@@ -526,6 +551,15 @@ window.App = window.App || {};
         App.track.feature('timeline.dragReschedule');
         App.moveTask(d.epId, d.suKey, d.curStart, d.curDue);
       }
+    },
+
+    /* The `click` that follows a drag's mouseup has to be dropped, or releasing
+       a bar also opens Edit Task. Cleared on the next tick: click is dispatched
+       synchronously after mouseup, so it always arrives before this runs, and
+       the flag can never linger to eat a real click later. */
+    suppressNextClick() {
+      this._clickSuppressed = true;
+      setTimeout(() => { this._clickSuppressed = false; }, 0);
     },
 
     // Called by App.render() before the view is torn down. The isConnected
