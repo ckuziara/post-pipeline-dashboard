@@ -394,6 +394,103 @@ window.App = window.App || {};
     }
   };
 
+  /* ---- Re-Arrange a show's episodes ----
+     Opened by clicking an episode on the Timeline while Re-Arrange is on. The
+     producer reorders the show's remaining episodes; each one then slides into
+     the schedule slot of whatever now sits in its place. Delivered episodes
+     aren't listed — their slots aren't up for grabs — and approved tasks stay
+     put, which is why each row says how much work is pinned. The real work is
+     App.reorderEpisodes; this is the picker in front of it. */
+  App.rearrange = {
+    open(showId, focusEpId) {
+      if (!App.canEditSchedule(App.state.role)) {
+        App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
+      }
+      const show = App.show(showId);
+      const eps = App.rearrangeableEpisodes(showId);
+      if (eps.length < 2) {
+        App.toast(eps.length
+          ? '“' + show.name + '” has only one episode still in production — nothing to re-arrange'
+          : 'Every episode of “' + show.name + '” is delivered', true);
+        return;
+      }
+      // the slots themselves: where each position starts today. Episodes move
+      // between these; the dates stay with the position.
+      const slotStarts = eps.map(ep => App.epStart(ep));
+      let order = eps.slice();
+
+      const listEl = el('.ra-list');
+      const applyBtn = el('button.btn-primary', {
+        onclick: () => {
+          App.modal.close();                                   // before the re-render underneath
+          App.reorderEpisodes(showId, order.map(ep => ep.id));
+        }
+      }, [App.icon('save'), ' Apply new order']);
+
+      const draw = () => {
+        listEl.innerHTML = '';
+        let moving = 0;
+        order.forEach((ep, i) => {
+          const origIdx = eps.indexOf(ep);
+          const delta = App.diffDays(slotStarts[i], slotStarts[origIdx]);
+          if (delta) moving++;
+          const subs = App.subitems(ep);
+          const lockedCount = subs.filter(s => s.status === 'approved').length;
+          const movable = subs.filter(s => s.status !== 'approved');
+          const newStart = movable.length
+            ? App.shiftIso(movable.reduce((m, s) => s.start < m ? s.start : m, movable[0].start), delta)
+            : null;
+
+          listEl.appendChild(el('.ra-row' + (ep.id === focusEpId ? '.focus' : '') + (delta ? '.moved' : ''), null, [
+            el('span.ra-pos', null, String(i + 1)),
+            el('.ra-main', null, [
+              el('.ra-title', null, [
+                el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color) } }, ep.code),
+                el('span', null, ep.title)
+              ]),
+              el('.ra-sub', null, [
+                el('span', null, App.fmtRange(App.epStart(ep), App.epDue(ep))),
+                (delta
+                  ? el('span.ra-delta', null, (delta > 0 ? '→ later by ' : '→ earlier by ') +
+                      Math.abs(delta) + ' day' + (Math.abs(delta) === 1 ? '' : 's') +
+                      (newStart ? ', starts ' + App.fmtDate(newStart) : ''))
+                  : el('span.ra-same', null, '· unchanged')),
+                (lockedCount
+                  ? el('span.ra-lock', { title: lockedCount + ' approved task' + (lockedCount === 1 ? '' : 's') +
+                      ' stay on their current dates' }, [App.icon('lock'), ' ' + lockedCount])
+                  : null)
+              ])
+            ]),
+            el('.ra-move', null, [
+              el('button.btn-move', { type: 'button', disabled: i === 0, title: 'Move earlier',
+                onclick: () => { [order[i - 1], order[i]] = [order[i], order[i - 1]]; draw(); } }, '▲'),
+              el('button.btn-move', { type: 'button', disabled: i === order.length - 1, title: 'Move later',
+                onclick: () => { [order[i], order[i + 1]] = [order[i + 1], order[i]]; draw(); } }, '▼')
+            ])
+          ]));
+        });
+        applyBtn.disabled = !moving;
+      };
+      draw();
+
+      const sections = [
+        el('.ctx-box.slim', null, [
+          el('span.ctx-chip', null, show.name),
+          el('span.ctx-title', null, eps.length + ' episode' + (eps.length === 1 ? '' : 's') + ' in production')
+        ]),
+        el('.fld-hint', { style: { margin: '10px 0' } },
+          'Episodes swap schedule slots — move one earlier and it takes over the dates of the one it passes. ' +
+          'Approved tasks keep their current dates, and delivered episodes aren’t listed.'),
+        listEl
+      ];
+      const footer = [
+        el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
+        applyBtn
+      ];
+      App.modal.open(card('calendar', 'Re-Arrange Episodes', 'Reorder ' + show.name + '’s remaining episodes', sections, footer));
+    }
+  };
+
   /* ---- Reusable pipeline editor ----
      The compact/expandable task list shared by Add Show and Admin → Workflow →
      Pipelines. Mutates the array it's given IN PLACE (push/splice/swap), so the

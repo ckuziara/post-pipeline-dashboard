@@ -359,6 +359,11 @@ button { font-family: inherit; cursor: pointer; }
    paired with a label inside the preferences popover */
 .toolbar-seg { background: var(--bg-2); }
 .toolbar-seg .seg { padding: 6px 11px; font-size: 11.5px; }
+/* a toolbar button that latches a mode on — has to read as engaged, not hovered */
+.toolbar-toggle.on {
+  background: var(--accent); border-color: transparent; color: #fff;
+}
+.toolbar-toggle.on:hover { background: var(--accent-2); color: #fff; }
 .prefs-actions { display: flex; gap: 6px; flex: none; }
 .prefs-btn {
   border: 1px solid var(--border-2); background: var(--bg); color: var(--text-2);
@@ -2089,6 +2094,43 @@ select.fld { cursor: pointer; }
 .pipe-lead .pipe-insert:hover { background: var(--accent); border-color: transparent; color: #fff; }
 .pipe-lead .pipe-insert:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
 .pipe-move { display: flex; flex-direction: column; gap: 2px; }
+/* ---- Re-Arrange mode + its episode reorder list ---- */
+/* While the mode is on every episode-bearing surface is a target rather than a
+   disclosure or an editor — including task bars, which are the only per-episode
+   thing on screen in the Department sort. */
+.gantt.rearranging .g-label,
+.gantt.rearranging .bar { cursor: pointer; }
+.gantt.rearranging .g-row:hover { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* the drag-to-reschedule grips would invite a gesture the mode has taken over */
+.gantt.rearranging .bar.adjustable::before,
+.gantt.rearranging .bar.adjustable::after { display: none; }
+
+.ra-list { display: flex; flex-direction: column; gap: 6px; max-height: 380px; overflow-y: auto; padding-right: 2px; }
+.ra-row {
+  display: flex; align-items: center; gap: 11px; padding: 8px 11px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px;
+}
+.ra-row.moved { border-color: rgba(91,108,255,.45); background: rgba(91,108,255,.06); }
+/* the episode they clicked to get here, so the list has a starting point */
+.ra-row.focus { box-shadow: inset 3px 0 0 var(--accent); }
+.ra-pos {
+  flex: none; width: 20px; text-align: right;
+  font-size: 11px; font-weight: 700; color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+.ra-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ra-title { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; }
+.ra-title > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ra-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 10.5px; color: var(--text-3); }
+.ra-delta { color: #9fb0ff; font-weight: 700; }
+.ra-same { color: var(--text-3); }
+.ra-lock {
+  display: inline-flex; align-items: center; gap: 3px; font-weight: 700;
+  color: #ffce8e; background: rgba(253,171,61,.14);
+  border: 1px solid rgba(253,171,61,.3); border-radius: 12px; padding: 1px 7px;
+}
+.ra-lock .ico { font-size: 9px; }
+.ra-move { flex: none; display: flex; flex-direction: column; gap: 2px; }
+
 .btn-move {
   background: var(--surface-3); border: 1px solid var(--border); color: var(--text-2);
   border-radius: 4px; font-size: 7px; line-height: 1; padding: 3px 4px; cursor: pointer;

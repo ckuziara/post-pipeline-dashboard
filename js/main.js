@@ -170,6 +170,73 @@ window.App = window.App || {};
     else App.toast('“' + g.su.name + '” → ' + App.fmtRange(newStart, newDue));
   };
 
+  /* Bulk reschedule — swap episodes between each other's schedule slots.
+
+     The slots stay where they are; the episodes move between them. An episode
+     keeps its own internal shape (task durations, anything hand-dragged) and
+     simply slides by the gap between the slot it held and the slot it now
+     holds, so a show can be re-prioritised without re-planning it.
+
+     Approved work never moves. It already happened, and back-dating history to
+     fit a new plan is how a schedule stops being believable — so an approved
+     task stays exactly where it is and the rest of its episode moves around
+     it. Delivered episodes aren't in the running at all: their slots aren't up
+     for grabs. Milestones derive from task dates, so they follow on their own.
+
+     `orderedIds` is the full set of schedulable episode ids in their new order. */
+  App.reorderEpisodes = function (showId, orderedIds) {
+    if (!App.canEditSchedule(App.state.role)) {
+      App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
+    }
+    const current = App.rearrangeableEpisodes(showId);
+    const currentIds = current.map(ep => ep.id);
+    // the incoming order must be a permutation of what we offered, or the slot
+    // mapping below would silently drop or duplicate an episode's dates
+    if (orderedIds.length !== currentIds.length || orderedIds.some(id => !currentIds.includes(id))) {
+      App.toast('That order doesn’t match the show’s episodes — nothing changed', true); return;
+    }
+    const slotStarts = current.map(ep => App.epStart(ep));
+
+    const moves = [];
+    orderedIds.forEach((id, newIdx) => {
+      const oldIdx = currentIds.indexOf(id);
+      const delta = App.diffDays(slotStarts[newIdx], slotStarts[oldIdx]);
+      if (delta) moves.push({ id, delta, ep: current[oldIdx] });
+    });
+    if (!moves.length) { App.toast('Already in that order'); return; }
+
+    let shifted = 0, locked = 0;
+    App.mutate(d => {
+      moves.forEach(m => {
+        const e = d.episodes.find(x => x.id === m.id); if (!e) return;
+        const subs = App.subitems(e);          // snapshot before writing back into e.dates
+        e.dates = e.dates || {};
+        subs.forEach(su => {
+          if (su.status === 'approved') { locked++; return; }   // stays put, by design
+          e.dates[su.key] = { start: App.shiftIso(su.start, m.delta), due: App.shiftIso(su.due, m.delta) };
+          shifted++;
+        });
+        App.refreshReadiness(e);
+      });
+    }, 'the re-arrange');
+
+    App.track.audit('show.reorder', {
+      show: App.show(showId).name,
+      order: orderedIds.map(id => (current.find(e => e.id === id) || {}).code).join(' → '),
+      episodesMoved: moves.length, tasksShifted: shifted, tasksLocked: locked
+    });
+    App.toast(moves.length + ' episode' + (moves.length === 1 ? '' : 's') + ' re-arranged' +
+      (locked ? ' · ' + locked + ' approved task' + (locked === 1 ? '' : 's') + ' left in place' : ''));
+  };
+
+  // Episodes a re-arrange may touch: this show's, still active, not delivered.
+  // Ordered by where they currently sit, which is the order the dialog shows.
+  App.rearrangeableEpisodes = function (showId) {
+    return App.activeEpisodes()
+      .filter(ep => ep.showId === showId && !App.isDelivered(ep))
+      .sort((a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1);
+  };
+
   // toggle a role's assign-owners privilege (Admin panel)
   App.setAssignPriv = function (roleKey, allowed) {
     if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change privileges', true); return; }

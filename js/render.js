@@ -189,6 +189,19 @@ window.App = window.App || {};
         el('button.ghost', { onclick: () => App.gantt.zoomBy(1.25), title: 'Zoom in (' + App.shortcutLabel('+') + ', or Ctrl+scroll on the chart)' }, '+'),
         el('button.ghost', { onclick: () => App.gantt.centerToday(), title: 'Scroll to today' }, '⊙ Today')
       ]));
+
+      /* Re-Arrange is a mode, not a preference: it changes what clicking an
+         episode does, so it lives in App.state (gone next session) rather than
+         being remembered. Only offered to whoever may move dates at all. */
+      if (App.canEditSchedule(App.state.role)) {
+        const on = !!App.state.rearrange;
+        bar.appendChild(el('button.ghost.toolbar-toggle' + (on ? '.on' : ''), {
+          onclick: () => { App.state.rearrange = !App.state.rearrange; App.render(); },
+          title: on
+            ? 'Re-Arrange is on — click an episode to reorder its show. Click again to turn off.'
+            : 'Re-Arrange: click an episode to reorder its show’s episodes'
+        }, '⇅ Re-Arrange'));
+      }
     }
 
     /* Legend — Timeline only, where bars are colour-coded by show and there's
