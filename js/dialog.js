@@ -395,41 +395,64 @@ window.App = window.App || {};
   };
 
   /* ---- Re-Arrange a show's episodes ----
-     Opened by clicking an episode on the Timeline while Re-Arrange is on. The
-     producer reorders the show's remaining episodes; each one then slides into
-     the schedule slot of whatever now sits in its place. Delivered episodes
-     aren't listed — their slots aren't up for grabs — and approved tasks stay
-     put, which is why each row says how much work is pinned. The real work is
-     App.reorderEpisodes; this is the picker in front of it. */
+     Pick a show, reorder its remaining episodes, apply. Each episode then
+     slides into the schedule slot of whatever now sits in its place. Delivered
+     episodes aren't listed — their slots aren't up for grabs — and approved
+     tasks stay put, which is why each row says how much work is pinned. The
+     real work is App.reorderEpisodes; this is the picker in front of it.
+
+     `showId` preselects a show (the toolbar passes the current filter when one
+     is set); without it the producer chooses from the dropdown. */
   App.rearrange = {
-    open(showId, focusEpId) {
+    open(showId) {
       if (!App.canEditSchedule(App.state.role)) {
         App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
       }
-      const show = App.show(showId);
-      const eps = App.rearrangeableEpisodes(showId);
-      if (eps.length < 2) {
-        App.toast(eps.length
-          ? '“' + show.name + '” has only one episode still in production — nothing to re-arrange'
-          : 'Every episode of “' + show.name + '” is delivered', true);
-        return;
-      }
-      // the slots themselves: where each position starts today. Episodes move
-      // between these; the dates stay with the position.
-      const slotStarts = eps.map(ep => App.epStart(ep));
-      let order = eps.slice();
+      const shows = App.activeShows();
+      if (!shows.length) { App.toast('No shows to re-arrange', true); return; }
+
+      // Every active show is listed with its count, rather than hiding the ones
+      // that can't move — "1 in production" explains itself, where a missing
+      // show would just look like a bug.
+      const showSel = el('select.fld');
+      shows.forEach(s => {
+        const n = App.rearrangeableEpisodes(s.id).length;
+        const o = document.createElement('option');
+        o.value = s.id;
+        o.textContent = s.name + '  ·  ' + (n ? n + ' in production' : 'all delivered');
+        showSel.appendChild(o);
+      });
+      // fall back to the first show that actually has something to reorder
+      const preferred = (showId && shows.some(s => s.id === showId)) ? showId : null;
+      showSel.value = preferred ||
+        (shows.find(s => App.rearrangeableEpisodes(s.id).length > 1) || shows[0]).id;
 
       const listEl = el('.ra-list');
+      const noteEl = el('.fld-hint', { style: { margin: '10px 0' } });
       const applyBtn = el('button.btn-primary', {
         onclick: () => {
+          const id = showSel.value, ids = order.map(ep => ep.id);
           App.modal.close();                                   // before the re-render underneath
-          App.reorderEpisodes(showId, order.map(ep => ep.id));
+          App.reorderEpisodes(id, ids);
         }
       }, [App.icon('save'), ' Apply new order']);
 
-      const draw = () => {
+      // per-show working state, rebuilt whenever the picker changes
+      let eps = [], slotStarts = [], order = [];
+
+      const drawList = () => {
+        const show = App.show(showSel.value);
         listEl.innerHTML = '';
         let moving = 0;
+
+        if (eps.length < 2) {
+          listEl.appendChild(el('.ra-empty', null, eps.length
+            ? '“' + show.name + '” has only one episode still in production — there’s nothing to reorder.'
+            : 'Every episode of “' + show.name + '” has been delivered.'));
+          applyBtn.disabled = true;
+          return;
+        }
+
         order.forEach((ep, i) => {
           const origIdx = eps.indexOf(ep);
           const delta = App.diffDays(slotStarts[i], slotStarts[origIdx]);
@@ -437,11 +460,13 @@ window.App = window.App || {};
           const subs = App.subitems(ep);
           const lockedCount = subs.filter(s => s.status === 'approved').length;
           const movable = subs.filter(s => s.status !== 'approved');
+          // where the first task that CAN move ends up — not the slot date,
+          // which an episode with lots of approved work never actually reaches
           const newStart = movable.length
             ? App.shiftIso(movable.reduce((m, s) => s.start < m ? s.start : m, movable[0].start), delta)
             : null;
 
-          listEl.appendChild(el('.ra-row' + (ep.id === focusEpId ? '.focus' : '') + (delta ? '.moved' : ''), null, [
+          listEl.appendChild(el('.ra-row' + (delta ? '.moved' : ''), null, [
             el('span.ra-pos', null, String(i + 1)),
             el('.ra-main', null, [
               el('.ra-title', null, [
@@ -463,31 +488,41 @@ window.App = window.App || {};
             ]),
             el('.ra-move', null, [
               el('button.btn-move', { type: 'button', disabled: i === 0, title: 'Move earlier',
-                onclick: () => { [order[i - 1], order[i]] = [order[i], order[i - 1]]; draw(); } }, '▲'),
+                onclick: () => { [order[i - 1], order[i]] = [order[i], order[i - 1]]; drawList(); } }, '▲'),
               el('button.btn-move', { type: 'button', disabled: i === order.length - 1, title: 'Move later',
-                onclick: () => { [order[i], order[i + 1]] = [order[i + 1], order[i]]; draw(); } }, '▼')
+                onclick: () => { [order[i], order[i + 1]] = [order[i + 1], order[i]]; drawList(); } }, '▼')
             ])
           ]));
         });
         applyBtn.disabled = !moving;
       };
-      draw();
+
+      const loadShow = () => {
+        eps = App.rearrangeableEpisodes(showSel.value);
+        // the slots themselves: where each position starts today. Episodes move
+        // between these; the dates stay with the position.
+        slotStarts = eps.map(ep => App.epStart(ep));
+        order = eps.slice();
+        noteEl.textContent = eps.length > 1
+          ? 'Episodes swap schedule slots — move one earlier and it takes over the dates of the one it passes. ' +
+            'Approved tasks keep their current dates, and delivered episodes aren’t listed.'
+          : 'Pick a show with two or more episodes still in production.';
+        drawList();
+      };
+      showSel.addEventListener('change', loadShow);
+      loadShow();
 
       const sections = [
-        el('.ctx-box.slim', null, [
-          el('span.ctx-chip', null, show.name),
-          el('span.ctx-title', null, eps.length + ' episode' + (eps.length === 1 ? '' : 's') + ' in production')
-        ]),
-        el('.fld-hint', { style: { margin: '10px 0' } },
-          'Episodes swap schedule slots — move one earlier and it takes over the dates of the one it passes. ' +
-          'Approved tasks keep their current dates, and delivered episodes aren’t listed.'),
+        field('Show', showSel, 'Which show’s episodes to reorder'),
+        noteEl,
         listEl
       ];
       const footer = [
         el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
         applyBtn
       ];
-      App.modal.open(card('calendar', 'Re-Arrange Episodes', 'Reorder ' + show.name + '’s remaining episodes', sections, footer));
+      App.modal.open(card('calendar', 'Re-Arrange Episodes',
+        'Reorder a show’s remaining episodes', sections, footer));
     }
   };
 

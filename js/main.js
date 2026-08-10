@@ -229,12 +229,19 @@ window.App = window.App || {};
       (locked ? ' · ' + locked + ' approved task' + (locked === 1 ? '' : 's') + ' left in place' : ''));
   };
 
-  // Episodes a re-arrange may touch: this show's, still active, not delivered.
-  // Ordered by where they currently sit, which is the order the dialog shows.
+  /* Episodes a re-arrange may touch: this show's, still active, not delivered.
+     Ordered by where they currently sit, since that ordering IS the slot list
+     the dialog maps positions onto. Two episodes can legitimately share a start
+     date, so the code breaks the tie — an arbitrary order would otherwise shift
+     under us between the dialog opening and the reorder being applied. */
   App.rearrangeableEpisodes = function (showId) {
     return App.activeEpisodes()
       .filter(ep => ep.showId === showId && !App.isDelivered(ep))
-      .sort((a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1);
+      .sort((a, b) => {
+        const sa = App.epStart(a), sb = App.epStart(b);
+        if (sa !== sb) return sa < sb ? -1 : 1;
+        return a.code < b.code ? -1 : a.code > b.code ? 1 : 0;
+      });
   };
 
   // toggle a role's assign-owners privilege (Admin panel)

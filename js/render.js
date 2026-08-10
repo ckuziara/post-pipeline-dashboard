@@ -190,16 +190,13 @@ window.App = window.App || {};
         el('button.ghost', { onclick: () => App.gantt.centerToday(), title: 'Scroll to today' }, '⊙ Today')
       ]));
 
-      /* Re-Arrange is a mode, not a preference: it changes what clicking an
-         episode does, so it lives in App.state (gone next session) rather than
-         being remembered. Only offered to whoever may move dates at all. */
+      /* Re-Arrange opens straight into its own dialog, which picks the show
+         itself — the current filter just preselects it when there is one. Only
+         offered to whoever may move dates at all. */
       if (App.canEditSchedule(App.state.role)) {
-        const on = !!App.state.rearrange;
-        bar.appendChild(el('button.ghost.toolbar-toggle' + (on ? '.on' : ''), {
-          onclick: () => { App.state.rearrange = !App.state.rearrange; App.render(); },
-          title: on
-            ? 'Re-Arrange is on — click an episode to reorder its show. Click again to turn off.'
-            : 'Re-Arrange: click an episode to reorder its show’s episodes'
+        bar.appendChild(el('button.ghost', {
+          onclick: () => App.rearrange.open(f.show !== 'all' ? f.show : null),
+          title: 'Re-Arrange: reorder a show’s remaining episodes'
         }, '⇅ Re-Arrange'));
       }
     }

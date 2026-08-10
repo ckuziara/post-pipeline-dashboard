@@ -117,8 +117,7 @@ window.App = window.App || {};
     _rafId: null,
 
     render(episodes) {
-      const wrap = el('.gantt' + (App.prefs.get('latchScroll', false) ? '.latch' : '') +
-        (App.state.rearrange ? '.rearranging' : ''));
+      const wrap = el('.gantt' + (App.prefs.get('latchScroll', false) ? '.latch' : ''));
       if (!episodes.length) { wrap.appendChild(el('.empty', null, 'No episodes match the current filters.')); return wrap; }
 
       // Only the Episode sort draws the end-of-episode milestones, and there
@@ -252,47 +251,11 @@ window.App = window.App || {};
       return wrap;
     },
 
-    /* Which show (and episode, when there is one) a click in Re-Arrange mode
-       refers to. Returns null for clicks on empty chart space, so the mode
-       leaves those alone; returns {showId:null} for a row that can't name one
-       show on its own — a Department row spans every show in view, so it only
-       resolves when the toolbar is already filtered to one. */
-    rearrangeTargetFrom(node) {
-      const bar = node.closest && (node.closest('.bar') || node.closest('.ms-day'));
-      const row = node.closest && node.closest('.g-row');
-      const label = node.closest && node.closest('.g-label');
-      if (!bar && !label) return null;
-
-      const epId = (bar && bar.dataset.episodeId) || (row && row.dataset.episodeId) || '';
-      if (epId && epId.indexOf('show:') === 0) return { showId: epId.slice(5), epId: null };
-      if (epId && epId.indexOf('dept:') !== 0) {
-        const ep = App.state.data.episodes.find(x => x.id === epId);
-        if (ep) return { showId: ep.showId, epId: ep.id };
-      }
-      // department row (or anything else unnamed): only actionable when the
-      // toolbar has already narrowed the view to a single show
-      const f = App.state.filters.show;
-      return { showId: f !== 'all' ? f : null, epId: null };
-    },
-
     setupEventDelegation() {
       if (!this._scrollEl) return;
       const self = this;
 
       const handleClick = (e) => {
-        /* Re-Arrange mode takes over the whole chart: while it's on, any click
-           that identifies an episode reorders that episode's show instead of
-           doing its normal thing. It has to come first, and cover bars as well
-           as row labels — the Department sort has no episode rows at all, its
-           episodes are the per-episode bars on each task line. */
-        const raTarget = (App.state.rearrange && App.rearrange) ? self.rearrangeTargetFrom(e.target) : null;
-        if (raTarget) {
-          e.preventDefault(); e.stopPropagation();
-          if (raTarget.showId) App.rearrange.open(raTarget.showId, raTarget.epId);
-          else App.toast('Click an episode — or filter to a single show — to re-arrange it', true);
-          return;
-        }
-
         const mark = e.target.closest('.ms-day.clickable');
         if (mark) {
           e.stopPropagation();                     // the document handler would close it again
@@ -357,7 +320,6 @@ window.App = window.App || {};
 
       const hoverHandler = (e) => {
         if (this._drag) return;
-        if (App.state.rearrange) return;   // the mode owns the chart; no drag affordances
         const noteEl = e.target.closest('.pn-note.editable');
         if (noteEl) {
           if (this._hoverBar && this._hoverBar !== noteEl) { this._hoverBar.style.cursor = ''; this._hoverBar.classList.remove('adjustable'); }
@@ -396,9 +358,6 @@ window.App = window.App || {};
       scroll.addEventListener('mousemove', hoverHandler);
 
       const downHandler = (e) => {
-        // Re-Arrange owns the click: dragging a bar here would reschedule one
-        // task while the mode is for moving whole episodes.
-        if (App.state.rearrange) return;
         // producer notes — DRAWING: empty grid cell in a notes row → draw a new note
         const drawTrack = e.target.closest('.g-row.pn-row .g-track.pn-drawable');
         if (drawTrack && !e.target.closest('.pn-note') && App.canEditNotes()) {
