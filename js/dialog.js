@@ -535,6 +535,101 @@ window.App = window.App || {};
     }
   };
 
+  /* ---- Milestone (Delivery / Live date) ----
+     These aren't tasks, so there's nothing to drag: the date is either following
+     the schedule or fixed, and this is where that's decided. For the delivery
+     date it also lists what has to be in hand on the day, so one click answers
+     both "when is it" and "are we ready". */
+  App.milestoneDialog = {
+    open(epId, key) {
+      const ep = App.state.data.episodes.find(x => x.id === epId); if (!ep) return;
+      const ms = App.epMilestone(ep, key); if (!ms) return;
+      const canEdit = App.canEditSchedule(App.state.role);
+      const show = App.show(ep.showId);
+
+      const dateInput = el('input.fld', { type: 'date', value: ms.date });
+      if (!canEdit) dateInput.disabled = true;
+
+      const autoLine = el('.ms-auto', null, [
+        'Following the schedule puts it on ',
+        el('strong', null, App.fmtDate(ms.auto)),
+        ' — ' + ms.buffer + ' days after ' + (ms.after === 'qc' ? 'QC finishes' : 'the delivery date') + '.'
+      ]);
+
+      const slip = ms.slipDays;
+      const status = ms.fixed
+        ? el('.ms-status' + (slip > 0 ? '.bad' : '.ok'), null, [
+            App.icon(slip > 0 ? 'warn' : 'lock'),
+            slip > 0
+              ? ' Fixed date — the work now finishes ' + slip + ' day' + (slip === 1 ? '' : 's') + ' after it'
+              : ' Fixed date — the schedule still makes it'
+          ])
+        : el('.ms-status', null, [App.icon('calendar'), ' Follows the schedule — moves when the work moves']);
+
+      const sections = [
+        el('.ctx-box.slim', null, [
+          el('span.ctx-chip', null, '# ' + ep.code),
+          el('span.ctx-title', null, ep.title),
+          el('span.ctx-dept', null, show.name)
+        ]),
+        status,
+        field(ms.name, dateInput, canEdit
+          ? 'Setting a date fixes it here — it stops moving when the work does.'
+          : 'Only Producers, Managers and Post Operations can change this.'),
+        autoLine
+      ];
+
+      /* What the delivery day is actually made of. Readiness is measured on the
+         files, not the task's status — a task can sit at Approved with nothing
+         uploaded, and on the day what matters is whether the assets are there. */
+      if (key === 'delivery_date') {
+        const assets = App.deliveryAssets(ep);
+        if (assets.length) {
+          sections.push(el('.modal-section-title', { style: { marginTop: '16px' } }, 'Delivery assets'));
+          sections.push(el('.dlv-list', null, assets.map(a => {
+            const parts = [];
+            if (a.files) parts.push(a.files + ' file' + (a.files === 1 ? '' : 's'));
+            if (a.links) parts.push(a.links + ' link' + (a.links === 1 ? '' : 's'));
+            return el('.dlv-row', null, [
+              el('.dlv-what', null, [
+                el('.dlv-dept', null, [el('span.dot', { style: { background: a.dept.color } }), a.dept.label]),
+                el('.dlv-asset', null, a.label),
+                el('.dlv-meta', null, a.count ? parts.join(' · ') : 'nothing uploaded yet')
+              ]),
+              a.count
+                ? el('span.ws-chip.ok', { title: a.su.name + ' — ' + App.status(a.su.status).label },
+                    '✓ ' + a.count + ' asset' + (a.count === 1 ? '' : 's'))
+                : el('span.ws-chip.pending', { title: a.su.name + ' — ' + App.status(a.su.status).label }, '⏳ Pending')
+            ]);
+          })));
+          const outstanding = assets.filter(a => !a.count);
+          sections.push(el('.pop-note', { style: { marginTop: '8px' } }, outstanding.length
+            ? 'Not ready to deliver — no assets uploaded for ' + outstanding.map(a => a.label).join(' or ')
+            : '✓ All delivery assets uploaded'));
+        }
+      }
+
+      const footer = [el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Close')];
+      if (canEdit) {
+        if (ms.fixed) {
+          footer.push(el('button.btn-ghost', {
+            onclick: () => { App.modal.close(); App.setEpisodeMilestone(epId, key, null); }
+          }, 'Follow the schedule'));
+        }
+        footer.push(el('button.btn-primary', {
+          onclick: () => {
+            const v = dateInput.value;
+            if (!v) { App.toast('Pick a date', true); return; }
+            App.modal.close();
+            App.setEpisodeMilestone(epId, key, v);
+          }
+        }, [App.icon('save'), ' Save date']));
+      }
+
+      App.modal.open(card('calendar', ms.name, App.fmtDate(ms.date) + ' · ' + ep.code, sections, footer));
+    }
+  };
+
   /* ---- Dependency impact confirmation ----
      Shown when dragging or stretching a bar lands it on top of a dependency.
      The producer gets the two schedules drawn over each other — where the task

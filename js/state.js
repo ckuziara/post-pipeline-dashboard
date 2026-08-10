@@ -580,6 +580,18 @@ window.App = window.App || {};
   ];
   App.isMilestoneKey = (key) => App.MILESTONES.some(m => m.key === key);
 
+  /* A milestone is either following the schedule or fixed.
+
+     Following (the default) is the old behaviour: it sits `buffer` days past
+     whatever comes before it and moves whenever that work moves. Fixed means a
+     date has been committed to and stored on the episode — it then stays put no
+     matter what happens upstream, which is the point: a delivery date that
+     quietly slides when the work slips hides exactly the problem worth seeing.
+
+     `auto` is where the work would actually put it, so a fixed milestone can
+     report `slipDays` — how many days late the schedule now runs against the
+     commitment. A later milestone chains off the one before it as ACTUALLY
+     dated, so fixing the delivery date carries the live date with it. */
   App.epMilestones = function (ep) {
     const subs = App.subitems(ep);
     if (!subs.length) return [];
@@ -587,9 +599,17 @@ window.App = window.App || {};
     // whatever finishes last instead
     const qc = subs.find(s => s.key === 'qc');
     const at = { qc: qc ? qc.due : subs.reduce((m, s) => s.due > m ? s.due : m, subs[0].due) };
+    const fixed = ep.milestones || {};
     return App.MILESTONES.map(m => {
-      at[m.key] = App.shiftIso(at[m.after] || at.qc, m.buffer);
-      return { key: m.key, name: m.name, short: m.short, after: m.after, buffer: m.buffer, date: at[m.key] };
+      const auto = App.shiftIso(at[m.after] || at.qc, m.buffer);
+      const date = fixed[m.key] || auto;
+      at[m.key] = date;
+      return {
+        key: m.key, name: m.name, short: m.short, after: m.after, buffer: m.buffer,
+        date: date, auto: auto, fixed: !!fixed[m.key],
+        // positive = the work now finishes later than the date we committed to
+        slipDays: fixed[m.key] ? App.diffDays(auto, date) : 0
+      };
     });
   };
   App.epMilestone = function (ep, key) { return App.epMilestones(ep).find(m => m.key === key) || null; };

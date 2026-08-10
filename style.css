@@ -700,17 +700,23 @@ button.ghost:hover { background: var(--hover); color: var(--text); }
 .ms-day.ms-live_date { background: #2f6fed; }
 .ms-day.clickable { cursor: pointer; }
 .ms-day.clickable:hover { filter: brightness(1.15); outline: 1.5px solid rgba(255,255,255,.5); outline-offset: -1.5px; }
+/* committed to, so it no longer drifts with the work — a ring marks it as held */
+.ms-day.fixed { box-shadow: 0 0 0 1.5px rgba(255,255,255,.75), 0 2px 8px rgba(0,0,0,.35); }
+/* …and the work has since run past it */
+.ms-day.late { box-shadow: 0 0 0 1.5px #ffce8e, 0 0 10px rgba(253,171,61,.55); }
 
-/* delivery-assets panel — what has to be in hand on the Delivery Date */
-.dlv-pop {
-  position: fixed; z-index: 200; width: 268px; background: var(--surface-2);
-  border: 1px solid var(--border-2); border-radius: 10px; box-shadow: var(--shadow);
-  padding: 10px; display: flex; flex-direction: column; gap: 2px;
-  animation: popIn .1s ease;
+/* milestone panel — whether the date is held or following, and for the
+   delivery date what has to be in hand on the day */
+.ms-status {
+  display: flex; align-items: center; gap: 7px; margin: 12px 0 4px;
+  font-size: 11.5px; font-weight: 600; color: var(--text-2);
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 8px 11px;
 }
-.dlv-head { padding: 0 2px 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
-.dlv-title { font-size: 12px; font-weight: 700; }
-.dlv-sub { font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
+.ms-status.ok { color: #6ee0aa; border-color: rgba(0,200,117,.32); background: rgba(0,200,117,.07); }
+.ms-status.bad { color: #ffce8e; border-color: rgba(253,171,61,.35); background: rgba(253,171,61,.09); }
+.ms-auto { font-size: 10.5px; color: var(--text-3); margin-top: 8px; line-height: 1.5; }
+.ms-auto strong { color: var(--text-2); }
+.dlv-list { display: flex; flex-direction: column; gap: 2px; }
 .dlv-row { display: flex; align-items: center; gap: 10px; padding: 6px 2px; }
 .dlv-what { min-width: 0; flex: 1; }
 .dlv-dept { display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px; }

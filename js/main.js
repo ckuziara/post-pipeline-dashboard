@@ -177,6 +177,42 @@ window.App = window.App || {};
     }
   };
 
+  /* Fix a milestone to a date, or hand it back to the schedule.
+
+     `iso` null returns it to following the work (buffer days past whatever comes
+     before it). Anything else pins it there for good: milestones are promises to
+     someone outside the studio, so once one is committed to it stops drifting
+     when the work in front of it moves — the slip shows up as a warning instead
+     of being quietly absorbed. */
+  App.setEpisodeMilestone = function (epId, key, iso) {
+    if (!App.canEditSchedule(App.state.role)) {
+      App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
+    }
+    if (!App.isMilestoneKey(key)) return;
+    const ep = App.state.data.episodes.find(x => x.id === epId); if (!ep) return;
+    const def = App.MILESTONES.find(m => m.key === key);
+    if (iso && !/^\d{4}-\d{2}-\d{2}$/.test(iso)) { App.toast('Enter a valid date', true); return; }
+
+    const was = App.epMilestone(ep, key);
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.milestones = e.milestones || {};
+      if (iso) e.milestones[key] = iso; else delete e.milestones[key];
+      if (!Object.keys(e.milestones).length) delete e.milestones;
+    }, 'the ' + def.short.toLowerCase() + ' date');
+
+    const now = App.epMilestone(App.state.data.episodes.find(x => x.id === epId), key);
+    App.track.audit('milestone.set', {
+      episode: ep.code, milestone: def.name,
+      from: was ? was.date : null, to: now ? now.date : null, fixed: !!iso
+    });
+    if (!iso) App.toast(def.name + ' follows the schedule again — ' + App.fmtDate(now.date));
+    else if (now.slipDays > 0) {
+      App.toast(def.name + ' fixed to ' + App.fmtDate(iso) + ' — the work runs ' +
+        now.slipDays + ' day' + (now.slipDays === 1 ? '' : 's') + ' past it', true);
+    } else App.toast(def.name + ' fixed to ' + App.fmtDate(iso));
+  };
+
   /* Bulk reschedule — swap episodes between each other's schedule slots.
 
      The slots stay where they are; the episodes move between them. An episode
@@ -856,7 +892,6 @@ window.App = window.App || {};
     });
     document.addEventListener('click', () => {
       App.board.closePop && App.board.closePop();
-      App.gantt.closeDeliveryPop && App.gantt.closeDeliveryPop();
       App.prefsMenu.close();
     });
     /* ---- keyboard shortcuts ----
@@ -877,8 +912,7 @@ window.App = window.App || {};
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
         App.board.closePop && App.board.closePop();
-        App.gantt.closeDeliveryPop && App.gantt.closeDeliveryPop();
-        App.prefsMenu.close();
+          App.prefsMenu.close();
         return;
       }
 

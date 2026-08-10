@@ -61,10 +61,6 @@ window.App = window.App || {};
     // makes restoration correct for EVERY render trigger (filters, edits,
     // expand clicks) without depending on async scroll events having fired.
     if (App.gantt && App.gantt.syncScrollState) App.gantt.syncScrollState();
-    // the delivery-assets panel lives on <body>, so it would outlive the mark
-    // it was anchored to once the timeline is rebuilt
-    if (App.gantt && App.gantt.closeDeliveryPop) App.gantt.closeDeliveryPop();
-
     view.innerHTML = '';
 
     if (App.state.view === 'admin') { view.appendChild(App.admin.render()); }
