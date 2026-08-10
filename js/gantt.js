@@ -30,6 +30,30 @@ window.App = window.App || {};
   }
   function clampZoom(z) { return Math.max(1.4, Math.min(60, z)); }
 
+  /* How far one Ctrl+scroll event should zoom.
+
+     A fixed step per event is what made this twitchy: a mouse wheel sends one
+     chunky event per notch, but a trackpad sends a stream of tiny ones, so the
+     same 12% per event meant a flick of two fingers crossed the whole range.
+
+     Scaling by the distance actually scrolled fixes both at once. Deltas are
+     first normalised to pixels — browsers report lines or pages depending on
+     the device — then fed through an exponential, which keeps the zoom rate
+     constant per pixel travelled and compounds smoothly however many events
+     arrive. A single event is capped so one violent flick can't jump the
+     entire scale.
+
+     At 0.0018/px: a trackpad's ~3px event moves ~0.5%, a wheel notch (~100px)
+     about 16%. Gentle where it was too eager, unchanged where it was fine. */
+  const ZOOM_PER_PX = 0.0018;
+  const PX_PER_LINE = 16, PX_PER_PAGE = 400;
+  function wheelZoomFactor(e) {
+    const px = e.deltaMode === 1 ? e.deltaY * PX_PER_LINE
+             : e.deltaMode === 2 ? e.deltaY * PX_PER_PAGE
+             : e.deltaY;
+    return Math.max(0.75, Math.min(1.33, Math.exp(-px * ZOOM_PER_PX)));
+  }
+
   // ctx = { start, totalCalDays, totalCols, dw, colOf } — colOf maps an ISO
   // date to its rendered column index, collapsing hidden (weekend) days onto
   // the column of the nearest preceding visible day. When weekends are shown,
@@ -211,7 +235,7 @@ window.App = window.App || {};
       scroll.addEventListener('wheel', (e) => {
         if (e.ctrlKey) {
           e.preventDefault();
-          const old = App.state.zoom, nz = clampZoom(old * (e.deltaY < 0 ? 1.12 : 0.89));
+          const old = App.state.zoom, nz = clampZoom(old * wheelZoomFactor(e));
           if (Math.abs(nz - old) > 0.001) {
             const sx = e.clientX - scroll.getBoundingClientRect().left;
             this._preserve = { dayOffset: (scroll.scrollLeft + sx - LABEL_W) / old, screenX: sx };

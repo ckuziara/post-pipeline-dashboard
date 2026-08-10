@@ -172,9 +172,23 @@ window.App = window.App || {};
     bar.appendChild(search);
 
     if (App.state.view === 'timeline') {
-      bar.appendChild(el('button.ghost', { onclick: () => App.gantt.zoomBy(0.8), title: 'Zoom out (Ctrl+scroll on the chart)' }, '−'));
-      bar.appendChild(el('button.ghost', { onclick: () => App.gantt.zoomBy(1.25), title: 'Zoom in (Ctrl+scroll on the chart)' }, '+'));
-      bar.appendChild(el('button.ghost', { onclick: () => App.gantt.centerToday(), title: 'Scroll to today' }, '⊙ Today'));
+      /* How the timeline is grouped is the setting people reach for most, so it
+         sits in the toolbar with the other filters rather than two clicks deep
+         in preferences. No label: three view names in a segmented control read
+         as what they are. */
+      const sort = App.prefs.get('timelineSort', 'department');
+      bar.appendChild(el('.prefs-seg.toolbar-seg', null,
+        [['episode', 'Episode'], ['department', 'Department'], ['show', 'Show']].map(([v, label]) =>
+          el('button.seg' + (sort === v ? '.active' : ''), {
+            title: 'Group the timeline by ' + label.toLowerCase(),
+            onclick: () => { App.prefs.set('timelineSort', v); App.render(); }
+          }, label))));
+      // kept together so a wrap can't strand the − from the + it belongs with
+      bar.appendChild(el('.toolbar-group', null, [
+        el('button.ghost', { onclick: () => App.gantt.zoomBy(0.8), title: 'Zoom out (' + App.shortcutLabel('−') + ', or Ctrl+scroll on the chart)' }, '−'),
+        el('button.ghost', { onclick: () => App.gantt.zoomBy(1.25), title: 'Zoom in (' + App.shortcutLabel('+') + ', or Ctrl+scroll on the chart)' }, '+'),
+        el('button.ghost', { onclick: () => App.gantt.centerToday(), title: 'Scroll to today' }, '⊙ Today')
+      ]));
     }
 
     /* Legend — Timeline only, where bars are colour-coded by show and there's
