@@ -124,11 +124,16 @@ window.App = window.App || {};
       .catch(e => App.toast('Approved, but publishing the files failed: ' + e.message, true));
   };
 
-  // Reschedule a task by dragging its bar on the Timeline. minDays is a hard
-  // floor (rejected outright — the drag itself already clamps to it live, so
-  // this only fires on a genuine bug or a very fast gesture); dependency
-  // ordering is a soft rule — the move still applies, but the user is warned.
-  App.moveTask = function (epId, key, newStart, newDue) {
+  /* Reschedule a task by dragging its bar on the Timeline.
+
+     minDays is a hard floor, rejected outright — the drag clamps to it live, so
+     this only fires on a genuine bug or a very fast gesture.
+
+     Breaking a dependency is allowed, but not silently: a move that lands on
+     top of one is held and put to the producer as a decision, with the old and
+     new schedule drawn over each other. Confirming re-enters with
+     opts.confirmed so the same call applies for real. */
+  App.moveTask = function (epId, key, newStart, newDue, opts) {
     const g = guardSchedule(epId, key); if (!g) return;
     const pipe = App.pipelineFor(g.ep);
     const task = pipe.find(t => t.key === key);
@@ -140,18 +145,16 @@ window.App = window.App || {};
       return;
     }
 
-    const byKey = {}; App.subitems(g.ep).forEach(s => { byKey[s.key] = s; });
-    const warnings = [];
-    (task ? task.deps : []).forEach(dk => {
-      const dep = byKey[dk];
-      if (dep && newStart <= dep.due) warnings.push('now starts before its dependency “' + dep.name + '” finishes');
-    });
-    pipe.forEach(t => {
-      if (t.key !== key && t.deps.includes(key)) {
-        const dependent = byKey[t.key];
-        if (dependent && dependent.start <= newDue) warnings.push('“' + dependent.name + '” now starts before it finishes');
-      }
-    });
+    const impact = App.scheduleImpact(g.ep, key, newStart, newDue);
+    if (impact.clashes.length && !(opts && opts.confirmed) && App.impactDialog) {
+      App.impactDialog.open(g.ep, key, impact, {
+        onConfirm: () => App.moveTask(epId, key, newStart, newDue, { confirmed: true }),
+        // the dragged bar is still sitting where it was dropped; a re-render
+        // rebuilds it from the unchanged data, snapping it back
+        onCancel: () => App.render()
+      });
+      return;
+    }
 
     App.mutate(d => {
       const e = d.episodes.find(x => x.id === epId);
@@ -163,11 +166,15 @@ window.App = window.App || {};
       App.track.audit('task.reschedule', {
         episode: g.ep.code, task: g.su.name,
         from: g.su.start + '→' + g.su.due, to: newStart + '→' + newDue,
-        brokeDependency: warnings.length > 0
+        brokeDependency: impact.clashes.length > 0
       });
     }
-    if (warnings.length) App.toast('“' + g.su.name + '”: ' + warnings.join('; '), true);
-    else App.toast('“' + g.su.name + '” → ' + App.fmtRange(newStart, newDue));
+    if (impact.clashes.length) {
+      App.toast('“' + g.su.name + '” moved — ' + impact.clashes.length +
+        ' dependency clash' + (impact.clashes.length === 1 ? '' : 'es') + ' accepted', true);
+    } else {
+      App.toast('“' + g.su.name + '” → ' + App.fmtRange(newStart, newDue));
+    }
   };
 
   /* Bulk reschedule — swap episodes between each other's schedule slots.

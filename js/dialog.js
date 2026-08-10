@@ -10,24 +10,33 @@ window.App = window.App || {};
 
   // ---- overlay ----
   App.modal = {
-    open(card) {
+    /* opts.onClose fires however the modal goes away — ✕, backdrop, Escape or a
+       button calling close() — for dialogs where dismissal is itself an answer.
+       A dialog that has already acted marks its own decision first, so its
+       close() reaches a no-op rather than being undone by its own teardown. */
+    open(card, opts) {
       this.close();
       const ov = el('.modal-overlay', { onclick: (e) => { if (e.target === ov) App.modal.close(); } });
       ov.appendChild(card);
       document.body.appendChild(ov);
       this._ov = ov;
+      this._onClose = (opts && opts.onClose) || null;
       this._esc = (e) => { if (e.key === 'Escape') App.modal.close(); };
       document.addEventListener('keydown', this._esc);
       const f = card.querySelector('input,select'); if (f) setTimeout(() => f.focus(), 30);
     },
     close() {
       if (!this._ov) return;          // nothing open — open() calls this defensively
+      // cleared before firing so a callback that opens another modal can't
+      // re-enter this one's teardown
+      const onClose = this._onClose; this._onClose = null;
       // A flow still open as the modal goes away was abandoned: the user walked
       // away without saving. Hooking it here (rather than on each dialog's close
       // button) catches Esc, a backdrop click and the ✕ alike; a successful save
       // closes its own flow first, so this only ever sees genuine drop-offs.
       this._ov.remove(); this._ov = null; document.removeEventListener('keydown', this._esc);
       App.track && App.track.abandonOpenFlows && App.track.abandonOpenFlows();
+      if (onClose) onClose();
     }
   };
 
@@ -526,6 +535,160 @@ window.App = window.App || {};
     }
   };
 
+  /* ---- Dependency impact confirmation ----
+     Shown when dragging or stretching a bar lands it on top of a dependency.
+     The producer gets the two schedules drawn over each other — where the task
+     was in dotted grey, where it would go in solid colour — plus a line per
+     broken dependency, then decides. Only the tasks actually involved are
+     drawn; a full chart is what they just came from.
+
+     Nothing here cascades: only the dragged task moves, so every other bar is
+     at its current dates and the overlap band is the literal collision.
+
+     Extension point: `sections` below is where the department-capacity and
+     budget consequences of the move will slot in, alongside the dependency
+     list — same shape, one more block. */
+  App.impactDialog = {
+    open(ep, key, impact, handlers) {
+      const onConfirm = (handlers && handlers.onConfirm) || function () {};
+      const onCancel = (handlers && handlers.onCancel) || function () {};
+      /* Exactly one of confirm/cancel runs. The flag is set before close() so
+         the dialog's own teardown — which reports dismissal as a cancel — can't
+         overturn a choice the producer just made. */
+      let decided = false;
+      const finish = (fn) => { if (decided) return; decided = true; App.modal.close(); fn(); };
+
+      const moved = impact.moved;
+      const movedDept = App.dept(moved.dept);
+      const later = impact.shiftDays > 0;
+
+      /* The window spans every bar we draw, old and new, with a day of air
+         either side. Plain calendar days: the main chart can hide weekends, but
+         here the point is the literal overlap, so a squeezed axis would misread. */
+      let winStart = impact.from.start < impact.to.start ? impact.from.start : impact.to.start;
+      let winEnd = impact.from.due > impact.to.due ? impact.from.due : impact.to.due;
+      impact.clashes.forEach(c => {
+        if (c.task.start < winStart) winStart = c.task.start;
+        if (c.task.due > winEnd) winEnd = c.task.due;
+      });
+      winStart = App.shiftIso(winStart, -1);
+      winEnd = App.shiftIso(winEnd, 1);
+      const winDays = App.diffDays(winEnd, winStart) + 1;
+      const left = (iso) => (App.diffDays(iso, winStart) / winDays) * 100;
+      const width = (s, d) => ((App.diffDays(d, s) + 1) / winDays) * 100;
+
+      // one row per task involved, earliest first; the moved task carries both
+      // its old and new bar, everything else sits still and shows the collision
+      const rows = [{ task: moved, isMoved: true, clash: null }]
+        .concat(impact.clashes.map(c => ({ task: c.task, isMoved: false, clash: c })))
+        .sort((a, b) => {
+          const sa = a.isMoved ? impact.to.start : a.task.start;
+          const sb = b.isMoved ? impact.to.start : b.task.start;
+          return sa < sb ? -1 : sa > sb ? 1 : 0;
+        });
+
+      const chart = el('.si-chart', null, [
+        el('.si-axis', null, [
+          el('span', null, App.fmtDate(winStart)),
+          el('span', null, App.fmtDate(winEnd))
+        ]),
+        el('.si-rows', null, rows.map(r => {
+          const dep = App.dept(r.task.dept);
+          const bars = [];
+          if (r.isMoved) {
+            bars.push(el('.si-bar.si-old', {
+              title: 'Now: ' + App.fmtRange(impact.from.start, impact.from.due),
+              style: { left: left(impact.from.start) + '%', width: width(impact.from.start, impact.from.due) + '%' }
+            }));
+            bars.push(el('.si-bar.si-new', {
+              title: 'After: ' + App.fmtRange(impact.to.start, impact.to.due),
+              style: { left: left(impact.to.start) + '%', width: width(impact.to.start, impact.to.due) + '%',
+                       background: dep.color, color: App.pickInk(dep.color) }
+            }, el('span', null, App.fmtRange(impact.to.start, impact.to.due))));
+          } else {
+            bars.push(el('.si-bar.si-fixed', {
+              title: r.task.name + ': ' + App.fmtRange(r.task.start, r.task.due) + ' (unchanged)',
+              style: { left: left(r.task.start) + '%', width: width(r.task.start, r.task.due) + '%',
+                       background: dep.color, color: App.pickInk(dep.color) }
+            }));
+            // the days where this task and the moved task would now sit on top
+            // of each other — the reason we're asking
+            const oStart = impact.to.start > r.task.start ? impact.to.start : r.task.start;
+            const oEnd = impact.to.due < r.task.due ? impact.to.due : r.task.due;
+            if (oStart <= oEnd) {
+              const shared = App.diffDays(oEnd, oStart) + 1;
+              bars.push(el('.si-clash', {
+                title: shared + ' day' + (shared === 1 ? '' : 's') + ' running at the same time',
+                style: { left: left(oStart) + '%', width: width(oStart, oEnd) + '%' }
+              }));
+            }
+          }
+          return el('.si-row' + (r.isMoved ? '.si-row-moved' : ''), null, [
+            el('.si-label', null, [
+              el('span.si-dot', { style: { background: dep.color } }),
+              el('span.si-name', null, r.task.name),
+              (r.isMoved ? el('span.si-tag', null, 'moving') : null)
+            ]),
+            el('.si-track', null, bars)
+          ]);
+        }))
+      ]);
+
+      const legend = el('.si-legend', null, [
+        el('span.si-key', null, [el('span.si-swatch.si-old'), 'Now']),
+        el('span.si-key', null, [el('span.si-swatch.si-new'), 'After the change']),
+        el('span.si-key', null, [el('span.si-swatch.si-clash'), 'Overlap'])
+      ]);
+
+      const clashList = el('.si-list', null, impact.clashes.map(c => el('.si-item', null, [
+        App.icon('warn', { cls: 'si-item-ic' }),
+        el('.si-item-main', null, [
+          el('.si-item-title', null, [
+            el('span', null, c.task.name),
+            el('span.si-dir', null, c.dir === 'upstream' ? 'feeds this task' : 'waits on this task')
+          ]),
+          el('.si-item-sub', null, App.dept(c.task.dept).label + ' · ' +
+            App.fmtRange(c.task.start, c.task.due) + ' · ' + c.text)
+        ]),
+        el('span.si-overlap', { title: 'The order is out by ' + c.earlyBy + ' day' + (c.earlyBy === 1 ? '' : 's') },
+          c.earlyBy + 'd early')
+      ])));
+
+      const sections = [
+        el('.ctx-box.slim', null, [
+          el('span.ctx-chip', null, '# ' + ep.code),
+          el('span.ctx-title', null, moved.name),
+          el('span.ctx-dept', null, movedDept.label)
+        ]),
+        el('.si-headline', null, [
+          el('strong', null, App.fmtRange(impact.from.start, impact.from.due)),
+          el('span.si-arrow', null, '→'),
+          el('strong', null, App.fmtRange(impact.to.start, impact.to.due)),
+          el('span.si-shift', null, impact.shiftDays
+            ? (later ? 'later by ' : 'earlier by ') + Math.abs(impact.shiftDays) + 'd'
+            : 'same start, new length')
+        ]),
+        el('.fld-hint', { style: { margin: '2px 0 10px' } },
+          'This would break ' + impact.clashes.length + ' dependenc' +
+          (impact.clashes.length === 1 ? 'y' : 'ies') +
+          '. Nothing else is rescheduled — the tasks below stay where they are.'),
+        clashList,
+        chart,
+        legend
+      ];
+
+      const footer = [
+        el('button.btn-ghost', { onclick: () => finish(onCancel) }, 'Keep as it was'),
+        el('button.btn-danger', { onclick: () => finish(onConfirm) }, [App.icon('warn'), ' Move anyway'])
+      ];
+
+      App.modal.open(
+        card('calendar', 'Dependency clash', 'Review what this move breaks before it happens', sections, footer, 'wide'),
+        // dismissing by ✕, backdrop or Escape is an answer too, and it's "no"
+        { onClose: () => finish(onCancel) }
+      );
+    }
+  };
   /* ---- Reusable pipeline editor ----
      The compact/expandable task list shared by Add Show and Admin → Workflow →
      Pipelines. Mutates the array it's given IN PLACE (push/splice/swap), so the

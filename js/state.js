@@ -485,6 +485,62 @@ window.App = window.App || {};
     return (st === 'in_progress' || st === 'review') && App.isBlocked(ep, key);
   };
 
+  /* What a proposed reschedule of one task would break.
+
+     Dependencies are an ordering promise: a task may not start until everything
+     it depends on has finished. Moving a bar can break that from either side —
+     drag it earlier and it can open before its own inputs are done; drag it
+     later, or stretch its tail, and it can run past the start of whatever was
+     waiting on it. Both are collected here, each with the overlap in days, so
+     the producer is shown the cost before it's paid rather than told afterwards.
+
+     Nothing cascades: only the dragged task moves, which is why every other
+     task in the result keeps its current dates. Pure — safe to call while
+     dragging. */
+  App.scheduleImpact = function (ep, key, newStart, newDue) {
+    const pipe = App.pipelineFor(ep);
+    const task = pipe.find(t => t.key === key);
+    const byKey = {}; App.subitems(ep).forEach(s => { byKey[s.key] = s; });
+    const moved = byKey[key];
+    const clashes = [];
+
+    /* `earlyBy` is how badly the ordering is violated — the days between the
+       finish that should gate the start and that start, inclusive. Deliberately
+       not called an overlap: a dependent scheduled long before its input isn't
+       overlapping it at all, it's simply far too early, and calling 77 days of
+       that "overlap" would misdescribe a number the producer decides on. */
+    (task ? task.deps : []).forEach(dk => {
+      const dep = byKey[dk];
+      if (dep && newStart <= dep.due) {
+        clashes.push({
+          dir: 'upstream', task: dep,
+          earlyBy: App.diffDays(dep.due, newStart) + 1,
+          text: 'would start before “' + dep.name + '” finishes'
+        });
+      }
+    });
+    // downstream: something waiting on this task would now start too early
+    pipe.forEach(t => {
+      if (t.key === key || !t.deps.includes(key)) return;
+      const dependent = byKey[t.key];
+      if (dependent && dependent.start <= newDue) {
+        clashes.push({
+          dir: 'downstream', task: dependent,
+          earlyBy: App.diffDays(newDue, dependent.start) + 1,
+          text: 'starts before this would finish'
+        });
+      }
+    });
+
+    return {
+      moved: moved,
+      from: moved ? { start: moved.start, due: moved.due } : null,
+      to: { start: newStart, due: newDue },
+      shiftDays: moved ? App.diffDays(newStart, moved.start) : 0,
+      clashes: clashes
+    };
+  };
+
   /* ---------------------------------------------------------------------------
      Episode-derived metrics
   --------------------------------------------------------------------------- */
