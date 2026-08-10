@@ -352,6 +352,13 @@ button { font-family: inherit; cursor: pointer; }
 }
 .prefs-seg .seg:hover { color: var(--text); }
 .prefs-seg .seg.active { background: var(--accent); color: #fff; }
+/* controls that must wrap as a unit rather than being split across rows */
+.toolbar-group { display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* the same segmented control, standing on its own in the toolbar rather than
+   paired with a label inside the preferences popover */
+.toolbar-seg { background: var(--bg-2); }
+.toolbar-seg .seg { padding: 6px 11px; font-size: 11.5px; }
 .prefs-actions { display: flex; gap: 6px; flex: none; }
 .prefs-btn {
   border: 1px solid var(--border-2); background: var(--bg); color: var(--text-2);

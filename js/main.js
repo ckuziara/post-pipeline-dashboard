@@ -705,8 +705,6 @@ window.App = window.App || {};
       // view; anything without an entry falls through to the empty note.
       const viewRows = {
         timeline: () => [
-          segRow('Sort timeline by', 'timelineSort', 'department',
-            [{ v: 'episode', label: 'Episode' }, { v: 'department', label: 'Department' }, { v: 'show', label: 'Show' }]),
           prefRow('Latch scrolling', 'latchScroll', false, () => App.render()),
           prefRow('Hide weekends', 'hideWeekends', true, () => App.render())
         ],
@@ -806,6 +804,17 @@ window.App = window.App || {};
       const mod = App.isMac ? e.metaKey : e.ctrlKey;
       if (!mod || e.altKey) return;
       const key = e.key.toLowerCase();
+
+      /* Cmd+/Cmd− — zoom the timeline, the same step as the toolbar buttons.
+         Only on the Timeline with no dialog open; anywhere else these stay the
+         browser's page zoom, which is what someone pressing them expects.
+         '=' and '-' are the unshifted keys; '+' and '_' arrive when Shift is
+         held, and the numpad sends 'Add'/'Subtract'. */
+      if (App.state.view === 'timeline' && !modalOpen() && !inTextField(e.target)) {
+        const zin = key === '=' || key === '+' || e.code === 'NumpadAdd';
+        const zout = key === '-' || key === '_' || e.code === 'NumpadSubtract';
+        if (zin || zout) { e.preventDefault(); App.gantt.zoomBy(zin ? 1.25 : 0.8); return; }
+      }
 
       // Cmd+F — jump to the episode search. Skipped while a dialog covers it,
       // where the browser's own find is the more useful thing to leave alone.
