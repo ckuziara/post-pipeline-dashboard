@@ -2182,11 +2182,37 @@ select.fld { cursor: pointer; }
   background: repeating-linear-gradient(45deg, rgba(255,91,110,.9) 0, rgba(255,91,110,.9) 2px, rgba(255,91,110,.35) 2px, rgba(255,91,110,.35) 5px);
   box-shadow: 0 0 0 1px rgba(255,91,110,.55);
 }
+/* The delivery date, drawn down every track so the bars can be read against it.
+   Solid where the promise stands, dashed where it would move to. */
+.si-ms {
+  position: absolute; top: -3px; bottom: -3px; width: 0; z-index: 5;
+  border-left: 2px solid #e2445c;
+  /* the bars underneath are department-coloured, so the line needs its own edge
+     to stay a line rather than reading as part of whatever it crosses */
+  box-shadow: -1px 0 0 rgba(0,0,0,.55), 1px 0 0 rgba(0,0,0,.55);
+}
+.si-ms.next { border-left: 2px dashed #ffce8e; }
+
+/* The offer to move the promise with the work */
+.si-del {
+  border: 1px solid rgba(226,68,92,.45); background: rgba(226,68,92,.08);
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 14px;
+}
+.si-del-head { display: flex; align-items: flex-start; gap: 9px; }
+.si-del-opt {
+  display: flex; align-items: flex-start; gap: 9px; margin-top: 10px;
+  padding-top: 10px; border-top: 1px dashed var(--border-2);
+  font-size: 12.5px; cursor: pointer;
+}
+.si-del-opt input { margin-top: 2px; flex: none; accent-color: var(--accent); }
+.si-del-note { display: block; font-size: 10.5px; color: var(--text-3); margin-top: 2px; font-weight: 400; }
+
 .si-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; }
 .si-key { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--text-3); }
 .si-swatch { width: 16px; height: 10px; border-radius: 3px; flex: none; }
 .si-swatch.si-old { background: transparent; border: 1px dashed var(--text-3); }
 .si-swatch.si-new { background: var(--accent); }
+.si-swatch.si-swatch-ms { width: 3px; height: 12px; border-radius: 1px; background: #e2445c; }
 .si-swatch.si-clash {
   height: 5px;
   background: repeating-linear-gradient(45deg, rgba(255,91,110,.9) 0, rgba(255,91,110,.9) 2px, rgba(255,91,110,.35) 2px, rgba(255,91,110,.35) 5px);

@@ -65,7 +65,7 @@ window.App = window.App || {};
     if (status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
   };
 
-  App.applyTaskEdit = function (epId, key, { name, status, start, due, assignee }) {
+  App.applyTaskEdit = function (epId, key, { name, status, start, due, assignee }, opts) {
     const g = findTask(epId, key); if (!g) return;
     const role = App.state.role;
     // Each field has its own right; anything the role lacks is left untouched
@@ -81,6 +81,24 @@ window.App = window.App || {};
     if (canTouch && status === 'approved' && g.su.status !== 'approved' && !App.canApprove(role)) {
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
+    /* Typing the dates is the same act as dragging them, so it meets the same
+       edge: nothing may reach the live date, and reaching the delivery date is
+       asked about rather than assumed. The rest of the edit waits for the
+       answer — a half-applied save would be worse than a re-asked one. */
+    const reSched = canSched && (start !== g.su.start || due !== g.su.due);
+    const impact = reSched ? App.scheduleImpact(g.ep, key, start, due) : null;
+    if (impact && impact.deny) { App.toast(impact.deny.text + ' — nothing saved', true); return; }
+    if (impact && impact.delivery && !(opts && opts.confirmed) && App.impactDialog) {
+      App.impactDialog.open(g.ep, key, impact, {
+        onConfirm: (shiftDelivery) => {
+          if (shiftDelivery) App.setEpisodeMilestone(epId, impact.delivery.ms.key, impact.delivery.suggest);
+          App.applyTaskEdit(epId, key, { name, status, start, due, assignee }, { confirmed: true });
+        },
+        onCancel: () => App.render()
+      });
+      return;
+    }
+
     const wasApproved = g.su.status === 'approved';
     App.mutate(d => {
       const e = d.episodes.find(x => x.id === epId);
@@ -146,9 +164,15 @@ window.App = window.App || {};
     }
 
     const impact = App.scheduleImpact(g.ep, key, newStart, newDue);
-    if (impact.clashes.length && !(opts && opts.confirmed) && App.impactDialog) {
+    if (impact.deny) {
+      App.toast(impact.deny.text + ' — nothing moved', true);
+      App.render();                            // snap the dropped bar back
+      return;
+    }
+    if ((impact.clashes.length || impact.delivery) && !(opts && opts.confirmed) && App.impactDialog) {
       App.impactDialog.open(g.ep, key, impact, {
-        onConfirm: () => App.moveTask(epId, key, newStart, newDue, { confirmed: true }),
+        onConfirm: (shiftDelivery) => App.moveTask(epId, key, newStart, newDue,
+          { confirmed: true, shiftDelivery: shiftDelivery }),
         // the dragged bar is still sitting where it was dropped; a re-render
         // rebuilds it from the unchanged data, snapping it back
         onCancel: () => App.render()
@@ -156,20 +180,32 @@ window.App = window.App || {};
       return;
     }
 
+    // the delivery date moves in the SAME mutation, so one undo puts both back
+    const shiftDelivery = !!(opts && opts.shiftDelivery && impact.delivery);
     App.mutate(d => {
       const e = d.episodes.find(x => x.id === epId);
       e.dates = e.dates || {};
       e.dates[key] = { start: newStart, due: newDue };
+      if (shiftDelivery) {
+        e.milestones = e.milestones || {};
+        e.milestones[impact.delivery.ms.key] = impact.delivery.suggest;
+      }
       App.refreshReadiness(e);
-    }, 'the reschedule');
+    }, shiftDelivery ? 'the reschedule and delivery date' : 'the reschedule');
     if (newStart !== g.su.start || newDue !== g.su.due) {
       App.track.audit('task.reschedule', {
         episode: g.ep.code, task: g.su.name,
         from: g.su.start + '→' + g.su.due, to: newStart + '→' + newDue,
-        brokeDependency: impact.clashes.length > 0
+        brokeDependency: impact.clashes.length > 0,
+        deliveryDate: shiftDelivery ? impact.delivery.ms.date + '→' + impact.delivery.suggest : null
       });
     }
-    if (impact.clashes.length) {
+    if (shiftDelivery) {
+      App.toast('“' + g.su.name + '” moved — delivery date now ' + App.fmtDate(impact.delivery.suggest), true);
+    } else if (impact.delivery) {
+      App.toast('“' + g.su.name + '” moved — the delivery date (' +
+        App.fmtDate(impact.delivery.ms.date) + ') stands', true);
+    } else if (impact.clashes.length) {
       App.toast('“' + g.su.name + '” moved — ' + impact.clashes.length +
         ' dependency clash' + (impact.clashes.length === 1 ? '' : 'es') + ' accepted', true);
     } else {

@@ -532,12 +532,55 @@ window.App = window.App || {};
       }
     });
 
+    /* The two committed dates put a hard edge round the work.
+
+       Nothing may run to or past the live date: the episode is out by then, so
+       there is no work left to do — that move is refused outright, not argued
+       about. Running to or past the DELIVERY date is a real thing producers
+       sometimes have to do, but it can't happen quietly: the delivery date is a
+       promise, so the honest response is to move the promise, and that's what
+       the mover is offered.
+
+       A shifted delivery date still has to land before the live date. When it
+       can't, there's no room left to deliver and the move is refused for that
+       reason instead — which is the same refusal, arrived at one step later. */
+    const ms = App.epMilestones(ep);
+    const liveMs = ms.find(m => m.key === App.LIVE_KEY) || null;
+    const delMs = ms.find(m => m.key !== App.LIVE_KEY) || null;
+    let deny = null, delivery = null;
+    if (moved) {
+      if (liveMs && newDue >= liveMs.date) {
+        deny = {
+          ms: liveMs,
+          text: '“' + moved.name + '” would run to ' + App.fmtDate(newDue) +
+                ', on or past the live date (' + App.fmtDate(liveMs.date) + ')'
+        };
+      } else if (delMs && newDue >= delMs.date) {
+        const suggest = App.shiftIso(newDue, delMs.afterQc);
+        if (liveMs && suggest >= liveMs.date) {
+          deny = {
+            ms: delMs,
+            text: 'There would be no room left to deliver — the work would finish ' +
+                  App.fmtDate(newDue) + ', and the episode goes live ' + App.fmtDate(liveMs.date)
+          };
+        } else {
+          delivery = {
+            ms: delMs, suggest: suggest,
+            // 0 = lands exactly on the delivery date
+            pastBy: App.diffDays(newDue, delMs.date)
+          };
+        }
+      }
+    }
+
     return {
       moved: moved,
       from: moved ? { start: moved.start, due: moved.due } : null,
       to: { start: newStart, due: newDue },
       shiftDays: moved ? App.diffDays(newStart, moved.start) : 0,
-      clashes: clashes
+      clashes: clashes,
+      deny: deny,
+      delivery: delivery
     };
   };
 

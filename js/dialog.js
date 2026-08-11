@@ -641,6 +641,12 @@ window.App = window.App || {};
      Nothing here cascades: only the dragged task moves, so every other bar is
      at its current dates and the overlap band is the literal collision.
 
+     It asks about the delivery date on the same terms. Work landing on or past
+     it is allowed, but the promise shouldn't be broken silently, so the date is
+     drawn down the chart and the move comes with the offer to shift it. The
+     live date is not negotiable here — a move that reaches it never gets this
+     far (see `scheduleImpact`).
+
      Extension point: `sections` below is where the department-capacity and
      budget consequences of the move will slot in, alongside the dependency
      list — same shape, one more block. */
@@ -667,6 +673,14 @@ window.App = window.App || {};
         if (c.task.start < winStart) winStart = c.task.start;
         if (c.task.due > winEnd) winEnd = c.task.due;
       });
+      // the date being crossed has to be in shot, or the picture doesn't show
+      // the thing we're asking about
+      const del = impact.delivery;
+      if (del) {
+        if (del.ms.date < winStart) winStart = del.ms.date;
+        const far = del.suggest > winEnd ? del.suggest : winEnd;
+        if (far > winEnd) winEnd = far;
+      }
       winStart = App.shiftIso(winStart, -1);
       winEnd = App.shiftIso(winEnd, 1);
       const winDays = App.diffDays(winEnd, winStart) + 1;
@@ -682,6 +696,17 @@ window.App = window.App || {};
           const sb = b.isMoved ? impact.to.start : b.task.start;
           return sa < sb ? -1 : sa > sb ? 1 : 0;
         });
+
+      /* The delivery date drawn down every track, where it is and where it would
+         go, so the move is read against the promise rather than beside it. */
+      const msLines = () => !del ? [] : [
+        el('.si-ms.now', { style: { left: left(del.ms.date) + '%' },
+          title: del.ms.name + ' — ' + App.fmtDate(del.ms.date) }),
+        del.suggest !== del.ms.date
+          ? el('.si-ms.next', { style: { left: left(del.suggest) + '%' },
+              title: 'Delivery date if shifted — ' + App.fmtDate(del.suggest) })
+          : null
+      ];
 
       const chart = el('.si-chart', null, [
         el('.si-axis', null, [
@@ -725,7 +750,7 @@ window.App = window.App || {};
               el('span.si-name', null, r.task.name),
               (r.isMoved ? el('span.si-tag', null, 'moving') : null)
             ]),
-            el('.si-track', null, bars)
+            el('.si-track', null, bars.concat(msLines()))
           ]);
         }))
       ]);
@@ -733,7 +758,8 @@ window.App = window.App || {};
       const legend = el('.si-legend', null, [
         el('span.si-key', null, [el('span.si-swatch.si-old'), 'Now']),
         el('span.si-key', null, [el('span.si-swatch.si-new'), 'After the change']),
-        el('span.si-key', null, [el('span.si-swatch.si-clash'), 'Overlap'])
+        impact.clashes.length ? el('span.si-key', null, [el('span.si-swatch.si-clash'), 'Overlap']) : null,
+        del ? el('span.si-key', null, [el('span.si-swatch.si-swatch-ms'), 'Delivery date']) : null
       ]);
 
       const clashList = el('.si-list', null, impact.clashes.map(c => el('.si-item', null, [
@@ -750,6 +776,36 @@ window.App = window.App || {};
           c.earlyBy + 'd early')
       ])));
 
+      /* The offer. Shifting the promise is the honest default when the work has
+         genuinely moved past it, so the box starts ticked — but leaving it clear
+         is a real answer too: the date stands and the episode shows as slipping,
+         which is exactly what a producer chasing a fixed delivery wants to see. */
+      let shiftBox = null, deliveryBlock = null;
+      if (del) {
+        shiftBox = el('input', { type: 'checkbox', checked: true });
+        deliveryBlock = el('.si-del', null, [
+          el('.si-del-head', null, [
+            App.icon('warn', { cls: 'si-item-ic' }),
+            el('.si-item-main', null, [
+              el('.si-item-title', null, el('span', null, del.pastBy === 0
+                ? 'The work would finish on the delivery date'
+                : 'The work would finish ' + del.pastBy + ' day' + (del.pastBy === 1 ? '' : 's') + ' past the delivery date')),
+              el('.si-item-sub', null, del.ms.name + ' is ' + App.fmtDate(del.ms.date) +
+                ' · “' + moved.name + '” would finish ' + App.fmtDate(impact.to.due))
+            ])
+          ]),
+          el('label.si-del-opt', null, [
+            shiftBox,
+            el('span', null, [
+              'Move the delivery date to ',
+              el('strong', null, App.fmtDate(del.suggest)),
+              el('span.si-del-note', null, del.ms.afterQc + ' days after the work finishes. The live date (' +
+                App.fmtDate(App.epMilestone(ep, App.LIVE_KEY).date) + ') does not move.')
+            ])
+          ])
+        ]);
+      }
+
       const sections = [
         el('.ctx-box.slim', null, [
           el('span.ctx-chip', null, '# ' + ep.code),
@@ -764,22 +820,27 @@ window.App = window.App || {};
             ? (later ? 'later by ' : 'earlier by ') + Math.abs(impact.shiftDays) + 'd'
             : 'same start, new length')
         ]),
-        el('.fld-hint', { style: { margin: '2px 0 10px' } },
+        impact.clashes.length ? el('.fld-hint', { style: { margin: '2px 0 10px' } },
           'This would break ' + impact.clashes.length + ' dependenc' +
           (impact.clashes.length === 1 ? 'y' : 'ies') +
-          '. Nothing else is rescheduled — the tasks below stay where they are.'),
+          '. Nothing else is rescheduled — the tasks below stay where they are.') : null,
         clashList,
+        deliveryBlock,
         chart,
         legend
       ];
 
       const footer = [
         el('button.btn-ghost', { onclick: () => finish(onCancel) }, 'Keep as it was'),
-        el('button.btn-danger', { onclick: () => finish(onConfirm) }, [App.icon('warn'), ' Move anyway'])
+        el('button.btn-danger', { onclick: () => finish(() => onConfirm(shiftBox && shiftBox.checked)) },
+          [App.icon('warn'), ' Move anyway'])
       ];
 
+      const title = del
+        ? (impact.clashes.length ? 'Past the delivery date, and a clash' : 'Past the delivery date')
+        : 'Dependency clash';
       App.modal.open(
-        card('calendar', 'Dependency clash', 'Review what this move breaks before it happens', sections, footer, 'wide'),
+        card('calendar', title, 'Review what this move breaks before it happens', sections, footer, 'wide'),
         // dismissing by ✕, backdrop or Escape is an answer too, and it's "no"
         { onClose: () => finish(onCancel) }
       );
