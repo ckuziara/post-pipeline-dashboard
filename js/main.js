@@ -65,7 +65,7 @@ window.App = window.App || {};
     if (status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
   };
 
-  App.applyTaskEdit = function (epId, key, { name, status, start, due, assignee }) {
+  App.applyTaskEdit = function (epId, key, { name, status, start, due, assignee }, opts) {
     const g = findTask(epId, key); if (!g) return;
     const role = App.state.role;
     // Each field has its own right; anything the role lacks is left untouched
@@ -81,6 +81,24 @@ window.App = window.App || {};
     if (canTouch && status === 'approved' && g.su.status !== 'approved' && !App.canApprove(role)) {
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
+    /* Typing the dates is the same act as dragging them, so it meets the same
+       edge: nothing may reach the live date, and reaching the delivery date is
+       asked about rather than assumed. The rest of the edit waits for the
+       answer — a half-applied save would be worse than a re-asked one. */
+    const reSched = canSched && (start !== g.su.start || due !== g.su.due);
+    const impact = reSched ? App.scheduleImpact(g.ep, key, start, due) : null;
+    if (impact && impact.deny) { App.toast(impact.deny.text + ' — nothing saved', true); return; }
+    if (impact && impact.delivery && !(opts && opts.confirmed) && App.impactDialog) {
+      App.impactDialog.open(g.ep, key, impact, {
+        onConfirm: (shiftDelivery) => {
+          if (shiftDelivery) App.setEpisodeMilestone(epId, impact.delivery.ms.key, impact.delivery.suggest);
+          App.applyTaskEdit(epId, key, { name, status, start, due, assignee }, { confirmed: true });
+        },
+        onCancel: () => App.render()
+      });
+      return;
+    }
+
     const wasApproved = g.su.status === 'approved';
     App.mutate(d => {
       const e = d.episodes.find(x => x.id === epId);
@@ -124,11 +142,16 @@ window.App = window.App || {};
       .catch(e => App.toast('Approved, but publishing the files failed: ' + e.message, true));
   };
 
-  // Reschedule a task by dragging its bar on the Timeline. minDays is a hard
-  // floor (rejected outright — the drag itself already clamps to it live, so
-  // this only fires on a genuine bug or a very fast gesture); dependency
-  // ordering is a soft rule — the move still applies, but the user is warned.
-  App.moveTask = function (epId, key, newStart, newDue) {
+  /* Reschedule a task by dragging its bar on the Timeline.
+
+     minDays is a hard floor, rejected outright — the drag clamps to it live, so
+     this only fires on a genuine bug or a very fast gesture.
+
+     Breaking a dependency is allowed, but not silently: a move that lands on
+     top of one is held and put to the producer as a decision, with the old and
+     new schedule drawn over each other. Confirming re-enters with
+     opts.confirmed so the same call applies for real. */
+  App.moveTask = function (epId, key, newStart, newDue, opts) {
     const g = guardSchedule(epId, key); if (!g) return;
     const pipe = App.pipelineFor(g.ep);
     const task = pipe.find(t => t.key === key);
@@ -140,34 +163,171 @@ window.App = window.App || {};
       return;
     }
 
-    const byKey = {}; App.subitems(g.ep).forEach(s => { byKey[s.key] = s; });
-    const warnings = [];
-    (task ? task.deps : []).forEach(dk => {
-      const dep = byKey[dk];
-      if (dep && newStart <= dep.due) warnings.push('now starts before its dependency “' + dep.name + '” finishes');
-    });
-    pipe.forEach(t => {
-      if (t.key !== key && t.deps.includes(key)) {
-        const dependent = byKey[t.key];
-        if (dependent && dependent.start <= newDue) warnings.push('“' + dependent.name + '” now starts before it finishes');
-      }
-    });
+    const impact = App.scheduleImpact(g.ep, key, newStart, newDue);
+    if (impact.deny) {
+      App.toast(impact.deny.text + ' — nothing moved', true);
+      App.render();                            // snap the dropped bar back
+      return;
+    }
+    if ((impact.clashes.length || impact.delivery) && !(opts && opts.confirmed) && App.impactDialog) {
+      App.impactDialog.open(g.ep, key, impact, {
+        onConfirm: (shiftDelivery) => App.moveTask(epId, key, newStart, newDue,
+          { confirmed: true, shiftDelivery: shiftDelivery }),
+        // the dragged bar is still sitting where it was dropped; a re-render
+        // rebuilds it from the unchanged data, snapping it back
+        onCancel: () => App.render()
+      });
+      return;
+    }
 
+    // the delivery date moves in the SAME mutation, so one undo puts both back
+    const shiftDelivery = !!(opts && opts.shiftDelivery && impact.delivery);
     App.mutate(d => {
       const e = d.episodes.find(x => x.id === epId);
       e.dates = e.dates || {};
       e.dates[key] = { start: newStart, due: newDue };
+      if (shiftDelivery) {
+        e.milestones = e.milestones || {};
+        e.milestones[impact.delivery.ms.key] = impact.delivery.suggest;
+      }
       App.refreshReadiness(e);
-    }, 'the reschedule');
+    }, shiftDelivery ? 'the reschedule and delivery date' : 'the reschedule');
     if (newStart !== g.su.start || newDue !== g.su.due) {
       App.track.audit('task.reschedule', {
         episode: g.ep.code, task: g.su.name,
         from: g.su.start + '→' + g.su.due, to: newStart + '→' + newDue,
-        brokeDependency: warnings.length > 0
+        brokeDependency: impact.clashes.length > 0,
+        deliveryDate: shiftDelivery ? impact.delivery.ms.date + '→' + impact.delivery.suggest : null
       });
     }
-    if (warnings.length) App.toast('“' + g.su.name + '”: ' + warnings.join('; '), true);
-    else App.toast('“' + g.su.name + '” → ' + App.fmtRange(newStart, newDue));
+    if (shiftDelivery) {
+      App.toast('“' + g.su.name + '” moved — delivery date now ' + App.fmtDate(impact.delivery.suggest), true);
+    } else if (impact.delivery) {
+      App.toast('“' + g.su.name + '” moved — the delivery date (' +
+        App.fmtDate(impact.delivery.ms.date) + ') stands', true);
+    } else if (impact.clashes.length) {
+      App.toast('“' + g.su.name + '” moved — ' + impact.clashes.length +
+        ' dependency clash' + (impact.clashes.length === 1 ? '' : 'es') + ' accepted', true);
+    } else {
+      App.toast('“' + g.su.name + '” → ' + App.fmtRange(newStart, newDue));
+    }
+  };
+
+  /* Move a milestone, or hand the delivery date back to the live date.
+
+     `iso` null clears a hand-picked delivery date, returning it to `lead` days
+     in front of the live date. The live date has nothing to fall back to — it
+     IS the commitment — so it can only be changed, never cleared. Neither ever
+     drifts with the work: a slip shows up as a warning instead of being quietly
+     absorbed by the date someone outside the studio was promised. */
+  App.setEpisodeMilestone = function (epId, key, iso) {
+    if (!App.canEditSchedule(App.state.role)) {
+      App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
+    }
+    if (!App.isMilestoneKey(key)) return;
+    const ep = App.state.data.episodes.find(x => x.id === epId); if (!ep) return;
+    const def = App.milestoneDef(key);
+    if (!iso && key === App.LIVE_KEY) { App.toast('A live date can be changed, but not cleared', true); return; }
+    if (iso && !/^\d{4}-\d{2}-\d{2}$/.test(iso)) { App.toast('Enter a valid date', true); return; }
+
+    const was = App.epMilestone(ep, key);
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.milestones = e.milestones || {};
+      if (iso) e.milestones[key] = iso; else delete e.milestones[key];
+      if (!Object.keys(e.milestones).length) delete e.milestones;
+    }, 'the ' + def.short.toLowerCase() + ' date');
+
+    const now = App.epMilestone(App.state.data.episodes.find(x => x.id === epId), key);
+    App.track.audit('milestone.set', {
+      episode: ep.code, milestone: def.name,
+      from: was ? was.date : null, to: now ? now.date : null, fixed: !!iso
+    });
+    if (!iso) App.toast(def.name + ' back to ' + def.lead + ' days before the live date — ' + App.fmtDate(now.date));
+    else if (now.slipDays > 0) {
+      App.toast(def.name + ' set to ' + App.fmtDate(iso) + ' — the work runs ' +
+        now.slipDays + ' day' + (now.slipDays === 1 ? '' : 's') + ' past it', true);
+    } else App.toast(def.name + ' set to ' + App.fmtDate(iso));
+  };
+
+  /* Bulk reschedule — swap episodes between each other's schedule slots.
+
+     The slots stay where they are; the episodes move between them. An episode
+     keeps its own internal shape (task durations, anything hand-dragged) and
+     simply slides by the gap between the slot it held and the slot it now
+     holds, so a show can be re-prioritised without re-planning it.
+
+     Approved work never moves. It already happened, and back-dating history to
+     fit a new plan is how a schedule stops being believable — so an approved
+     task stays exactly where it is and the rest of its episode moves around
+     it. Delivered episodes aren't in the running at all: their slots aren't up
+     for grabs. Milestones derive from task dates, so they follow on their own.
+
+     `orderedIds` is the full set of schedulable episode ids in their new order. */
+  App.reorderEpisodes = function (showId, orderedIds) {
+    if (!App.canEditSchedule(App.state.role)) {
+      App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
+    }
+    const current = App.rearrangeableEpisodes(showId);
+    const currentIds = current.map(ep => ep.id);
+    // the incoming order must be a permutation of what we offered, or the slot
+    // mapping below would silently drop or duplicate an episode's dates
+    if (orderedIds.length !== currentIds.length || orderedIds.some(id => !currentIds.includes(id))) {
+      App.toast('That order doesn’t match the show’s episodes — nothing changed', true); return;
+    }
+    const slotStarts = current.map(ep => App.epStart(ep));
+    /* Delivery and live dates belong to the SLOT, not to the episode — the
+       whole point of a re-arrange is that the episode moved into the early slot
+       goes out on the early slot's date. So they travel with the position. */
+    const slotMs = current.map(ep => (ep.milestones ? JSON.parse(JSON.stringify(ep.milestones)) : null));
+
+    const moves = [];
+    orderedIds.forEach((id, newIdx) => {
+      const oldIdx = currentIds.indexOf(id);
+      if (oldIdx === newIdx) return;
+      const delta = App.diffDays(slotStarts[newIdx], slotStarts[oldIdx]);
+      moves.push({ id, delta, newIdx, ep: current[oldIdx] });
+    });
+    if (!moves.length) { App.toast('Already in that order'); return; }
+
+    let shifted = 0, locked = 0;
+    App.mutate(d => {
+      moves.forEach(m => {
+        const e = d.episodes.find(x => x.id === m.id); if (!e) return;
+        const subs = App.subitems(e);          // snapshot before writing back into e.dates
+        e.dates = e.dates || {};
+        if (m.delta) subs.forEach(su => {
+          if (su.status === 'approved') { locked++; return; }   // stays put, by design
+          e.dates[su.key] = { start: App.shiftIso(su.start, m.delta), due: App.shiftIso(su.due, m.delta) };
+          shifted++;
+        });
+        if (slotMs[m.newIdx]) e.milestones = slotMs[m.newIdx]; else delete e.milestones;
+        App.refreshReadiness(e);
+      });
+    }, 'the re-arrange');
+
+    App.track.audit('show.reorder', {
+      show: App.show(showId).name,
+      order: orderedIds.map(id => (current.find(e => e.id === id) || {}).code).join(' → '),
+      episodesMoved: moves.length, tasksShifted: shifted, tasksLocked: locked
+    });
+    App.toast(moves.length + ' episode' + (moves.length === 1 ? '' : 's') + ' re-arranged' +
+      (locked ? ' · ' + locked + ' approved task' + (locked === 1 ? '' : 's') + ' left in place' : ''));
+  };
+
+  /* Episodes a re-arrange may touch: this show's, still active, not delivered.
+     Ordered by where they currently sit, since that ordering IS the slot list
+     the dialog maps positions onto. Two episodes can legitimately share a start
+     date, so the code breaks the tie — an arbitrary order would otherwise shift
+     under us between the dialog opening and the reorder being applied. */
+  App.rearrangeableEpisodes = function (showId) {
+    return App.activeEpisodes()
+      .filter(ep => ep.showId === showId && !App.isDelivered(ep))
+      .sort((a, b) => {
+        const sa = App.epStart(a), sb = App.epStart(b);
+        if (sa !== sb) return sa < sb ? -1 : 1;
+        return a.code < b.code ? -1 : a.code > b.code ? 1 : 0;
+      });
   };
 
   // toggle a role's assign-owners privilege (Admin panel)
@@ -400,7 +560,13 @@ window.App = window.App || {};
   // scale: squeeze/extend factor from the Add Show dialog (1 = recommended pace;
   // durations never drop below each task's minDays). Episode i starts at
   // startIso + i*cadence; every task gets concrete scheduled dates in ep.dates.
-  App.createShow = function ({ name, code, type, epNames, pipeline, startIso, cadence, scale }) {
+  /* `epStarts` optionally gives each episode its own kick-off date, which is how
+     a per-episode live date is honoured: the producer names the day an episode
+     goes live, and it starts however many days earlier its pipeline needs.
+     Without it, episodes fall on an even `cadence` from startIso as before.
+     `epLives` carries the live dates themselves, stamped onto each episode so
+     they stand as commitments from the moment the show exists. */
+  App.createShow = function ({ name, code, type, epNames, pipeline, startIso, cadence, scale, epStarts, epLives }) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
     type = type || 'animation';
     pipeline = pipeline || App.defaultPipelineFor(type);
@@ -413,14 +579,17 @@ window.App = window.App || {};
       const byDept = {};
       d.people.forEach(p => { const dep = App.roleDept(p.role); if (dep) (byDept[dep] = byDept[dep] || []).push(p.id); });
       epNames.forEach((title, i) => {
-        const sch = App.schedulePipeline(pipeline, App.shiftIso(startIso, i * cadence), scale);
+        const epStart = (epStarts && epStarts[i]) || App.shiftIso(startIso, i * cadence);
+        const sch = App.schedulePipeline(pipeline, epStart, scale);
         const assignees = {};
         pipeline.forEach(t => { const pool = byDept[t.dept] || []; if (pool.length) assignees[t.key] = pool[i % pool.length]; });
-        d.episodes.push({
+        const ep = {
           id: App.uid(), showId, code: code + '-' + (i + 1), title, index: d.episodes.length,
           shiftDays: 0, dates: sch.dates,
           statuses: App.deriveStatusesFromDates(pipeline, sch.dates, assignees), assignees
-        });
+        };
+        if (epLives && epLives[i]) ep.milestones = { [App.LIVE_KEY]: epLives[i] };
+        d.episodes.push(ep);
       });
     });
     App.track.audit('show.create', { show: name, code, type, episodes: epNames.length, tasks: pipeline.length });
@@ -775,7 +944,6 @@ window.App = window.App || {};
     });
     document.addEventListener('click', () => {
       App.board.closePop && App.board.closePop();
-      App.gantt.closeDeliveryPop && App.gantt.closeDeliveryPop();
       App.prefsMenu.close();
     });
     /* ---- keyboard shortcuts ----
@@ -796,8 +964,7 @@ window.App = window.App || {};
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
         App.board.closePop && App.board.closePop();
-        App.gantt.closeDeliveryPop && App.gantt.closeDeliveryPop();
-        App.prefsMenu.close();
+          App.prefsMenu.close();
         return;
       }
 

@@ -683,6 +683,9 @@ button.ghost:hover { background: var(--hover); color: var(--text); }
 .g-row.sub .bar { height: 12px; font-size: 9px; border-radius: 4px; }
 .bar .bar-out { position: absolute; left: calc(100% + 8px); color: var(--text-2); font-weight: 600; font-size: 10px; }
 .bar.delivered { opacity: .55; }
+/* Quarters and wider: the bar is a shape, not a label. No padding to reserve
+   for text that isn't there, and a floor so a short task stays visible. */
+.bar.bare { padding: 0; min-width: 2px; }
 /* End-of-episode milestones (Delivery Date, Live Date). Each claims its own
    day column so it reads as a dated event on the calendar — red D for the
    delivery, blue LD for going live — rather than a marker floating beside the
@@ -700,17 +703,24 @@ button.ghost:hover { background: var(--hover); color: var(--text); }
 .ms-day.ms-live_date { background: #2f6fed; }
 .ms-day.clickable { cursor: pointer; }
 .ms-day.clickable:hover { filter: brightness(1.15); outline: 1.5px solid rgba(255,255,255,.5); outline-offset: -1.5px; }
+/* held at a date of its own rather than derived — always true of a live date,
+   true of a delivery date only when someone has pinned it */
+.ms-day.fixed { box-shadow: 0 0 0 1.5px rgba(255,255,255,.75), 0 2px 8px rgba(0,0,0,.35); }
+/* …and the work has since run past it */
+.ms-day.late { box-shadow: 0 0 0 1.5px #ffce8e, 0 0 10px rgba(253,171,61,.55); }
 
-/* delivery-assets panel — what has to be in hand on the Delivery Date */
-.dlv-pop {
-  position: fixed; z-index: 200; width: 268px; background: var(--surface-2);
-  border: 1px solid var(--border-2); border-radius: 10px; box-shadow: var(--shadow);
-  padding: 10px; display: flex; flex-direction: column; gap: 2px;
-  animation: popIn .1s ease;
+/* milestone panel — whether the date is held or following, and for the
+   delivery date what has to be in hand on the day */
+.ms-status {
+  display: flex; align-items: center; gap: 7px; margin: 12px 0 4px;
+  font-size: 11.5px; font-weight: 600; color: var(--text-2);
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 8px 11px;
 }
-.dlv-head { padding: 0 2px 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
-.dlv-title { font-size: 12px; font-weight: 700; }
-.dlv-sub { font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
+.ms-status.ok { color: #6ee0aa; border-color: rgba(0,200,117,.32); background: rgba(0,200,117,.07); }
+.ms-status.bad { color: #ffce8e; border-color: rgba(253,171,61,.35); background: rgba(253,171,61,.09); }
+.ms-auto { font-size: 10.5px; color: var(--text-3); margin-top: 8px; line-height: 1.5; }
+.ms-auto strong { color: var(--text-2); }
+.dlv-list { display: flex; flex-direction: column; gap: 2px; }
 .dlv-row { display: flex; align-items: center; gap: 10px; padding: 6px 2px; }
 .dlv-what { min-width: 0; flex: 1; }
 .dlv-dept { display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px; }
@@ -1898,6 +1908,13 @@ select.fld { cursor: pointer; }
 .ep-name-row { display: flex; align-items: center; gap: 10px; }
 .ep-name-num { font-size: 11px; font-weight: 700; color: var(--text-3); width: 28px; flex: 0 0 auto; }
 .ep-name-row .fld { margin: 0; }
+.ep-name-row .ep-name-fld { flex: 1; min-width: 0; }
+/* Per-episode live date. Filled in from the plan, so it reads as a suggestion
+   until it's changed — `.moved` marks the ones now driving their own timing. */
+.ep-live-cell { flex: none; display: flex; align-items: center; gap: 6px; }
+.ep-live-lbl { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); }
+.ep-live-fld { width: 148px; padding: 6px 9px; font-size: 12px; color: var(--text-2); }
+.ep-live-fld.moved { color: var(--text-1); border-color: var(--accent); font-weight: 600; }
 
 .btn-primary { background: var(--accent); color: #fff; border: 0; padding: 10px 16px; border-radius: 9px; font-size: 13px; font-weight: 700; }
 .btn-primary:hover { background: #6b7bff; }
@@ -2049,10 +2066,6 @@ select.fld { cursor: pointer; }
   border-radius: 12px; padding: 2px 8px;
 }
 /* mandatory end-of-episode milestones — listed, but nothing to interact with */
-.pipe-row.milestone { cursor: default; border-style: dashed; opacity: .85; }
-.pipe-row.milestone:hover { background: none; border-color: var(--border); }
-.pipe-row.milestone .pipe-deps-sum { font-style: italic; }
-.pipe-ms-pin { display: block; line-height: 18px; text-align: center; font-size: 9px; color: var(--text-3); }
 .pipe-row.compact .pipe-move { flex: none; flex-direction: row; gap: 3px; }
 .pipe-row.compact .pipe-move.hov { opacity: 0; transition: opacity .12s; }
 .pipe-row.compact:hover .pipe-move.hov { opacity: 1; }
@@ -2089,6 +2102,155 @@ select.fld { cursor: pointer; }
 .pipe-lead .pipe-insert:hover { background: var(--accent); border-color: transparent; color: #fff; }
 .pipe-lead .pipe-insert:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
 .pipe-move { display: flex; flex-direction: column; gap: 2px; }
+/* ---- Dependency clash: impact list + before/after picture ---- */
+.si-headline {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  margin: 12px 0 4px; font-size: 13px;
+}
+.si-arrow { color: var(--text-3); }
+.si-shift {
+  font-size: 10.5px; font-weight: 700; color: #ffce8e;
+  background: rgba(253,171,61,.14); border: 1px solid rgba(253,171,61,.3);
+  border-radius: 12px; padding: 2px 8px;
+}
+.si-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.si-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 11px;
+  background: rgba(255,91,110,.06); border: 1px solid rgba(255,91,110,.28); border-radius: 9px;
+}
+.si-item-ic { color: var(--danger); flex: none; font-size: 12px; }
+.si-item-main { flex: 1; min-width: 0; }
+.si-item-title { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.si-dir {
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--text-3); background: var(--surface-3); border-radius: 8px; padding: 1px 6px;
+}
+.si-item-sub { font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
+.si-overlap {
+  flex: none; font-size: 10.5px; font-weight: 700; color: #ffb3bd;
+  background: rgba(255,91,110,.16); border-radius: 12px; padding: 2px 8px;
+}
+
+/* the picture: one row per involved task, bars positioned by date across a
+   shared window. Only the moved task draws two bars (was / would be). */
+.si-chart {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px;
+}
+.si-axis {
+  display: flex; justify-content: space-between;
+  font-size: 10px; color: var(--text-3); margin-bottom: 8px; padding-left: 122px;
+}
+.si-rows { display: flex; flex-direction: column; gap: 7px; }
+.si-row { display: flex; align-items: center; gap: 10px; }
+.si-label { flex: none; width: 112px; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.si-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.si-name {
+  font-size: 10.5px; color: var(--text-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.si-row-moved .si-name { color: var(--text); font-weight: 700; }
+.si-tag {
+  flex: none; font-size: 8.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--accent); background: rgba(91,108,255,.14); border-radius: 8px; padding: 1px 5px;
+}
+.si-track {
+  position: relative; flex: 1; height: 22px;
+  background: repeating-linear-gradient(to right, transparent 0, transparent 13px, rgba(255,255,255,.045) 13px, rgba(255,255,255,.045) 14px);
+  border-radius: 4px;
+}
+.si-bar {
+  position: absolute; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; white-space: nowrap; overflow: hidden; min-width: 3px;
+}
+/* Where it is now: a dashed, unfilled frame the full height of the track. The
+   proposal is drawn shorter and centred INSIDE it, so the two stay legible when
+   one contains the other — which is every stretch, where the start doesn't move
+   and only the tail grows. */
+.si-bar.si-old {
+  top: 0; bottom: 0; background: transparent;
+  border: 1px dashed var(--text-3); opacity: .8; z-index: 1;
+}
+.si-bar.si-new {
+  top: 50%; transform: translateY(-50%); height: 12px;
+  z-index: 3; box-shadow: 0 1px 5px rgba(0,0,0,.4);
+}
+.si-bar.si-fixed { top: 50%; transform: translateY(-50%); height: 12px; z-index: 2; opacity: .92; }
+/* The days the two would run at once. A strip under the bars rather than a
+   block over them — it has to mark the collision without hiding whose bar it is.
+   Scoped to the track: the legend reuses this class as a static swatch. */
+.si-track .si-clash {
+  position: absolute; bottom: 0; height: 5px; z-index: 4; border-radius: 2px; min-width: 2px;
+  background: repeating-linear-gradient(45deg, rgba(255,91,110,.9) 0, rgba(255,91,110,.9) 2px, rgba(255,91,110,.35) 2px, rgba(255,91,110,.35) 5px);
+  box-shadow: 0 0 0 1px rgba(255,91,110,.55);
+}
+/* The delivery date, drawn down every track so the bars can be read against it.
+   Solid where the promise stands, dashed where it would move to. */
+.si-ms {
+  position: absolute; top: -3px; bottom: -3px; width: 0; z-index: 5;
+  border-left: 2px solid #e2445c;
+  /* the bars underneath are department-coloured, so the line needs its own edge
+     to stay a line rather than reading as part of whatever it crosses */
+  box-shadow: -1px 0 0 rgba(0,0,0,.55), 1px 0 0 rgba(0,0,0,.55);
+}
+.si-ms.next { border-left: 2px dashed #ffce8e; }
+
+/* The offer to move the promise with the work */
+.si-del {
+  border: 1px solid rgba(226,68,92,.45); background: rgba(226,68,92,.08);
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 14px;
+}
+.si-del-head { display: flex; align-items: flex-start; gap: 9px; }
+.si-del-opt {
+  display: flex; align-items: flex-start; gap: 9px; margin-top: 10px;
+  padding-top: 10px; border-top: 1px dashed var(--border-2);
+  font-size: 12.5px; cursor: pointer;
+}
+.si-del-opt input { margin-top: 2px; flex: none; accent-color: var(--accent); }
+.si-del-note { display: block; font-size: 10.5px; color: var(--text-3); margin-top: 2px; font-weight: 400; }
+
+.si-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; }
+.si-key { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--text-3); }
+.si-swatch { width: 16px; height: 10px; border-radius: 3px; flex: none; }
+.si-swatch.si-old { background: transparent; border: 1px dashed var(--text-3); }
+.si-swatch.si-new { background: var(--accent); }
+.si-swatch.si-swatch-ms { width: 3px; height: 12px; border-radius: 1px; background: #e2445c; }
+.si-swatch.si-clash {
+  height: 5px;
+  background: repeating-linear-gradient(45deg, rgba(255,91,110,.9) 0, rgba(255,91,110,.9) 2px, rgba(255,91,110,.35) 2px, rgba(255,91,110,.35) 5px);
+  box-shadow: 0 0 0 1px rgba(255,91,110,.55);
+}
+
+/* ---- Re-Arrange: the episode reorder list ---- */
+.ra-list { display: flex; flex-direction: column; gap: 6px; max-height: 380px; overflow-y: auto; padding-right: 2px; }
+.ra-empty {
+  padding: 22px 14px; text-align: center; font-size: 12.5px; color: var(--text-3);
+  background: var(--bg-2); border: 1px dashed var(--border-2); border-radius: 9px;
+}
+.ra-row {
+  display: flex; align-items: center; gap: 11px; padding: 8px 11px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px;
+}
+.ra-row.moved { border-color: rgba(91,108,255,.45); background: rgba(91,108,255,.06); }
+.ra-pos {
+  flex: none; width: 20px; text-align: right;
+  font-size: 11px; font-weight: 700; color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+.ra-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ra-title { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; }
+.ra-title > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ra-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 10.5px; color: var(--text-3); }
+.ra-delta { color: #9fb0ff; font-weight: 700; }
+.ra-same { color: var(--text-3); }
+.ra-lock {
+  display: inline-flex; align-items: center; gap: 3px; font-weight: 700;
+  color: #ffce8e; background: rgba(253,171,61,.14);
+  border: 1px solid rgba(253,171,61,.3); border-radius: 12px; padding: 1px 7px;
+}
+.ra-lock .ico { font-size: 9px; }
+.ra-move { flex: none; display: flex; flex-direction: column; gap: 2px; }
+
 .btn-move {
   background: var(--surface-3); border: 1px solid var(--border); color: var(--text-2);
   border-radius: 4px; font-size: 7px; line-height: 1; padding: 3px 4px; cursor: pointer;

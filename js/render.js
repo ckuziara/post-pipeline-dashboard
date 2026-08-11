@@ -61,10 +61,6 @@ window.App = window.App || {};
     // makes restoration correct for EVERY render trigger (filters, edits,
     // expand clicks) without depending on async scroll events having fired.
     if (App.gantt && App.gantt.syncScrollState) App.gantt.syncScrollState();
-    // the delivery-assets panel lives on <body>, so it would outlive the mark
-    // it was anchored to once the timeline is rebuilt
-    if (App.gantt && App.gantt.closeDeliveryPop) App.gantt.closeDeliveryPop();
-
     view.innerHTML = '';
 
     if (App.state.view === 'admin') { view.appendChild(App.admin.render()); }
@@ -189,6 +185,16 @@ window.App = window.App || {};
         el('button.ghost', { onclick: () => App.gantt.zoomBy(1.25), title: 'Zoom in (' + App.shortcutLabel('+') + ', or Ctrl+scroll on the chart)' }, '+'),
         el('button.ghost', { onclick: () => App.gantt.centerToday(), title: 'Scroll to today' }, '⊙ Today')
       ]));
+
+      /* Re-Arrange opens straight into its own dialog, which picks the show
+         itself — the current filter just preselects it when there is one. Only
+         offered to whoever may move dates at all. */
+      if (App.canEditSchedule(App.state.role)) {
+        bar.appendChild(el('button.ghost', {
+          onclick: () => App.rearrange.open(f.show !== 'all' ? f.show : null),
+          title: 'Re-Arrange: reorder a show’s remaining episodes'
+        }, '⇅ Re-Arrange'));
+      }
     }
 
     /* Legend — Timeline only, where bars are colour-coded by show and there's

@@ -30,6 +30,34 @@ window.App = window.App || {};
   }
   function clampZoom(z) { return Math.max(1.4, Math.min(60, z)); }
 
+  /* Zoomed out to quarters, the chart is read as shape rather than detail.
+
+     A day is under 6px there, so a task's label has no room to be a word and a
+     milestone's single day is a sliver with a letter jammed in it. Both stop
+     being information and become noise laid over the thing you zoomed out to
+     see, so the coarse view drops them and lets the bars carry it. Nothing is
+     lost: the tooltips still say everything, and zooming back in brings the
+     detail with it. Tied to the header tier so there's one definition of
+     "zoomed out" rather than a second threshold to keep in step. */
+  function isCoarse(dw) {
+    const t = tierFor(dw).primary;
+    return t === 'quarters' || t === 'years';
+  }
+
+  /* Telling a click apart from a drag or a hold.
+
+     A press that moves past DRAG_SLOP, or is held for HOLD_MS without moving,
+     was a gesture — not a click — so it must not also trigger the click action
+     (opening Edit Task). The browser fires `click` after `mouseup` regardless,
+     and it used to be swallowed by accident: applying a move re-rendered the
+     chart, destroying the element the click was headed for. A move that now
+     stops to ask for confirmation leaves the DOM in place, so the click landed
+     and Edit Task opened over the question. The suppression below is explicit
+     rather than relying on that. HOLD_MS is generous — a deliberate click can
+     be slow, and refusing to open Edit Task for one would feel broken. */
+  const DRAG_SLOP = 3;      // px of travel that makes it a drag
+  const HOLD_MS = 400;      // press longer than this reads as a grab, not a click
+
   /* How far one Ctrl+scroll event should zoom.
 
      A fixed step per event is what made this twitchy: a mouse wheel sends one
@@ -256,11 +284,16 @@ window.App = window.App || {};
       const self = this;
 
       const handleClick = (e) => {
+        // a drag or a hold just ended on this element — that gesture already had
+        // its effect, and it isn't "open Edit Task"
+        if (self._clickSuppressed) { e.stopPropagation(); return; }
+
         const mark = e.target.closest('.ms-day.clickable');
         if (mark) {
-          e.stopPropagation();                     // the document handler would close it again
-          const ep = App.state.data.episodes.find(x => x.id === mark.dataset.episodeId);
-          if (ep) self.openDeliveryPop(mark, ep);
+          e.stopPropagation();
+          if (mark.dataset.episodeId && mark.dataset.msKey && App.milestoneDialog) {
+            App.milestoneDialog.open(mark.dataset.episodeId, mark.dataset.msKey);
+          }
           return;
         }
 
@@ -405,7 +438,7 @@ window.App = window.App || {};
         const task = pipe.find(t => t.key === suKey);
         const byKey = {}; App.subitems(ep).forEach(s => { byKey[s.key] = s; });
         this._drag = {
-          bar, epId, suKey, zone, startClientX: e.clientX,
+          bar, epId, suKey, zone, startClientX: e.clientX, startedAt: Date.now(), moved: false,
           origStart: su.start, origDue: su.due, curStart: su.start, curDue: su.due,
           minDays: (task && task.minDays) || 1,
           deps: (task ? task.deps : []).map(k => byKey[k]).filter(Boolean),
@@ -463,6 +496,8 @@ window.App = window.App || {};
         return;
       }
 
+      if (Math.abs(e.clientX - d.startClientX) > DRAG_SLOP) d.moved = true;
+
       let newStart = d.origStart, newDue = d.origDue;
       if (d.zone === 'move') {
         newStart = App.addVisibleDays(d.origStart, colDelta, hw);
@@ -511,12 +546,17 @@ window.App = window.App || {};
         return;
       }
 
+      // was this a gesture rather than a click? (see DRAG_SLOP / HOLD_MS)
+      const held = d.startedAt ? (Date.now() - d.startedAt) >= HOLD_MS : false;
+      const wasGesture = !!d.moved || held;
+      if (wasGesture) this.suppressNextClick();
+
       if (d.kind === 'note') {
         d.el.classList.remove('dragging');
         if (d.moved && (d.curStart !== d.origStart || d.curDue !== d.origDue)) {
           App.updateNote(d.showId, d.id, { start: d.curStart, due: d.curDue });
-        } else {
-          this.openNoteEditor(d.el);   // a click (no move) opens the editor
+        } else if (!wasGesture) {
+          this.openNoteEditor(d.el);   // a plain click opens the editor
         }
         return;
       }
@@ -526,6 +566,15 @@ window.App = window.App || {};
         App.track.feature('timeline.dragReschedule');
         App.moveTask(d.epId, d.suKey, d.curStart, d.curDue);
       }
+    },
+
+    /* The `click` that follows a drag's mouseup has to be dropped, or releasing
+       a bar also opens Edit Task. Cleared on the next tick: click is dispatched
+       synchronously after mouseup, so it always arrives before this runs, and
+       the flag can never linger to eat a real click later. */
+    suppressNextClick() {
+      this._clickSuppressed = true;
+      setTimeout(() => { this._clickSuppressed = false; }, 0);
     },
 
     // Called by App.render() before the view is torn down. The isConnected
@@ -649,81 +698,29 @@ window.App = window.App || {};
       return row;
     },
 
-    // Delivery Date and Live Date, pinned past the end of the episode's work.
-    // Each occupies its single day on the grid — a red D and a blue LD — so
-    // they read as dated events on the calendar rather than annotations
-    // floating beside the bar. Not tasks: nothing to drag or click into.
+    /* Delivery Date and Live Date, past the end of the episode's work. Each
+       occupies its single day on the grid — a red D and a blue LD — so they read
+       as dated events on the calendar rather than annotations floating beside
+       the bar. They are not tasks and are never draggable: a date owed to
+       someone outside the studio shouldn't be a thing you can nudge with the
+       mouse. Clicking one opens its panel, which is where the date is changed. */
     milestoneMarks(track, ep, xOf, dw) {
+      if (isCoarse(dw)) return;                  // a one-day mark says nothing at this scale
       App.epMilestones(ep).forEach(m => {
-        // the delivery opens its asset panel; the live date has nothing behind it
-        const clickable = m.key === 'delivery_date' && App.deliveryAssets(ep).length > 0;
-        const mark = el('.ms-day.ms-' + m.key + (clickable ? '.clickable' : ''), {
+        const late = m.slipDays > 0;
+        const mark = el('.ms-day.clickable.ms-' + m.key + (m.fixed ? '.fixed' : '') + (late ? '.late' : ''), {
           style: { left: xOf(m.date) + 'px', width: xOf.width(m.date, m.date) + 'px' },
-          title: m.name + ' — ' + App.fmtDate(m.date) + ' · ' + m.buffer + ' days after ' +
-                 (m.after === 'qc' ? 'QC' : 'delivery') + (clickable ? '\nClick for delivery assets' : '')
+          title: m.name + ' — ' + App.fmtDate(m.date) +
+                 (m.key === App.LIVE_KEY ? '' : m.fixed
+                   ? '\nHeld at its own date'
+                   : '\n' + m.lead + ' days before the live date') +
+                 (late ? '\nThe work now finishes ' + m.slipDays + ' day' + (m.slipDays === 1 ? '' : 's') + ' later' : '') +
+                 '\nClick to edit'
         }, el('span.ms-tag', null, m.key === 'live_date' ? 'LD' : 'D'));
-        if (clickable) mark.dataset.episodeId = ep.id;
+        mark.dataset.episodeId = ep.id;
+        mark.dataset.msKey = m.key;
         track.appendChild(mark);
       });
-    },
-
-    // ---- delivery assets panel ----
-    // What has to be in hand on the Delivery Date, and where each piece has
-    // got to. Read-only: the dates and statuses live with the tasks that own
-    // them, this is just the delivery-day view of them.
-    closeDeliveryPop() { if (this._dlvPop) { this._dlvPop.remove(); this._dlvPop = null; } },
-    openDeliveryPop(mark, ep) {
-      this.closeDeliveryPop();
-      const assets = App.deliveryAssets(ep);
-      if (!assets.length) return;
-      const ms = App.epMilestone(ep, 'delivery_date');
-      const r = mark.getBoundingClientRect();
-
-      const pop = el('.dlv-pop', { onclick: (e) => e.stopPropagation() }, [
-        el('.dlv-head', null, [
-          el('.dlv-title', null, 'Delivery Assets'),
-          el('.dlv-sub', null, ep.code + ' · ' + App.fmtDate(ms.date))
-        ])
-      ]);
-      assets.forEach(a => {
-        // the chip reports the upload, not the task: files on the volume are
-        // what the delivery is made of. The task's own status is the subtitle.
-        const parts = [];
-        if (a.files) parts.push(a.files + ' file' + (a.files === 1 ? '' : 's'));
-        if (a.links) parts.push(a.links + ' link' + (a.links === 1 ? '' : 's'));
-        pop.appendChild(el('.dlv-row', null, [
-          el('.dlv-what', null, [
-            el('.dlv-dept', null, [
-              el('span.dot', { style: { background: a.dept.color } }),
-              a.dept.label
-            ]),
-            el('.dlv-asset', null, a.label),
-            el('.dlv-meta', null, a.count ? parts.join(' · ') : 'nothing uploaded yet')
-          ]),
-          a.count
-            ? el('span.ws-chip.ok', { title: a.su.name + ' — ' + App.status(a.su.status).label },
-                '✓ ' + a.count + ' asset' + (a.count === 1 ? '' : 's'))
-            : el('span.ws-chip.pending', { title: a.su.name + ' — ' + App.status(a.su.status).label }, '⏳ Pending')
-        ]));
-      });
-
-      const outstanding = assets.filter(a => !a.count);
-      pop.appendChild(el('.pop-note', null, outstanding.length
-        ? 'Not ready to deliver — no assets uploaded for ' + outstanding.map(a => a.label).join(' or ')
-        : '✓ All delivery assets uploaded'));
-
-      document.body.appendChild(pop);
-      // same flip/clamp as the board's status picker: position after paint so
-      // the measured height is real, flip up near the bottom edge
-      requestAnimationFrame(() => {
-        const ph = pop.offsetHeight, pw = pop.offsetWidth;
-        const flipUp = r.bottom + ph + 8 > window.innerHeight;
-        let left = r.left + r.width / 2 - pw / 2;
-        if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
-        pop.style.top = Math.max(8, flipUp ? r.top - ph - 6 : r.bottom + 6) + 'px';
-        pop.style.left = Math.max(8, left) + 'px';
-      });
-      this._dlvPop = pop;
     },
 
     // draw one task bar into a sub-row track (shared by every sort)
@@ -740,12 +737,13 @@ window.App = window.App || {};
       const done = su.status === 'approved';
       const ring = su.status === 'ready' || su.status === 'in_progress' || su.status === 'review';
       const bg = fill || dep.color;
-      const sbar = el('.bar' + (done ? '.delivered' : '') + (ring ? '.st-ring' : ''), {
+      const bare = isCoarse(dw);                 // shape only — see isCoarse
+      const sbar = el('.bar' + (done ? '.delivered' : '') + (ring ? '.st-ring' : '') + (bare ? '.bare' : ''), {
         title: (labelText ? labelText + ' — ' : '') + su.name + ' — ' + st.label + ' · ' + App.fmtRange(su.start, su.due),
         style: Object.assign(
           { left: sl + 'px', width: sw + 'px', background: bg, color: pickInk(bg) },
           ring ? { outlineColor: st.color } : null)
-      }, [
+      }, bare ? null : [
         el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, labelText || su.name),
         (App.isRiskBlocked(ep, su.key) ? App.icon('blocked', { cls: 'blk', title: 'In progress while a dependency is unapproved' }) : null)
       ]);

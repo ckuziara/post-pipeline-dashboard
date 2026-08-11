@@ -485,6 +485,105 @@ window.App = window.App || {};
     return (st === 'in_progress' || st === 'review') && App.isBlocked(ep, key);
   };
 
+  /* What a proposed reschedule of one task would break.
+
+     Dependencies are an ordering promise: a task may not start until everything
+     it depends on has finished. Moving a bar can break that from either side —
+     drag it earlier and it can open before its own inputs are done; drag it
+     later, or stretch its tail, and it can run past the start of whatever was
+     waiting on it. Both are collected here, each with the overlap in days, so
+     the producer is shown the cost before it's paid rather than told afterwards.
+
+     Nothing cascades: only the dragged task moves, which is why every other
+     task in the result keeps its current dates. Pure — safe to call while
+     dragging. */
+  App.scheduleImpact = function (ep, key, newStart, newDue) {
+    const pipe = App.pipelineFor(ep);
+    const task = pipe.find(t => t.key === key);
+    const byKey = {}; App.subitems(ep).forEach(s => { byKey[s.key] = s; });
+    const moved = byKey[key];
+    const clashes = [];
+
+    /* `earlyBy` is how badly the ordering is violated — the days between the
+       finish that should gate the start and that start, inclusive. Deliberately
+       not called an overlap: a dependent scheduled long before its input isn't
+       overlapping it at all, it's simply far too early, and calling 77 days of
+       that "overlap" would misdescribe a number the producer decides on. */
+    (task ? task.deps : []).forEach(dk => {
+      const dep = byKey[dk];
+      if (dep && newStart <= dep.due) {
+        clashes.push({
+          dir: 'upstream', task: dep,
+          earlyBy: App.diffDays(dep.due, newStart) + 1,
+          text: 'would start before “' + dep.name + '” finishes'
+        });
+      }
+    });
+    // downstream: something waiting on this task would now start too early
+    pipe.forEach(t => {
+      if (t.key === key || !t.deps.includes(key)) return;
+      const dependent = byKey[t.key];
+      if (dependent && dependent.start <= newDue) {
+        clashes.push({
+          dir: 'downstream', task: dependent,
+          earlyBy: App.diffDays(newDue, dependent.start) + 1,
+          text: 'starts before this would finish'
+        });
+      }
+    });
+
+    /* The two committed dates put a hard edge round the work.
+
+       Nothing may run to or past the live date: the episode is out by then, so
+       there is no work left to do — that move is refused outright, not argued
+       about. Running to or past the DELIVERY date is a real thing producers
+       sometimes have to do, but it can't happen quietly: the delivery date is a
+       promise, so the honest response is to move the promise, and that's what
+       the mover is offered.
+
+       A shifted delivery date still has to land before the live date. When it
+       can't, there's no room left to deliver and the move is refused for that
+       reason instead — which is the same refusal, arrived at one step later. */
+    const ms = App.epMilestones(ep);
+    const liveMs = ms.find(m => m.key === App.LIVE_KEY) || null;
+    const delMs = ms.find(m => m.key !== App.LIVE_KEY) || null;
+    let deny = null, delivery = null;
+    if (moved) {
+      if (liveMs && newDue >= liveMs.date) {
+        deny = {
+          ms: liveMs,
+          text: '“' + moved.name + '” would run to ' + App.fmtDate(newDue) +
+                ', on or past the live date (' + App.fmtDate(liveMs.date) + ')'
+        };
+      } else if (delMs && newDue >= delMs.date) {
+        const suggest = App.shiftIso(newDue, delMs.afterQc);
+        if (liveMs && suggest >= liveMs.date) {
+          deny = {
+            ms: delMs,
+            text: 'There would be no room left to deliver — the work would finish ' +
+                  App.fmtDate(newDue) + ', and the episode goes live ' + App.fmtDate(liveMs.date)
+          };
+        } else {
+          delivery = {
+            ms: delMs, suggest: suggest,
+            // 0 = lands exactly on the delivery date
+            pastBy: App.diffDays(newDue, delMs.date)
+          };
+        }
+      }
+    }
+
+    return {
+      moved: moved,
+      from: moved ? { start: moved.start, due: moved.due } : null,
+      to: { start: newStart, due: newDue },
+      shiftDays: moved ? App.diffDays(newStart, moved.start) : 0,
+      clashes: clashes,
+      deny: deny,
+      delivery: delivery
+    };
+  };
+
   /* ---------------------------------------------------------------------------
      Episode-derived metrics
   --------------------------------------------------------------------------- */
@@ -510,30 +609,62 @@ window.App = window.App || {};
 
      Delivery Date and Live Date are NOT tasks: nobody works on them, they have
      no duration, department, assignee or status. They are the two dates the
-     episode is committed to downstream, each a fixed buffer past the one
-     before it, so they can't be dragged, removed or edited — they simply move
-     when the work in front of them moves. Every episode has both.
+     episode is committed to downstream. Every episode has both.
 
-     `after` names what a milestone hangs off: 'qc' is the task key it follows,
-     anything else is a preceding milestone. Buffers are calendar days, the
-     same as a pipeline task's `lag`.
+     The Live Date is the anchor and it NEVER moves on its own. It's a date the
+     business has already given out; a live date that quietly slides when the
+     work slips hides exactly the problem worth seeing. Every episode stores its
+     own (see `migrate`), and it changes only when someone changes it.
+
+     The Delivery Date hangs off the live date instead of off the work: `lead`
+     days in front of it — the window the partner needs to get the episode out.
+     It can be pinned to its own date when a partner asks for something else.
+
+     `afterQc` is how long each date needs past the end of the work, so both can
+     report how far the schedule now runs past what was promised. Days are
+     calendar days, the same as a pipeline task's `lag`.
   --------------------------------------------------------------------------- */
   App.MILESTONES = [
-    { key: 'delivery_date', name: 'Delivery Date', short: 'Delivery', after: 'qc',            buffer: 2 },
-    { key: 'live_date',     name: 'Live Date',     short: 'Live',     after: 'delivery_date', buffer: 7 }
+    { key: 'delivery_date', name: 'Delivery Date', short: 'Delivery', lead: 7, afterQc: 2 },
+    { key: 'live_date',     name: 'Live Date',     short: 'Live',     lead: 0, afterQc: 9 }
   ];
+  App.LIVE_KEY = 'live_date';
   App.isMilestoneKey = (key) => App.MILESTONES.some(m => m.key === key);
+  App.milestoneDef = (key) => App.MILESTONES.find(m => m.key === key) || null;
 
-  App.epMilestones = function (ep) {
+  // where the work would first allow a milestone — the earliest honest date,
+  // used to seed a live date and to report slip against a promised one
+  App.msEarliest = function (ep, key) {
     const subs = App.subitems(ep);
-    if (!subs.length) return [];
+    if (!subs.length) return null;
     // a pipeline without a QC step still gets its milestones — they hang off
     // whatever finishes last instead
     const qc = subs.find(s => s.key === 'qc');
-    const at = { qc: qc ? qc.due : subs.reduce((m, s) => s.due > m ? s.due : m, subs[0].due) };
+    const qcDue = qc ? qc.due : subs.reduce((m, s) => s.due > m ? s.due : m, subs[0].due);
+    const def = App.milestoneDef(key);
+    return def ? App.shiftIso(qcDue, def.afterQc) : null;
+  };
+
+  /* Both dates, resolved for one episode.
+
+     `date` is what has been promised. `auto` is the earliest the work allows,
+     so `slipDays` says how far the schedule now runs past the promise — the
+     warning that replaces the old silent drift. `fixed` means this particular
+     date was set by hand rather than derived from the live date. */
+  App.epMilestones = function (ep) {
+    const subs = App.subitems(ep);
+    if (!subs.length) return [];
+    const set = ep.milestones || {};
+    const live = set[App.LIVE_KEY] || App.msEarliest(ep, App.LIVE_KEY);
     return App.MILESTONES.map(m => {
-      at[m.key] = App.shiftIso(at[m.after] || at.qc, m.buffer);
-      return { key: m.key, name: m.name, short: m.short, after: m.after, buffer: m.buffer, date: at[m.key] };
+      const date = m.key === App.LIVE_KEY ? live : (set[m.key] || App.shiftIso(live, -m.lead));
+      const auto = App.msEarliest(ep, m.key);
+      return {
+        key: m.key, name: m.name, short: m.short, lead: m.lead, afterQc: m.afterQc,
+        date: date, auto: auto, fixed: !!set[m.key],
+        // positive = the work now finishes later than the date we committed to
+        slipDays: App.diffDays(auto, date)
+      };
     });
   };
   App.epMilestone = function (ep, key) { return App.epMilestones(ep).find(m => m.key === key) || null; };
@@ -690,6 +821,19 @@ window.App = window.App || {};
       });
       if (Array.isArray(ep.removed)) ep.removed = ep.removed.filter(k => !App.isMilestoneKey(k));
     });
+    /* Live dates used to be derived from the work, so they drifted with it.
+       They're commitments now, so every episode carries its own — stamp the
+       date each one currently shows. Nothing appears to move on upgrade, and
+       nothing moves after. */
+    const prevBoard = App.state.data;
+    App.state.data = data;                    // epMilestones reads the live board
+    try {
+      (data.episodes || []).forEach(ep => {
+        if (ep.milestones && ep.milestones[App.LIVE_KEY]) return;
+        const live = App.msEarliest(ep, App.LIVE_KEY);
+        if (live) (ep.milestones = ep.milestones || {})[App.LIVE_KEY] = live;
+      });
+    } finally { App.state.data = prevBoard; }
     return data;
   };
   App.load = function () {
