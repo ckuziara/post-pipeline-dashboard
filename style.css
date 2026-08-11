@@ -700,7 +700,8 @@ button.ghost:hover { background: var(--hover); color: var(--text); }
 .ms-day.ms-live_date { background: #2f6fed; }
 .ms-day.clickable { cursor: pointer; }
 .ms-day.clickable:hover { filter: brightness(1.15); outline: 1.5px solid rgba(255,255,255,.5); outline-offset: -1.5px; }
-/* committed to, so it no longer drifts with the work — a ring marks it as held */
+/* held at a date of its own rather than derived — always true of a live date,
+   true of a delivery date only when someone has pinned it */
 .ms-day.fixed { box-shadow: 0 0 0 1.5px rgba(255,255,255,.75), 0 2px 8px rgba(0,0,0,.35); }
 /* …and the work has since run past it */
 .ms-day.late { box-shadow: 0 0 0 1.5px #ffce8e, 0 0 10px rgba(253,171,61,.55); }

@@ -536,10 +536,10 @@ window.App = window.App || {};
   };
 
   /* ---- Milestone (Delivery / Live date) ----
-     These aren't tasks, so there's nothing to drag: the date is either following
-     the schedule or fixed, and this is where that's decided. For the delivery
-     date it also lists what has to be in hand on the day, so one click answers
-     both "when is it" and "are we ready". */
+     These aren't tasks, so there's nothing to drag — they're the dates the
+     episode is committed to, and this is the only place they change. For the
+     delivery date it also lists what has to be in hand on the day, so one click
+     answers both "when is it" and "are we ready". */
   App.milestoneDialog = {
     open(epId, key) {
       const ep = App.state.data.episodes.find(x => x.id === epId); if (!ep) return;
@@ -550,21 +550,20 @@ window.App = window.App || {};
       const dateInput = el('input.fld', { type: 'date', value: ms.date });
       if (!canEdit) dateInput.disabled = true;
 
+      const isLive = key === App.LIVE_KEY;
       const autoLine = el('.ms-auto', null, [
-        'Following the schedule puts it on ',
+        'The work first allows it on ',
         el('strong', null, App.fmtDate(ms.auto)),
-        ' — ' + ms.buffer + ' days after ' + (ms.after === 'qc' ? 'QC finishes' : 'the delivery date') + '.'
+        ' — ' + ms.afterQc + ' days after QC finishes.'
       ]);
 
       const slip = ms.slipDays;
-      const status = ms.fixed
-        ? el('.ms-status' + (slip > 0 ? '.bad' : '.ok'), null, [
-            App.icon(slip > 0 ? 'warn' : 'lock'),
-            slip > 0
-              ? ' Fixed date — the work now finishes ' + slip + ' day' + (slip === 1 ? '' : 's') + ' after it'
-              : ' Fixed date — the schedule still makes it'
-          ])
-        : el('.ms-status', null, [App.icon('calendar'), ' Follows the schedule — moves when the work moves']);
+      const status = el('.ms-status' + (slip > 0 ? '.bad' : '.ok'), null, [
+        App.icon(slip > 0 ? 'warn' : 'lock'),
+        slip > 0
+          ? ' Committed date — the work now finishes ' + slip + ' day' + (slip === 1 ? '' : 's') + ' after it'
+          : ' Committed date — the schedule still makes it'
+      ]);
 
       const sections = [
         el('.ctx-box.slim', null, [
@@ -573,9 +572,11 @@ window.App = window.App || {};
           el('span.ctx-dept', null, show.name)
         ]),
         status,
-        field(ms.name, dateInput, canEdit
-          ? 'Setting a date fixes it here — it stops moving when the work does.'
-          : 'Only Producers, Managers and Post Operations can change this.'),
+        field(ms.name, dateInput, !canEdit
+          ? 'Only Producers, Managers and Post Operations can change this.'
+          : isLive
+            ? 'The date the episode goes out. It never moves on its own — moving it moves the delivery date with it.'
+            : 'Defaults to ' + ms.lead + ' days before the live date. Set a date to hold it there instead.'),
         autoLine
       ];
 
@@ -611,10 +612,10 @@ window.App = window.App || {};
 
       const footer = [el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Close')];
       if (canEdit) {
-        if (ms.fixed) {
+        if (ms.fixed && !isLive) {
           footer.push(el('button.btn-ghost', {
             onclick: () => { App.modal.close(); App.setEpisodeMilestone(epId, key, null); }
-          }, 'Follow the schedule'));
+          }, 'Follow the live date'));
         }
         footer.push(el('button.btn-primary', {
           onclick: () => {
@@ -1255,7 +1256,7 @@ window.App = window.App || {};
 
          The squeeze/stretch from the Project End Date is a separate knob: it
          sets how long each episode's work takes, and applies to all of them. */
-      const LIVE_OFFSET = App.MILESTONES.reduce((a, m) => a + m.buffer, 0);
+      const LIVE_OFFSET = App.milestoneDef(App.LIVE_KEY).afterQc;
       function episodePlan() {
         const { start, cadence, epCount } = readPlan();
         const rec = App.scheduleShow(pipe, start, epCount, cadence, 1);
@@ -1412,8 +1413,10 @@ window.App = window.App || {};
             const target = endInput.value || rec.end;
             const scale = target === rec.end ? 1 : App.solveScale(pipe, start, epCount, cadence, target).scale;
             // an episode given its own live date starts wherever it must to
-            // land there; the rest keep the even cadence
-            const epStarts = episodePlan().map(p => p.start);
+            // land there; the rest keep the even cadence. The live date is
+            // stamped on the episode either way — it's the commitment now.
+            const plan = episodePlan();
+            const epStarts = plan.map(p => p.start), epLives = plan.map(p => p.live);
             // keep the optional flags the editor can set — dropping them here
             // silently discarded a task's lag and its version-control toggle
             const pipeline = pipe.map(t => {
@@ -1422,7 +1425,7 @@ window.App = window.App || {};
               if (t.vc) o.vc = true;
               return o;
             });
-            App.createShow({ name, code, type: typeSel.value, epNames, pipeline, startIso: start, cadence, scale, epStarts });
+            App.createShow({ name, code, type: typeSel.value, epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives });
             App.track.flowDone('Create show', true, { episodes: epNames.length });
             editor.closeMenus();
             App.modal.close();

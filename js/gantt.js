@@ -692,15 +692,14 @@ window.App = window.App || {};
        mouse. Clicking one opens its panel, which is where the date is changed. */
     milestoneMarks(track, ep, xOf, dw) {
       App.epMilestones(ep).forEach(m => {
-        const late = m.fixed && m.slipDays > 0;
+        const late = m.slipDays > 0;
         const mark = el('.ms-day.clickable.ms-' + m.key + (m.fixed ? '.fixed' : '') + (late ? '.late' : ''), {
           style: { left: xOf(m.date) + 'px', width: xOf.width(m.date, m.date) + 'px' },
           title: m.name + ' — ' + App.fmtDate(m.date) +
-                 (m.fixed
-                   ? '\nFixed date' + (late
-                       ? ' — the work now finishes ' + m.slipDays + ' day' + (m.slipDays === 1 ? '' : 's') + ' later'
-                       : '')
-                   : '\n' + m.buffer + ' days after ' + (m.after === 'qc' ? 'QC' : 'delivery') + ', follows the schedule') +
+                 (m.key === App.LIVE_KEY ? '' : m.fixed
+                   ? '\nHeld at its own date'
+                   : '\n' + m.lead + ' days before the live date') +
+                 (late ? '\nThe work now finishes ' + m.slipDays + ' day' + (m.slipDays === 1 ? '' : 's') + ' later' : '') +
                  '\nClick to edit'
         }, el('span.ms-tag', null, m.key === 'live_date' ? 'LD' : 'D'));
         mark.dataset.episodeId = ep.id;

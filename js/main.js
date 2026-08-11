@@ -177,20 +177,21 @@ window.App = window.App || {};
     }
   };
 
-  /* Fix a milestone to a date, or hand it back to the schedule.
+  /* Move a milestone, or hand the delivery date back to the live date.
 
-     `iso` null returns it to following the work (buffer days past whatever comes
-     before it). Anything else pins it there for good: milestones are promises to
-     someone outside the studio, so once one is committed to it stops drifting
-     when the work in front of it moves — the slip shows up as a warning instead
-     of being quietly absorbed. */
+     `iso` null clears a hand-picked delivery date, returning it to `lead` days
+     in front of the live date. The live date has nothing to fall back to — it
+     IS the commitment — so it can only be changed, never cleared. Neither ever
+     drifts with the work: a slip shows up as a warning instead of being quietly
+     absorbed by the date someone outside the studio was promised. */
   App.setEpisodeMilestone = function (epId, key, iso) {
     if (!App.canEditSchedule(App.state.role)) {
       App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
     }
     if (!App.isMilestoneKey(key)) return;
     const ep = App.state.data.episodes.find(x => x.id === epId); if (!ep) return;
-    const def = App.MILESTONES.find(m => m.key === key);
+    const def = App.milestoneDef(key);
+    if (!iso && key === App.LIVE_KEY) { App.toast('A live date can be changed, but not cleared', true); return; }
     if (iso && !/^\d{4}-\d{2}-\d{2}$/.test(iso)) { App.toast('Enter a valid date', true); return; }
 
     const was = App.epMilestone(ep, key);
@@ -206,11 +207,11 @@ window.App = window.App || {};
       episode: ep.code, milestone: def.name,
       from: was ? was.date : null, to: now ? now.date : null, fixed: !!iso
     });
-    if (!iso) App.toast(def.name + ' follows the schedule again — ' + App.fmtDate(now.date));
+    if (!iso) App.toast(def.name + ' back to ' + def.lead + ' days before the live date — ' + App.fmtDate(now.date));
     else if (now.slipDays > 0) {
-      App.toast(def.name + ' fixed to ' + App.fmtDate(iso) + ' — the work runs ' +
+      App.toast(def.name + ' set to ' + App.fmtDate(iso) + ' — the work runs ' +
         now.slipDays + ' day' + (now.slipDays === 1 ? '' : 's') + ' past it', true);
-    } else App.toast(def.name + ' fixed to ' + App.fmtDate(iso));
+    } else App.toast(def.name + ' set to ' + App.fmtDate(iso));
   };
 
   /* Bulk reschedule — swap episodes between each other's schedule slots.
@@ -239,12 +240,17 @@ window.App = window.App || {};
       App.toast('That order doesn’t match the show’s episodes — nothing changed', true); return;
     }
     const slotStarts = current.map(ep => App.epStart(ep));
+    /* Delivery and live dates belong to the SLOT, not to the episode — the
+       whole point of a re-arrange is that the episode moved into the early slot
+       goes out on the early slot's date. So they travel with the position. */
+    const slotMs = current.map(ep => (ep.milestones ? JSON.parse(JSON.stringify(ep.milestones)) : null));
 
     const moves = [];
     orderedIds.forEach((id, newIdx) => {
       const oldIdx = currentIds.indexOf(id);
+      if (oldIdx === newIdx) return;
       const delta = App.diffDays(slotStarts[newIdx], slotStarts[oldIdx]);
-      if (delta) moves.push({ id, delta, ep: current[oldIdx] });
+      moves.push({ id, delta, newIdx, ep: current[oldIdx] });
     });
     if (!moves.length) { App.toast('Already in that order'); return; }
 
@@ -254,11 +260,12 @@ window.App = window.App || {};
         const e = d.episodes.find(x => x.id === m.id); if (!e) return;
         const subs = App.subitems(e);          // snapshot before writing back into e.dates
         e.dates = e.dates || {};
-        subs.forEach(su => {
+        if (m.delta) subs.forEach(su => {
           if (su.status === 'approved') { locked++; return; }   // stays put, by design
           e.dates[su.key] = { start: App.shiftIso(su.start, m.delta), due: App.shiftIso(su.due, m.delta) };
           shifted++;
         });
+        if (slotMs[m.newIdx]) e.milestones = slotMs[m.newIdx]; else delete e.milestones;
         App.refreshReadiness(e);
       });
     }, 'the re-arrange');
@@ -520,8 +527,10 @@ window.App = window.App || {};
   /* `epStarts` optionally gives each episode its own kick-off date, which is how
      a per-episode live date is honoured: the producer names the day an episode
      goes live, and it starts however many days earlier its pipeline needs.
-     Without it, episodes fall on an even `cadence` from startIso as before. */
-  App.createShow = function ({ name, code, type, epNames, pipeline, startIso, cadence, scale, epStarts }) {
+     Without it, episodes fall on an even `cadence` from startIso as before.
+     `epLives` carries the live dates themselves, stamped onto each episode so
+     they stand as commitments from the moment the show exists. */
+  App.createShow = function ({ name, code, type, epNames, pipeline, startIso, cadence, scale, epStarts, epLives }) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
     type = type || 'animation';
     pipeline = pipeline || App.defaultPipelineFor(type);
@@ -538,11 +547,13 @@ window.App = window.App || {};
         const sch = App.schedulePipeline(pipeline, epStart, scale);
         const assignees = {};
         pipeline.forEach(t => { const pool = byDept[t.dept] || []; if (pool.length) assignees[t.key] = pool[i % pool.length]; });
-        d.episodes.push({
+        const ep = {
           id: App.uid(), showId, code: code + '-' + (i + 1), title, index: d.episodes.length,
           shiftDays: 0, dates: sch.dates,
           statuses: App.deriveStatusesFromDates(pipeline, sch.dates, assignees), assignees
-        });
+        };
+        if (epLives && epLives[i]) ep.milestones = { [App.LIVE_KEY]: epLives[i] };
+        d.episodes.push(ep);
       });
     });
     App.track.audit('show.create', { show: name, code, type, episodes: epNames.length, tasks: pipeline.length });

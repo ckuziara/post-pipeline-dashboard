@@ -566,49 +566,61 @@ window.App = window.App || {};
 
      Delivery Date and Live Date are NOT tasks: nobody works on them, they have
      no duration, department, assignee or status. They are the two dates the
-     episode is committed to downstream, each a fixed buffer past the one
-     before it, so they can't be dragged, removed or edited — they simply move
-     when the work in front of them moves. Every episode has both.
+     episode is committed to downstream. Every episode has both.
 
-     `after` names what a milestone hangs off: 'qc' is the task key it follows,
-     anything else is a preceding milestone. Buffers are calendar days, the
-     same as a pipeline task's `lag`.
+     The Live Date is the anchor and it NEVER moves on its own. It's a date the
+     business has already given out; a live date that quietly slides when the
+     work slips hides exactly the problem worth seeing. Every episode stores its
+     own (see `migrate`), and it changes only when someone changes it.
+
+     The Delivery Date hangs off the live date instead of off the work: `lead`
+     days in front of it — the window the partner needs to get the episode out.
+     It can be pinned to its own date when a partner asks for something else.
+
+     `afterQc` is how long each date needs past the end of the work, so both can
+     report how far the schedule now runs past what was promised. Days are
+     calendar days, the same as a pipeline task's `lag`.
   --------------------------------------------------------------------------- */
   App.MILESTONES = [
-    { key: 'delivery_date', name: 'Delivery Date', short: 'Delivery', after: 'qc',            buffer: 2 },
-    { key: 'live_date',     name: 'Live Date',     short: 'Live',     after: 'delivery_date', buffer: 7 }
+    { key: 'delivery_date', name: 'Delivery Date', short: 'Delivery', lead: 7, afterQc: 2 },
+    { key: 'live_date',     name: 'Live Date',     short: 'Live',     lead: 0, afterQc: 9 }
   ];
+  App.LIVE_KEY = 'live_date';
   App.isMilestoneKey = (key) => App.MILESTONES.some(m => m.key === key);
+  App.milestoneDef = (key) => App.MILESTONES.find(m => m.key === key) || null;
 
-  /* A milestone is either following the schedule or fixed.
-
-     Following (the default) is the old behaviour: it sits `buffer` days past
-     whatever comes before it and moves whenever that work moves. Fixed means a
-     date has been committed to and stored on the episode — it then stays put no
-     matter what happens upstream, which is the point: a delivery date that
-     quietly slides when the work slips hides exactly the problem worth seeing.
-
-     `auto` is where the work would actually put it, so a fixed milestone can
-     report `slipDays` — how many days late the schedule now runs against the
-     commitment. A later milestone chains off the one before it as ACTUALLY
-     dated, so fixing the delivery date carries the live date with it. */
-  App.epMilestones = function (ep) {
+  // where the work would first allow a milestone — the earliest honest date,
+  // used to seed a live date and to report slip against a promised one
+  App.msEarliest = function (ep, key) {
     const subs = App.subitems(ep);
-    if (!subs.length) return [];
+    if (!subs.length) return null;
     // a pipeline without a QC step still gets its milestones — they hang off
     // whatever finishes last instead
     const qc = subs.find(s => s.key === 'qc');
-    const at = { qc: qc ? qc.due : subs.reduce((m, s) => s.due > m ? s.due : m, subs[0].due) };
-    const fixed = ep.milestones || {};
+    const qcDue = qc ? qc.due : subs.reduce((m, s) => s.due > m ? s.due : m, subs[0].due);
+    const def = App.milestoneDef(key);
+    return def ? App.shiftIso(qcDue, def.afterQc) : null;
+  };
+
+  /* Both dates, resolved for one episode.
+
+     `date` is what has been promised. `auto` is the earliest the work allows,
+     so `slipDays` says how far the schedule now runs past the promise — the
+     warning that replaces the old silent drift. `fixed` means this particular
+     date was set by hand rather than derived from the live date. */
+  App.epMilestones = function (ep) {
+    const subs = App.subitems(ep);
+    if (!subs.length) return [];
+    const set = ep.milestones || {};
+    const live = set[App.LIVE_KEY] || App.msEarliest(ep, App.LIVE_KEY);
     return App.MILESTONES.map(m => {
-      const auto = App.shiftIso(at[m.after] || at.qc, m.buffer);
-      const date = fixed[m.key] || auto;
-      at[m.key] = date;
+      const date = m.key === App.LIVE_KEY ? live : (set[m.key] || App.shiftIso(live, -m.lead));
+      const auto = App.msEarliest(ep, m.key);
       return {
-        key: m.key, name: m.name, short: m.short, after: m.after, buffer: m.buffer,
-        date: date, auto: auto, fixed: !!fixed[m.key],
+        key: m.key, name: m.name, short: m.short, lead: m.lead, afterQc: m.afterQc,
+        date: date, auto: auto, fixed: !!set[m.key],
         // positive = the work now finishes later than the date we committed to
-        slipDays: fixed[m.key] ? App.diffDays(auto, date) : 0
+        slipDays: App.diffDays(auto, date)
       };
     });
   };
@@ -766,6 +778,19 @@ window.App = window.App || {};
       });
       if (Array.isArray(ep.removed)) ep.removed = ep.removed.filter(k => !App.isMilestoneKey(k));
     });
+    /* Live dates used to be derived from the work, so they drifted with it.
+       They're commitments now, so every episode carries its own — stamp the
+       date each one currently shows. Nothing appears to move on upgrade, and
+       nothing moves after. */
+    const prevBoard = App.state.data;
+    App.state.data = data;                    // epMilestones reads the live board
+    try {
+      (data.episodes || []).forEach(ep => {
+        if (ep.milestones && ep.milestones[App.LIVE_KEY]) return;
+        const live = App.msEarliest(ep, App.LIVE_KEY);
+        if (live) (ep.milestones = ep.milestones || {})[App.LIVE_KEY] = live;
+      });
+    } finally { App.state.data = prevBoard; }
     return data;
   };
   App.load = function () {
