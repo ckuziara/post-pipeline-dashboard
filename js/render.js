@@ -33,8 +33,8 @@ window.App = window.App || {};
     App.workspace && App.workspace.syncOpen && App.workspace.syncOpen();   // reflect a teammate's delivery
     if (App.tooltip) App.tooltip.reset();   // a redraw strips hovered nodes without firing mouseleave
 
-    // guard: only admins may sit on the Admin view
-    if (App.state.view === 'admin' && !App.isAdminRole(App.state.role)) App.state.view = 'timeline';
+    // guard: only admins may sit on the Admin or Planning views
+    if ((App.state.view === 'admin' || App.state.view === 'planning') && !App.isAdminRole(App.state.role)) App.state.view = 'timeline';
 
     renderBrandMark();
     renderViewTabs();
@@ -64,6 +64,7 @@ window.App = window.App || {};
     view.innerHTML = '';
 
     if (App.state.view === 'admin') { view.appendChild(App.admin.render()); }
+    else if (App.state.view === 'planning') { view.appendChild(App.planning.render()); }
     else if (App.state.view === 'review') { view.appendChild(reviewQueue(episodes)); }
     else if (App.state.view === 'board') view.appendChild(App.board.render(episodes));
     else if (App.state.view === 'dashboard') view.appendChild(App.dashboard.render(episodes));
@@ -91,6 +92,8 @@ window.App = window.App || {};
     const box = document.getElementById('view-tabs'); box.innerHTML = '';
     const tabs = [['timeline', 'chart', 'Timeline'], ['board', 'grid', 'Board'], ['dashboard', 'compass', 'Dashboard']];
     if (App.state.role === 'director') tabs.push(['review', 'target', 'Reviews']);
+    // budget modelling is oversight work, so it rides the same gate as Admin
+    if (App.isAdminRole(App.state.role)) tabs.push(['planning', 'sparkle', 'Planning']);
     if (App.isAdminRole(App.state.role)) tabs.push(['admin', 'tools', 'Admin']);
     tabs.forEach(([v, ic, lbl]) => {
       box.appendChild(el('button.view-tab' + (App.state.view === v ? '.active' : ''),

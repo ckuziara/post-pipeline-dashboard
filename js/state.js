@@ -784,6 +784,7 @@ window.App = window.App || {};
     role: 'producer',
     filters: { show: 'all', dept: 'all', person: 'all', q: '' },
     admin: { view: 'hub', role: 'producer', q: '', editing: null },  // admin page sub-navigation
+    planning: { view: 'hub', editing: null, variant: 'C', selected: [] },  // planning module sub-navigation
     expanded: {},                     // episodeId -> bool (board)
     ganttExpanded: {},                // episodeId -> bool (timeline subitem drill-down)
     zoom: 16,                         // px per day on the timeline
