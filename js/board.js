@@ -106,6 +106,14 @@ window.App = window.App || {};
           (App.vc && App.vc.boardBadge(ep))
         ]),
         el('.ep-right', null, [
+          // the two dates the episode is committed to downstream — derived, so
+          // there's nothing to click here, they just move with the work
+          el('.ep-meta.dates-meta', {
+            title: App.epMilestones(ep).map(m => m.name + ': ' + App.fmtDate(m.date)).join('\n')
+          }, [
+            el('.m-label', null, 'Delivery · Live'),
+            el('.m-val', null, App.epMilestones(ep).map(m => App.fmtDate(m.date)).join(' · '))
+          ]),
           el('.ep-meta.status-meta', null, [
             el('.m-label', null, 'Status'),
             el('.m-val', { style: { color: s.status.color } }, s.status.label)

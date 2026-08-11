@@ -352,6 +352,13 @@ button { font-family: inherit; cursor: pointer; }
 }
 .prefs-seg .seg:hover { color: var(--text); }
 .prefs-seg .seg.active { background: var(--accent); color: #fff; }
+/* controls that must wrap as a unit rather than being split across rows */
+.toolbar-group { display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* the same segmented control, standing on its own in the toolbar rather than
+   paired with a label inside the preferences popover */
+.toolbar-seg { background: var(--bg-2); }
+.toolbar-seg .seg { padding: 6px 11px; font-size: 11.5px; }
 .prefs-actions { display: flex; gap: 6px; flex: none; }
 .prefs-btn {
   border: 1px solid var(--border-2); background: var(--bg); color: var(--text-2);
@@ -676,6 +683,56 @@ button.ghost:hover { background: var(--hover); color: var(--text); }
 .g-row.sub .bar { height: 12px; font-size: 9px; border-radius: 4px; }
 .bar .bar-out { position: absolute; left: calc(100% + 8px); color: var(--text-2); font-weight: 600; font-size: 10px; }
 .bar.delivered { opacity: .55; }
+/* Quarters and wider: the bar is a shape, not a label. No padding to reserve
+   for text that isn't there, and a floor so a short task stays visible. */
+.bar.bare { padding: 0; min-width: 2px; }
+/* End-of-episode milestones (Delivery Date, Live Date). Each claims its own
+   day column so it reads as a dated event on the calendar — red D for the
+   delivery, blue LD for going live — rather than a marker floating beside the
+   bar. Fixed dates, so there is nothing to drag or open. */
+.ms-day {
+  position: absolute; top: 50%; transform: translateY(-50%); height: 17px;
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+  border-radius: 3px; cursor: default; z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+.ms-day .ms-tag {
+  font-size: 9.5px; font-weight: 800; letter-spacing: .02em; color: #fff;
+  line-height: 1; pointer-events: none;
+}
+.ms-day.ms-delivery_date { background: #e2445c; }
+.ms-day.ms-live_date { background: #2f6fed; }
+.ms-day.clickable { cursor: pointer; }
+.ms-day.clickable:hover { filter: brightness(1.15); outline: 1.5px solid rgba(255,255,255,.5); outline-offset: -1.5px; }
+/* held at a date of its own rather than derived — always true of a live date,
+   true of a delivery date only when someone has pinned it */
+.ms-day.fixed { box-shadow: 0 0 0 1.5px rgba(255,255,255,.75), 0 2px 8px rgba(0,0,0,.35); }
+/* …and the work has since run past it */
+.ms-day.late { box-shadow: 0 0 0 1.5px #ffce8e, 0 0 10px rgba(253,171,61,.55); }
+
+/* milestone panel — whether the date is held or following, and for the
+   delivery date what has to be in hand on the day */
+.ms-status {
+  display: flex; align-items: center; gap: 7px; margin: 12px 0 4px;
+  font-size: 11.5px; font-weight: 600; color: var(--text-2);
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 8px 11px;
+}
+.ms-status.ok { color: #6ee0aa; border-color: rgba(0,200,117,.32); background: rgba(0,200,117,.07); }
+.ms-status.bad { color: #ffce8e; border-color: rgba(253,171,61,.35); background: rgba(253,171,61,.09); }
+.ms-auto { font-size: 10.5px; color: var(--text-3); margin-top: 8px; line-height: 1.5; }
+.ms-auto strong { color: var(--text-2); }
+.dlv-list { display: flex; flex-direction: column; gap: 2px; }
+.dlv-row { display: flex; align-items: center; gap: 10px; padding: 6px 2px; }
+.dlv-what { min-width: 0; flex: 1; }
+.dlv-dept { display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px; }
+.dlv-dept .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.dlv-asset { font-size: 12px; font-weight: 600; margin-top: 2px; }
+.dlv-meta { font-size: 10px; color: var(--text-3); margin-top: 1px; }
+/* Task bars carry no status dot (too little room) — the live states are marked
+   with a hairline ring in the status colour instead, set inline per bar. Drawn
+   as an outline rather than a shadow or border so it neither fights .dragging's
+   box-shadow nor eats into the bar's width. */
+.bar.st-ring { outline: 1.5px solid currentColor; outline-offset: -1.5px; }
+.g-row.sub .bar.st-ring { outline-width: 1px; outline-offset: -1px; }
 /* drag-to-reschedule (Timeline): move from the middle, resize from an edge.
    Small grip tabs fade in at the edges on hover (and stay while dragging) to
    show the bar is adjustable there. */
@@ -841,6 +898,11 @@ body.gantt-dragging { user-select: none; }
 .ep-meta .m-val { font-size: 12px; font-weight: 700; white-space: nowrap; }
 .ep-meta.status-meta { width: 100px; }
 .ep-meta.stage-meta { width: 120px; }
+/* Delivery / Live dates — the first thing to give up its space, since the
+   episode title matters more and the Timeline shows these dates too */
+.ep-meta.dates-meta { width: 118px; }
+.ep-meta.dates-meta .m-val { font-size: 11.5px; color: var(--text-2); }
+@media (max-width: 1100px) { .ep-meta.dates-meta { display: none; } }
 .ep-prog { width: 120px; flex: none; display: flex; flex-direction: column; align-items: center; }
 .prog-track { width: 100%; height: 7px; border-radius: 5px; background: var(--surface-3); overflow: hidden; }
 .prog-fill { height: 100%; border-radius: 5px; background: linear-gradient(90deg, #00c875, #2bd38a); }
@@ -898,28 +960,100 @@ body.gantt-dragging { user-select: none; }
    DASHBOARD
 ================================================================= */
 /* greeting bar above the widget grid */
-.dash-hello { margin: 2px 2px 16px; }
+.dash-hello { margin: 2px 2px 16px; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.dash-tools { display: flex; align-items: center; gap: 8px; flex: none; }
 .dash-hi { font-size: 21px; font-weight: 800; letter-spacing: -.3px; }
 .dash-quote { font-size: 12px; color: #ffd34d; font-style: italic; margin-top: 4px; }
 .dash-quote .qa { color: var(--text-3); font-style: normal; }
 
+/* Columns are packed in JS (App.dashboard → packRows) so every row adds up to a
+   full twelve — hence plain row flow, not dense: placement is already decided
+   and nothing needs back-filling into a hole. Heights are content-driven:
+   `align-items: start` keeps a short card its own height instead of stretching
+   it to match a taller neighbour and leaving dead space inside it. */
 .dash-grid {
-  display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px;
-  grid-auto-rows: minmax(120px, auto); grid-auto-flow: dense;
+  display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px;
+  grid-auto-rows: auto; grid-auto-flow: row; align-items: start;
 }
 .dw { min-width: 0; }
 .dw-head-l { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.dw-grip {
-  cursor: grab; color: var(--text-3); font-size: 12px; line-height: 1;
-  opacity: 0; transition: opacity .15s, color .15s; user-select: none;
-}
-.dw:hover .dw-grip { opacity: .8; }
+.dw-grip { cursor: grab; color: var(--text-3); font-size: 12px; line-height: 1; user-select: none; }
 .dw-grip:hover { color: var(--text); }
 .dw.dw-dragging { opacity: .4; }
 .dw.dw-over .widget { outline: 2px dashed var(--accent); outline-offset: 2px; }
+
+/* ---- layout edit mode (Dashboard → Edit) ----
+   Tiles become movable and resizable; their contents go inert so arranging a
+   widget can never touch what's inside it. Resizing is grabbed from an edge
+   rather than a corner handle: the whole side is the target, and all it shows
+   is a hairline along that edge on hover — no furniture sitting on the tile. */
+.dash-grid.editing .widget { outline: 1px dashed var(--border-2); outline-offset: -1px; }
+.dash-grid.editing .widget-body { pointer-events: none; user-select: none; }
+.dw-editable { position: relative; cursor: grab; }
+.dw-editable.dw-resizing { cursor: default; }
+.dw-edge, .dw-corner { position: absolute; z-index: 4; touch-action: none; }
+.dw-edge::after {
+  content: ''; position: absolute; inset: 0; margin: auto; border-radius: 2px;
+  background: var(--accent); opacity: 0; transition: opacity .12s;
+}
+.dw-edge:hover::after { opacity: .9; }
+.e-t, .e-b { left: 16px; right: 16px; height: 12px; cursor: ns-resize; }
+.e-l, .e-r { top: 16px; bottom: 16px; width: 12px; cursor: ew-resize; }
+.e-t { top: -6px; } .e-b { bottom: -6px; }
+.e-l { left: -6px; } .e-r { right: -6px; }
+.e-t::after, .e-b::after { height: 2px; }
+.e-l::after, .e-r::after { width: 2px; }
+
+/* corners sit over the edge strips and read as a small bracket on hover */
+.dw-corner { width: 20px; height: 20px; z-index: 5; }
+.dw-corner::before, .dw-corner::after {
+  content: ''; position: absolute; background: var(--accent); border-radius: 2px;
+  opacity: 0; transition: opacity .12s;
+}
+.dw-corner::before { width: 13px; height: 2px; }
+.dw-corner::after { width: 2px; height: 13px; }
+.dw-corner:hover::before, .dw-corner:hover::after { opacity: .9; }
+.c-tl { top: -6px; left: -6px; cursor: nwse-resize; }
+.c-tr { top: -6px; right: -6px; cursor: nesw-resize; }
+.c-bl { bottom: -6px; left: -6px; cursor: nesw-resize; }
+.c-br { bottom: -6px; right: -6px; cursor: nwse-resize; }
+.c-tl::before, .c-tr::before { top: 7px; } .c-bl::before, .c-br::before { bottom: 7px; }
+.c-tl::before, .c-bl::before { left: 7px; } .c-tr::before, .c-br::before { right: 7px; }
+.c-tl::after, .c-tr::after { top: 7px; }   .c-bl::after, .c-br::after { bottom: 7px; }
+.c-tl::after, .c-bl::after { left: 7px; }  .c-tr::after, .c-br::after { right: 7px; }
+
+/* mid-drag only the handle under the cursor stays lit */
+.dw-resizing .dw-edge::after,
+.dw-resizing .dw-corner::before, .dw-resizing .dw-corner::after { opacity: 0; }
+.dw-resizing .dw-edge:hover::after,
+.dw-resizing .dw-corner:hover::before, .dw-resizing .dw-corner:hover::after { opacity: .9; }
+.dw-size {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 3; pointer-events: none; opacity: 0; transition: opacity .12s;
+  font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--text-2); background: var(--bg-2);
+  border: 1px solid var(--border-2); border-radius: 6px; padding: 3px 10px;
+}
+.dw-editable:hover .dw-size, .dw-resizing .dw-size { opacity: 1; }
+
+/* size-aware trims: a narrow tile gives up the label gutter and the padding
+   before it gives up rows of data */
+.dw-sm .widget-body { padding: 11px; }
+.dw-sm .bar-row { grid-template-columns: 86px 1fr 28px; gap: 7px; margin-bottom: 7px; }
+.dw-sm .risk-item { padding: 7px 9px; gap: 8px; }
+/* a narrow tile can't afford the full department chip in a list row */
+.dw-md .risk-item .dept-chip { max-width: 86px; overflow: hidden; }
+.dw-sm .big-num { font-size: 40px; letter-spacing: -1.5px; }
+.dw-sm .big-num .of { font-size: 20px; }
+.dw-sm .pr-chip { width: 78px; font-size: 9px; padding: 2px 6px; }
+.dw-sm .pr-head { padding: 8px 10px; gap: 7px; }
+.dw-sm .pr-row { padding: 6px 10px; gap: 7px; }
+/* large tiles put the headline figure and its breakdown side by side */
+.dw-wide { display: flex; align-items: center; gap: 28px; flex: 1; min-width: 0; }
+.dw-wide .dw-split { flex: 1; min-width: 0; }
 .dw-calm { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-3); font-size: 12.5px; min-height: 60px; }
 
-.widget { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; }
+.widget { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; min-height: 116px; }
 .widget-head { padding: 12px 15px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex: none; }
 .widget-title { font-size: 12.5px; font-weight: 700; }
 .widget-sub { font-size: 10.5px; color: var(--text-3); }
@@ -938,11 +1072,45 @@ body.gantt-dragging { user-select: none; }
 .bar-row .bf { height: 100%; border-radius: 5px; }
 .bar-row .bv { font-size: 11px; font-weight: 700; color: var(--text-2); text-align: right; }
 
+/* Priority widget — collapsible urgency buckets. The left edge carries the
+   group's colour so the whole band reads as one unit while scanning down. */
+.pr-list { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 0; }
+.pr-group {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-left: 3px solid var(--text-3);     /* colour set inline per group */
+  border-radius: 8px; overflow: hidden;
+}
+.pr-head {
+  width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px 12px;
+  background: none; border: 0; text-align: left; cursor: pointer; color: var(--text);
+}
+.pr-head:hover { background: var(--hover); }
+.pr-head .chev { color: var(--text-3); font-size: 9px; flex: none; transition: transform .15s; }
+.pr-head .chev.open { transform: rotate(90deg); }
+.pr-label { font-size: 12.5px; font-weight: 700; }
+.pr-sub { font-size: 11px; color: var(--text-3); }
+.pr-count { font-size: 17px; font-weight: 800; margin-left: auto; line-height: 1; }
+.pr-rows { border-top: 1px solid var(--border); }
+.pr-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.pr-row:last-child { border-bottom: 0; }
+.pr-row:hover { background: var(--hover); }
+.pr-code { font-size: 11.5px; font-weight: 700; flex: none; }
+.pr-task { font-size: 11.5px; color: var(--text-2); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pr-date { font-size: 11px; color: var(--text-3); flex: none; margin-left: auto; white-space: nowrap; }
+.pr-chip {
+  font-size: 10px; font-weight: 700; border-radius: 6px; padding: 3px 9px;
+  flex: none; width: 104px; text-align: center; white-space: nowrap;
+}
+.pr-more { font-size: 10.5px; color: var(--text-3); padding: 7px 12px; }
+
 .risk-list { display: flex; flex-direction: column; gap: 8px; }
 .risk-item { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); }
 .risk-item .ri-main { flex: 1; min-width: 0; }
 .risk-item .ri-title { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.risk-item .ri-sub { font-size: 10.5px; color: var(--text-3); }
+.risk-item .ri-sub { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .risk-item .ri-tag { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
 .ri-tag.over { background: rgba(255,91,110,.16); color: #ffa7b0; }
 .ri-tag.blk { background: rgba(253,171,61,.16); color: #ffce8e; }
@@ -1740,6 +1908,13 @@ select.fld { cursor: pointer; }
 .ep-name-row { display: flex; align-items: center; gap: 10px; }
 .ep-name-num { font-size: 11px; font-weight: 700; color: var(--text-3); width: 28px; flex: 0 0 auto; }
 .ep-name-row .fld { margin: 0; }
+.ep-name-row .ep-name-fld { flex: 1; min-width: 0; }
+/* Per-episode live date. Filled in from the plan, so it reads as a suggestion
+   until it's changed — `.moved` marks the ones now driving their own timing. */
+.ep-live-cell { flex: none; display: flex; align-items: center; gap: 6px; }
+.ep-live-lbl { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); }
+.ep-live-fld { width: 148px; padding: 6px 9px; font-size: 12px; color: var(--text-2); }
+.ep-live-fld.moved { color: var(--text-1); border-color: var(--accent); font-weight: 600; }
 
 .btn-primary { background: var(--accent); color: #fff; border: 0; padding: 10px 16px; border-radius: 9px; font-size: 13px; font-weight: 700; }
 .btn-primary:hover { background: #6b7bff; }
@@ -1850,7 +2025,10 @@ select.fld { cursor: pointer; }
 
 .pipe-row {
   display: grid; align-items: center; gap: 7px;
-  grid-template-columns: 20px 18px minmax(88px, 1.1fr) 90px 60px 60px minmax(108px, 1.3fr) auto;
+  /* lead · move · name · dept · days · min · wait · deps.
+     Days/Min/Wait are all the same fixed width — they hold the same kind of
+     small number — and Deps takes the slack instead. */
+  grid-template-columns: 20px 18px minmax(88px, 1.1fr) 90px 60px 60px 60px minmax(108px, 1.3fr);
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 7px 9px;
 }
 .pipe-actions { display: flex; align-items: center; gap: 4px; flex: none; }
@@ -1887,6 +2065,7 @@ select.fld { cursor: pointer; }
   background: rgba(253,171,61,.14); border: 1px solid rgba(253,171,61,.3);
   border-radius: 12px; padding: 2px 8px;
 }
+/* mandatory end-of-episode milestones — listed, but nothing to interact with */
 .pipe-row.compact .pipe-move { flex: none; flex-direction: row; gap: 3px; }
 .pipe-row.compact .pipe-move.hov { opacity: 0; transition: opacity .12s; }
 .pipe-row.compact:hover .pipe-move.hov { opacity: 1; }
@@ -1923,6 +2102,155 @@ select.fld { cursor: pointer; }
 .pipe-lead .pipe-insert:hover { background: var(--accent); border-color: transparent; color: #fff; }
 .pipe-lead .pipe-insert:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
 .pipe-move { display: flex; flex-direction: column; gap: 2px; }
+/* ---- Dependency clash: impact list + before/after picture ---- */
+.si-headline {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  margin: 12px 0 4px; font-size: 13px;
+}
+.si-arrow { color: var(--text-3); }
+.si-shift {
+  font-size: 10.5px; font-weight: 700; color: #ffce8e;
+  background: rgba(253,171,61,.14); border: 1px solid rgba(253,171,61,.3);
+  border-radius: 12px; padding: 2px 8px;
+}
+.si-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.si-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 11px;
+  background: rgba(255,91,110,.06); border: 1px solid rgba(255,91,110,.28); border-radius: 9px;
+}
+.si-item-ic { color: var(--danger); flex: none; font-size: 12px; }
+.si-item-main { flex: 1; min-width: 0; }
+.si-item-title { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.si-dir {
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--text-3); background: var(--surface-3); border-radius: 8px; padding: 1px 6px;
+}
+.si-item-sub { font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
+.si-overlap {
+  flex: none; font-size: 10.5px; font-weight: 700; color: #ffb3bd;
+  background: rgba(255,91,110,.16); border-radius: 12px; padding: 2px 8px;
+}
+
+/* the picture: one row per involved task, bars positioned by date across a
+   shared window. Only the moved task draws two bars (was / would be). */
+.si-chart {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px;
+}
+.si-axis {
+  display: flex; justify-content: space-between;
+  font-size: 10px; color: var(--text-3); margin-bottom: 8px; padding-left: 122px;
+}
+.si-rows { display: flex; flex-direction: column; gap: 7px; }
+.si-row { display: flex; align-items: center; gap: 10px; }
+.si-label { flex: none; width: 112px; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.si-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.si-name {
+  font-size: 10.5px; color: var(--text-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.si-row-moved .si-name { color: var(--text); font-weight: 700; }
+.si-tag {
+  flex: none; font-size: 8.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--accent); background: rgba(91,108,255,.14); border-radius: 8px; padding: 1px 5px;
+}
+.si-track {
+  position: relative; flex: 1; height: 22px;
+  background: repeating-linear-gradient(to right, transparent 0, transparent 13px, rgba(255,255,255,.045) 13px, rgba(255,255,255,.045) 14px);
+  border-radius: 4px;
+}
+.si-bar {
+  position: absolute; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; white-space: nowrap; overflow: hidden; min-width: 3px;
+}
+/* Where it is now: a dashed, unfilled frame the full height of the track. The
+   proposal is drawn shorter and centred INSIDE it, so the two stay legible when
+   one contains the other — which is every stretch, where the start doesn't move
+   and only the tail grows. */
+.si-bar.si-old {
+  top: 0; bottom: 0; background: transparent;
+  border: 1px dashed var(--text-3); opacity: .8; z-index: 1;
+}
+.si-bar.si-new {
+  top: 50%; transform: translateY(-50%); height: 12px;
+  z-index: 3; box-shadow: 0 1px 5px rgba(0,0,0,.4);
+}
+.si-bar.si-fixed { top: 50%; transform: translateY(-50%); height: 12px; z-index: 2; opacity: .92; }
+/* The days the two would run at once. A strip under the bars rather than a
+   block over them — it has to mark the collision without hiding whose bar it is.
+   Scoped to the track: the legend reuses this class as a static swatch. */
+.si-track .si-clash {
+  position: absolute; bottom: 0; height: 5px; z-index: 4; border-radius: 2px; min-width: 2px;
+  background: repeating-linear-gradient(45deg, rgba(255,91,110,.9) 0, rgba(255,91,110,.9) 2px, rgba(255,91,110,.35) 2px, rgba(255,91,110,.35) 5px);
+  box-shadow: 0 0 0 1px rgba(255,91,110,.55);
+}
+/* The delivery date, drawn down every track so the bars can be read against it.
+   Solid where the promise stands, dashed where it would move to. */
+.si-ms {
+  position: absolute; top: -3px; bottom: -3px; width: 0; z-index: 5;
+  border-left: 2px solid #e2445c;
+  /* the bars underneath are department-coloured, so the line needs its own edge
+     to stay a line rather than reading as part of whatever it crosses */
+  box-shadow: -1px 0 0 rgba(0,0,0,.55), 1px 0 0 rgba(0,0,0,.55);
+}
+.si-ms.next { border-left: 2px dashed #ffce8e; }
+
+/* The offer to move the promise with the work */
+.si-del {
+  border: 1px solid rgba(226,68,92,.45); background: rgba(226,68,92,.08);
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 14px;
+}
+.si-del-head { display: flex; align-items: flex-start; gap: 9px; }
+.si-del-opt {
+  display: flex; align-items: flex-start; gap: 9px; margin-top: 10px;
+  padding-top: 10px; border-top: 1px dashed var(--border-2);
+  font-size: 12.5px; cursor: pointer;
+}
+.si-del-opt input { margin-top: 2px; flex: none; accent-color: var(--accent); }
+.si-del-note { display: block; font-size: 10.5px; color: var(--text-3); margin-top: 2px; font-weight: 400; }
+
+.si-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; }
+.si-key { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--text-3); }
+.si-swatch { width: 16px; height: 10px; border-radius: 3px; flex: none; }
+.si-swatch.si-old { background: transparent; border: 1px dashed var(--text-3); }
+.si-swatch.si-new { background: var(--accent); }
+.si-swatch.si-swatch-ms { width: 3px; height: 12px; border-radius: 1px; background: #e2445c; }
+.si-swatch.si-clash {
+  height: 5px;
+  background: repeating-linear-gradient(45deg, rgba(255,91,110,.9) 0, rgba(255,91,110,.9) 2px, rgba(255,91,110,.35) 2px, rgba(255,91,110,.35) 5px);
+  box-shadow: 0 0 0 1px rgba(255,91,110,.55);
+}
+
+/* ---- Re-Arrange: the episode reorder list ---- */
+.ra-list { display: flex; flex-direction: column; gap: 6px; max-height: 380px; overflow-y: auto; padding-right: 2px; }
+.ra-empty {
+  padding: 22px 14px; text-align: center; font-size: 12.5px; color: var(--text-3);
+  background: var(--bg-2); border: 1px dashed var(--border-2); border-radius: 9px;
+}
+.ra-row {
+  display: flex; align-items: center; gap: 11px; padding: 8px 11px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px;
+}
+.ra-row.moved { border-color: rgba(91,108,255,.45); background: rgba(91,108,255,.06); }
+.ra-pos {
+  flex: none; width: 20px; text-align: right;
+  font-size: 11px; font-weight: 700; color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+.ra-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ra-title { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; }
+.ra-title > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ra-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 10.5px; color: var(--text-3); }
+.ra-delta { color: #9fb0ff; font-weight: 700; }
+.ra-same { color: var(--text-3); }
+.ra-lock {
+  display: inline-flex; align-items: center; gap: 3px; font-weight: 700;
+  color: #ffce8e; background: rgba(253,171,61,.14);
+  border: 1px solid rgba(253,171,61,.3); border-radius: 12px; padding: 1px 7px;
+}
+.ra-lock .ico { font-size: 9px; }
+.ra-move { flex: none; display: flex; flex-direction: column; gap: 2px; }
+
 .btn-move {
   background: var(--surface-3); border: 1px solid var(--border); color: var(--text-2);
   border-radius: 4px; font-size: 7px; line-height: 1; padding: 3px 4px; cursor: pointer;
@@ -1931,7 +2259,11 @@ select.fld { cursor: pointer; }
 .btn-move:disabled { opacity: .25; cursor: default; }
 .pipe-row .fld { padding: 7px 9px; font-size: 12.5px; border-radius: 7px; }
 /* stack the label above the input so the number gets the full column width */
-.pipe-days { display: flex; flex-direction: column; align-items: stretch; gap: 3px; }
+/* Days / Min / Wait all hold the same kind of small number, so they're pinned
+   to one width rather than left to stretch. An explicit width beats the grid's
+   default justify-self:stretch, which keeps them identical whichever track
+   they land in — the narrow layout reflows them onto different tracks. */
+.pipe-days { display: flex; flex-direction: column; align-items: stretch; gap: 3px; width: 60px; }
 .pipe-days-lbl { font-size: 9px; line-height: 1; color: var(--text-3); font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
 .fld-num { width: 100%; min-width: 0; padding: 6px 4px; text-align: center; -moz-appearance: textfield; }
 .fld-num::-webkit-inner-spin-button, .fld-num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -2005,6 +2337,40 @@ select.fld { cursor: pointer; }
 .dep-menu-item:hover { background: var(--hover); }
 .dep-menu-item .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .dep-menu-empty { color: var(--text-3); font-size: 11.5px; padding: 8px 10px; }
+
+/* Board backups — label field + trigger above the snapshot list. The card
+   itself carries no padding (its rows each own theirs), so these two set
+   their own to line up with the rows between them. */
+.adm-backup-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+}
+.adm-backup-bar .fld { flex: 1; min-width: 0; padding: 8px 12px; font-size: 12.5px; }
+.adm-backup-bar .adm-btn { flex: none; }
+.adm-backup-cap:not(:empty) { padding: 11px 18px 13px; border-top: 1px solid var(--border); }
+
+/* Remove-task confirmation, shown in place of the row it belongs to — this
+   editor already lives inside a dialog, so a modal here would close its host. */
+.pipe-row.pipe-confirm {
+  display: block; border-color: #ff5b6e; background: rgba(255,91,110,.07);
+}
+.pc-msg { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; font-weight: 600; }
+.pc-ic { flex: none; color: #ff8a95; margin-top: 1px; }
+.pc-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pc-hint { flex: 1; min-width: 140px; font-size: 11px; color: var(--text-3); }
+.pc-btn { padding: 6px 12px; font-size: 11.5px; flex: none; }
+
+/* "what depended on this?" list in the remove-task prompt */
+.dep-migrate {
+  margin: 10px 0 4px; display: flex; flex-direction: column; gap: 2px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px;
+  max-height: 190px; overflow-y: auto;
+}
+.dm-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
+.dm-row .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dm-name { font-weight: 700; flex: none; }
+.dm-arrow { color: var(--text-3); flex: none; }
+.dm-new { color: var(--text-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 760px) {
   .pipe-row.editing { grid-template-columns: 22px 20px 1fr 74px 74px auto; }

@@ -78,7 +78,7 @@ window.App = window.App || {};
         if (r.status === 409) {
           const s = await r.json();
           this.version = s.version;
-          App.state.data = s.data;
+          App.state.data = App.migrate(s.data);
           App.render();
           App.toast('Updated by a teammate — board refreshed', true);
         } else if (r.ok) {
@@ -96,7 +96,7 @@ window.App = window.App || {};
       if (ae && ae.classList && (ae.classList.contains('jr-block') || ae.classList.contains('pn-note-input'))) return;
       if (v <= this.version) return;
       const data = await this.pull();
-      if (data) { App.state.data = data; App.render(); }
+      if (data) { App.state.data = App.migrate(data); App.render(); }
     },
 
     // Instant path: a teammate's save broadcasts the new version over SSE.
@@ -136,6 +136,44 @@ window.App = window.App || {};
       const r = await fetch('/api/browse' + (q.length ? '?' + q.join('&') : ''), { cache: 'no-store' });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || 'could not open that folder');
+      return body;
+    },
+
+    /* ---- board backups (Admin → Shows; admin-only) ----
+       Snapshots live in the database, so there's no payload to send: the
+       server copies whatever it currently holds. */
+    async backups() {
+      const r = await fetch('/api/backups', { cache: 'no-store' });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not read the backups');
+      return body;
+    },
+    async backupNow(label) {
+      const r = await fetch('/api/backups', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: label || '' })
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not take a backup');
+      return body;
+    },
+    async restoreBackup(id) {
+      const r = await fetch('/api/backups/restore', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: id })
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not restore that backup');
+      // the board underneath us is now a different one — adopt it wholesale
+      this.version = body.version;
+      const data = await this.pull();
+      if (data) { App.state.data = App.migrate(data); App.history.clear(); App.render(); }
+      return body;
+    },
+    async deleteBackup(id) {
+      const r = await fetch('/api/backups?id=' + encodeURIComponent(id), { method: 'DELETE' });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not delete that backup');
       return body;
     },
 

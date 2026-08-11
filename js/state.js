@@ -141,16 +141,16 @@ window.App = window.App || {};
      Operations also owns scheduling (across every department, since that's the
      coordinating job), so it carries editSchedule without editAll. */
   App.ROLES = [
-    { key: 'producer',  label: 'Producer',        ico: 'clapper', view: 'timeline',  approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, hint: 'Full access — all tasks, shows & admin' },
-    { key: 'manager',   label: 'Manager',         ico: 'compass', view: 'dashboard', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, hint: 'Oversight, approvals & admin' },
-    { key: 'director',  label: 'Director',        ico: 'target', view: 'review',    approve: true, editAll: true, hint: 'Review & approve cuts' },
-    { key: 'creative',  label: 'Creative',        ico: 'pencil', view: 'board', dept: 'creative',  hint: 'Creative department tasks' },
-    { key: 'music',     label: 'Music',           ico: 'music', view: 'board', dept: 'music',     hint: 'Music department tasks' },
-    { key: 'animation', label: 'Animation',       ico: 'film', view: 'board', dept: 'animation', hint: 'Animation department tasks' },
-    { key: 'audio',     label: 'Audio Post',      ico: 'headphones', view: 'board', dept: 'audio',     hint: 'Audio Post department tasks' },
-    { key: 'video',     label: 'Video Post',      ico: 'camera', view: 'board', dept: 'video',     hint: 'Video Post department tasks' },
-    { key: 'ops',       label: 'Post Operations', ico: 'package', view: 'board', dept: 'ops', editSchedule: true, hint: 'Post Operations tasks & scheduling' },
-    { key: 'qc',        label: 'QC',              ico: 'checkBadge', view: 'board', dept: 'qc',        hint: 'QC tasks' }
+    { key: 'producer',  label: 'Producer',        ico: 'clapper', approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, hint: 'Full access — all tasks, shows & admin' },
+    { key: 'manager',   label: 'Manager',         ico: 'compass', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, hint: 'Oversight, approvals & admin' },
+    { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, hint: 'Review & approve cuts' },
+    { key: 'creative',  label: 'Creative',        ico: 'pencil', dept: 'creative',  hint: 'Creative department tasks' },
+    { key: 'music',     label: 'Music',           ico: 'music', dept: 'music',     hint: 'Music department tasks' },
+    { key: 'animation', label: 'Animation',       ico: 'film', dept: 'animation', hint: 'Animation department tasks' },
+    { key: 'audio',     label: 'Audio Post',      ico: 'headphones', dept: 'audio',     hint: 'Audio Post department tasks' },
+    { key: 'video',     label: 'Video Post',      ico: 'camera', dept: 'video',     hint: 'Video Post department tasks' },
+    { key: 'ops',       label: 'Post Operations', ico: 'package', dept: 'ops', editSchedule: true, hint: 'Post Operations tasks & scheduling' },
+    { key: 'qc',        label: 'QC',              ico: 'checkBadge', dept: 'qc',        hint: 'QC tasks' }
   ];
   App.role = (k) => App.ROLES.find(r => r.key === k) || App.ROLES[0];
   // Role capabilities are data-driven (Admin → Access Control) with the ROLES
@@ -221,9 +221,7 @@ window.App = window.App || {};
     { key: 'sfx_v3',        name: 'SFX V3',        dept: 'audio',     start: '2026-02-16', due: '2026-02-20', deps: ['final_lrc', 'sfx_v2'],              status: 'not_started' },
     { key: 'subtitle',      name: 'Subtitle',      dept: 'video',     start: '2025-12-23', due: '2026-02-10', deps: ['scripts', 'final_lrc'],             status: 'not_started' },
     { key: 'deliverys',     name: 'Deliverys',     dept: 'ops',       start: '2026-02-10', due: '2026-02-21', deps: ['final_lrc', 'sfx_v3', 'subtitle'],  status: 'not_started' },
-    { key: 'qc',            name: 'QC',            dept: 'qc',        start: '2026-02-11', due: '2026-02-22', deps: ['deliverys'],                         status: 'not_started' },
-    // Publication milestone: a single date four weeks past QC (see `lag`).
-    { key: 'live_date',     name: 'Live Date',     dept: 'ops',       start: '2026-03-22', due: '2026-03-22', deps: ['qc'], lag: 28,                       status: 'not_started' }
+    { key: 'qc',            name: 'QC',            dept: 'qc',        start: '2026-02-11', due: '2026-02-22', deps: ['deliverys'],                         status: 'not_started' }
   ];
   App.TASK = (key) => App.TEMPLATE.find(t => t.key === key);
   App.taskName = (key) => { const t = App.TASK(key); return t ? t.name : key; };
@@ -258,9 +256,7 @@ window.App = window.App || {};
     { key: 'online_conform', name: 'Online Conform',  dept: 'video',    days: 3, minDays: 2, deps: ['color_grade', 'vfx_cleanup', 'final_mix'] },
     { key: 'subtitle',       name: 'Subtitle',        dept: 'ops',      days: 3, minDays: 2, deps: ['picture_lock'] },
     { key: 'deliverys',      name: 'Deliverys',       dept: 'ops',      days: 2, minDays: 1, deps: ['online_conform', 'subtitle'] },
-    { key: 'qc',             name: 'QC',              dept: 'qc',       days: 2, minDays: 1, deps: ['deliverys'] },
-    // Publication milestone: a single date four weeks past QC (see `lag`).
-    { key: 'live_date',      name: 'Live Date',       dept: 'ops',      days: 1, minDays: 1, deps: ['qc'], lag: 28 }
+    { key: 'qc',             name: 'QC',              dept: 'qc',       days: 2, minDays: 1, deps: ['deliverys'] }
   ];
   App.defaultPipelineFor = function (type) {
     if (type === 'live_action') return App.LIVE_PIPELINE.map(t => ({ ...t, deps: t.deps.slice() }));
@@ -433,6 +429,12 @@ window.App = window.App || {};
     return App.fmtDate(a) + ' – ' + App.fmtDate(b);
   };
 
+  /* Keyboard shortcuts read in the platform's own idiom — ⌘ on a Mac, Ctrl
+     everywhere else — so a hint never tells someone to press a key they
+     haven't got. */
+  App.isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  App.shortcutLabel = (keys) => (App.isMac ? '⌘' : 'Ctrl+') + keys;
+
   App.uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
   App.initials = (name) => name.split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
 
@@ -483,6 +485,105 @@ window.App = window.App || {};
     return (st === 'in_progress' || st === 'review') && App.isBlocked(ep, key);
   };
 
+  /* What a proposed reschedule of one task would break.
+
+     Dependencies are an ordering promise: a task may not start until everything
+     it depends on has finished. Moving a bar can break that from either side —
+     drag it earlier and it can open before its own inputs are done; drag it
+     later, or stretch its tail, and it can run past the start of whatever was
+     waiting on it. Both are collected here, each with the overlap in days, so
+     the producer is shown the cost before it's paid rather than told afterwards.
+
+     Nothing cascades: only the dragged task moves, which is why every other
+     task in the result keeps its current dates. Pure — safe to call while
+     dragging. */
+  App.scheduleImpact = function (ep, key, newStart, newDue) {
+    const pipe = App.pipelineFor(ep);
+    const task = pipe.find(t => t.key === key);
+    const byKey = {}; App.subitems(ep).forEach(s => { byKey[s.key] = s; });
+    const moved = byKey[key];
+    const clashes = [];
+
+    /* `earlyBy` is how badly the ordering is violated — the days between the
+       finish that should gate the start and that start, inclusive. Deliberately
+       not called an overlap: a dependent scheduled long before its input isn't
+       overlapping it at all, it's simply far too early, and calling 77 days of
+       that "overlap" would misdescribe a number the producer decides on. */
+    (task ? task.deps : []).forEach(dk => {
+      const dep = byKey[dk];
+      if (dep && newStart <= dep.due) {
+        clashes.push({
+          dir: 'upstream', task: dep,
+          earlyBy: App.diffDays(dep.due, newStart) + 1,
+          text: 'would start before “' + dep.name + '” finishes'
+        });
+      }
+    });
+    // downstream: something waiting on this task would now start too early
+    pipe.forEach(t => {
+      if (t.key === key || !t.deps.includes(key)) return;
+      const dependent = byKey[t.key];
+      if (dependent && dependent.start <= newDue) {
+        clashes.push({
+          dir: 'downstream', task: dependent,
+          earlyBy: App.diffDays(newDue, dependent.start) + 1,
+          text: 'starts before this would finish'
+        });
+      }
+    });
+
+    /* The two committed dates put a hard edge round the work.
+
+       Nothing may run to or past the live date: the episode is out by then, so
+       there is no work left to do — that move is refused outright, not argued
+       about. Running to or past the DELIVERY date is a real thing producers
+       sometimes have to do, but it can't happen quietly: the delivery date is a
+       promise, so the honest response is to move the promise, and that's what
+       the mover is offered.
+
+       A shifted delivery date still has to land before the live date. When it
+       can't, there's no room left to deliver and the move is refused for that
+       reason instead — which is the same refusal, arrived at one step later. */
+    const ms = App.epMilestones(ep);
+    const liveMs = ms.find(m => m.key === App.LIVE_KEY) || null;
+    const delMs = ms.find(m => m.key !== App.LIVE_KEY) || null;
+    let deny = null, delivery = null;
+    if (moved) {
+      if (liveMs && newDue >= liveMs.date) {
+        deny = {
+          ms: liveMs,
+          text: '“' + moved.name + '” would run to ' + App.fmtDate(newDue) +
+                ', on or past the live date (' + App.fmtDate(liveMs.date) + ')'
+        };
+      } else if (delMs && newDue >= delMs.date) {
+        const suggest = App.shiftIso(newDue, delMs.afterQc);
+        if (liveMs && suggest >= liveMs.date) {
+          deny = {
+            ms: delMs,
+            text: 'There would be no room left to deliver — the work would finish ' +
+                  App.fmtDate(newDue) + ', and the episode goes live ' + App.fmtDate(liveMs.date)
+          };
+        } else {
+          delivery = {
+            ms: delMs, suggest: suggest,
+            // 0 = lands exactly on the delivery date
+            pastBy: App.diffDays(newDue, delMs.date)
+          };
+        }
+      }
+    }
+
+    return {
+      moved: moved,
+      from: moved ? { start: moved.start, due: moved.due } : null,
+      to: { start: newStart, due: newDue },
+      shiftDays: moved ? App.diffDays(newStart, moved.start) : 0,
+      clashes: clashes,
+      deny: deny,
+      delivery: delivery
+    };
+  };
+
   /* ---------------------------------------------------------------------------
      Episode-derived metrics
   --------------------------------------------------------------------------- */
@@ -501,6 +602,104 @@ window.App = window.App || {};
   };
   App.epDue = function (ep) {
     return App.subitems(ep).reduce((m, s) => s.due > m ? s.due : m, '0000-00-00');
+  };
+
+  /* ---------------------------------------------------------------------------
+     End-of-episode milestones.
+
+     Delivery Date and Live Date are NOT tasks: nobody works on them, they have
+     no duration, department, assignee or status. They are the two dates the
+     episode is committed to downstream. Every episode has both.
+
+     The Live Date is the anchor and it NEVER moves on its own. It's a date the
+     business has already given out; a live date that quietly slides when the
+     work slips hides exactly the problem worth seeing. Every episode stores its
+     own (see `migrate`), and it changes only when someone changes it.
+
+     The Delivery Date hangs off the live date instead of off the work: `lead`
+     days in front of it — the window the partner needs to get the episode out.
+     It can be pinned to its own date when a partner asks for something else.
+
+     `afterQc` is how long each date needs past the end of the work, so both can
+     report how far the schedule now runs past what was promised. Days are
+     calendar days, the same as a pipeline task's `lag`.
+  --------------------------------------------------------------------------- */
+  App.MILESTONES = [
+    { key: 'delivery_date', name: 'Delivery Date', short: 'Delivery', lead: 7, afterQc: 2 },
+    { key: 'live_date',     name: 'Live Date',     short: 'Live',     lead: 0, afterQc: 9 }
+  ];
+  App.LIVE_KEY = 'live_date';
+  App.isMilestoneKey = (key) => App.MILESTONES.some(m => m.key === key);
+  App.milestoneDef = (key) => App.MILESTONES.find(m => m.key === key) || null;
+
+  // where the work would first allow a milestone — the earliest honest date,
+  // used to seed a live date and to report slip against a promised one
+  App.msEarliest = function (ep, key) {
+    const subs = App.subitems(ep);
+    if (!subs.length) return null;
+    // a pipeline without a QC step still gets its milestones — they hang off
+    // whatever finishes last instead
+    const qc = subs.find(s => s.key === 'qc');
+    const qcDue = qc ? qc.due : subs.reduce((m, s) => s.due > m ? s.due : m, subs[0].due);
+    const def = App.milestoneDef(key);
+    return def ? App.shiftIso(qcDue, def.afterQc) : null;
+  };
+
+  /* Both dates, resolved for one episode.
+
+     `date` is what has been promised. `auto` is the earliest the work allows,
+     so `slipDays` says how far the schedule now runs past the promise — the
+     warning that replaces the old silent drift. `fixed` means this particular
+     date was set by hand rather than derived from the live date. */
+  App.epMilestones = function (ep) {
+    const subs = App.subitems(ep);
+    if (!subs.length) return [];
+    const set = ep.milestones || {};
+    const live = set[App.LIVE_KEY] || App.msEarliest(ep, App.LIVE_KEY);
+    return App.MILESTONES.map(m => {
+      const date = m.key === App.LIVE_KEY ? live : (set[m.key] || App.shiftIso(live, -m.lead));
+      const auto = App.msEarliest(ep, m.key);
+      return {
+        key: m.key, name: m.name, short: m.short, lead: m.lead, afterQc: m.afterQc,
+        date: date, auto: auto, fixed: !!set[m.key],
+        // positive = the work now finishes later than the date we committed to
+        slipDays: App.diffDays(auto, date)
+      };
+    });
+  };
+  App.epMilestone = function (ep, key) { return App.epMilestones(ep).find(m => m.key === key) || null; };
+
+  /* What the Delivery Date actually consists of: the assets that have to be in
+     hand on the day, and the pipeline task they're uploaded against. The asset
+     is named separately from the task because it's what the partner receives
+     ("Reports"), not what the studio calls the work ("QC"). A pipeline that
+     doesn't run one of these tasks simply doesn't list that asset.
+
+     Readiness is measured on the FILES, not the task's status: a task can sit
+     at Approved with nothing uploaded against it, and on delivery day what
+     matters is whether the assets are actually there. Counts attachments and
+     external links the same way the Workspace does. */
+  App.DELIVERY_ASSETS = [
+    { task: 'deliverys', label: 'Deliveries' },
+    { task: 'qc',        label: 'Reports' }
+  ];
+  App.deliveryAssets = function (ep) {
+    return App.DELIVERY_ASSETS.map(a => {
+      const su = App.subitem(ep, a.task);
+      if (!su) return null;
+      const files = (App.uploads && App.uploads.list(ep.id, su.key)) || [];
+      const links = (App.taskLinks && App.taskLinks(ep.id, su.key)) || [];
+      return {
+        label: a.label, su: su, dept: App.dept(su.dept),
+        files: files.length, links: links.length, count: files.length + links.length
+      };
+    }).filter(Boolean);
+  };
+  // the episode's true end — the last milestone, not the last piece of work.
+  // Used wherever a view needs to reserve room out to the Live Date.
+  App.epFinal = function (ep) {
+    const ms = App.epMilestones(ep);
+    return ms.length ? ms[ms.length - 1].date : App.epDue(ep);
   };
   App.progressPct = function (ep) {
     const subs = App.subitems(ep);
@@ -581,7 +780,7 @@ window.App = window.App || {};
      State
   --------------------------------------------------------------------------- */
   App.state = {
-    view: 'timeline',                 // timeline | board | dashboard
+    view: 'dashboard',                // timeline | board | dashboard — every role starts here
     role: 'producer',
     filters: { show: 'all', dept: 'all', person: 'all', q: '' },
     admin: { view: 'hub', role: 'producer', q: '', editing: null },  // admin page sub-navigation
@@ -603,18 +802,255 @@ window.App = window.App || {};
     catch (e) { console.error('save failed', e); }
     if (App.api && App.api.online) App.api.push();   // sync to the shared server store
   };
+  /* Boards saved before Delivery/Live became milestones still carry a
+     `live_date` *task* in their stored pipelines (and its per-episode date,
+     status and name overrides). Strip it wherever data enters — localStorage,
+     the shared server, a preset — so no board resurrects it. Idempotent, and
+     cheap enough to run on every ingress rather than tracking a schema
+     version. Everything else about the board is left exactly as found. */
+  App.migrate = function (data) {
+    if (!data) return data;
+    const drop = (pipe) => Array.isArray(pipe) ? pipe.filter(t => !App.isMilestoneKey(t.key)).map(t => {
+      if (t.deps && t.deps.some(App.isMilestoneKey)) t.deps = t.deps.filter(d => !App.isMilestoneKey(d));
+      return t;
+    }) : pipe;
+    (data.shows || []).forEach(s => { if (s.pipeline) s.pipeline = drop(s.pipeline); });
+    (data.pipelinePresets || []).forEach(p => { if (p.pipeline) p.pipeline = drop(p.pipeline); });
+    (data.episodes || []).forEach(ep => {
+      ['dates', 'statuses', 'names', 'assignees'].forEach(f => {
+        if (ep[f]) App.MILESTONES.forEach(m => { delete ep[f][m.key]; });
+      });
+      if (Array.isArray(ep.removed)) ep.removed = ep.removed.filter(k => !App.isMilestoneKey(k));
+    });
+    /* Live dates used to be derived from the work, so they drifted with it.
+       They're commitments now, so every episode carries its own — stamp the
+       date each one currently shows. Nothing appears to move on upgrade, and
+       nothing moves after. */
+    const prevBoard = App.state.data;
+    App.state.data = data;                    // epMilestones reads the live board
+    try {
+      (data.episodes || []).forEach(ep => {
+        if (ep.milestones && ep.milestones[App.LIVE_KEY]) return;
+        const live = App.msEarliest(ep, App.LIVE_KEY);
+        if (live) (ep.milestones = ep.milestones || {})[App.LIVE_KEY] = live;
+      });
+    } finally { App.state.data = prevBoard; }
+    return data;
+  };
   App.load = function () {
     let stored = null;
     try { stored = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { stored = null; }
-    App.state.data = (stored && stored.episodes && stored.episodes.length) ? stored : App.seedData();
+    App.state.data = App.migrate((stored && stored.episodes && stored.episodes.length) ? stored : App.seedData());
   };
-  App.resetData = function () {
-    App.state.data = App.seedData();
+  /* ---------------------------------------------------------------------------
+     Board history — undo / redo, scoped to your own edits.
+
+     This is a SHARED board, so an undo must never be a rewind. Restoring a
+     whole-board snapshot would quietly revert whatever a teammate changed in
+     the meantime, which is worse than not having undo at all. Instead each
+     mutation is recorded as a set of precise before/after values, addressed by
+     path — "this episode's status for this task", not "the board".
+
+     Undo then does two things:
+       · it touches only the paths YOUR action changed, leaving everything
+         else — including a teammate's concurrent edits — exactly as it is;
+       · it refuses if the value it's about to revert is no longer the value it
+         wrote. Someone else has moved that task since, and silently stamping
+         over their work is the one thing undo must not do.
+
+     Session-only, in memory, capped. The activity log is not rewound: an undo
+     is a new change, not an erasure of what happened.
+  --------------------------------------------------------------------------- */
+  const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+  const same = (a, b) => JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b);
+  const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+  // arrays of records (shows, episodes, people) are matched by id, so an edit
+  // to one episode never reads as "the whole episodes list changed"
+  const keyed = (v) => Array.isArray(v) && v.every(x => x && typeof x === 'object' && typeof x.id === 'string');
+
+  function diffInto(before, after, path, out) {
+    if (before === after) return;
+    if (isObj(before) && isObj(after)) {
+      const keys = new Set(Object.keys(before).concat(Object.keys(after)));
+      keys.forEach(k => diffInto(before[k], after[k], path.concat(k), out));
+      return;
+    }
+    if (keyed(before) && keyed(after)) {
+      const b = new Map(), a = new Map();
+      before.forEach((x, i) => b.set(x.id, { x, i }));
+      after.forEach((x, i) => a.set(x.id, { x, i }));
+      new Set(Array.from(b.keys()).concat(Array.from(a.keys()))).forEach(id => {
+        const bv = b.get(id), av = a.get(id);
+        if (!bv) out.push({ path: path.concat([{ id }]), before: undefined, after: clone(av.x), at: av.i });
+        else if (!av) out.push({ path: path.concat([{ id }]), before: clone(bv.x), after: undefined, at: bv.i });
+        else diffInto(bv.x, av.x, path.concat([{ id }]), out);
+      });
+      return;
+    }
+    if (!same(before, after)) out.push({ path: path, before: clone(before), after: clone(after) });
+  }
+
+  function getAt(root, path) {
+    let cur = root;
+    for (let i = 0; i < path.length; i++) {
+      if (cur == null) return undefined;
+      const seg = path[i];
+      cur = (typeof seg === 'object')
+        ? (Array.isArray(cur) ? cur.find(x => x && x.id === seg.id) : undefined)
+        : cur[seg];
+    }
+    return cur;
+  }
+
+  // Writes one value back. Missing intermediate objects are rebuilt, so undoing
+  // a change that created `ep.dates` from nothing still lands.
+  function setAt(root, path, value, at) {
+    let parent = root;
+    for (let i = 0; i < path.length - 1; i++) {
+      const seg = path[i];
+      if (typeof seg === 'object') {
+        if (!Array.isArray(parent)) return false;
+        parent = parent.find(x => x && x.id === seg.id);
+      } else {
+        if (parent[seg] == null) parent[seg] = {};
+        parent = parent[seg];
+      }
+      if (parent == null) return false;
+    }
+    const last = path[path.length - 1];
+    if (typeof last === 'object') {
+      if (!Array.isArray(parent)) return false;
+      const i = parent.findIndex(x => x && x.id === last.id);
+      if (value === undefined) { if (i >= 0) parent.splice(i, 1); }
+      else if (i >= 0) parent[i] = value;
+      else parent.splice(Math.min(at == null ? parent.length : at, parent.length), 0, value);
+    } else if (value === undefined) {
+      delete parent[last];
+    } else {
+      parent[last] = value;
+    }
+    return true;
+  }
+
+  App.history = {
+    _undo: [], _redo: [],
+    LIMIT: 50,
+
+    record(label, changes) {
+      if (!changes.length) return;              // a no-op action isn't a history step
+      this._undo.push({ label: label || 'the last change', changes: changes });
+      if (this._undo.length > this.LIMIT) this._undo.shift();
+      this._redo.length = 0;                    // a new action forks the timeline
+    },
+    canUndo() { return this._undo.length > 0; },
+    canRedo() { return this._redo.length > 0; },
+    clear() { this._undo.length = 0; this._redo.length = 0; },
+
+    /* `dir` is 'before' to undo and 'after' to redo. Every value is checked
+       against what we expect to still be there before ANY of them is written,
+       so a refused step leaves the board completely untouched. */
+    _apply(entry, dir) {
+      const expect = dir === 'before' ? 'after' : 'before';
+      const stale = entry.changes.some(c => !same(getAt(App.state.data, c.path), c[expect]));
+      if (stale) return { ok: false, label: entry.label };
+      entry.changes.forEach(c => setAt(App.state.data, c.path, clone(c[dir]), c.at));
+      App.applyWorkflow && App.applyWorkflow();
+      App.save();
+      App.render();
+      return { ok: true, label: entry.label };
+    },
+    undo() {
+      if (!this._undo.length) return null;
+      const entry = this._undo[this._undo.length - 1];
+      const r = this._apply(entry, 'before');
+      if (!r.ok) return r;                      // left in place; the user can retry after looking
+      this._undo.pop(); this._redo.push(entry);
+      return r;
+    },
+    redo() {
+      if (!this._redo.length) return null;
+      const entry = this._redo[this._redo.length - 1];
+      const r = this._apply(entry, 'after');
+      if (!r.ok) return r;
+      this._redo.pop(); this._undo.push(entry);
+      return r;
+    }
+  };
+
+  /* `label` names the action for the undo toast — "Undid the reschedule".
+     The board is cloned before the change so the two can be diffed; at ~50KB
+     that's cheap next to the render the mutation triggers anyway. */
+  App.mutate = function (fn, label) {
+    const before = clone(App.state.data);
+    fn(App.state.data);
+    const changes = [];
+    diffInto(before, App.state.data, [], changes);
+    App.history.record(label, changes);
     App.save();
     App.render();
-    App.toast('Demo data reset to the reference board');
   };
-  App.mutate = function (fn) { fn(App.state.data); App.save(); App.render(); };
+
+  /* ---------------------------------------------------------------------------
+     Show backup — everything belonging to one show, as a JSON file.
+
+     Board data lives on the server, never in the repo, so a deploy can't touch
+     it — but a bad edit, a delete or a data migration can. This is the way to
+     take a copy before doing something irreversible. It's a snapshot for
+     safekeeping and inspection, NOT an importer: nothing in the app reads these
+     files back in, so restoring one is a manual job.
+
+     The show's own record and episodes are the substance; attachments and task
+     links are keyed by episode so they're filtered out of the board-wide maps.
+     `context` carries the workflow and the people referenced, so the file can
+     be read on its own without the rest of the board to decode it.
+  --------------------------------------------------------------------------- */
+  App.showBackup = function (showId) {
+    const d = App.state.data;
+    const show = d.shows.find(s => s.id === showId);
+    if (!show) return null;
+    const episodes = d.episodes.filter(e => e.showId === showId);
+    const epIds = episodes.map(e => e.id);
+    const mine = (map) => {
+      const out = {};
+      Object.keys(map || {}).forEach(k => { if (epIds.includes(String(k).split('::')[0])) out[k] = map[k]; });
+      return out;
+    };
+    // only the people actually referenced, so the file doesn't carry the whole directory
+    const used = new Set();
+    episodes.forEach(e => Object.values(e.assignees || {}).forEach(p => p && used.add(p)));
+
+    return {
+      format: 'postpipeline.show-backup',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      exportedBy: (App.state.user && App.state.user.name) || null,
+      show: show,
+      episodes: episodes,
+      attachments: mine(d.attachments),
+      taskLinks: mine(d.taskLinks),
+      context: {
+        workflow: d.workflow || null,
+        people: (d.people || []).filter(p => used.has(p.id))
+      }
+    };
+  };
+
+  App.downloadShowBackup = function (showId) {
+    const data = App.showBackup(showId);
+    if (!data) { App.toast('That show no longer exists', true); return; }
+    const slug = String(data.show.prefix || data.show.name || 'show')
+      .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'show';
+    const name = 'postpipeline_' + slug + '_' + App.isoDate(App.today()) + '.json';
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    // give the download a tick to start before the blob is thrown away
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    App.track && App.track.audit && App.track.audit('show.backup', { show: data.show.name, episodes: data.episodes.length });
+    App.toast('Backed up ' + data.show.name + ' — ' + data.episodes.length +
+      ' episode' + (data.episodes.length === 1 ? '' : 's'));
+  };
 
   /* Personal quick preferences — device-local (localStorage), deliberately NOT
      part of the shared board data so one user's view settings don't sync to
@@ -628,33 +1064,6 @@ window.App = window.App || {};
       set: (k, v) => { p[k] = v; try { localStorage.setItem(PKEY, JSON.stringify(p)); } catch (e) {} }
     };
   })();
-
-  /* The Timeline is a pivot over two chosen dimensions:
-       rows: 'show' | 'episode' | 'department'  — what one Y-axis row groups,
-             and therefore what its single summary bar spans
-       sub:  'task' | 'episode'                 — what a row expands into
-     Bars aren't separately choosable: a row's bar is that row's own span, so
-     the two always agree. Retired keys (`timelineSort`, `timelineBars`) are
-     still read as defaults so an existing view carries over. */
-  App.TL_DIMS = {
-    show:       { label: 'Show' },
-    episode:    { label: 'Episode' },
-    department: { label: 'Department' },
-    task:       { label: 'Task' }
-  };
-  const LEGACY_SORT = {
-    department: { rows: 'episode', sub: 'task' },
-    episode:    { rows: 'episode', sub: 'task' },
-    show:       { rows: 'show',    sub: 'task' }
-  };
-  App.timelineAxes = function () {
-    const was = LEGACY_SORT[App.prefs.get('timelineSort', 'department')] || LEGACY_SORT.department;
-    const legacyBars = App.prefs.get('timelineBars', null);   // the retired two-axis key
-    return {
-      rows: App.prefs.get('timelineRows2', legacyBars === 'show' ? 'show' : was.rows),
-      sub: App.prefs.get('timelineSub', was.sub)
-    };
-  };
 
   /* Themes — each is a named set of CSS-variable overrides living in
      style.css under :root[data-theme="…"]; switching one only swaps that
@@ -732,12 +1141,16 @@ window.App = window.App || {};
     // pos: 'auto' (default) flips above/below to fit the viewport; 'below'
     // pins it under the target regardless of available space.
     show(target, text, pos) {
-      if (!text) return;
+      if (!text || !target.isConnected) return;
       const tip = this.ensure();
       tip.textContent = text;
       tip.classList.add('show');
       requestAnimationFrame(() => {
         if (!tip.classList.contains('show')) return;
+        // A re-render between the reveal and this frame detaches the target;
+        // its rect would then be all zeros and pin the tooltip to the top-left
+        // corner of the app, orphaned from whatever it was describing.
+        if (!target.isConnected) { this.hide(); return; }
         const r = target.getBoundingClientRect();
         const tw = tip.offsetWidth, th = tip.offsetHeight;
         let left = r.left + r.width / 2 - tw / 2;
@@ -753,9 +1166,17 @@ window.App = window.App || {};
     hide() {
       if (this.node) this.node.classList.remove('show');
     },
+    /* Called by App.render(): a redraw removes hovered elements without ever
+       firing their mouseleave, so anything still on the stack is stale and any
+       tooltip on screen is describing a node that no longer exists. */
+    reset() {
+      this._stack = [];
+      this.hide();
+    },
     // Only reveal if `target` is still the frontmost hovered element —
     // a slower ancestor timer firing after a nested element took over is a no-op.
     _reveal(target) {
+      this._stack = this._stack.filter(t => t.isConnected);   // drop anything a re-render took away
       if (this._stack[this._stack.length - 1] !== target) return;
       const info = this._info.get(target);
       if (info) this.show(target, info.text, info.pos);
@@ -777,7 +1198,14 @@ window.App = window.App || {};
         const top = this._stack[this._stack.length - 1];
         if (top) this._reveal(top);
       });
-      target.addEventListener('mousedown', () => this.hide());
+      // A click means the tooltip is no longer wanted — and the button may be
+      // about to remove itself (a modal ✕, a row that re-renders). Cancelling
+      // the pending timer as well as hiding stops it reappearing afterwards.
+      target.addEventListener('mousedown', () => {
+        clearTimeout(timer);
+        this._stack = this._stack.filter(t => t !== target);
+        this.hide();
+      });
     }
   };
 
