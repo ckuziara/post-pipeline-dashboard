@@ -1904,6 +1904,13 @@ select.fld { cursor: pointer; }
 .ep-name-row { display: flex; align-items: center; gap: 10px; }
 .ep-name-num { font-size: 11px; font-weight: 700; color: var(--text-3); width: 28px; flex: 0 0 auto; }
 .ep-name-row .fld { margin: 0; }
+.ep-name-row .ep-name-fld { flex: 1; min-width: 0; }
+/* Per-episode live date. Filled in from the plan, so it reads as a suggestion
+   until it's changed — `.moved` marks the ones now driving their own timing. */
+.ep-live-cell { flex: none; display: flex; align-items: center; gap: 6px; }
+.ep-live-lbl { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); }
+.ep-live-fld { width: 148px; padding: 6px 9px; font-size: 12px; color: var(--text-2); }
+.ep-live-fld.moved { color: var(--text-1); border-color: var(--accent); font-weight: 600; }
 
 .btn-primary { background: var(--accent); color: #fff; border: 0; padding: 10px 16px; border-radius: 9px; font-size: 13px; font-weight: 700; }
 .btn-primary:hover { background: #6b7bff; }
@@ -2055,20 +2062,6 @@ select.fld { cursor: pointer; }
   border-radius: 12px; padding: 2px 8px;
 }
 /* mandatory end-of-episode milestones — listed, but nothing to interact with */
-/* Delivery & Live dates in Add Show — the commitments the plan is aimed at,
-   listed apart from the pipeline because they aren't work. */
-.ms-plan-list { display: flex; flex-direction: column; gap: 6px; }
-.ms-plan-row {
-  display: flex; align-items: center; gap: 11px; padding: 8px 11px;
-  background: var(--bg-2); border: 1px dashed var(--border-2); border-radius: 9px;
-}
-.ms-plan-pin { flex: none; width: 14px; text-align: center; font-size: 9px; color: var(--text-3); }
-.ms-plan-main { flex: 1; min-width: 0; }
-.ms-plan-name { font-size: 12.5px; font-weight: 600; }
-.ms-plan-note { font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
-.ms-plan-note.warn { color: #ffce8e; }
-.ms-plan-note.bad { color: #ffb3bd; }
-.ms-plan-row .fld { flex: none; width: 150px; padding: 6px 9px; font-size: 12px; }
 .pipe-row.compact .pipe-move { flex: none; flex-direction: row; gap: 3px; }
 .pipe-row.compact .pipe-move.hov { opacity: 0; transition: opacity .12s; }
 .pipe-row.compact:hover .pipe-move.hov { opacity: 1; }

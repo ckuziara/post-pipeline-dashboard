@@ -517,7 +517,11 @@ window.App = window.App || {};
   // scale: squeeze/extend factor from the Add Show dialog (1 = recommended pace;
   // durations never drop below each task's minDays). Episode i starts at
   // startIso + i*cadence; every task gets concrete scheduled dates in ep.dates.
-  App.createShow = function ({ name, code, type, epNames, pipeline, startIso, cadence, scale }) {
+  /* `epStarts` optionally gives each episode its own kick-off date, which is how
+     a per-episode live date is honoured: the producer names the day an episode
+     goes live, and it starts however many days earlier its pipeline needs.
+     Without it, episodes fall on an even `cadence` from startIso as before. */
+  App.createShow = function ({ name, code, type, epNames, pipeline, startIso, cadence, scale, epStarts }) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
     type = type || 'animation';
     pipeline = pipeline || App.defaultPipelineFor(type);
@@ -530,7 +534,8 @@ window.App = window.App || {};
       const byDept = {};
       d.people.forEach(p => { const dep = App.roleDept(p.role); if (dep) (byDept[dep] = byDept[dep] || []).push(p.id); });
       epNames.forEach((title, i) => {
-        const sch = App.schedulePipeline(pipeline, App.shiftIso(startIso, i * cadence), scale);
+        const epStart = (epStarts && epStarts[i]) || App.shiftIso(startIso, i * cadence);
+        const sch = App.schedulePipeline(pipeline, epStart, scale);
         const assignees = {};
         pipeline.forEach(t => { const pool = byDept[t.dept] || []; if (pool.length) assignees[t.key] = pool[i % pool.length]; });
         d.episodes.push({

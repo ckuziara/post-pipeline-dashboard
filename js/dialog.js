@@ -1151,16 +1151,35 @@ window.App = window.App || {};
       }
       const countInput = el('input.fld', { type: 'number', value: '3', min: '1', max: '100' });
       const epList = el('.ep-name-list');
+      /* Episode rows carry a name and the date that episode goes live. Live
+         dates default to the even cadence, but each is editable: naming a date
+         moves that one episode's work so it lands there, leaving the others
+         where they are. `epLive[i]` holds only the dates actually typed — a
+         blank entry means "wherever the cadence puts it" and keeps following
+         the plan when the start, cadence or pipeline changes. */
+      const epNameVals = [], epLive = [];
+      const epCountBadge = el('span.count-badge');
       const rebuildEps = () => {
         const n = Math.max(1, Math.min(EP_MAX, parseInt(countInput.value) || 1));
-        const existing = [...epList.querySelectorAll('input')].map(i => i.value);
+        [...epList.querySelectorAll('.ep-name-row')].forEach((row, i) => {
+          epNameVals[i] = row.querySelector('.ep-name-fld').value;
+        });
         epList.innerHTML = '';
         for (let i = 0; i < n; i++) {
+          const idx = i;
+          const liveInput = el('input.fld.ep-live-fld', { type: 'date' });
+          liveInput.addEventListener('change', () => {
+            epLive[idx] = liveInput.value || null;
+            updateSchedule();
+          });
           epList.appendChild(el('.ep-name-row', null, [
             el('span.ep-name-num', null, '#' + (i + 1)),
-            el('input.fld', { type: 'text', value: existing[i] || ('Episode ' + (i + 1)), placeholder: 'Episode ' + (i + 1) })
+            el('input.fld.ep-name-fld', { type: 'text', value: epNameVals[i] || ('Episode ' + (i + 1)), placeholder: 'Episode ' + (i + 1) }),
+            el('.ep-live-cell', null, [el('span.ep-live-lbl', null, 'Live'), liveInput])
           ]));
         }
+        epLive.length = n;
+        if (epCountBadge) epCountBadge.textContent = String(n);
       };
 
       // ---------- schedule ----------
@@ -1223,27 +1242,62 @@ window.App = window.App || {};
           endFeedback.textContent = '⤢ Extended to ' + Math.round(solved.scale * 100) + '% of nominal — extra breathing room on every task';
         }
 
-        /* The milestones hang a fixed buffer past whatever the plan reaches, so
-           they're derived from the same target — never held separately. `reached`
-           is what the schedule can actually manage, which differs from `target`
-           when a squeeze has been clamped to the floor. */
-        const reached = target < floor.end ? floor.end : target;
-        msFields.forEach(f => {
-          f.input.value = App.shiftIso(target, f.m.offset);
-          const suggested = App.shiftIso(rec.end, f.m.offset);
-          const actual = App.shiftIso(reached, f.m.offset);
-          if (target === rec.end) {
-            f.note.className = 'ms-plan-note';
-            f.note.textContent = 'Suggested by the plan';
-          } else if (actual !== f.input.value) {
-            f.note.className = 'ms-plan-note bad';
-            f.note.textContent = 'Not reachable — earliest is ' + App.fmtDate(actual);
-          } else {
-            const d = App.diffDays(target, rec.end);
-            f.note.className = 'ms-plan-note warn';
-            f.note.textContent = (d < 0 ? Math.abs(d) + ' days earlier' : d + ' days later') +
-              ' than suggested (' + App.fmtDate(suggested) + ')';
-          }
+        paintEpisodeDates();
+      }
+
+      /* Every episode's kick-off and live date under the current plan.
+
+         An episode's live date is a fixed buffer past the end of its own work,
+         so naming one is really naming when that episode must finish: the whole
+         episode slides by the gap between the date it would reach and the date
+         asked for. Only that episode moves — the rest keep their cadence, which
+         is what makes this useful for pulling a single episode forward.
+
+         The squeeze/stretch from the Project End Date is a separate knob: it
+         sets how long each episode's work takes, and applies to all of them. */
+      const LIVE_OFFSET = App.MILESTONES.reduce((a, m) => a + m.buffer, 0);
+      function episodePlan() {
+        const { start, cadence, epCount } = readPlan();
+        const rec = App.scheduleShow(pipe, start, epCount, cadence, 1);
+        if (!rec) return [];
+        const target = endInput.value || rec.end;
+        const scale = target === rec.end ? 1
+          : (App.solveScale(pipe, start, epCount, cadence, target) || { scale: 1 }).scale;
+        const out = [];
+        for (let i = 0; i < epCount; i++) {
+          const baseStart = App.shiftIso(start, i * cadence);
+          const sch = App.schedulePipeline(pipe, baseStart, scale);
+          if (!sch) return [];
+          // milestones hang off QC, not off whatever finishes last — anchor
+          // here the same way so the date shown is the date the episode gets
+          const anchor = (sch.dates.qc && sch.dates.qc.due) || sch.end;
+          const suggestedLive = App.shiftIso(anchor, LIVE_OFFSET);
+          const wanted = epLive[i] || null;
+          const shift = wanted ? App.diffDays(wanted, suggestedLive) : 0;
+          out.push({
+            i, scale, suggestedLive,
+            live: wanted || suggestedLive,
+            start: App.shiftIso(baseStart, shift),
+            shift
+          });
+        }
+        return out;
+      }
+
+      // fill the per-episode live-date fields with whatever the plan now reaches
+      function paintEpisodeDates() {
+        const plan = episodePlan();
+        [...epList.querySelectorAll('.ep-name-row')].forEach((row, i) => {
+          const input = row.querySelector('.ep-live-fld');
+          const p = plan[i];
+          if (!input || !p) return;
+          input.value = p.live;
+          input.classList.toggle('moved', !!p.shift);
+          row.title = p.shift
+            ? 'Starts ' + App.fmtDate(p.start) + ' — ' + Math.abs(p.shift) + ' day' +
+              (Math.abs(p.shift) === 1 ? '' : 's') + (p.shift < 0 ? ' earlier' : ' later') +
+              ' than the cadence, to go live on ' + App.fmtDate(p.live)
+            : 'Starts ' + App.fmtDate(p.start) + ' — on the ' + readPlan().cadence + '-day cadence';
         });
       }
 
@@ -1282,44 +1336,13 @@ window.App = window.App || {};
         return api;
       }
 
-      /* ---------- delivery & live dates ----------
-         The two dates the show is committed to downstream. They're shown here
-         rather than in the pipeline because they aren't work — nobody does them,
-         they're what the work is FOR. Each is offered at the date the plan
-         currently reaches, and typing a different one re-times the pipeline to
-         hit it: the same squeeze/stretch the Project End Date drives, since
-         these sit a fixed buffer past it. The end date and these two are three
-         views of one number, so editing any of them updates the others. */
-      const msOffsets = () => {
-        let acc = 0;
-        return App.MILESTONES.map(m => ({ key: m.key, name: m.name, short: m.short, offset: (acc += m.buffer) }));
-      };
-      const msFields = msOffsets().map(m => {
-        const input = el('input.fld', { type: 'date' });
-        const note = el('.ms-plan-note');
-        input.addEventListener('change', () => {
-          if (!input.value) { updateSchedule(); return; }
-          // a committed milestone is really a statement about when the work
-          // must finish — convert it back and let the existing solver re-time
-          endInput.value = App.shiftIso(input.value, -m.offset);
-          targetTouched = true;
-          updateSchedule();
-        });
-        return { m, input, note, row: el('.ms-plan-row', null, [
-          el('span.ms-plan-pin', null, '◆'),
-          el('.ms-plan-main', null, [
-            el('.ms-plan-name', null, m.name),
-            note
-          ]),
-          input
-        ]) };
-      });
-      const msBody = el('.pipe-body', null, [
+      // ---------- episodes ----------
+      const epBody = el('.pipe-body', null, [
         el('.fld-hint', { style: { margin: '8px 0' } },
-          'What the final episode is committed to. Suggested from the plan — enter a date instead and the pipeline is re-timed to reach it.'),
-        el('.ms-plan-list', null, msFields.map(f => f.row))
+          'Name each episode and, if it matters, say when it goes live. Live dates follow the cadence unless you change one — then just that episode moves to land on its date.'),
+        epList
       ]);
-      const msPanel = collapsible('Delivery & Live Dates', [el('span.count-badge', null, String(App.MILESTONES.length))], msBody);
+      const epPanel = collapsible('Episodes', [epCountBadge], epBody);
 
       // ---------- pipeline editor (shared component) ----------
       const addTaskBtn = el('button.btn-icon', {
@@ -1369,11 +1392,8 @@ window.App = window.App || {};
           recPill,
           endFeedback
         ]),
-        el('.modal-section-title', null, 'Episodes'),
-        el('.fld-hint', { style: { marginTop: '-4px', marginBottom: '10px' } }, 'Name each episode — dates are scheduled from the show’s pipeline.'),
-        epList,
-        msPanel.head,
-        msPanel.body,
+        epPanel.head,
+        epPanel.body,
         pipePanel.head,
         pipePanel.body
       ];
@@ -1387,10 +1407,13 @@ window.App = window.App || {};
             if (!pipe.length) { App.toast('The pipeline needs at least one task', true); return; }
             if (!App.topoSort(pipe)) { App.toast('The pipeline has a dependency cycle', true); return; }
             const { start, cadence, epCount } = readPlan();
-            const epNames = [...epList.querySelectorAll('input')].map((inp, idx) => inp.value.trim() || ('Episode ' + (idx + 1))).slice(0, epCount);
+            const epNames = [...epList.querySelectorAll('.ep-name-fld')].map((inp, idx) => inp.value.trim() || ('Episode ' + (idx + 1))).slice(0, epCount);
             const rec = App.scheduleShow(pipe, start, epCount, cadence, 1);
             const target = endInput.value || rec.end;
             const scale = target === rec.end ? 1 : App.solveScale(pipe, start, epCount, cadence, target).scale;
+            // an episode given its own live date starts wherever it must to
+            // land there; the rest keep the even cadence
+            const epStarts = episodePlan().map(p => p.start);
             // keep the optional flags the editor can set — dropping them here
             // silently discarded a task's lag and its version-control toggle
             const pipeline = pipe.map(t => {
@@ -1399,7 +1422,7 @@ window.App = window.App || {};
               if (t.vc) o.vc = true;
               return o;
             });
-            App.createShow({ name, code, type: typeSel.value, epNames, pipeline, startIso: start, cadence, scale });
+            App.createShow({ name, code, type: typeSel.value, epNames, pipeline, startIso: start, cadence, scale, epStarts });
             App.track.flowDone('Create show', true, { episodes: epNames.length });
             editor.closeMenus();
             App.modal.close();
