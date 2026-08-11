@@ -1762,6 +1762,7 @@ window.App = window.App || {};
       else if (s.view === 'report' && editing) wrap.appendChild(report(editing));
       else if (s.view === 'slate') wrap.appendChild(slateOptimizer());
       else if (s.view === 'kb') wrap.appendChild(App.taskKb.editor());
+      else if (s.view === 'kbflow') wrap.appendChild(App.taskKb.stageFlow());
       else if (s.view === 'craft' && editing) wrap.appendChild(App.craft.editor(editing));
       else wrap.appendChild(hub());
       return wrap;
