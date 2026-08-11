@@ -683,6 +683,9 @@ button.ghost:hover { background: var(--hover); color: var(--text); }
 .g-row.sub .bar { height: 12px; font-size: 9px; border-radius: 4px; }
 .bar .bar-out { position: absolute; left: calc(100% + 8px); color: var(--text-2); font-weight: 600; font-size: 10px; }
 .bar.delivered { opacity: .55; }
+/* Quarters and wider: the bar is a shape, not a label. No padding to reserve
+   for text that isn't there, and a floor so a short task stays visible. */
+.bar.bare { padding: 0; min-width: 2px; }
 /* End-of-episode milestones (Delivery Date, Live Date). Each claims its own
    day column so it reads as a dated event on the calendar — red D for the
    delivery, blue LD for going live — rather than a marker floating beside the

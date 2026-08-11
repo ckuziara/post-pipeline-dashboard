@@ -30,6 +30,20 @@ window.App = window.App || {};
   }
   function clampZoom(z) { return Math.max(1.4, Math.min(60, z)); }
 
+  /* Zoomed out to quarters, the chart is read as shape rather than detail.
+
+     A day is under 6px there, so a task's label has no room to be a word and a
+     milestone's single day is a sliver with a letter jammed in it. Both stop
+     being information and become noise laid over the thing you zoomed out to
+     see, so the coarse view drops them and lets the bars carry it. Nothing is
+     lost: the tooltips still say everything, and zooming back in brings the
+     detail with it. Tied to the header tier so there's one definition of
+     "zoomed out" rather than a second threshold to keep in step. */
+  function isCoarse(dw) {
+    const t = tierFor(dw).primary;
+    return t === 'quarters' || t === 'years';
+  }
+
   /* Telling a click apart from a drag or a hold.
 
      A press that moves past DRAG_SLOP, or is held for HOLD_MS without moving,
@@ -691,6 +705,7 @@ window.App = window.App || {};
        someone outside the studio shouldn't be a thing you can nudge with the
        mouse. Clicking one opens its panel, which is where the date is changed. */
     milestoneMarks(track, ep, xOf, dw) {
+      if (isCoarse(dw)) return;                  // a one-day mark says nothing at this scale
       App.epMilestones(ep).forEach(m => {
         const late = m.slipDays > 0;
         const mark = el('.ms-day.clickable.ms-' + m.key + (m.fixed ? '.fixed' : '') + (late ? '.late' : ''), {
@@ -722,12 +737,13 @@ window.App = window.App || {};
       const done = su.status === 'approved';
       const ring = su.status === 'ready' || su.status === 'in_progress' || su.status === 'review';
       const bg = fill || dep.color;
-      const sbar = el('.bar' + (done ? '.delivered' : '') + (ring ? '.st-ring' : ''), {
+      const bare = isCoarse(dw);                 // shape only — see isCoarse
+      const sbar = el('.bar' + (done ? '.delivered' : '') + (ring ? '.st-ring' : '') + (bare ? '.bare' : ''), {
         title: (labelText ? labelText + ' — ' : '') + su.name + ' — ' + st.label + ' · ' + App.fmtRange(su.start, su.due),
         style: Object.assign(
           { left: sl + 'px', width: sw + 'px', background: bg, color: pickInk(bg) },
           ring ? { outlineColor: st.color } : null)
-      }, [
+      }, bare ? null : [
         el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, labelText || su.name),
         (App.isRiskBlocked(ep, su.key) ? App.icon('blocked', { cls: 'blk', title: 'In progress while a dependency is unapproved' }) : null)
       ]);
