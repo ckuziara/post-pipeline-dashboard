@@ -986,21 +986,6 @@ window.App = window.App || {};
       ]);
     }
 
-    /* The two end-of-episode milestones, shown after the last task so the
-       pipeline reads as the whole story. They aren't tasks and aren't part of
-       `pipe`: no duration, no department, nothing to edit, reorder or remove —
-       they're listed here purely so it's clear every episode ends with them
-       and how far past the work they sit. */
-    const milestoneRow = (m) => el('.pipe-row.compact.milestone', {
-      title: tip(m.name + ' — always ' + m.buffer + ' days after ' +
-        (m.after === 'qc' ? 'QC finishes' : 'the delivery date') + '. Every episode has one; it cannot be edited or removed.')
-    }, [
-      el('.pipe-lead', null, el('span.pipe-ms-pin', null, '◆')),
-      el('span.pipe-name-ro', null, m.name),
-      el('span.pipe-deps-sum', null, 'fixed date · not a task'),
-      el('span.pipe-lag', null, '+' + lagLabel(m.buffer))
-    ]);
-
     function renderPipe() {
       closeDepMenu();
       pipeCount.textContent = pipe.length;
@@ -1009,7 +994,6 @@ window.App = window.App || {};
         t.key === confirmKey ? confirmRow(t, i)
         : t.key === editingKey ? editRow(t, i)
         : compactRow(t, i)));
-      App.MILESTONES.forEach(m => pipeList.appendChild(milestoneRow(m)));
     }
 
     /* ---- removing a task, and the dependencies it leaves behind ----
@@ -1238,6 +1222,29 @@ window.App = window.App || {};
           endFeedback.className = 'end-feedback ok';
           endFeedback.textContent = '⤢ Extended to ' + Math.round(solved.scale * 100) + '% of nominal — extra breathing room on every task';
         }
+
+        /* The milestones hang a fixed buffer past whatever the plan reaches, so
+           they're derived from the same target — never held separately. `reached`
+           is what the schedule can actually manage, which differs from `target`
+           when a squeeze has been clamped to the floor. */
+        const reached = target < floor.end ? floor.end : target;
+        msFields.forEach(f => {
+          f.input.value = App.shiftIso(target, f.m.offset);
+          const suggested = App.shiftIso(rec.end, f.m.offset);
+          const actual = App.shiftIso(reached, f.m.offset);
+          if (target === rec.end) {
+            f.note.className = 'ms-plan-note';
+            f.note.textContent = 'Suggested by the plan';
+          } else if (actual !== f.input.value) {
+            f.note.className = 'ms-plan-note bad';
+            f.note.textContent = 'Not reachable — earliest is ' + App.fmtDate(actual);
+          } else {
+            const d = App.diffDays(target, rec.end);
+            f.note.className = 'ms-plan-note warn';
+            f.note.textContent = (d < 0 ? Math.abs(d) + ' days earlier' : d + ' days later') +
+              ' than suggested (' + App.fmtDate(suggested) + ')';
+          }
+        });
       }
 
       countInput.addEventListener('input', () => { rebuildEps(); updateSchedule(); });
@@ -1251,6 +1258,69 @@ window.App = window.App || {};
       cadenceInput.addEventListener('change', updateSchedule);
       endInput.addEventListener('change', () => { targetTouched = true; updateSchedule(); });
 
+      /* ---------- collapsible sections ----------
+         The dialog is already taller than most screens, so only one of these
+         stands open at a time — opening one folds the rest away. */
+      const panels = [];
+      function collapsible(label, headExtras, body, onToggle) {
+        const chev = el('span.chev', null, '▶');
+        body.style.display = 'none';
+        const api = {
+          open: false,
+          setOpen(v) {
+            if (v) panels.forEach(p => { if (p !== api && p.open) p.setOpen(false); });
+            api.open = v;
+            chev.classList.toggle('open', v);
+            body.style.display = v ? '' : 'none';
+            if (onToggle) onToggle(v);
+          }
+        };
+        api.head = el('.pipe-toggle', { onclick: () => api.setOpen(!api.open) },
+          [chev, el('span.pipe-toggle-lbl', null, label)].concat(headExtras || []));
+        api.body = body;
+        panels.push(api);
+        return api;
+      }
+
+      /* ---------- delivery & live dates ----------
+         The two dates the show is committed to downstream. They're shown here
+         rather than in the pipeline because they aren't work — nobody does them,
+         they're what the work is FOR. Each is offered at the date the plan
+         currently reaches, and typing a different one re-times the pipeline to
+         hit it: the same squeeze/stretch the Project End Date drives, since
+         these sit a fixed buffer past it. The end date and these two are three
+         views of one number, so editing any of them updates the others. */
+      const msOffsets = () => {
+        let acc = 0;
+        return App.MILESTONES.map(m => ({ key: m.key, name: m.name, short: m.short, offset: (acc += m.buffer) }));
+      };
+      const msFields = msOffsets().map(m => {
+        const input = el('input.fld', { type: 'date' });
+        const note = el('.ms-plan-note');
+        input.addEventListener('change', () => {
+          if (!input.value) { updateSchedule(); return; }
+          // a committed milestone is really a statement about when the work
+          // must finish — convert it back and let the existing solver re-time
+          endInput.value = App.shiftIso(input.value, -m.offset);
+          targetTouched = true;
+          updateSchedule();
+        });
+        return { m, input, note, row: el('.ms-plan-row', null, [
+          el('span.ms-plan-pin', null, '◆'),
+          el('.ms-plan-main', null, [
+            el('.ms-plan-name', null, m.name),
+            note
+          ]),
+          input
+        ]) };
+      });
+      const msBody = el('.pipe-body', null, [
+        el('.fld-hint', { style: { margin: '8px 0' } },
+          'What the final episode is committed to. Suggested from the plan — enter a date instead and the pipeline is re-timed to reach it.'),
+        el('.ms-plan-list', null, msFields.map(f => f.row))
+      ]);
+      const msPanel = collapsible('Delivery & Live Dates', [el('span.count-badge', null, String(App.MILESTONES.length))], msBody);
+
       // ---------- pipeline editor (shared component) ----------
       const addTaskBtn = el('button.btn-icon', {
         type: 'button',
@@ -1260,10 +1330,7 @@ window.App = window.App || {};
         }
       }, '＋');
 
-      // pipeline customisation is tucked behind a collapsed toggle by default
-      let pipeOpen = false;
-      const pipeChev = el('span.chev', null, '▶');
-      const pipeBody = el('.pipe-body', { style: { display: 'none' } }, [
+      const pipeBody = el('.pipe-body', null, [
         el('.fld-hint', { style: { margin: '8px 0' } },
           '“days” is the nominal duration, “min” the floor it can be squeezed to. Dependencies gate when a task can start. Click a task to edit it.'),
         editor.list
@@ -1271,21 +1338,10 @@ window.App = window.App || {};
       // the pipeline controls only make sense once the section is expanded
       const pipeTools = [editor.undoBtn, editor.redoBtn, addTaskBtn];
       pipeTools.forEach(b => { b.style.display = 'none'; });
-      const pipeToggle = el('.pipe-toggle', {
-        onclick: () => {
-          pipeOpen = !pipeOpen;
-          pipeChev.classList.toggle('open', pipeOpen);
-          pipeBody.style.display = pipeOpen ? '' : 'none';
-          pipeTools.forEach(b => { b.style.display = pipeOpen ? '' : 'none'; });
-        }
-      }, [
-        pipeChev,
-        el('span.pipe-toggle-lbl', null, 'Customize Pipeline Tasks'),
-        editor.count,
-        editor.undoBtn,
-        editor.redoBtn,
-        addTaskBtn
-      ]);
+      const pipePanel = collapsible('Customize Pipeline Tasks',
+        [editor.count, editor.undoBtn, editor.redoBtn, addTaskBtn],
+        pipeBody,
+        (open) => { pipeTools.forEach(b => { b.style.display = open ? '' : 'none'; }); });
 
       rebuildEps();
       rebuildPresetOptions();
@@ -1316,8 +1372,10 @@ window.App = window.App || {};
         el('.modal-section-title', null, 'Episodes'),
         el('.fld-hint', { style: { marginTop: '-4px', marginBottom: '10px' } }, 'Name each episode — dates are scheduled from the show’s pipeline.'),
         epList,
-        pipeToggle,
-        pipeBody
+        msPanel.head,
+        msPanel.body,
+        pipePanel.head,
+        pipePanel.body
       ];
 
       const footer = [
