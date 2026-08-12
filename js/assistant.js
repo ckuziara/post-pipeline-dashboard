@@ -196,6 +196,19 @@ window.App = window.App || {};
       build: (show, m) => deptPlan(show, m[1], m[2])
     },
     {
+      /* "make Spline V2 an Animation task" — the way people actually say it.
+         Anchored on the trailing noun so it can't swallow "make all Blocking
+         dependent on Layout", which the dependency intents above claim first. */
+      re: /^(?:make|set|turn)\s+(.+?)\s+(?:in)?to\s+(?:an?|the)\s+(.+?)\s+(?:task|job|item|step|stage)$/i,
+      perm: 'schedule',
+      build: (show, m) => deptPlan(show, m[1], m[2])
+    },
+    {
+      re: /^(?:make|set|turn)\s+(.+?)\s+(?:an?|the)\s+(.+?)\s+(?:task|job|item|step|stage)$/i,
+      perm: 'schedule',
+      build: (show, m) => deptPlan(show, m[1], m[2])
+    },
+    {
       // "move Layout to Video Post" — returns null unless the target really is
       // a department, so "move LA-102 two weeks later" falls through to shift
       re: /^(?:move|change|switch|put|reassign)\s+(.+?)\s+(?:in)?to\s+(?:the\s+)?(.+?)(?:\s+(?:department|dept|team))?$/i,
