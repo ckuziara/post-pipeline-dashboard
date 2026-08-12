@@ -77,6 +77,10 @@ window.App = window.App || {};
     App.track && App.track.feature('view.' + App.state.view);
     if (App.state.view === 'admin') App.track.feature('admin.' + (App.state.admin.view || 'hub'));
     App.state._lastRenderedView = App.state.view;
+    // The assistant lives on <body>, outside the view that was just rebuilt, so
+    // its transcript survives a redraw; this only follows the view and the show
+    // filter it's scoped to.
+    App.assistant && App.assistant.sync();
   };
 
   // the brand mark doubles as the preferences button: clapper normally, gear
