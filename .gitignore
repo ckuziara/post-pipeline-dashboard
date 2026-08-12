@@ -6,6 +6,9 @@ server-config.json
 data/
 .env
 
+# Neon workspace link (machine-specific: which org/project/branch you're on)
+.neon
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db
@@ -14,3 +17,4 @@ Thumbs.db
 # Claude Code local session state (machine-specific, not project config)
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+.neon
