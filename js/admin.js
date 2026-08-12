@@ -838,6 +838,10 @@ window.App = window.App || {};
     'lucidlink.delivered': 'LucidLink upload', 'lucidlink.uploadFailed': 'LucidLink upload failed',
     'lucidlink.prepareFailed': 'LucidLink prepare failed',
     'flow.start': 'Workflow started', 'flow.complete': 'Workflow completed', 'flow.abandon': 'Workflow abandoned',
+    'assistant.miss': 'Assistant didn’t understand', 'assistant.unresolved': 'Assistant couldn’t resolve a name',
+    'assistant.parsed': 'Assistant understood', 'assistant.blocked': 'Assistant unavailable',
+    'assistant.cancelled': 'Assistant plan cancelled',
+    'assistant.replicate': 'Pipeline replicated', 'assistant.dependency': 'Dependency changed',
     'view.workspace': 'Task workspace', 'admin.logs': 'Audit logs'
   };
   const actionLabel = (a) => ACTION_LABELS[a] || a;
@@ -917,7 +921,10 @@ window.App = window.App || {};
       panel.innerHTML = '';
 
       const kindSel = el('select.filter');
-      [['', 'All events'], ['audit', 'Changes only'], ['usage', 'Feature usage only']].forEach(([v, l]) => {
+      // 'error' was always stored and counted, but had no way to be filtered to
+      // — which is where the assistant's miss log and the LucidLink failures live
+      [['', 'All events'], ['audit', 'Changes only'], ['usage', 'Feature usage only'],
+       ['error', 'Problems only']].forEach(([v, l]) => {
         const o = document.createElement('option'); o.value = v; o.textContent = l;
         if (v === filters.kind) o.selected = true; kindSel.appendChild(o);
       });
@@ -952,7 +959,8 @@ window.App = window.App || {};
           el('.cell.adm-who', null, person ? person.name : (r.email || '—')),
           el('.cell', null, el('span.adm-role-chip', null, r.role ? App.role(r.role).label : '—')),
           el('.cell', null, [
-            el('span.adm-kind.' + (r.kind === 'audit' ? 'audit' : 'usage'), null, r.kind === 'audit' ? 'change' : 'usage'),
+            el('span.adm-kind.' + (r.kind === 'audit' ? 'audit' : r.kind === 'error' ? 'error' : 'usage'), null,
+              r.kind === 'audit' ? 'change' : r.kind === 'error' ? 'problem' : 'usage'),
             el('span', null, actionLabel(r.action))
           ]),
           el('.cell.adm-detail', { title: detailText(r.detail) }, detailText(r.detail))
