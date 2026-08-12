@@ -209,6 +209,12 @@ window.App = window.App || {};
       build: (show, m) => deptPlan(show, m[1], m[2])
     },
     {
+      // "add Spline V2 after Blocking in Animation for 5 days"
+      re: /^(?:add|create|insert)\s+(.+)$/i,
+      perm: 'schedule',
+      build: (show, m) => addTaskPlan(show, m[1])
+    },
+    {
       // "move Layout to Video Post" — returns null unless the target really is
       // a department, so "move LA-102 two weeks later" falls through to shift
       re: /^(?:move|change|switch|put|reassign)\s+(.+?)\s+(?:in)?to\s+(?:the\s+)?(.+?)(?:\s+(?:department|dept|team))?$/i,
@@ -687,6 +693,166 @@ window.App = window.App || {};
         });
         return '“' + task.name + '” is now a ' + App.dept(toKey).label + ' task across ' + show.name +
           (freed ? ' · ' + plural(freed, 'task') + ' left unassigned' : '') + '.';
+      }
+    };
+  }
+
+  /* ---- add a task to the pipeline ----------------------------------------
+
+     Everything else here reshapes tasks that already exist; this is the one
+     that makes a new one. It lands on the SHOW's pipeline, so every episode
+     gains it — including ones added later.
+
+     "after X" SPLICES rather than branches. Saying a stage goes after Blocking
+     almost always means it goes between Blocking and whatever followed it, not
+     alongside — so whatever depended on the anchor is rewired to depend on the
+     new task instead, and the preview names every rewired task so that isn't a
+     surprise. "before X" is the mirror: the new task inherits the anchor's
+     dependencies and the anchor waits on it.
+
+     Concrete dates matter here in a way they don't elsewhere. App.subitems
+     falls back to "starts today" for a pipeline task an episode has no dates
+     for, which would drop the new bar onto today's date in every episode
+     regardless of where that episode actually sits. So each episode gets a
+     real slot, measured from its own copy of the anchor.
+
+     Nothing downstream is rescheduled. Splicing a task in makes the work
+     longer, so the tasks after it are now too early — that's reported, per the
+     same rule the rest of the app follows: the producer decides who gives up
+     the days. */
+  const DEFAULT_DAYS = 5, DEFAULT_MIN = 2;
+
+  function addTaskPlan(show, rest) {
+    const pipe = showPipeline(show);
+    let text = stripScope(rest);
+
+    // pull the optional modifiers off the end first, so what's left is just
+    // "<name> after|before <anchor>"
+    let days = null;
+    text = text.replace(/\s+(?:for|over|taking)\s+(\d+)\s*(day|week)s?\b/i, (m0, n, unit) => {
+      days = parseInt(n, 10) * (/week/i.test(unit) ? 7 : 1);
+      return '';
+    });
+    let deptKey = null;
+    text = text.replace(/\s+(?:in|to|under|for)\s+(?:the\s+)?([A-Za-z][\w\s&-]*?)(?:\s+(?:department|dept|team))?\s*$/i,
+      (m0, name) => { const k = findDept(name); if (!k) return m0; deptKey = k; return ''; });
+
+    const m = text.match(/^(?:a\s+|an\s+)?(?:new\s+)?(?:task|stage|step|job)?\s*(?:called|named)?\s*(.+?)\s+(after|before|following|ahead\s+of|preceding)\s+(.+)$/i);
+    if (!m) return null;                       // no anchor — not something we can place
+
+    const name = m[1].replace(/^["“']|["”']$/g, '').trim();
+    const position = /^(?:before|ahead\s+of|preceding)$/i.test(m[2]) ? 'before' : 'after';
+    if (!name) return null;
+
+    const found = findTasks(pipe, m[3]);
+    if (!found.length) {
+      return { reason: 'no_task', kind: 'addtask',
+        error: 'There’s no task called “' + m[3].trim() + '” in ' + show.name + '’s pipeline to put it ' + position + '.',
+        hint: 'Its tasks are: ' + pipe.map(t => t.name).join(', ') + '.' };
+    }
+    if (found.length > 1) {
+      return { reason: 'ambiguous_task', kind: 'addtask',
+        error: '“' + m[3].trim() + '” matches ' + found.length + ' tasks — ' +
+          found.map(t => '“' + t.name + '”').join(', ') + '.', hint: 'Name one exactly.' };
+    }
+    const anchor = found[0];
+
+    // a name already in use would make every later reference ambiguous
+    if (pipe.some(t => norm(t.name) === norm(name))) {
+      return { reason: 'already', kind: 'addtask',
+        error: show.name + '’s pipeline already has a task called “' + pipe.find(t => norm(t.name) === norm(name)).name + '”.' };
+    }
+    if (deptKey === null) deptKey = anchor.dept;     // same team as the stage it sits beside
+    const dur = days || DEFAULT_DAYS;
+
+    // build the candidate pipeline now, so a cycle is caught before it's offered
+    let key = norm(name).slice(0, 24) || 'task';
+    if (!key || pipe.some(t => t.key === key)) { let i = 2; const base = key; while (pipe.some(t => t.key === key)) key = base + '_' + (i++); }
+    const next = JSON.parse(JSON.stringify(pipe));
+    const idx = next.findIndex(t => t.key === anchor.key);
+    const task = { key, name, dept: deptKey, days: dur, minDays: Math.min(DEFAULT_MIN, dur), deps: [] };
+    const rewired = [];
+    if (position === 'after') {
+      task.deps = [anchor.key];
+      next.forEach(t => {
+        const i = t.deps.indexOf(anchor.key);
+        if (i >= 0) { t.deps[i] = key; rewired.push(t.name); }
+      });
+      next.splice(idx + 1, 0, task);
+    } else {
+      task.deps = anchor.deps.slice();
+      next.splice(idx, 0, task);
+      const a = next.find(t => t.key === anchor.key);
+      a.deps = [key];
+      rewired.push(anchor.name);
+    }
+    if (!App.topoSort(next)) {
+      return { reason: 'cycle', kind: 'addtask', error: 'Adding it there would make a dependency loop.' };
+    }
+
+    // where it lands in each episode, measured from that episode's own anchor
+    const eps = showEpisodes(show.id);
+    const slots = {};
+    eps.forEach(ep => {
+      const su = App.subitem(ep, anchor.key);
+      if (!su) return;
+      slots[ep.id] = position === 'after'
+        ? { start: App.shiftIso(su.due, 1), due: App.shiftIso(su.due, dur) }
+        : { start: App.shiftIso(su.start, -dur), due: App.shiftIso(su.start, -1) };
+    });
+
+    const lines = [], warn = [];
+    eps.forEach(ep => {
+      const s = slots[ep.id];
+      if (!s) { lines.push({ code: ep.code, text: 'doesn’t run “' + anchor.name + '”, so it won’t be added here', muted: true }); return; }
+      lines.push({ code: ep.code, text: App.fmtRange(s.start, s.due) + ' · unassigned' });
+      // splicing makes the chain longer, so whatever followed the anchor is now
+      // too early — reported, never silently pushed
+      next.filter(t => t.deps.includes(key) && t.key !== key).forEach(t => {
+        const dep = App.subitem(ep, t.key);
+        if (dep && dep.start <= s.due) {
+          warn.push(ep.code + ': “' + t.name + '” starts ' + plural(App.diffDays(s.due, dep.start) + 1, 'day') +
+            ' before “' + name + '” would finish.');
+        }
+      });
+    });
+    if (!Object.keys(slots).length) {
+      return { reason: 'no_targets', kind: 'addtask',
+        error: 'No episode of ' + show.name + ' runs “' + anchor.name + '”, so there’s nowhere to put it.' };
+    }
+
+    return {
+      kind: 'addtask',
+      title: 'Add “' + name + '” ' + position + ' “' + anchor.name + '” in ' + show.name,
+      note: plural(dur, 'day') + ' of ' + App.dept(deptKey).label + ' work, added to ' + show.name +
+            '’s pipeline so every episode gains it — including ones added later. It starts unassigned, and ' +
+            (rewired.length
+              ? (position === 'after'
+                  ? rewired.join(', ') + ' will wait for it instead of “' + anchor.name + '”.'
+                  : '“' + anchor.name + '” will wait for it.')
+              : 'nothing else depends on it yet.'),
+      lines, warn,
+      label: 'Add “' + name + '”',
+      run: () => {
+        App.mutate(d => {
+          const s = d.shows.find(x => x.id === show.id); if (!s) return;
+          s.pipeline = next;
+          d.episodes.filter(e => e.showId === show.id).forEach(e => {
+            if (!slots[e.id]) return;
+            e.dates = e.dates || {};
+            e.statuses = e.statuses || {};
+            e.dates[key] = slots[e.id];
+            e.statuses[key] = 'not_started';
+            App.refreshReadiness(e);
+          });
+        }, 'the new task');
+        App.track && App.track.audit && App.track.audit('assistant.addTask', {
+          show: show.name, task: name, dept: App.dept(deptKey).label,
+          position, anchor: anchor.name, days: dur,
+          episodes: Object.keys(slots).length, rewired: rewired.join(', ') || null
+        });
+        return '“' + name + '” added ' + position + ' “' + anchor.name + '” across ' +
+          plural(Object.keys(slots).length, 'episode') + ' · unassigned.';
       }
     };
   }
