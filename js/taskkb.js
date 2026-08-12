@@ -93,33 +93,73 @@ window.App = window.App || {};
      library is byte-identical every time it's built. The scheduler calls this
      on every simulation; churning ids would make bars unstable between runs. */
   const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  const TYPES = ['animation', 'live_action'];
+  const TYPE_LABEL = { animation: 'Animation', live_action: 'Live Action' };
+
+  /* Animation and Live Action are SEPARATE libraries, not one list with a type
+     flag. A final mix on a live-action episode isn't the same job as one on an
+     animated episode — different days, different revision counts — and sharing
+     one entry meant tuning either was impossible without disturbing the other.
+     Each type therefore owns its own copy, editable independently. */
+  function seedFor(type) {
+    return SEED
+      .filter(t => (t.types || TYPES).includes(type))
+      .map(t => {
+        const c = Object.assign({}, t);
+        delete c.types;                                  // the list it lives in IS its type
+        return Object.assign({ id: t.dept + ':' + slug(t.name), enabled: true }, c);
+      });
+  }
   function seedLibrary() {
-    return SEED.map(t => Object.assign({ id: t.dept + ':' + slug(t.name), enabled: true }, t));
+    return { animation: seedFor('animation'), live_action: seedFor('live_action') };
   }
 
   // total working days one instance of this task consumes, revisions included
   const taskDays = (t) => Math.max(1, (t.days || 0) + (t.rev || 0) * (t.revDays || 0));
 
-  const library = () => {
-    const d = App.state.data;
-    if (!d) return [];
-    if (!d.taskKb || !d.taskKb.length) return seedLibrary();
-    return d.taskKb;
-  };
-  const isSeeded = () => !!(App.state.data && App.state.data.taskKb && App.state.data.taskKb.length);
+  /* Older saves hold a single shared array. Split it per type, deep-copying so
+     the two sides are genuinely independent from the first edit onward. */
+  function migrate(stored) {
+    if (!Array.isArray(stored)) return stored;
+    const out = {};
+    TYPES.forEach(type => {
+      out[type] = stored
+        .filter(t => (t.types || TYPES).includes(type))
+        .map(t => { const c = JSON.parse(JSON.stringify(t)); delete c.types; return c; });
+    });
+    return out;
+  }
 
-  function saveLibrary(lib) {
-    App.mutate(d => { d.taskKb = lib; });
+  const store = () => {
+    const d = App.state.data;
+    if (!d || !d.taskKb) return null;
+    const s = migrate(d.taskKb);
+    return (s && (s.animation || s.live_action)) ? s : null;
+  };
+  const library = (type) => {
+    const s = store();
+    if (!s) return seedFor(type);
+    return s[type] && s[type].length ? s[type] : seedFor(type);
+  };
+  const isSeeded = () => !!store();
+
+  // writes one type's list, leaving the other untouched
+  function saveLibrary(type, lib) {
+    App.mutate(d => {
+      const cur = migrate(d.taskKb) || {};
+      d.taskKb = Object.assign({ animation: library('animation'), live_action: library('live_action') }, cur);
+      d.taskKb[type] = lib;
+    });
   }
   function ensureSeeded() {
-    if (!isSeeded()) saveLibrary(seedLibrary());
+    if (!isSeeded()) App.mutate(d => { d.taskKb = seedLibrary(); });
   }
 
   /* The tasks that apply to a show type, in waterfall order. This is what the
      planner consumes instead of a hand-written pipeline. */
   function tasksFor(type) {
-    return library()
-      .filter(t => t.enabled !== false && (t.types || BOTH).includes(type))
+    return library(type)
+      .filter(t => t.enabled !== false)
       .slice()
       .sort((a, b) => (a.stage - b.stage) || (a.dept < b.dept ? -1 : 1));
   }
@@ -175,7 +215,9 @@ window.App = window.App || {};
     /* Deliberately does NOT persist the seed on open. Saving during a render
        would re-enter App.render() and paint the view twice; the fallback
        library is already returned by library(), and Save writes it for real. */
-    const lib = JSON.parse(JSON.stringify(library()));
+    const st = App.state.planning;
+    const type = (st.kbType = st.kbType || 'animation');
+    const lib = JSON.parse(JSON.stringify(library(type)));
     const box = el('div');
 
     box.appendChild(el('.pl-crumb', null, [
@@ -187,25 +229,60 @@ window.App = window.App || {};
       el('div', null, [
         el('.pl-title', null, 'Task Knowledge Base'),
         el('.pl-sub', null, 'Every task the studio knows how to do, with the revisions it actually needs. The planner books base time plus every revision round — this is where a schedule stops being optimistic.')
-      ])
+      ]),
+      el('button.btn-ghost', {
+        title: 'See the stage order as a pipeline',
+        onclick: () => { commit(); st.view = 'kbflow'; App.render(); }
+      }, [App.icon('chart'), ' Stage flow'])
     ]));
 
-    // what the library implies for a typical order, so edits have consequences
+    /* Animation and Live Action are independent libraries; the switch changes
+       which one you're editing, not a filter over a shared list. Unsaved edits
+       are carried over so switching to compare doesn't cost you your work. */
+    const tabs = el('.pl-kb-types-bar');
+    TYPES.forEach(tp => {
+      tabs.appendChild(el('button.pl-kb-typetab' + (tp === type ? '.active' : ''), {
+        onclick: () => {
+          if (tp === type) return;
+          commit();                       // keep this type's edits in the draft
+          st.kbType = tp; App.render();
+        }
+      }, [
+        TYPE_LABEL[tp],
+        el('span.pl-kb-typecount', null, String(library(tp).filter(t => t.enabled !== false).length))
+      ]));
+    });
+    box.appendChild(tabs);
+
+    // Unsaved edits survive a type switch or a hop to the stage flow.
+    const DRAFTS = (App.taskKb._drafts = App.taskKb._drafts || {});
+    if (DRAFTS[type]) lib.splice(0, lib.length, ...JSON.parse(JSON.stringify(DRAFTS[type])));
+    function commit() { DRAFTS[type] = JSON.parse(JSON.stringify(lib)); }
+
+    // what this library implies for a typical order, so edits have consequences
     const statsBox = el('.pl-stats');
     function refreshStats() {
       statsBox.innerHTML = '';
-      const a = summary('animation', 10), l = summary('live_action', 10);
-      [['Animation', a], ['Live Action', l]].forEach(([label, s]) => {
-        statsBox.appendChild(el('.pl-stat', null, [
-          el('.pl-stat-lab', null, label + ' · 10 eps'),
-          el('.pl-stat-val', null, s.totalDays + ' task-days'),
-          el('.pl-stat-sub', null, s.taskCount + ' tasks → ' + s.instances + ' instances · ' +
-            Math.round(s.revShare * 100) + '% of it revisions')
-        ]));
-      });
+      const active = lib.filter(t => t.enabled !== false);
+      const eps = 10;
+      const base = active.reduce((s, t) => s + (t.days || 0) * (t.scope === 'series' ? 1 : eps), 0);
+      const rev = active.reduce((s, t) => s + (t.rev || 0) * (t.revDays || 0) * (t.scope === 'series' ? 1 : eps), 0);
+      const inst = active.reduce((s, t) => s + (t.scope === 'series' ? 1 : eps), 0);
+      const stages = new Set(active.map(t => t.stage)).size;
       statsBox.appendChild(el('.pl-stat', null, [
-        el('.pl-stat-lab', null, 'Library'),
-        el('.pl-stat-val', null, lib.filter(t => t.enabled !== false).length + ' active'),
+        el('.pl-stat-lab', null, TYPE_LABEL[type] + ' · 10 eps'),
+        el('.pl-stat-val', null, (base + rev) + ' task-days'),
+        el('.pl-stat-sub', null, active.length + ' tasks → ' + inst + ' instances · ' +
+          Math.round((base + rev ? rev / (base + rev) : 0) * 100) + '% of it revisions')
+      ]));
+      statsBox.appendChild(el('.pl-stat', null, [
+        el('.pl-stat-lab', null, 'Pipeline'),
+        el('.pl-stat-val', null, stages + ' stages'),
+        el('.pl-stat-sub', null, 'lower stages finish before higher ones start')
+      ]));
+      statsBox.appendChild(el('.pl-stat', null, [
+        el('.pl-stat-lab', null, TYPE_LABEL[type] + ' library'),
+        el('.pl-stat-val', null, active.length + ' active'),
         el('.pl-stat-sub', null, lib.length + ' total across ' + DEPT_ORDER.length + ' departments')
       ]));
     }
@@ -216,7 +293,7 @@ window.App = window.App || {};
       table.appendChild(el('.pl-kb-head', null, [
         el('.cell', null, 'Task'), el('.cell', null, 'Scope'), el('.cell', null, 'Stage'),
         el('.cell', null, 'Days'), el('.cell', null, 'Revs'), el('.cell', null, 'Days / rev'),
-        el('.cell', null, 'Total'), el('.cell', null, 'Types'), el('.cell', null, '')
+        el('.cell', null, 'Total'), el('.cell', null, '')
       ]));
 
       DEPT_ORDER.forEach(dept => {
@@ -233,7 +310,7 @@ window.App = window.App || {};
             onclick: () => {
               const maxStage = lib.reduce((m, t) => Math.max(m, t.stage || 0), 0);
               lib.push({ id: App.uid(), dept, name: 'New task', scope: 'episode',
-                         stage: Math.max(1, maxStage), days: 3, rev: 1, revDays: 1, types: BOTH.slice(), enabled: true });
+                         stage: Math.max(1, maxStage), days: 3, rev: 1, revDays: 1, enabled: true });
               render(); refreshStats();
             }
           }, '＋ Task')
@@ -261,19 +338,6 @@ window.App = window.App || {};
           });
           scopeSel.addEventListener('change', () => { t.scope = scopeSel.value; refreshStats(); });
 
-          const typeBox = el('.pl-kb-types');
-          [['animation', 'Anim'], ['live_action', 'Live']].forEach(([v, l]) => {
-            const c = el('input', { type: 'checkbox' });
-            c.checked = (t.types || BOTH).includes(v);
-            c.addEventListener('change', () => {
-              const set = new Set(t.types || BOTH);
-              if (c.checked) set.add(v); else set.delete(v);
-              t.types = [...set];
-              refreshStats();
-            });
-            typeBox.appendChild(el('label.pl-kb-type', null, [c, el('span', null, l)]));
-          });
-
           const onChk = el('input', { type: 'checkbox' });
           onChk.checked = t.enabled !== false;
           onChk.addEventListener('change', () => { t.enabled = onChk.checked; render(); refreshStats(); });
@@ -286,7 +350,6 @@ window.App = window.App || {};
             el('.cell', null, num('rev', 0, 10)),
             el('.cell', null, num('revDays', 0, 60)),
             el('.cell.pl-kb-totalcell', null, totalOut),
-            el('.cell', null, typeBox),
             el('.cell.pl-rate-x', null, el('button.btn-mini.danger', {
               title: 'Delete this task from the library',
               onclick: () => {
@@ -311,16 +374,17 @@ window.App = window.App || {};
     box.appendChild(el('.pl-actions', null, [
       el('button.btn-ghost', { onclick: () => { App.state.planning.view = 'hub'; App.render(); } }, 'Cancel'),
       el('button.btn-ghost', {
-        onclick: () => App.confirm('Reset the library to the seeded studio defaults? Your edits will be lost.',
-          () => { saveLibrary(seedLibrary()); App.toast('Task library reset to defaults'); },
-          { title: 'Reset task library', yesLabel: 'Reset' })
+        onclick: () => App.confirm('Reset the ' + TYPE_LABEL[type] + ' library to the seeded studio defaults? Only this library is affected — ' + TYPE_LABEL[type === 'animation' ? 'live_action' : 'animation'] + ' is left alone.',
+          () => { delete DRAFTS[type]; saveLibrary(type, seedFor(type)); App.toast(TYPE_LABEL[type] + ' library reset to defaults'); },
+          { title: 'Reset ' + TYPE_LABEL[type] + ' library', yesLabel: 'Reset' })
       }, 'Reset to defaults'),
       el('button.btn-primary', {
         onclick: () => {
           const bad = lib.find(t => !(t.name || '').trim());
           if (bad) { App.toast('Every task needs a name', true); return; }
-          saveLibrary(lib);
-          App.toast('Task knowledge base saved — ' + lib.filter(t => t.enabled !== false).length + ' active tasks');
+          delete DRAFTS[type];
+          saveLibrary(type, lib);
+          App.toast(TYPE_LABEL[type] + ' library saved — ' + lib.filter(t => t.enabled !== false).length + ' active tasks');
           App.state.planning.view = 'hub'; App.render();
         }
       }, [App.icon('save'), ' Save library'])
@@ -330,8 +394,176 @@ window.App = window.App || {};
     return box;
   }
 
+  /* ========================================================= stage flow ===
+     A number in a box can't show a pipeline. This view draws the same `stage`
+     data two ways at once:
+
+       • a proportional strip — each stage as wide as it is long, so you can
+         see where the weeks actually go, not just what order things happen in
+       • columns of cards — one per stage, holding the tasks that run in
+         PARALLEL there, which is the fact the integer hides completely
+
+     Dragging a card to another column restages it, so ordering the pipeline is
+     a physical act rather than arithmetic. */
+  function stageFlow() {
+    const st = App.state.planning;
+    const type = st.kbType || 'animation';
+    const DRAFTS = (App.taskKb._drafts = App.taskKb._drafts || {});
+    // edit the same draft the table is editing, so the two stay in step
+    const lib = DRAFTS[type] ? JSON.parse(JSON.stringify(DRAFTS[type]))
+                             : JSON.parse(JSON.stringify(library(type)));
+    const commit = () => { DRAFTS[type] = JSON.parse(JSON.stringify(lib)); };
+
+    const box = el('div');
+    box.appendChild(el('.pl-crumb', null, [
+      el('span.pl-crumb-link', { onclick: () => { st.view = 'hub'; App.render(); } }, 'Planning'),
+      el('span', null, '/'),
+      el('span.pl-crumb-link', { onclick: () => { st.view = 'kb'; App.render(); } }, 'Task Knowledge Base'),
+      el('span', null, '/'),
+      el('span.pl-crumb-here', null, 'Stage flow')
+    ]));
+
+    const head = el('.pl-head', null, [
+      el('div', null, [
+        el('.pl-title', null, TYPE_LABEL[type] + ' pipeline'),
+        el('.pl-sub', null, 'Each column is a stage; everything in a column runs at the same time. Drag a task to another stage to reorder the pipeline.')
+      ]),
+      el('.pl-kb-types-bar', null, TYPES.map(tp =>
+        el('button.pl-kb-typetab' + (tp === type ? '.active' : ''), {
+          onclick: () => { if (tp !== type) { commit(); st.kbType = tp; App.render(); } }
+        }, TYPE_LABEL[tp])))
+    ]);
+    box.appendChild(head);
+
+    const wrap = el('div');
+    let dragId = null;
+
+    function stages() {
+      const map = {};
+      lib.filter(t => t.enabled !== false).forEach(t => {
+        (map[t.stage] = map[t.stage] || []).push(t);
+      });
+      return Object.keys(map).map(Number).sort((a, b) => a - b)
+        .map(s => ({ stage: s, tasks: map[s], days: map[s].reduce((m, t) => Math.max(m, taskDays(t)), 0) }));
+    }
+
+    /* Renumber to a dense 1..n after every move. Emptying a stage otherwise
+       leaves a hole — the pipeline would still run correctly, but the labels
+       would start at "Stage 2" and the numbers would drift further from the
+       column count with each drag. Order is preserved; only the labels close up.
+       Disabled tasks are renumbered too, so re-enabling one can't resurrect a
+       stale stage number. */
+    function renumber() {
+      const used = [...new Set(lib.map(t => t.stage))].sort((a, b) => a - b);
+      const map = new Map(used.map((s, i) => [s, i + 1]));
+      lib.forEach(t => { t.stage = map.get(t.stage); });
+    }
+    function moveTo(taskId, targetStage) {
+      const t = lib.find(x => x.id === taskId);
+      if (!t || t.stage === targetStage) return;
+      t.stage = targetStage;
+      renumber();
+      commit();
+      draw();
+    }
+
+    function draw() {
+      wrap.innerHTML = '';
+      const list = stages();
+      if (!list.length) {
+        wrap.appendChild(el('.pl-empty', null, 'No active tasks in this library yet.'));
+        return;
+      }
+      const total = list.reduce((s, g) => s + g.days, 0) || 1;
+
+      // ---- proportional duration strip ----
+      const strip = el('.kbf-strip');
+      list.forEach(g => {
+        const seg = el('.kbf-seg', {
+          style: { width: (g.days / total * 100) + '%' },
+          title: 'Stage ' + g.stage + ' — ' + g.days + ' days (longest task), ' + g.tasks.length + ' in parallel'
+        }, [
+          el('span.kbf-seg-n', null, String(g.stage)),
+          el('span.kbf-seg-d', null, g.days + 'd')
+        ]);
+        strip.appendChild(seg);
+      });
+      wrap.appendChild(el('.pl-card', null, [
+        el('.pl-card-head', null, [
+          el('.pl-card-title', null, 'Where the time goes'),
+          el('.pl-card-desc', null, 'Each stage sized by its longest task — ' + total +
+            ' working days end to end if every stage waits for the one before.')
+        ]),
+        strip
+      ]));
+
+      // ---- columns of parallel work ----
+      const cols = el('.kbf-cols');
+      list.forEach(g => {
+        const col = el('.kbf-col');
+        col.appendChild(el('.kbf-col-head', null, [
+          el('span.kbf-col-n', null, 'Stage ' + g.stage),
+          el('span.kbf-col-d', null, g.days + 'd')
+        ]));
+        const body = el('.kbf-col-body');
+        // drop target
+        body.addEventListener('dragover', e => { e.preventDefault(); body.classList.add('over'); });
+        body.addEventListener('dragleave', () => body.classList.remove('over'));
+        body.addEventListener('drop', e => {
+          e.preventDefault(); body.classList.remove('over');
+          if (dragId) moveTo(dragId, g.stage);
+        });
+
+        g.tasks.forEach(t => {
+          const dep = App.dept(t.dept);
+          const card = el('.kbf-card', {
+            draggable: 'true',
+            title: t.name + ' — ' + taskDays(t) + 'd (' + (t.days || 0) + ' + ' +
+              (t.rev || 0) + '×' + (t.revDays || 0) + ' revisions)'
+          }, [
+            el('.kbf-card-top', null, [
+              el('span.dot', { style: { background: dep.color } }),
+              el('span.kbf-card-name', null, t.name)
+            ]),
+            el('.kbf-card-meta', null, [
+              el('span', null, taskDays(t) + 'd'),
+              el('span.kbf-card-scope', null, t.scope === 'series' ? 'per series' : 'per episode')
+            ])
+          ]);
+          card.addEventListener('dragstart', () => { dragId = t.id; card.classList.add('dragging'); });
+          card.addEventListener('dragend', () => { dragId = null; card.classList.remove('dragging'); });
+          body.appendChild(card);
+        });
+        col.appendChild(body);
+        cols.appendChild(col);
+      });
+      wrap.appendChild(el('.pl-card', null, [
+        el('.pl-card-head', null, [
+          el('.pl-card-title', null, 'Stages'),
+          el('.pl-card-desc', null, 'Tasks in the same column run in parallel. Drag one sideways to move it to another stage.')
+        ]),
+        cols
+      ]));
+    }
+
+    box.appendChild(wrap);
+    box.appendChild(el('.pl-actions', null, [
+      el('button.btn-ghost', { onclick: () => { st.view = 'kb'; App.render(); } }, '‹ Back to the table'),
+      el('button.btn-primary', {
+        onclick: () => {
+          delete DRAFTS[type];
+          saveLibrary(type, lib);
+          App.toast(TYPE_LABEL[type] + ' pipeline saved');
+          st.view = 'kb'; App.render();
+        }
+      }, [App.icon('save'), ' Save pipeline'])
+    ]));
+    draw();
+    return box;
+  }
+
   App.taskKb = {
-    seedLibrary, library, saveLibrary, ensureSeeded, isSeeded,
-    taskDays, tasksFor, stagesFor, stagesFromTasks, summary, editor, DEPT_ORDER
+    seedLibrary, seedFor, library, saveLibrary, ensureSeeded, isSeeded, TYPES, TYPE_LABEL,
+    taskDays, tasksFor, stagesFor, stagesFromTasks, summary, editor, stageFlow, DEPT_ORDER
   };
 })();

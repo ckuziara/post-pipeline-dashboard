@@ -2693,8 +2693,10 @@ select.fld { cursor: pointer; }
 }
 
 /* ---- task knowledge base ---- */
+/* Eight columns since the Anim/Live pair went away — each show type now has
+   its own library, so a per-row type toggle no longer means anything. */
 .pl-kb-head, .pl-kb-row {
-  display: grid; grid-template-columns: 1.7fr 118px 62px 62px 56px 74px 58px 104px 34px;
+  display: grid; grid-template-columns: 1.7fr 118px 62px 62px 56px 74px 58px 34px;
   gap: 9px; padding: 8px 18px; align-items: center;
 }
 .pl-kb-head { background: var(--bg-2); border-bottom: 1px solid var(--border); }
@@ -2713,9 +2715,22 @@ select.fld { cursor: pointer; }
 .pl-kb-scope { font-size: 11.5px; }
 .pl-kb-totalcell { text-align: center; }
 .pl-kb-total { font-size: 11.5px; font-weight: 800; color: var(--accent); }
-.pl-kb-types { display: flex; gap: 8px; }
-.pl-kb-type { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-3); cursor: pointer; }
-.pl-kb-type input { accent-color: var(--accent); cursor: pointer; }
+/* Animation / Live Action switch — these are two separate libraries, so the
+   control reads as a pair of tabs rather than a filter. */
+.pl-kb-types-bar { display: flex; gap: 6px; margin: 0 0 16px; flex: none; }
+.pl-kb-typetab {
+  display: inline-flex; align-items: center; gap: 7px;
+  border: 1px solid var(--border-2); background: var(--bg-2); color: var(--text-2);
+  font-size: 12.5px; font-weight: 700; padding: 8px 15px; border-radius: 9px; cursor: pointer;
+  transition: background .13s, color .13s, border-color .13s;
+}
+.pl-kb-typetab:hover { background: var(--hover); color: var(--text); }
+.pl-kb-typetab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pl-kb-typecount {
+  font-size: 10.5px; font-weight: 800; padding: 1px 7px; border-radius: 999px;
+  background: rgba(255,255,255,.14);
+}
+.pl-kb-typetab:not(.active) .pl-kb-typecount { background: var(--bg); color: var(--text-3); }
 
 .pl-kb-summary { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
 .pl-kb-sum-lab { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .6px; color: var(--text-3); }
@@ -2723,13 +2738,53 @@ select.fld { cursor: pointer; }
 .pl-kb-sum-sub { font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
 .pl-kb-summary .btn-ghost { margin-left: auto; }
 
-/* Hiding Scope (2) and Types (8) leaves seven visible cells — the track count
-   has to match or the delete button wraps and doubles every row's height. */
+/* Hiding Scope (2) leaves seven visible cells — the track count has to match or
+   the delete button wraps and doubles every row's height. Cell 8 is now that
+   delete button, so it must stay visible. */
 @media (max-width: 980px) {
   .pl-kb-head, .pl-kb-row { grid-template-columns: 1.4fr 50px 50px 46px 58px 50px 32px; gap: 7px; }
-  .pl-kb-head .cell:nth-child(2), .pl-kb-row .cell:nth-child(2),
-  .pl-kb-head .cell:nth-child(8), .pl-kb-row .cell:nth-child(8) { display: none; }
+  .pl-kb-head .cell:nth-child(2), .pl-kb-row .cell:nth-child(2) { display: none; }
 }
+
+/* ---- stage flow: the pipeline as a picture ---- */
+.kbf-strip {
+  display: flex; gap: 2px; padding: 14px 18px 18px; align-items: stretch;
+  overflow-x: auto;
+}
+.kbf-seg {
+  min-width: 30px; border-radius: 6px; padding: 9px 4px 7px; text-align: center;
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 62%, #000));
+  color: #fff; flex: none; display: flex; flex-direction: column; gap: 2px; justify-content: center;
+}
+.kbf-seg-n { font-size: 10.5px; font-weight: 800; opacity: .85; }
+.kbf-seg-d { font-size: 11px; font-weight: 800; }
+
+.kbf-cols { display: flex; gap: 10px; padding: 14px 18px 18px; overflow-x: auto; align-items: flex-start; }
+.kbf-col {
+  flex: none; width: 190px; background: var(--bg-2);
+  border: 1px solid var(--border); border-radius: 11px; overflow: hidden;
+}
+.kbf-col-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding: 9px 11px; background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.kbf-col-n { font-size: 11px; font-weight: 800; }
+.kbf-col-d { font-size: 10.5px; font-weight: 800; color: var(--accent); }
+.kbf-col-body { padding: 8px; display: flex; flex-direction: column; gap: 7px; min-height: 62px; transition: background .13s; }
+.kbf-col-body.over { background: rgba(91,108,255,.14); }
+.kbf-card {
+  background: var(--surface); border: 1px solid var(--border-2); border-radius: 9px;
+  padding: 8px 9px; cursor: grab; transition: border-color .13s, transform .08s;
+}
+.kbf-card:hover { border-color: var(--accent); }
+.kbf-card.dragging { opacity: .45; cursor: grabbing; }
+.kbf-card-top { display: flex; align-items: center; gap: 6px; }
+/* the shared .dot has no size of its own outside a chip, so give it one here —
+   the department colour is the only thing telling these cards apart */
+.kbf-card-top .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.kbf-card-name { font-size: 11.5px; font-weight: 700; line-height: 1.3; }
+.kbf-card-meta { display: flex; justify-content: space-between; gap: 6px; margin-top: 5px; font-size: 10px; color: var(--text-3); }
+.kbf-card-scope { opacity: .8; }
 
 /* ---- crafted pipeline ---- */
 .pl-sigs { display: flex; flex-wrap: wrap; gap: 8px; }
