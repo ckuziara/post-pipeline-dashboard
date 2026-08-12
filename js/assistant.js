@@ -125,28 +125,216 @@ window.App = window.App || {};
      preview and then run again at apply time against a board that may have
      moved underneath it. */
 
+  /* Each intent declares the right it needs, because they genuinely differ:
+     asking what's blocked needs none, assigning an owner is its own privilege,
+     and everything that moves dates or reshapes a pipeline rides on
+     canEditSchedule. `perm: null` means anyone signed in may ask.
+
+     A build() may return null to mean "that wasn't me after all" — the matcher
+     then keeps looking. Several of these grammars legitimately overlap ("move
+     Layout to Video Post" vs "move LA-102 two weeks later"), and falling
+     through beats trying to write one regex that tells them apart. */
+  const PERM = {
+    schedule: { test: () => App.canEditSchedule(App.state.role),
+                deny: 'Only Producers, Managers and Post Operations can change the schedule, so there’s nothing I can apply for you here.' },
+    assign:   { test: () => App.canAssignOwners(App.state.role),
+                deny: 'Your role can’t assign task owners. An admin sets that in Admin → Access Control.' }
+  };
+
   const INTENTS = [
+    /* ---- read-only questions (no permission, no plan, no apply) ---- */
+    {
+      re: /^(?:what(?:'s|’s| is|s)?\s+)?(?:is\s+)?(?:currently\s+)?(?:blocked|at\s+risk|the\s+blockers?|blockers?)\b/i,
+      build: (show) => blockedAnswer(show)
+    },
+    {
+      re: /^(?:what(?:'s|’s| is|s)?\s+)?(?:is\s+)?(?:overdue|late|behind|slipping)\b/i,
+      build: (show) => overdueAnswer(show)
+    },
+    {
+      re: /\bdue\s+(?:this|next)\s+week\b|^what(?:'s|’s| is)?\s+due\b|^what\s+is\s+coming\s+up\b/i,
+      build: (show, m, q) => dueAnswer(show, /next\s+week/i.test(q))
+    },
+    {
+      re: /^who(?:'s|’s| is)?\s+(?:on|owns|has|assigned\s+to|working\s+on|doing)\s+(.+)$/i,
+      build: (show, m) => ownerAnswer(show, m[1])
+    },
+    {
+      re: /^(?:status|summary|overview|how(?:'s|’s| is)\s+(?:this\s+show|it|everything)\s+(?:going|doing|looking))/i,
+      build: (show) => summaryAnswer(show)
+    },
+
+    /* ---- changes ---- */
     {
       // "replicate LA-101's pipeline to the remaining episodes"
       re: /^(?:replicate|copy|clone|apply|duplicate)\s+(.+?)(?:['’]s|s['’])?\s+(?:pipeline|schedule|shape|plan)\b/i,
+      perm: 'schedule',
       build: (show, m) => replicatePlan(show, m[1])
     },
     {
       // "make all Blocking dependent on Layout"
       re: /^(?:make|set|have)\s+(?:all\s+|every\s+)?(.+?)\s+(?:depend(?:ent|ant)?\s+(?:on|upon)|depends?\s+on|wait\s+(?:for|on)|follow)\s+(.+)$/i,
+      perm: 'schedule',
       build: (show, m) => dependPlan(show, m[1], m[2], true)
     },
     {
       // "make Blocking no longer depend on Layout"
       re: /^(?:make\s+)?(?:all\s+|every\s+)?(.+?)\s+(?:no\s+longer|not|stop)\s+(?:depend(?:ent|ant)?\s+(?:on|upon)|depends?\s+on|waiting\s+for)\s+(.+)$/i,
+      perm: 'schedule',
       build: (show, m) => dependPlan(show, m[1], m[2], false)
     },
     {
       // "remove the dependency between Blocking and Layout"
       re: /^(?:remove|drop|clear|delete|unlink)\s+(?:the\s+)?dependenc(?:y|ies)\s+(?:between\s+|from\s+|of\s+)?(.+?)\s+(?:and|on|from|to)\s+(.+)$/i,
+      perm: 'schedule',
       build: (show, m) => dependPlan(show, m[1], m[2], false)
+    },
+    {
+      // "change the department of Layout to Video Post"
+      re: /^(?:change|set|switch)\s+(?:the\s+)?(?:department|dept|team)\s+(?:of|for)\s+(.+?)\s+to\s+(.+)$/i,
+      perm: 'schedule',
+      build: (show, m) => deptPlan(show, m[1], m[2])
+    },
+    {
+      // "move Layout to Video Post" — returns null unless the target really is
+      // a department, so "move LA-102 two weeks later" falls through to shift
+      re: /^(?:move|change|switch|put|reassign)\s+(.+?)\s+(?:in)?to\s+(?:the\s+)?(.+?)(?:\s+(?:department|dept|team))?$/i,
+      perm: 'schedule',
+      build: (show, m) => deptPlan(show, m[1], m[2], true)
+    },
+    {
+      // "assign all Audio Post tasks to Chris" / "give Layout to Diego"
+      re: /^(?:assign|give|hand)\s+(.+?)\s+(?:to|over\s+to)\s+(.+)$/i,
+      perm: 'assign',
+      build: (show, m) => assignPlan(show, m[1], m[2])
+    },
+    {
+      // "unassign Maya" / "take Layout off Diego"
+      re: /^(?:unassign|clear)\s+(.+)$/i,
+      perm: 'assign',
+      build: (show, m) => assignPlan(show, m[1], null)
+    },
+    {
+      // "push everything after Layout out a week" / "move LA-102 two weeks later"
+      re: /^(?:push|shift|move|delay|pull|bring|slip)\s+(.+)$/i,
+      perm: 'schedule',
+      build: (show, m) => shiftPlan(show, m[1])
+    },
+    {
+      // "get this show finished by March 1" / "fit this show into 8 weeks"
+      re: /^(?:fit|finish|get|squeeze|compress|stretch|deliver)\b.*?\b(?:by|in|into|to)\s+(.+)$/i,
+      perm: 'schedule',
+      build: (show, m) => fitPlan(show, m[1])
     }
   ];
+
+  /* ---- read-only answers -------------------------------------------------
+
+     These return { answer: true } instead of a plan: there is nothing to
+     preview and nothing to apply, so the chat renders them as a reply and
+     stops. No permission gate either — reading the board is what everyone
+     signed in is already doing by looking at it.
+
+     Each one leans on a derivation that already exists in state.js rather than
+     recomputing "blocked" or "overdue" a second, subtly different way. */
+
+  const answer = (title, lines, note) => ({ answer: true, kind: 'query', title, lines: lines || [], note });
+
+  function blockedAnswer(show) {
+    const eps = showEpisodes(show.id);
+    const lines = [];
+    eps.forEach(ep => App.epBlockedTasks(ep).forEach(su => {
+      const waiting = su.deps
+        .filter(d => ((ep.statuses && ep.statuses[d]) || 'not_started') !== 'approved')
+        .map(d => App.taskNameFor(ep, d));
+      lines.push({ code: ep.code, text: '“' + su.name + '” is ' + App.status(su.status).label.toLowerCase() +
+        ', waiting on ' + waiting.join(' + ') });
+    }));
+    if (!lines.length) {
+      return answer('Nothing is blocked in ' + show.name, [],
+        'A task counts as blocked when it’s already under way but something it depends on isn’t approved yet.');
+    }
+    return answer(plural(lines.length, 'task') + ' at risk in ' + show.name, lines,
+      'Each of these is already being worked on while something it depends on is still unapproved.');
+  }
+
+  function overdueAnswer(show) {
+    const today = App.isoDate(App.today());
+    const lines = [];
+    showEpisodes(show.id).forEach(ep => App.epOverdueTasks(ep).forEach(su => {
+      lines.push({ code: ep.code, text: '“' + su.name + '” was due ' + App.fmtDate(su.due) +
+        ' — ' + plural(App.diffDays(today, su.due), 'day') + ' ago · ' + App.status(su.status).label });
+    }));
+    if (!lines.length) return answer('Nothing is overdue in ' + show.name);
+    lines.sort((a, b) => a.code < b.code ? -1 : 1);
+    return answer(plural(lines.length, 'task') + ' overdue in ' + show.name, lines.slice(0, 20),
+      lines.length > 20 ? 'Showing the first 20.' : null);
+  }
+
+  function dueAnswer(show, nextWeek) {
+    // calendar week, Monday–Sunday — the same boundary the dashboard uses, so
+    // the two never disagree about what "this week" means
+    const t = App.today();
+    const monday = App.addDays(t, -((t.getDay() + 6) % 7));
+    const from = App.isoDate(nextWeek ? App.addDays(monday, 7) : monday);
+    const to = App.isoDate(App.addDays(App.parseDate(from), 6));
+    const lines = [];
+    showEpisodes(show.id).forEach(ep => App.subitems(ep).forEach(su => {
+      if (su.due >= from && su.due <= to && su.status !== 'approved') {
+        const who = su.assignee && App.person(su.assignee);
+        lines.push({ code: ep.code, text: '“' + su.name + '” due ' + App.fmtDate(su.due) +
+          (who ? ' · ' + who.name : ' · unassigned') });
+      }
+    }));
+    const when = (nextWeek ? 'next week' : 'this week') + ' (' + App.fmtRange(from, to) + ')';
+    if (!lines.length) return answer('Nothing due ' + when + ' in ' + show.name);
+    lines.sort((a, b) => a.code < b.code ? -1 : 1);
+    return answer(plural(lines.length, 'task') + ' due ' + when + ' in ' + show.name, lines);
+  }
+
+  function ownerAnswer(show, phrase) {
+    const pipe = showPipeline(show);
+    const found = findTasks(pipe, stripScope(phrase));
+    if (!found.length) {
+      return { reason: 'no_task', kind: 'query',
+        error: 'There’s no task called “' + stripScope(phrase).trim() + '” in ' + show.name + '’s pipeline.',
+        hint: 'Its tasks are: ' + pipe.map(t => t.name).join(', ') + '.' };
+    }
+    if (found.length > 1) {
+      return { reason: 'ambiguous_task', kind: 'query',
+        error: '“' + stripScope(phrase).trim() + '” matches ' + found.length + ' tasks — ' +
+          found.map(t => '“' + t.name + '”').join(', ') + '.', hint: 'Name one exactly.' };
+    }
+    const task = found[0];
+    const lines = [];
+    showEpisodes(show.id).forEach(ep => {
+      const su = App.subitem(ep, task.key);
+      if (!su) return;
+      const who = su.assignee && App.person(su.assignee);
+      lines.push({ code: ep.code, text: (who ? who.name : 'nobody assigned') +
+        ' · ' + App.status(su.status).label + ' · ' + App.fmtRange(su.start, su.due) });
+    });
+    if (!lines.length) return answer('No episode of ' + show.name + ' runs “' + task.name + '”');
+    return answer('“' + task.name + '” across ' + show.name, lines,
+      App.dept(task.dept).label + ' department.');
+  }
+
+  function summaryAnswer(show) {
+    const eps = showEpisodes(show.id);
+    if (!eps.length) return answer(show.name + ' has no active episodes');
+    const lines = eps.map(ep => {
+      const bits = [App.progressPct(ep) + '% · ' + App.epStatusLabel(ep)];
+      const over = App.epOverdueCount(ep), blocked = App.epBlockedCount(ep);
+      if (over) bits.push(plural(over, 'overdue task'));
+      if (blocked) bits.push(plural(blocked, 'blocked task'));
+      const live = App.epMilestone(ep, App.LIVE_KEY);
+      if (live) bits.push('live ' + App.fmtDate(live.date) + (live.slipDays > 0 ? ' (slipping ' + live.slipDays + 'd)' : ''));
+      return { code: ep.code, text: bits.join(' · '), muted: App.isDelivered(ep) };
+    });
+    const atRisk = eps.filter(App.isAtRisk).length;
+    return answer(show.name + ' — ' + plural(eps.length, 'episode'), lines,
+      atRisk ? plural(atRisk, 'episode') + ' at risk.' : 'Nothing overdue across the show.');
+  }
 
   /* ---- replicate one episode's pipeline ---------------------------------
 
@@ -372,6 +560,517 @@ window.App = window.App || {};
     };
   }
 
+  /* ---- move a task to another department --------------------------------
+
+     A task's department lives on the SHOW's pipeline, not on an episode, so
+     this lands on every episode at once — the same reach as a dependency edit.
+     It is also the only way to change a department at all: the Edit Task
+     dialog deliberately doesn't offer it, since it isn't a fact about one
+     episode's copy of the task.
+
+     Ownership does not survive the move. App.canEditTask is
+     department-scoped, so leaving the old department's owner in place would
+     hand them a task they can no longer edit — an owner in name only, and the
+     work looks covered when nobody can touch it. So the task is left
+     deliberately ownerless for the receiving department to claim.
+
+     Approved work is the exception, and for the usual reason: the assignee on
+     a finished task is the record of who did it, not a plan for who will.
+     Clearing that would rewrite history to tidy up a forward-looking change. */
+  function findDept(phrase) {
+    const n = norm(phrase);
+    if (!n) return null;
+    const keys = Object.keys(App.DEPARTMENTS);
+    let hit = keys.filter(k => norm(App.DEPARTMENTS[k].label) === n || norm(k) === n);
+    if (hit.length === 1) return hit[0];
+    hit = keys.filter(k => norm(App.DEPARTMENTS[k].label).startsWith(n) || norm(k).startsWith(n));
+    return hit.length === 1 ? hit[0] : null;
+  }
+
+  function deptPlan(show, taskPhrase, deptPhrase, soft) {
+    const toKey = findDept(stripScope(deptPhrase));
+    // the permissive "move X to Y" grammar only claims the sentence when Y is
+    // really a department — otherwise this is a date shift and we step aside
+    if (!toKey) {
+      if (soft) return null;
+      return { reason: 'no_task', kind: 'dept',
+        error: 'There’s no department called “' + stripScope(deptPhrase).trim() + '”.',
+        hint: 'Departments are: ' + Object.keys(App.DEPARTMENTS).map(k => App.DEPARTMENTS[k].label).join(', ') + '.' };
+    }
+
+    const pipe = showPipeline(show);
+    const found = findTasks(pipe, stripScope(taskPhrase));
+    if (!found.length) {
+      if (soft) return null;
+      return { reason: 'no_task', kind: 'dept',
+        error: 'There’s no task called “' + stripScope(taskPhrase).trim() + '” in ' + show.name + '’s pipeline.',
+        hint: 'Its tasks are: ' + pipe.map(t => t.name).join(', ') + '.' };
+    }
+    if (found.length > 1) {
+      return { reason: 'ambiguous_task', kind: 'dept',
+        error: '“' + stripScope(taskPhrase).trim() + '” matches ' + found.length + ' tasks — ' +
+          found.map(t => '“' + t.name + '”').join(', ') + '.', hint: 'Name one exactly.' };
+    }
+    const task = found[0];
+    const fromKey = task.dept;
+    if (fromKey === toKey) {
+      return { reason: 'already', kind: 'dept',
+        error: '“' + task.name + '” is already in ' + App.dept(toKey).label + '.' };
+    }
+
+    const eps = showEpisodes(show.id);
+    const lines = [], warn = [];
+    let freeing = 0, kept = 0;
+    eps.forEach(ep => {
+      const su = App.subitem(ep, task.key);
+      if (!su) { lines.push({ code: ep.code, text: 'doesn’t run this task', muted: true }); return; }
+      const who = su.assignee && App.person(su.assignee);
+      if (!who) { lines.push({ code: ep.code, text: 'already unassigned', muted: true }); return; }
+      if (su.status === 'approved') {
+        kept++;
+        lines.push({ code: ep.code, text: who.name + ' keeps it — already approved', muted: true });
+      } else {
+        freeing++;
+        lines.push({ code: ep.code, text: who.name + ' → unassigned' });
+      }
+    });
+    const staff = App.state.data.people.filter(p => App.roleDept(p.role) === toKey);
+    if (freeing) {
+      warn.push(plural(freeing, 'task') + ' will be left without an owner for ' + App.dept(toKey).label +
+        ' to pick up' + (staff.length ? ' — ' + staff.map(p => p.name).join(', ') + '.' :
+        '. There is nobody in that department yet; add someone in Admin.'));
+    }
+
+    return {
+      kind: 'dept',
+      title: '“' + task.name + '” moves from ' + App.dept(fromKey).label + ' to ' + App.dept(toKey).label,
+      note: 'Departments belong to ' + show.name + '’s pipeline, so this applies to every episode — including ones added later. ' +
+            'Dates don’t move. Unfinished work is left unassigned for the new department to claim; approved work keeps whoever completed it.',
+      lines, warn,
+      label: 'Move to ' + App.dept(toKey).label,
+      run: () => {
+        const next = JSON.parse(JSON.stringify(pipe));
+        next.find(t => t.key === task.key).dept = toKey;
+        let freed = 0;
+        App.mutate(d => {
+          const s = d.shows.find(x => x.id === show.id); if (!s) return;
+          s.pipeline = next;
+          d.episodes.filter(e => e.showId === show.id).forEach(e => {
+            e.statuses = e.statuses || {};
+            // an owner from the old department would keep the task while losing
+            // the right to edit it, so the unfinished ones are handed back
+            if (e.assignees && e.assignees[task.key] &&
+                (e.statuses[task.key] || 'not_started') !== 'approved') {
+              delete e.assignees[task.key];
+              freed++;
+            }
+            App.refreshReadiness(e);
+          });
+        }, 'the department change');
+        App.track && App.track.audit && App.track.audit('assistant.department', {
+          show: show.name, task: task.name,
+          from: App.dept(fromKey).label, to: App.dept(toKey).label,
+          episodes: eps.length, unassigned: freed
+        });
+        return '“' + task.name + '” is now a ' + App.dept(toKey).label + ' task across ' + show.name +
+          (freed ? ' · ' + plural(freed, 'task') + ' left unassigned' : '') + '.';
+      }
+    };
+  }
+
+  /* ---- bulk assign an owner ---------------------------------------------
+
+     Owners are per-episode (ep.assignees), so unlike the pipeline edits above
+     this writes to every episode individually. The subject may be a department
+     ("all Audio Post tasks"), a single pipeline task ("Layout"), or everything.
+
+     Approved work is left alone: reassigning a finished task rewrites who did
+     it, which is a different and much worse thing than deciding who does it
+     next. */
+  function findPerson(phrase) {
+    const n = norm(phrase);
+    if (!n) return null;
+    const people = App.state.data.people.filter(p => App.roleDept(p.role));
+    let hit = people.filter(p => norm(p.name) === n);
+    if (hit.length === 1) return hit[0];
+    hit = people.filter(p => norm(p.name).split(/(?=[A-Z])/).join('').startsWith(n) || norm(p.name).startsWith(n));
+    if (hit.length === 1) return hit[0];
+    // first name alone, which is how people actually refer to each other
+    hit = people.filter(p => norm(p.name.split(/\s+/)[0]) === n);
+    return hit.length === 1 ? hit[0] : null;
+  }
+
+  function assignPlan(show, subjectPhrase, personPhrase) {
+    const pipe = showPipeline(show);
+    const eps = showEpisodes(show.id);
+    const clearing = personPhrase == null;
+
+    // who is being assigned (or, when clearing, whose work is being cleared)
+    const person = findPerson(stripScope(clearing ? subjectPhrase : personPhrase));
+    if (!person) {
+      const nm = stripScope(clearing ? subjectPhrase : personPhrase).trim();
+      return { reason: 'no_person', kind: 'assign',
+        error: 'I couldn’t find anyone called “' + nm + '”.',
+        hint: 'Team members are: ' + App.state.data.people.filter(p => App.roleDept(p.role)).map(p => p.name).join(', ') + '.' };
+    }
+
+    // which tasks: a department, one pipeline task, or everything
+    let keys, what;
+    if (clearing) {
+      keys = pipe.map(t => t.key);
+      what = 'everything assigned to ' + person.name;
+    } else {
+      const deptKey = findDept(stripScope(subjectPhrase).replace(/\s*(?:tasks?|work|subitems?)\s*$/i, '').replace(/^all\s+/i, ''));
+      if (deptKey) {
+        keys = pipe.filter(t => t.dept === deptKey).map(t => t.key);
+        what = 'every ' + App.dept(deptKey).label + ' task';
+      } else {
+        const found = findTasks(pipe, stripScope(subjectPhrase).replace(/^all\s+/i, ''));
+        if (!found.length) {
+          return { reason: 'no_task', kind: 'assign',
+            error: 'I couldn’t match “' + stripScope(subjectPhrase).trim() + '” to a task or a department in ' + show.name + '.',
+            hint: 'Try a department (' + Object.keys(App.DEPARTMENTS).map(k => App.DEPARTMENTS[k].label).join(', ') + ') or a task name.' };
+        }
+        if (found.length > 1) {
+          return { reason: 'ambiguous_task', kind: 'assign',
+            error: '“' + stripScope(subjectPhrase).trim() + '” matches ' + found.length + ' tasks — ' +
+              found.map(t => '“' + t.name + '”').join(', ') + '.', hint: 'Name one exactly.' };
+        }
+        keys = [found[0].key];
+        what = '“' + found[0].name + '”';
+      }
+    }
+    if (!keys.length) return { reason: 'noop', kind: 'assign', error: 'That matches no tasks in ' + show.name + '’s pipeline.' };
+
+    // a department owner can only be given their own department's work
+    const personDept = App.roleDept(person.role);
+    const wrongTeam = clearing ? [] : keys.filter(k => {
+      const t = pipe.find(x => x.key === k); return t && t.dept !== personDept;
+    });
+
+    const lines = [], warn = [];
+    let changes = 0, locked = 0;
+    eps.forEach(ep => {
+      let n = 0, skipped = 0;
+      keys.forEach(k => {
+        const su = App.subitem(ep, k);
+        if (!su) return;
+        const cur = su.assignee || null;
+        if (clearing) { if (cur !== person.id) return; }
+        else if (cur === person.id) return;
+        if (su.status === 'approved') { skipped++; return; }
+        n++;
+      });
+      changes += n; locked += skipped;
+      const bits = [];
+      bits.push(n ? plural(n, 'task') + (clearing ? ' cleared' : ' → ' + person.name) : 'no change');
+      if (skipped) bits.push(plural(skipped, 'approved task') + ' left as is');
+      lines.push({ code: ep.code, text: bits.join(' · '), muted: !n });
+    });
+    if (!changes) {
+      return { reason: 'noop', kind: 'assign',
+        error: clearing
+          ? person.name + ' isn’t assigned to anything unapproved in ' + show.name + '.'
+          : person.name + ' already owns ' + what + ' across ' + show.name + '.' };
+    }
+    if (wrongTeam.length) {
+      warn.push(person.name + ' is ' + App.dept(personDept).label + ', but ' + plural(wrongTeam.length, 'of these tasks belongs', 'of these tasks belong') +
+        ' to another department — they won’t be able to edit those.');
+    }
+
+    return {
+      kind: 'assign',
+      title: clearing
+        ? 'Unassign ' + person.name + ' from ' + plural(changes, 'task') + ' in ' + show.name
+        : 'Give ' + what + ' to ' + person.name + ' across ' + show.name,
+      note: 'Approved work keeps whoever completed it — only unfinished tasks change hands.',
+      lines, warn,
+      label: clearing ? 'Unassign ' + plural(changes, 'task') : 'Assign ' + plural(changes, 'task'),
+      run: () => {
+        let n = 0;
+        App.mutate(d => {
+          eps.forEach(e0 => {
+            const e = d.episodes.find(x => x.id === e0.id); if (!e) return;
+            e.assignees = e.assignees || {};
+            e.statuses = e.statuses || {};
+            keys.forEach(k => {
+              if ((e.statuses[k] || 'not_started') === 'approved') return;
+              const cur = e.assignees[k] || null;
+              if (clearing) { if (cur !== person.id) return; delete e.assignees[k]; n++; }
+              else { if (cur === person.id) return; e.assignees[k] = person.id; n++; }
+            });
+            App.refreshReadiness(e);
+          });
+        }, clearing ? 'the unassignment' : 'the assignment');
+        App.track && App.track.audit && App.track.audit('assistant.assign', {
+          show: show.name, person: person.name, tasks: n, cleared: clearing
+        });
+        return clearing
+          ? person.name + ' unassigned from ' + plural(n, 'task') + ' in ' + show.name + '.'
+          : person.name + ' now owns ' + plural(n, 'task') + ' across ' + show.name + '.';
+      }
+    };
+  }
+
+  /* ---- shift dates -------------------------------------------------------
+
+     The one thing the assistant couldn't do until now: move work. Two shapes,
+     because they're the two ways a slip actually gets described —
+
+       "move LA-102 two weeks later"          a whole episode
+       "push everything after Layout out a week"   a task and its tail
+
+     Approved work never moves, as everywhere else. Live dates never move
+     either: they're commitments, and a slip that quietly drags the live date
+     with it hides the exact thing worth seeing — so running past one is
+     reported, loudly, and the producer decides. */
+  const WORD_NUM = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+
+  function parseSpan(text) {
+    const m = text.match(/(?:by\s+)?(\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s*(day|week|month)s?\b/i);
+    if (!m) return null;
+    const n = /^\d+$/.test(m[1]) ? parseInt(m[1], 10) : WORD_NUM[m[1].toLowerCase()];
+    if (!n) return null;
+    const unit = m[2].toLowerCase();
+    return n * (unit === 'week' ? 7 : unit === 'month' ? 30 : 1);
+  }
+
+  // "later/out/back/forward" push into the future; "earlier/in/up" pull back
+  function parseDirection(text) {
+    if (/\b(?:earlier|sooner|forward\s+to|up|in\s+by)\b/i.test(text)) return -1;
+    if (/\b(?:later|out|back|forward|further)\b/i.test(text)) return 1;
+    return 1;                        // a bare "delay it 3 days" means later
+  }
+
+  function shiftPlan(show, rest) {
+    const days = parseSpan(rest);
+    if (!days) return null;                     // no duration → not a shift
+    const dir = parseDirection(rest);
+    const delta = days * dir;
+
+    // strip the duration/direction tail to leave the subject
+    const subject = rest
+      .replace(/(?:by\s+)?(?:\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:day|week|month)s?\b.*$/i, '')
+      .replace(/\b(?:out|back|forward|later|earlier|further|up)\b\s*$/i, '')
+      .trim();
+
+    const eps = showEpisodes(show.id);
+    const pipe = showPipeline(show);
+    let targets, what, fromKey = null;
+
+    const tail = subject.match(/^(?:everything|all|the\s+rest)\s+(?:after|from|beyond|past)\s+(.+)$/i);
+    if (tail) {
+      const found = findTasks(pipe, stripScope(tail[1]));
+      if (!found.length) {
+        return { reason: 'no_task', kind: 'shift',
+          error: 'There’s no task called “' + stripScope(tail[1]).trim() + '” in ' + show.name + '’s pipeline.',
+          hint: 'Its tasks are: ' + pipe.map(t => t.name).join(', ') + '.' };
+      }
+      if (found.length > 1) {
+        return { reason: 'ambiguous_task', kind: 'shift',
+          error: '“' + stripScope(tail[1]).trim() + '” matches ' + found.length + ' tasks — ' +
+            found.map(t => '“' + t.name + '”').join(', ') + '.', hint: 'Name one exactly.' };
+      }
+      fromKey = found[0].key;
+      targets = eps;
+      what = 'everything from “' + found[0].name + '” onward';
+    } else if (/^(?:everything|all|the\s+(?:whole\s+)?show|it)$/i.test(subject) || !subject) {
+      targets = eps;
+      what = 'every unapproved task';
+    } else {
+      const ep = findEpisode(eps, stripScope(subject));
+      if (!ep) return null;                     // can't tell what's being moved
+      targets = [ep];
+      what = ep.code;
+    }
+    if (!targets.length) return { reason: 'noop', kind: 'shift', error: 'There’s nothing to move in ' + show.name + '.' };
+
+    /* Which tasks move: from `fromKey` onward means the task itself plus
+       everything that transitively depends on it — the tail of the graph, not
+       simply the tasks with later dates, so a parallel strand that doesn't
+       depend on it stays put. */
+    const tailKeys = (() => {
+      if (!fromKey) return null;
+      const out = new Set([fromKey]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        pipe.forEach(t => {
+          if (out.has(t.key)) return;
+          if (t.deps.some(d => out.has(d))) { out.add(t.key); grew = true; }
+        });
+      }
+      return out;
+    })();
+
+    const lines = [], warn = [];
+    let moving = 0, locked = 0;
+    targets.forEach(ep => {
+      let n = 0, skipped = 0, last = '0000-00-00';
+      App.subitems(ep).forEach(su => {
+        if (tailKeys && !tailKeys.has(su.key)) return;
+        if (su.status === 'approved') { skipped++; if (su.due > last) last = su.due; return; }
+        n++;
+        const due = App.shiftIso(su.due, delta);
+        if (due > last) last = due;
+      });
+      moving += n; locked += skipped;
+      const bits = [n ? plural(n, 'task') + ' move' : 'nothing to move'];
+      if (skipped) bits.push(plural(skipped, 'approved task') + ' stay put');
+      lines.push({ code: ep.code, text: bits.join(' · '), muted: !n });
+
+      const live = App.epMilestone(ep, App.LIVE_KEY);
+      if (n && live && last >= live.date) {
+        warn.push(ep.code + ' would run to ' + App.fmtDate(last) + ', on or past its live date (' +
+          App.fmtDate(live.date) + ').');
+      }
+    });
+    if (!moving) {
+      return { reason: 'noop', kind: 'shift',
+        error: 'Nothing there can move — every matching task is already approved.' };
+    }
+
+    const dirWord = delta > 0 ? 'later' : 'earlier';
+    return {
+      kind: 'shift',
+      title: 'Move ' + what + ' ' + plural(Math.abs(delta), 'day') + ' ' + dirWord + ' in ' + show.name,
+      note: 'Approved work stays exactly where it is. Live dates don’t move — they’re commitments, so a schedule running past one is flagged rather than absorbed.',
+      lines, warn,
+      label: 'Shift ' + plural(moving, 'task'),
+      run: () => {
+        let n = 0;
+        App.mutate(d => {
+          targets.forEach(e0 => {
+            const e = d.episodes.find(x => x.id === e0.id); if (!e) return;
+            const subs = App.subitems(e);            // snapshot before writing
+            e.dates = e.dates || {};
+            e.statuses = e.statuses || {};
+            subs.forEach(su => {
+              if (tailKeys && !tailKeys.has(su.key)) return;
+              if (su.status === 'approved') return;
+              e.dates[su.key] = { start: App.shiftIso(su.start, delta), due: App.shiftIso(su.due, delta) };
+              n++;
+            });
+            App.refreshReadiness(e);
+          });
+        }, 'the shift');
+        App.track && App.track.audit && App.track.audit('assistant.shift', {
+          show: show.name, subject: what, days: delta, tasksMoved: n, tasksLocked: locked
+        });
+        return plural(n, 'task') + ' moved ' + Math.abs(delta) + ' days ' + dirWord +
+          (locked ? ' · ' + plural(locked, 'approved task') + ' left in place' : '') + '.';
+      }
+    };
+  }
+
+  /* ---- fit the show to a deadline ---------------------------------------
+
+     Squeezes or stretches every task's nominal duration so the show's critical
+     path lands on a target date. App.solveScale already does the hard part — a
+     binary search over a monotonic end(scale) — and it has been sitting unused
+     outside the Add Show planner. No task ever drops below its minDays, so a
+     target that simply can't be met comes back clamped and says so.
+
+     This is the most invasive thing here: it rewrites every unapproved date in
+     the show. Hence the loudest preview. */
+  function parseWhen(text) {
+    const s = stripScope(text).trim();
+    const iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) return iso[0];
+    const MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+    const m = s.match(/([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?/i) ||
+              s.match(/(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([a-z]+)(?:,?\s*(\d{4}))?/i);
+    if (!m) return null;
+    let name = m[1], day = m[2];
+    if (/^\d+$/.test(name)) { const t = name; name = day; day = t; }
+    const mi = MONTHS.findIndex(x => x.startsWith(String(name).toLowerCase().slice(0, 3)));
+    if (mi < 0) return null;
+    const today = App.today();
+    let year = m[3] ? parseInt(m[3], 10) : today.getFullYear();
+    const cand = new Date(year, mi, parseInt(day, 10));
+    // a bare month/day that has already passed means next year
+    if (!m[3] && cand < today) year++;
+    return App.isoDate(new Date(year, mi, parseInt(day, 10)));
+  }
+
+  function fitPlan(show, whenPhrase) {
+    const target = parseWhen(whenPhrase);
+    if (!target) return null;                    // not a date → not a fit
+
+    const eps = showEpisodes(show.id).filter(ep => !App.isDelivered(ep));
+    if (!eps.length) return { reason: 'no_targets', kind: 'fit', error: 'Every episode of ' + show.name + ' is already delivered.' };
+
+    const pipe = showPipeline(show);
+    const startIso = eps.reduce((m, ep) => { const s = App.epStart(ep); return s < m ? s : m; }, '9999-99-99');
+    const today = App.isoDate(App.today());
+    if (target <= today) {
+      return { reason: 'bad_date', kind: 'fit',
+        error: App.fmtDate(target) + ' is in the past — pick a date ahead of today.' };
+    }
+
+    // cadence: the average gap between episode starts, which is what the
+    // show was actually planned on
+    const starts = eps.map(ep => App.epStart(ep)).sort();
+    const cadence = starts.length > 1
+      ? Math.max(1, Math.round(App.diffDays(starts[starts.length - 1], starts[0]) / (starts.length - 1)))
+      : 1;
+
+    const solved = App.solveScale(pipe, startIso, eps.length, cadence, target);
+    if (!solved) {
+      return { reason: 'cycle', kind: 'fit', error: show.name + '’s pipeline has a dependency cycle, so it can’t be scheduled.' };
+    }
+
+    const current = App.scheduleShow(pipe, startIso, eps.length, cadence, 1);
+    const lines = [], warn = [];
+    const pct = Math.round(solved.scale * 100);
+    lines.push({ code: 'Now', text: 'critical path ends ' + App.fmtDate(current.end) });
+    lines.push({ code: 'Target', text: App.fmtDate(target) });
+    lines.push({ code: 'Fitted', text: 'ends ' + App.fmtDate(solved.end) + ' · durations at ' + pct + '% of nominal' });
+
+    if (solved.clamped) {
+      warn.push('Even at every task’s minimum duration the show can’t finish before ' +
+        App.fmtDate(solved.end) + ' — that’s ' + plural(App.diffDays(solved.end, target), 'day') + ' past your target.');
+    }
+    if (solved.scale < 1) {
+      warn.push('This compresses the plan. Durations shrink toward each task’s minDays; nothing goes below it.');
+    }
+    eps.forEach(ep => {
+      const approved = App.subitems(ep).filter(s => s.status === 'approved').length;
+      if (approved) warn.push(ep.code + ' has ' + plural(approved, 'approved task') + ' that will not move, so its dates will not match the fitted plan exactly.');
+    });
+
+    return {
+      kind: 'fit',
+      title: 'Fit ' + show.name + ' to ' + App.fmtDate(target),
+      note: 'Rewrites every unapproved date in ' + plural(eps.length, 'episode') + ', rescheduling each from its own start with durations scaled to ' + pct + '%. The most far-reaching change here — one undo puts it all back.',
+      lines, warn,
+      label: solved.clamped ? 'Compress as far as it goes' : 'Fit to ' + App.fmtDate(target),
+      run: () => {
+        let n = 0, locked = 0;
+        App.mutate(d => {
+          eps.forEach(e0 => {
+            const e = d.episodes.find(x => x.id === e0.id); if (!e) return;
+            const base = App.epStart(e);
+            const sched = App.schedulePipeline(pipe, base, solved.scale);
+            if (!sched) return;
+            e.dates = e.dates || {};
+            e.statuses = e.statuses || {};
+            Object.keys(sched.dates).forEach(k => {
+              if ((e.statuses[k] || 'not_started') === 'approved') { locked++; return; }
+              e.dates[k] = sched.dates[k];
+              n++;
+            });
+            App.refreshReadiness(e);
+          });
+        }, 'the refit');
+        App.track && App.track.audit && App.track.audit('assistant.fit', {
+          show: show.name, target, scale: solved.scale, end: solved.end, tasks: n, locked
+        });
+        return show.name + ' refitted — ' + plural(n, 'task') + ' rescheduled, ending ' + App.fmtDate(solved.end) + '.';
+      }
+    };
+  }
+
   /* ---- interpreter ------------------------------------------------------ */
 
   function interpret(text) {
@@ -389,14 +1088,18 @@ window.App = window.App || {};
       return { reason: 'no_show',
         error: 'Pick a show in the toolbar first. These changes reach every episode of a show at once, so “All shows” isn’t something I should guess at.' };
     }
-    if (!App.canEditSchedule(App.state.role)) {
-      return { reason: 'no_permission',
-        error: 'Only Producers, Managers and Post Operations can change the schedule, so there’s nothing I can apply for you here.' };
-    }
-
+    /* Permission is checked per intent rather than up front: a department
+       owner may not move dates, but nothing stops them asking what's blocked.
+       The check happens only once an intent has claimed the sentence, so a
+       refusal always names the thing being refused. */
     for (const intent of INTENTS) {
       const m = q.match(intent.re);
-      if (m) return intent.build(show, m);
+      if (!m) continue;
+      const plan = intent.build(show, m, q);
+      if (!plan) continue;                       // "not my sentence" — keep looking
+      const perm = intent.perm && PERM[intent.perm];
+      if (perm && !perm.test()) return { reason: 'no_permission', error: perm.deny };
+      return plan;
     }
     return { reason: 'unmatched',
       error: 'I didn’t understand that one. I’m a small command interpreter, not a language model — I only know a few phrasings.',
@@ -435,7 +1138,7 @@ window.App = window.App || {};
     if (!plan.error) return t.usage('assistant.parsed', Object.assign({ kind: plan.kind }, base));
     const r = plan.reason;
     if (r === 'unmatched') return t.error('assistant.miss', withText({ reason: r }));
-    if (r === 'no_task' || r === 'ambiguous_task' || r === 'no_episode')
+    if (r === 'no_task' || r === 'ambiguous_task' || r === 'no_episode' || r === 'no_person')
       return t.error('assistant.unresolved', withText({ reason: r, kind: plan.kind }));
     if (r === 'no_show') return t.usage('assistant.blocked', withText({ reason: r }));
     if (r === 'no_permission' || r === 'help') return t.usage('assistant.blocked', Object.assign({ reason: r }, base));
@@ -465,6 +1168,14 @@ window.App = window.App || {};
     const push = (key, text) => { if (!out.some(c => c.key === key)) out.push({ key, text }); };
 
     const approved = (e) => App.subitems(e).filter(s => s.status === 'approved').length;
+
+    /* Questions first, and only when there's actually something to report —
+       "What's blocked?" is a poor suggestion on a show with nothing blocked.
+       They cost nothing to run and need no permission, so they're the right
+       opener for anyone whose role can't change the schedule at all. */
+    if (eps.some(e => App.epBlockedCount(e) > 0)) push('q:blocked', 'What’s blocked?');
+    if (eps.some(e => App.epOverdueCount(e) > 0)) push('q:overdue', 'What’s overdue?');
+    push('q:due', 'What’s due this week?');
 
     // Replicating copies a reference episode's shape onto the rest, so the
     // episode furthest along is the one worth offering as the reference.
@@ -508,10 +1219,44 @@ window.App = window.App || {};
       });
     }
 
-    /* Follow the thread. Having just linked two tasks, the useful next move is
-       usually to spread the shape that link implies — and having just
-       replicated, it's to fix the ordering the copy exposed. */
-    const lead = after === 'dep' ? 'rep:' : after === 'replicate' ? 'undep:' : null;
+    /* A department move is only worth suggesting when the pipeline gives a
+       reason to think one is misfiled — a lone task sitting in a department
+       nothing else around it belongs to. Anything more speculative than that
+       would be noise. */
+    const deptCount = {};
+    pipe.forEach(t => { deptCount[t.dept] = (deptCount[t.dept] || 0) + 1; });
+    const lonely = pipe.find(t => deptCount[t.dept] === 1);
+    if (lonely) {
+      const neighbour = pipe.find(t => t.key !== lonely.key && t.deps.includes(lonely.key)) ||
+                        pipe.find(t => lonely.deps.includes(t.key));
+      if (neighbour && neighbour.dept !== lonely.dept) {
+        push('dept:' + lonely.key, 'Move ' + lonely.name + ' to ' + App.dept(neighbour.dept).label);
+      }
+    }
+
+    /* A department move deliberately leaves the task ownerless, so the very
+       next thing anyone wants is to name who picks it up. Offer whoever is
+       actually in the receiving department. */
+    // scanned across every episode, not just the first: the episode that lost
+    // its owner is rarely the earliest one, and checking only eps[0] misses the
+    // very handover this is here to offer
+    const orphan = pipe.find(t => eps.some(ep => {
+      const su = App.subitem(ep, t.key);
+      return su && !su.assignee && su.status !== 'approved';
+    }));
+    if (orphan) {
+      const staff = App.state.data.people.filter(p => App.roleDept(p.role) === orphan.dept);
+      if (staff.length) push('assign:' + orphan.key, 'Give ' + orphan.name + ' to ' + staff[0].name);
+    }
+
+    /* Follow the thread — the next move usually depends on the last one. After
+       a question, offer a change; after a change, offer the question that
+       shows what it did; after a department move, offer the handover. */
+    const lead = after === 'dept' ? 'assign:'
+               : after === 'dep' ? 'rep:'
+               : after === 'replicate' ? 'undep:'
+               : after === 'query' ? 'rep:'
+               : after ? 'q:' : null;
     if (lead) out.sort((a, b) => (b.key.startsWith(lead) ? 1 : 0) - (a.key.startsWith(lead) ? 1 : 0));
     return out;
   }
@@ -663,7 +1408,28 @@ window.App = window.App || {};
         this.offer();                 // the turn is over — name a way forward
         return;
       }
+      if (plan.answer) { this.drawAnswer(plan); return; }
       this.drawPlan(q, plan);
+    },
+
+    /* A question is answered and finished with — there's nothing to preview
+       and nothing to apply, so it gets the reply and the follow-up chips
+       without the plan card's machinery. */
+    drawAnswer(plan) {
+      const card = plan.lines.length || plan.note ? el('.ai-plan.ai-answer') : null;
+      if (card) {
+        if (plan.lines.length) {
+          const list = el('.ai-rows');
+          plan.lines.forEach(l => list.appendChild(el('.ai-row' + (l.muted ? '.muted' : ''), null, [
+            el('span.ai-row-code', null, l.code),
+            el('span.ai-row-text', null, l.text)
+          ])));
+          card.appendChild(list);
+        }
+        if (plan.note) card.appendChild(el('.ai-plan-note', null, plan.note));
+      }
+      this.say('assistant', plan.title, card);
+      this.offer('query');
     },
 
     /* A plan is drawn from the preview it was built with, but applied by
