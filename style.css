@@ -2970,10 +2970,10 @@ select.fld { cursor: pointer; }
    dialog, below the workspace section. Sits in the modal's normal flow rather
    than floating: it is part of the task, not an overlay on it.
    ============================================================================ */
-.chat { margin-top: 18px; }
-.chat .modal-section-title { display: flex; align-items: center; gap: 7px; }
+.chat { margin-top: 2px; }
+.chat-head { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 .chat-rev-pill {
-  margin-left: auto; font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  font-size: 10px; font-weight: 700; letter-spacing: .04em;
   text-transform: uppercase; color: var(--text-2);
   background: var(--surface-3); border: 1px solid var(--border);
   padding: 2px 8px; border-radius: 999px;
@@ -3067,3 +3067,36 @@ select.fld { cursor: pointer; }
 .chat-rev-go { background: var(--accent); border-color: var(--accent); color: #fff; }
 .chat-rev-go:hover { background: var(--accent-2); }
 .chat-rev-x:hover { color: var(--text); background: var(--surface-3); }
+
+/* ---- modal header tabs (js/dialog.js modalTabs) ----------------------------
+   Only the Edit Task dialog uses these. Panels are hidden rather than
+   destroyed, so the form controls the footer's Save reads stay alive while
+   you're reading the discussion. */
+.modal-head.has-tabs { align-items: flex-start; }
+.modal-tabs { display: flex; gap: 4px; margin-left: auto; margin-right: 12px; padding-top: 2px; }
+.modal-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid transparent; background: none; color: var(--text-3);
+  font-family: inherit; font-size: 12px; font-weight: 600;
+  padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  transition: color .14s ease, background .14s ease, border-color .14s ease;
+}
+.modal-tab:hover { color: var(--text-2); background: var(--surface-3); }
+.modal-tab.active {
+  color: var(--text); background: var(--surface-3); border-color: var(--border-2);
+}
+.modal-tab-badge {
+  min-width: 17px; text-align: center;
+  font-size: 10px; font-weight: 700; line-height: 1.6;
+  color: var(--text-2); background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: 999px; padding: 0 5px;
+}
+.modal-tab.active .modal-tab-badge { color: #fff; background: var(--accent); border-color: var(--accent); }
+.modal-tab-badge.hidden { display: none; }
+
+.et-panel.hidden { display: none; }
+
+@media (max-width: 620px) {
+  .modal-head.has-tabs { flex-wrap: wrap; }
+  .modal-tabs { order: 3; width: 100%; margin: 8px 0 0; }
+}

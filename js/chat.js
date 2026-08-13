@@ -41,12 +41,27 @@ window.App = window.App || {};
 
     /* Same contract as App.workspace.inlineSection: build the box, kick off a
        load, hand the node straight back so the dialog can place it. */
-    inlineSection(epId, taskKey) {
+    /* opts.onCount(n) lets the host surface a message count without knowing
+       anything about the thread — the Edit Task tab uses it for its badge.
+       Loading happens immediately even though the panel starts hidden, which
+       is what makes the count available before anyone opens the tab. */
+    inlineSection(epId, taskKey, opts) {
       const box = el('.chat');
-      this._mounted = { box, epId, taskKey, thread: null, error: null, busy: false, sending: false };
+      this._mounted = {
+        box, epId, taskKey, thread: null, error: null, busy: false, sending: false,
+        onCount: (opts && opts.onCount) || null
+      };
       this._render();
       this.reload();
       return box;
+    },
+
+    _count() {
+      const m = this._mounted;
+      if (!m || !m.onCount) return;
+      // dividers aren't messages anyone wrote, so they don't count as unread
+      const n = m.thread ? m.thread.messages.filter(x => !x.is_system_event).length : 0;
+      m.onCount(n);
     },
 
     // App.render() calls this so a teammate's message appears while the dialog
@@ -68,6 +83,7 @@ window.App = window.App || {};
       }
       m.busy = false;
       this._render();
+      this._count();
     },
 
     /* A message arriving over SSE. Every client hears every message, so the
@@ -81,6 +97,7 @@ window.App = window.App || {};
       if (m.thread.messages.some(x => x.id === payload.message.id)) return;   // our own echo
       m.thread.messages.push(payload.message);
       this._render();
+      this._count();
       this._scroll();
     },
 
@@ -103,6 +120,7 @@ window.App = window.App || {};
       }
       m.sending = false;
       this._render();
+      this._count();
       this._scroll();
     },
 
@@ -137,11 +155,10 @@ window.App = window.App || {};
       const caret = focused ? document.activeElement.selectionStart : null;
       box.innerHTML = '';
 
+      // No heading: the tab already says Discussion. Only the current round
+      // needs stating, and only once there is one.
       const rev = m.thread && m.thread.currentRevision;
-      box.appendChild(el('.modal-section-title', null, [
-        App.icon('note'), ' Discussion',
-        rev ? el('span.chat-rev-pill', null, 'Revision ' + rev.idx) : null
-      ]));
+      if (rev) box.appendChild(el('.chat-head', null, el('span.chat-rev-pill', null, 'Revision ' + rev.idx)));
 
       // Unavailable is the normal case in local development, so it reads as a
       // note about configuration rather than something being broken.
