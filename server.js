@@ -18,6 +18,7 @@ const os = require('os');
 const crypto = require('crypto');
 const folders = require('./folders');
 const { makePgChat, parseTaskId } = require('./chat-store');
+const { makeKeyVault } = require('./keyvault');
 
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
@@ -589,6 +590,35 @@ const activity = config.databaseUrl ? makePgActivity(config.databaseUrl) : makeF
    not a failure: the routes answer 503 with a reason. */
 const chat = config.databaseUrl ? makePgChat(getPgPool(config.databaseUrl)) : null;
 
+/* BYOK relay. Needs Postgres AND at least one MASTER_KEY_V*; null when either
+   is absent, and the routes say which. A bad master key (wrong length, or
+   MASTER_KEY_CURRENT naming one that doesn't exist) is a configuration error
+   worth shouting about, but not worth taking the board down for — the tracker
+   worked before this feature and must keep working without it. */
+let vault = null;
+if (config.databaseUrl) {
+  try {
+    vault = makeKeyVault(getPgPool(config.databaseUrl));
+  } catch (e) {
+    console.error('BYOK relay disabled — ' + e.message);
+  }
+}
+
+/* Server-side audit. The client tracker (js/track.js) can't be trusted to
+   record something it never sees — a relay call spends the user's money, so
+   the record of it is written here, from the session, not from the browser.
+   Best-effort: a logging failure must never fail the request it describes. */
+function auditServer(session, action, detail) {
+  Promise.resolve()
+    .then(() => activity.append([{
+      ts: new Date().toISOString(),
+      email: (session && session.email) || null,
+      role: null, dept: null,
+      kind: 'audit', action, detail: detail || {}
+    }]))
+    .catch(() => {});
+}
+
 /* ------------------------------------------------- live update fan-out ---- */
 // Plain-HTTP Server-Sent Events — no extra dependency, works through Render's
 // proxy. Every open /api/events connection gets the new version the instant
@@ -933,6 +963,68 @@ const server = http.createServer(async (req, res) => {
           });
           sseEmit('new_message', { taskId: episodeId + '::' + taskKey, message: divider });
           return sendJson(res, 201, { revision, divider });
+        }
+
+        return sendJson(res, 405, { error: 'Method not allowed' });
+      }
+
+      /* ---- BYOK: the user's own Gemini key, and the relay that spends it ---
+         The key is theirs, so the bill is theirs. Every guard here — the
+         format check, the verify-before-store, the per-minute bucket, the
+         daily ceiling — exists because the thing being protected is somebody
+         else's money rather than ours. */
+      if (url.pathname === '/api/save-key' || url.pathname === '/api/key' || url.pathname === '/api/call-gemini') {
+        if (!vault) {
+          return sendJson(res, 503, {
+            error: !config.databaseUrl
+              ? 'The key relay needs Postgres. This server is running on the JSON file store — set DATABASE_URL.'
+              : 'The key relay needs a master key. Set MASTER_KEY_V1 (openssl rand -base64 32) and MASTER_KEY_CURRENT=1.'
+          });
+        }
+        const s = getSession(req);
+        const me = await chat.upsertUser({ email: s.email, fullName: s.name || '' });
+
+        if (route === 'POST /api/save-key') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          const apiKey = String(body.apiKey || '').trim();
+          if (!vault.validFormat(apiKey)) {
+            return sendJson(res, 400, { error: 'That does not look like a Google AI Studio API key (expected AIza…, 39 characters).' });
+          }
+          const why = await vault.verifyWithGoogle(apiKey);
+          if (why) return sendJson(res, 400, { error: why });
+          const saved = await vault.saveKey(me.id, apiKey);
+          // the key itself is never logged, echoed, or written anywhere but
+          // the encrypted column
+          auditServer(s, 'byok.keySaved', { provider: 'gemini', keyHint: saved.keyHint });
+          return sendJson(res, 200, { ok: true, provider: 'gemini', keyHint: saved.keyHint });
+        }
+
+        if (route === 'GET /api/key') return sendJson(res, 200, await vault.status(me.id));
+
+        if (route === 'DELETE /api/key') {
+          const gone = await vault.deleteKey(me.id);
+          if (gone) auditServer(s, 'byok.keyRemoved', { provider: 'gemini' });
+          return sendJson(res, 200, { ok: true, removed: gone });
+        }
+
+        if (route === 'POST /api/call-gemini') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          const r = await vault.callGemini(me.id, String(body.prompt || ''));
+          if (r.retryAfter) res.setHeader('Retry-After', String(r.retryAfter));
+          if (!r.ok) {
+            // status and reason only — an upstream error body can echo the request
+            console.error('[byok] call failed', r.status, r.upstreamStatus || '', r.googleStatus || '');
+            return sendJson(res, r.status, { error: r.error });
+          }
+          auditServer(s, 'byok.call', {
+            model: r.model, usedToday: r.usedToday, dailyLimit: r.dailyLimit,
+            promptTokens: r.usage && r.usage.promptTokenCount,
+            outputTokens: r.usage && r.usage.candidatesTokenCount
+          });
+          return sendJson(res, 200, {
+            text: r.text, model: r.model, finishReason: r.finishReason,
+            usage: r.usage, usedToday: r.usedToday, dailyLimit: r.dailyLimit
+          });
         }
 
         return sendJson(res, 405, { error: 'Method not allowed' });
