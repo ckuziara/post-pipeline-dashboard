@@ -17,6 +17,8 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const folders = require('./folders');
+const { makePgChat, parseTaskId } = require('./chat-store');
+const { makeKeyVault } = require('./keyvault');
 
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
@@ -582,6 +584,41 @@ function aggregate(rows, since) {
 
 const activity = config.databaseUrl ? makePgActivity(config.databaseUrl) : makeFileActivity();
 
+/* Contextual task chat. Postgres only — there is no file backend, so chat is
+   simply absent when the board runs on the JSON store (local preview). Shares
+   the one pool rather than opening a second. Null here is a supported state,
+   not a failure: the routes answer 503 with a reason. */
+const chat = config.databaseUrl ? makePgChat(getPgPool(config.databaseUrl)) : null;
+
+/* BYOK relay. Needs Postgres AND at least one MASTER_KEY_V*; null when either
+   is absent, and the routes say which. A bad master key (wrong length, or
+   MASTER_KEY_CURRENT naming one that doesn't exist) is a configuration error
+   worth shouting about, but not worth taking the board down for — the tracker
+   worked before this feature and must keep working without it. */
+let vault = null;
+if (config.databaseUrl) {
+  try {
+    vault = makeKeyVault(getPgPool(config.databaseUrl));
+  } catch (e) {
+    console.error('BYOK relay disabled — ' + e.message);
+  }
+}
+
+/* Server-side audit. The client tracker (js/track.js) can't be trusted to
+   record something it never sees — a relay call spends the user's money, so
+   the record of it is written here, from the session, not from the browser.
+   Best-effort: a logging failure must never fail the request it describes. */
+function auditServer(session, action, detail) {
+  Promise.resolve()
+    .then(() => activity.append([{
+      ts: new Date().toISOString(),
+      email: (session && session.email) || null,
+      role: null, dept: null,
+      kind: 'audit', action, detail: detail || {}
+    }]))
+    .catch(() => {});
+}
+
 /* ------------------------------------------------- live update fan-out ---- */
 // Plain-HTTP Server-Sent Events — no extra dependency, works through Render's
 // proxy. Every open /api/events connection gets the new version the instant
@@ -590,6 +627,23 @@ const activity = config.databaseUrl ? makePgActivity(config.databaseUrl) : makeF
 const sseClients = new Set();
 function broadcastVersion(v) {
   const msg = 'event: version\ndata: ' + v + '\n\n';
+  for (const res of sseClients) {
+    try { res.write(msg); } catch (e) { sseClients.delete(res); }
+  }
+}
+
+/* Chat realtime rides the SSE stream that already exists rather than adding a
+   second transport. The spec asks for Socket.io; this delivers the same three
+   events (new_message, notification_cleared, reference_pinned) over the
+   channel every client is already connected to — see the note in
+   migrations/002. Named events, so a client subscribes to what it wants.
+
+   No per-task rooms: SSE has no concept of them, so every listener receives
+   every event and filters on taskId. Fine at this board's scale; if chat ever
+   gets loud enough for that to matter, that is the moment to reconsider the
+   transport rather than now. */
+function sseEmit(event, payload) {
+  const msg = 'event: ' + event + '\ndata: ' + JSON.stringify(payload) + '\n\n';
   for (const res of sseClients) {
     try { res.write(msg); } catch (e) { sseClients.delete(res); }
   }
@@ -843,6 +897,164 @@ const server = http.createServer(async (req, res) => {
 
       if (route === 'GET /api/state') return sendJson(res, 200, await storage.get());
       if (route === 'GET /api/version') return sendJson(res, 200, { version: await storage.version() });
+
+      /* ---- contextual task chat -------------------------------------------
+         Spec section 4. Every other route here is an exact string match; these
+         are the first with a path parameter, hence the regex.
+
+         :taskId is `episodeId::taskKey` — the identity the rest of the app
+         already uses (js/uploads.js, js/workspace.js). There is no tasks table
+         to hand out uuids, so this is the stable name a task actually has. */
+      const taskChat = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(messages|revisions)$/);
+      if (taskChat) {
+        if (!chat) {
+          return sendJson(res, 503, {
+            error: 'Chat needs Postgres. This server is running on the JSON file store — set DATABASE_URL to enable it.'
+          });
+        }
+        const parsed = parseTaskId(decodeURIComponent(taskChat[1]));
+        if (!parsed) {
+          return sendJson(res, 400, { error: 'taskId must be "<episodeId>::<taskKey>", e.g. cn6bimwnrc::layout' });
+        }
+        const { episodeId, taskKey } = parsed;
+        const s = getSession(req);
+        // the users table fills itself from whoever signs in, which is also
+        // what keeps author_id pointing at a real row
+        const me = await chat.upsertUser({ email: s.email, fullName: s.name || '' });
+
+        if (route.startsWith('GET') && taskChat[2] === 'messages') {
+          const limit = parseInt(url.searchParams.get('limit') || '100', 10);
+          const before = url.searchParams.get('before') || null;
+          const [messages, current] = await Promise.all([
+            chat.listThread({ episodeId, taskKey, limit, before }),
+            chat.currentRevision({ episodeId, taskKey })
+          ]);
+          // dividers are messages with a revision_id and is_system_event, so the
+          // client renders one continuous stream — no separate merge step
+          return sendJson(res, 200, { taskId: episodeId + '::' + taskKey, messages, currentRevision: current });
+        }
+
+        if (route.startsWith('POST') && taskChat[2] === 'messages') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          if (!body.content || !String(body.content).trim()) {
+            return sendJson(res, 400, { error: 'content is required' });
+          }
+          let msg;
+          try {
+            msg = await chat.postMessage({
+              episodeId, taskKey, authorId: me.id, content: String(body.content),
+              crossReferences: Array.isArray(body.crossReferences) ? body.crossReferences : []
+            });
+          } catch (e) {
+            return sendJson(res, 400, { error: e.message });
+          }
+          sseEmit('new_message', { taskId: episodeId + '::' + taskKey, message: msg });
+          /* TODO(stage 3): mirror into the Slack thread via slack_thread_mappings.
+             TODO(stage 5): fan out mention + assignee notifications. Both are
+             deliberately absent rather than half-wired — a message that saved
+             but silently failed to notify is worse than one that didn't try. */
+          return sendJson(res, 201, { message: msg });
+        }
+
+        if (route.startsWith('POST') && taskChat[2] === 'revisions') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          const { revision, divider } = await chat.startRevision({
+            episodeId, taskKey, label: body.label || null, createdByUserId: me.id
+          });
+          sseEmit('new_message', { taskId: episodeId + '::' + taskKey, message: divider });
+          return sendJson(res, 201, { revision, divider });
+        }
+
+        return sendJson(res, 405, { error: 'Method not allowed' });
+      }
+
+      /* ---- BYOK: the user's own Gemini key, and the relay that spends it ---
+         The key is theirs, so the bill is theirs. Every guard here — the
+         format check, the verify-before-store, the per-minute bucket, the
+         daily ceiling — exists because the thing being protected is somebody
+         else's money rather than ours. */
+      if (url.pathname === '/api/save-key' || url.pathname === '/api/key' || url.pathname === '/api/call-gemini') {
+        if (!vault) {
+          return sendJson(res, 503, {
+            error: !config.databaseUrl
+              ? 'The key relay needs Postgres. This server is running on the JSON file store — set DATABASE_URL.'
+              : 'The key relay needs a master key. Set MASTER_KEY_V1 (openssl rand -base64 32) and MASTER_KEY_CURRENT=1.'
+          });
+        }
+        const s = getSession(req);
+        const me = await chat.upsertUser({ email: s.email, fullName: s.name || '' });
+
+        if (route === 'POST /api/save-key') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          const apiKey = String(body.apiKey || '').trim();
+          if (!vault.validFormat(apiKey)) {
+            return sendJson(res, 400, { error: 'That does not look like a Google AI Studio API key (expected AIza…, 39 characters).' });
+          }
+          const why = await vault.verifyWithGoogle(apiKey);
+          if (why) return sendJson(res, 400, { error: why });
+          const saved = await vault.saveKey(me.id, apiKey);
+          // the key itself is never logged, echoed, or written anywhere but
+          // the encrypted column
+          auditServer(s, 'byok.keySaved', { provider: 'gemini', keyHint: saved.keyHint });
+          return sendJson(res, 200, { ok: true, provider: 'gemini', keyHint: saved.keyHint });
+        }
+
+        if (route === 'GET /api/key') return sendJson(res, 200, await vault.status(me.id));
+
+        if (route === 'DELETE /api/key') {
+          const gone = await vault.deleteKey(me.id);
+          if (gone) auditServer(s, 'byok.keyRemoved', { provider: 'gemini' });
+          return sendJson(res, 200, { ok: true, removed: gone });
+        }
+
+        if (route === 'POST /api/call-gemini') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          const r = await vault.callGemini(me.id, String(body.prompt || ''));
+          if (r.retryAfter) res.setHeader('Retry-After', String(r.retryAfter));
+          if (!r.ok) {
+            // status and reason only — an upstream error body can echo the request
+            console.error('[byok] call failed', r.status, r.upstreamStatus || '', r.googleStatus || '');
+            return sendJson(res, r.status, { error: r.error });
+          }
+          auditServer(s, 'byok.call', {
+            model: r.model, usedToday: r.usedToday, dailyLimit: r.dailyLimit,
+            promptTokens: r.usage && r.usage.promptTokenCount,
+            outputTokens: r.usage && r.usage.candidatesTokenCount
+          });
+          return sendJson(res, 200, {
+            text: r.text, model: r.model, finishReason: r.finishReason,
+            usage: r.usage, usedToday: r.usedToday, dailyLimit: r.dailyLimit
+          });
+        }
+
+        return sendJson(res, 405, { error: 'Method not allowed' });
+      }
+
+      /* Unread count and clearing, used by the notification bell. */
+      if (route === 'GET /api/notifications') {
+        if (!chat) return sendJson(res, 200, { unread: [], count: 0, disabled: true });
+        const s = getSession(req);
+        const me = await chat.upsertUser({ email: s.email, fullName: s.name || '' });
+        const unread = await chat.listUnread(me.id);
+        return sendJson(res, 200, { unread, count: unread.length });
+      }
+
+      if (route === 'POST /api/notifications/read') {
+        if (!chat) return sendJson(res, 503, { error: 'Chat needs Postgres.' });
+        const s = getSession(req);
+        const me = await chat.upsertUser({ email: s.email, fullName: s.name || '' });
+        const body = JSON.parse(await readBody(req) || '{}');
+        let cleared = 0;
+        if (Array.isArray(body.ids) && body.ids.length) {
+          cleared = await chat.markRead(me.id, body.ids);
+        } else if (body.taskId) {
+          const p = parseTaskId(String(body.taskId));
+          if (!p) return sendJson(res, 400, { error: 'bad taskId' });
+          cleared = await chat.markThreadRead(me.id, p);
+          sseEmit('notification_cleared', { taskId: body.taskId, userId: me.id });
+        }
+        return sendJson(res, 200, { cleared });
+      }
 
       if (route === 'GET /api/events') {
         res.writeHead(200, {
@@ -1341,6 +1553,12 @@ const server = http.createServer(async (req, res) => {
   // likewise backups — the board must still serve if the table can't be made
   try { await backups.init(); }
   catch (e) { console.error('Backup store init failed (backups disabled):', e.message); }
+  // chat is Postgres-only and equally optional: the tracker predates it and
+  // must still serve without it
+  if (chat) {
+    try { await chat.init(); }
+    catch (e) { console.error('Chat store init failed (chat disabled):', e.message); }
+  }
 
   server.listen(PORT, config.host, () => {
     const nets = os.networkInterfaces();
