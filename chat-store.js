@@ -220,11 +220,19 @@ function makePgChat(pool) {
         const cur = await this.currentRevision({ episodeId, taskKey });
         rev = cur ? cur.id : null;
       }
+      /* Returns the author joined on, in the same shape listThread produces.
+         Not cosmetic: this row is what the caller broadcasts over SSE, and a
+         bare insert row has author_id but no name — so every recipient would
+         render "Someone" until they happened to reload. */
       return one(await q(
-        `insert into messages
-           (episode_id, task_key, author_id, content, is_system_event, cross_references, revision_id)
-         values ($1,$2,$3,$4,$5,$6::jsonb,$7)
-         returning *`,
+        `with ins as (
+           insert into messages
+             (episode_id, task_key, author_id, content, is_system_event, cross_references, revision_id)
+           values ($1,$2,$3,$4,$5,$6::jsonb,$7)
+           returning *
+         )
+         select ins.*, u.full_name as author_name, u.email as author_email
+           from ins left join users u on u.id = ins.author_id`,
         [episodeId, taskKey, sys ? null : authorId, content, sys,
          JSON.stringify(crossReferences || []), rev || null]));
     },

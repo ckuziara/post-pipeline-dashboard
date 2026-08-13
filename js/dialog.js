@@ -371,7 +371,10 @@ window.App = window.App || {};
            back to Smart Upload's metadata catalogue rather than showing nothing. */
         (App.workspace && App.masterPathSet && App.masterPathSet()
           ? App.workspace.inlineSection(epId, key)
-          : (App.uploads ? App.uploads.inlineSection(epId, key) : null))
+          : (App.uploads ? App.uploads.inlineSection(epId, key) : null)),
+        // the task's conversation — last, because it grows and everything
+        // above it is fixed-height
+        (App.chat ? App.chat.inlineSection(epId, key) : null)
       ];
 
       const footer = [

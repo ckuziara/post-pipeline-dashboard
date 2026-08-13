@@ -31,6 +31,7 @@ window.App = window.App || {};
     App.vc && App.vc.syncOpen && App.vc.syncOpen();   // live-refresh the Version Control panel on state sync
     App.uploads && App.uploads._refresh && App.uploads._refresh();   // live-refresh the attachments section
     App.workspace && App.workspace.syncOpen && App.workspace.syncOpen();   // reflect a teammate's delivery
+    App.chat && App.chat.syncOpen && App.chat.syncOpen();                  // and a teammate's message
     if (App.tooltip) App.tooltip.reset();   // a redraw strips hovered nodes without firing mouseleave
 
     // guard: only admins may sit on the Admin or Planning views
