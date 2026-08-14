@@ -314,7 +314,9 @@ window.App = window.App || {};
         body: JSON.stringify({ email, code })
       });
       if (!r.ok) throw new Error((await r.json()).error || 'sign-in failed');
-      location.href = location.pathname;   // reboot signed in (drops ?err=…)
+      // reboot signed in — drops ?err=… but keeps the hash, so a #task= deep
+      // link that landed on the login screen still opens after sign-in
+      location.href = location.pathname + location.hash;
     },
 
     async logout() {
