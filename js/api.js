@@ -107,6 +107,22 @@ window.App = window.App || {};
       es.addEventListener('version', e => {
         this._adoptVersion(Number(e.data)).catch(() => {});
       });
+      /* Chat rides the same stream rather than a second transport. SSE has no
+         rooms, so every client hears every message and the panel filters on
+         taskId — see the note in server.js. Parsed defensively: a malformed
+         frame must not kill the listener for the rest of the session. */
+      es.addEventListener('new_message', e => {
+        try { App.chat && App.chat.onLive(JSON.parse(e.data)); } catch (err) {}
+      });
+      es.addEventListener('notification_cleared', e => {
+        try { App.chat && App.chat.onCleared(JSON.parse(e.data)); } catch (err) {}
+      });
+      es.addEventListener('notification', e => {
+        try { App.chat && App.chat.onNotify(JSON.parse(e.data)); } catch (err) {}
+      });
+      es.addEventListener('reference_pinned', e => {
+        try { App.chat && App.chat.onPinned(JSON.parse(e.data)); } catch (err) {}
+      });
       this._es = es;
     },
 
@@ -197,6 +213,48 @@ window.App = window.App || {};
       if (!r.ok) throw new Error(body.error || 'could not read usage statistics');
       return body;
     },
+
+    /* ---- contextual task chat ----
+       Postgres-only on the server, so every call here can legitimately come
+       back 503 on a file-store deploy. `chatUnavailable` is carried on the
+       thrown error so the UI can say "not configured" rather than "failed". */
+    async _chat(method, path, body) {
+      const r = await fetch(path, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+        cache: 'no-store'
+      });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const e = new Error(out.error || 'request failed');
+        e.status = r.status;
+        e.chatUnavailable = r.status === 503;
+        throw e;
+      }
+      return out;
+    },
+
+    chatThread(taskId) {
+      return this._chat('GET', '/api/tasks/' + encodeURIComponent(taskId) + '/messages');
+    },
+    // cross-references are extracted server-side from the content itself —
+    // the client has nothing trustworthy to add
+    chatSend(taskId, content) {
+      return this._chat('POST', '/api/tasks/' + encodeURIComponent(taskId) + '/messages', { content });
+    },
+    chatReferences(taskId) {
+      return this._chat('GET', '/api/tasks/' + encodeURIComponent(taskId) + '/references');
+    },
+    removeChatReference(taskId, id) {
+      return this._chat('DELETE', '/api/tasks/' + encodeURIComponent(taskId) + '/references?id=' + encodeURIComponent(id));
+    },
+    chatStartRevision(taskId, label) {
+      return this._chat('POST', '/api/tasks/' + encodeURIComponent(taskId) + '/revisions',
+        { label: label || null });
+    },
+    notifications() { return this._chat('GET', '/api/notifications'); },
+    markNotificationsRead(body) { return this._chat('POST', '/api/notifications/read', body || {}); },
 
     /* ---- per-subtask workspace (Project / Assets / Deliver) ----
        All of these POST because the server needs the pipeline to resolve a task's

@@ -2964,3 +2964,205 @@ select.fld { cursor: pointer; }
   .ai-root { right: 14px; bottom: 14px; }
   .ai-panel { max-height: calc(100vh - 110px); }
 }
+
+/* ============================================================================
+   Contextual task chat (js/chat.js) — the conversation inside the Edit Task
+   dialog, below the workspace section. Sits in the modal's normal flow rather
+   than floating: it is part of the task, not an overlay on it.
+   ============================================================================ */
+.chat { margin-top: 2px; }
+.chat-head { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.chat-rev-pill {
+  font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--text-2);
+  background: var(--surface-3); border: 1px solid var(--border);
+  padding: 2px 8px; border-radius: 999px;
+}
+
+/* Unavailable is the ordinary state in local dev (no DATABASE_URL), so it is
+   a quiet note; .bad is reserved for something actually going wrong. */
+.chat-note {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11.5px; line-height: 1.5; color: var(--text-2);
+  background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: 9px; padding: 9px 11px;
+}
+.chat-note svg { width: 14px; height: 14px; flex: none; }
+.chat-note.bad { color: #ffb4bd; background: rgba(255,91,110,.09); border-color: rgba(255,91,110,.28); }
+:root[data-mode="light"] .chat-note.bad { color: #b3222f; }
+
+.chat-log {
+  max-height: 300px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 12px; margin-bottom: 10px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+}
+.chat-empty { font-size: 11.5px; color: var(--text-3); text-align: center; padding: 14px 0; }
+
+.chat-msg { display: flex; gap: 9px; align-items: flex-start; }
+.chat-av { width: 26px; height: 26px; font-size: 10px; flex: none; background: var(--surface-3); color: var(--text-2); }
+.chat-msg.mine .chat-av { background: var(--accent); color: #fff; }
+.chat-body { min-width: 0; flex: 1; }
+.chat-meta { font-size: 10.5px; color: var(--text-3); margin-bottom: 2px; }
+.chat-who { font-weight: 700; color: var(--text-2); }
+.chat-text { font-size: 12.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.chat-refs { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.chat-ref {
+  font-size: 10px; font-weight: 600; color: var(--text-2);
+  background: var(--surface-3); border: 1px solid var(--border);
+  padding: 2px 7px; border-radius: 999px;
+}
+
+/* A revision divider is a rule across the thread, not a message — the
+   conversation continues through it. */
+.chat-divider {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--text-3);
+  margin: 2px 0;
+}
+.chat-divider::before, .chat-divider::after {
+  content: ''; flex: 1; height: 1px; background: var(--border-2);
+}
+.chat-divider::before { flex: 0 0 10px; }
+.chat-divider-at { text-transform: none; letter-spacing: 0; font-weight: 600; opacity: .7; }
+
+.chat-compose { display: flex; flex-direction: column; gap: 8px; }
+.chat-input {
+  width: 100%; resize: vertical; min-height: 46px;
+  background: var(--surface); border: 1px solid var(--border-2); border-radius: 9px;
+  color: var(--text); font-family: inherit; font-size: 12.5px; line-height: 1.5; padding: 9px 11px;
+}
+.chat-input:focus { outline: none; border-color: var(--accent); }
+.chat-input:disabled { opacity: .6; }
+
+.chat-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.chat-send {
+  border: 0; background: var(--accent); color: #fff; font-family: inherit;
+  font-size: 11.5px; font-weight: 700; padding: 7px 14px; border-radius: 8px; cursor: pointer;
+}
+.chat-send:hover { background: var(--accent-2); }
+.chat-send:disabled { opacity: .6; cursor: default; }
+.chat-rev {
+  display: inline-flex; align-items: center; gap: 6px; margin-right: auto;
+  border: 1px solid var(--border-2); background: none; color: var(--text-2);
+  font-family: inherit; font-size: 11.5px; font-weight: 600;
+  padding: 7px 12px; border-radius: 8px; cursor: pointer;
+}
+.chat-rev:hover { color: var(--text); background: var(--surface-3); }
+.chat-rev svg { width: 13px; height: 13px; }
+
+.chat-revrow { display: flex; gap: 6px; align-items: center; }
+.chat-revrow.hidden { display: none; }
+.chat-revlabel {
+  flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: 8px; color: var(--text); font-family: inherit; font-size: 12px; padding: 7px 10px;
+}
+.chat-revlabel:focus { outline: none; border-color: var(--accent); }
+.chat-rev-go, .chat-rev-x {
+  border: 1px solid var(--border-2); background: none; color: var(--text-2);
+  font-family: inherit; font-size: 11.5px; font-weight: 600;
+  padding: 7px 11px; border-radius: 8px; cursor: pointer; flex: none;
+}
+.chat-rev-go { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chat-rev-go:hover { background: var(--accent-2); }
+.chat-rev-x:hover { color: var(--text); background: var(--surface-3); }
+
+/* ---- modal header tabs (js/dialog.js modalTabs) ----------------------------
+   Only the Edit Task dialog uses these. Panels are hidden rather than
+   destroyed, so the form controls the footer's Save reads stay alive while
+   you're reading the discussion. */
+.modal-head.has-tabs { align-items: flex-start; }
+.modal-tabs { display: flex; gap: 4px; margin-left: auto; margin-right: 12px; padding-top: 2px; }
+.modal-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid transparent; background: none; color: var(--text-3);
+  font-family: inherit; font-size: 12px; font-weight: 600;
+  padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  transition: color .14s ease, background .14s ease, border-color .14s ease;
+}
+.modal-tab:hover { color: var(--text-2); background: var(--surface-3); }
+.modal-tab.active {
+  color: var(--text); background: var(--surface-3); border-color: var(--border-2);
+}
+.modal-tab-badge {
+  min-width: 17px; text-align: center;
+  font-size: 10px; font-weight: 700; line-height: 1.6;
+  color: var(--text-2); background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: 999px; padding: 0 5px;
+}
+.modal-tab.active .modal-tab-badge { color: #fff; background: var(--accent); border-color: var(--accent); }
+.modal-tab-badge.hidden { display: none; }
+
+.et-panel.hidden { display: none; }
+
+@media (max-width: 620px) {
+  .modal-head.has-tabs { flex-wrap: wrap; }
+  .modal-tabs { order: 3; width: 100%; margin: 8px 0 0; }
+}
+
+/* ---- notification bell (js/chat.js, mounted in the topbar) ---------------- */
+.bell-box { position: relative; display: inline-flex; }
+.bell {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2);
+}
+.bell:hover { color: var(--text); background: var(--surface-3); }
+.bell-ic { width: 15px; height: 15px; }
+.bell-badge {
+  position: absolute; top: -5px; right: -5px;
+  min-width: 16px; padding: 0 4px; border-radius: 999px;
+  font-size: 9.5px; font-weight: 800; line-height: 1.7; text-align: center;
+  background: var(--danger); color: #fff;
+}
+.bell-pop {
+  position: fixed; z-index: 960; width: 340px; max-height: 420px; overflow-y: auto;
+  margin-top: 40px; right: 16px; top: 12px;
+  background: var(--surface-2); border: 1px solid var(--border-2);
+  border-radius: 12px; box-shadow: var(--shadow); padding: 6px;
+}
+.bell-empty { font-size: 11.5px; color: var(--text-3); padding: 14px 12px; line-height: 1.5; }
+.bell-item {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  border: 0; background: none; border-radius: 8px; padding: 9px 10px;
+  font-family: inherit;
+}
+.bell-item:hover { background: var(--surface-3); }
+.bell-item-top { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
+.bell-item-code { font-size: 11px; font-weight: 700; color: var(--text); }
+.bell-item-why {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--accent); flex: none;
+}
+.bell-item-text { font-size: 11.5px; color: var(--text-2); line-height: 1.45; word-break: break-word; }
+.bell-more { font-size: 10.5px; color: var(--text-3); text-align: center; padding: 7px 0 4px; }
+
+/* ---- chat cross-reference chips & pinned references ----------------------- */
+.chat-ref { display: inline-flex; align-items: center; gap: 4px; }
+.chat-ref.link, .chat-ref.jump {
+  cursor: pointer; text-decoration: none;
+  color: var(--accent); background: var(--surface-3);
+  border: 1px solid var(--border-2); font-family: inherit;
+}
+.chat-ref.link:hover, .chat-ref.jump:hover { border-color: var(--accent); color: var(--text); }
+.chat-ref svg { width: 11px; height: 11px; }
+
+.chat-pins { display: flex; flex-direction: column; gap: 5px; margin-bottom: 9px; }
+.chat-pin {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px;
+  padding: 6px 9px;
+}
+.chat-pin-link {
+  flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 600; color: var(--accent); text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-pin-link:hover { color: var(--text); }
+.chat-pin-link svg { width: 12px; height: 12px; flex: none; }
+.chat-pin-x {
+  flex: none; border: 0; background: none; color: var(--text-3);
+  font-size: 11px; cursor: pointer; padding: 2px 4px; border-radius: 5px;
+}
+.chat-pin-x:hover { color: var(--danger); background: var(--surface-3); }

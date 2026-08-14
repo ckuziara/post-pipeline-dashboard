@@ -196,18 +196,44 @@ window.App = window.App || {};
     }
   };
 
-  function card(icon, title, subtitle, sections, footer, cls) {
+  /* `tabs` is optional and sits in the header beside the title — only the Edit
+     Task dialog passes one, so every other caller is untouched by it. */
+  function card(icon, title, subtitle, sections, footer, cls, tabs) {
     return el('.modal-card' + (cls ? '.' + cls : ''), { onclick: (e) => e.stopPropagation() }, [
-      el('.modal-head', null, [
+      el('.modal-head' + (tabs ? '.has-tabs' : ''), null, [
         el('.modal-head-main', null, [
           App.icon(icon, { cls: 'modal-ic' }),
           el('div', null, [el('.modal-title', null, title), subtitle ? el('.modal-subtitle', null, subtitle) : null])
         ]),
+        tabs || null,
         el('button.modal-x', { onclick: () => App.modal.close(), title: 'Close' }, '✕')
       ]),
       el('.modal-body', null, sections),
       el('.modal-foot', null, footer)
     ]);
+  }
+
+  /* A tab strip for a modal header. Panels are shown and hidden rather than
+     rebuilt: the Details panel holds live form controls whose values the
+     footer's Save reads, so tearing them down on a tab change would either
+     lose what someone typed or force the save to read from somewhere else. */
+  function modalTabs(defs, initialKey) {
+    const strip = el('.modal-tabs');
+    const show = (key) => {
+      defs.forEach(d => {
+        d.panel.classList.toggle('hidden', d.key !== key);
+        d.btn.classList.toggle('active', d.key === key);
+      });
+    };
+    const first = defs.some(d => d.key === initialKey) ? initialKey : defs[0].key;
+    defs.forEach((d) => {
+      d.btn = el('button.modal-tab' + (d.key === first ? '.active' : ''), {
+        type: 'button', onclick: () => show(d.key)
+      }, [d.label, d.badge || null]);
+      d.panel.classList.toggle('hidden', d.key !== first);
+      strip.appendChild(d.btn);
+    });
+    return strip;
   }
 
   function field(label, control, hint) {
@@ -254,7 +280,7 @@ window.App = window.App || {};
 
   // ---- Edit Task ----
   App.editTask = {
-    open(epId, key) {
+    open(epId, key, opts) {
       const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
       const su = App.subitem(ep, key); if (!su) return;
       const role = App.state.role;
@@ -343,11 +369,15 @@ window.App = window.App || {};
         return el('span.et-owner', null, [el('span.avatar', { style: { background: p.color } }, App.initials(p.name)), p.name]);
       };
 
-      const sections = [
-        el('.ctx-box.slim', null, [
-          el('span.ctx-chip', null, '# ' + ep.code), el('span.ctx-title', null, ep.title),
-          el('span.ctx-dept', null, App.dept(su.dept).label)
-        ]),
+      /* The context bar stays outside the tabs: which task you're looking at is
+         true on both of them, and losing it when you switch to the discussion
+         is exactly when you'd want it. */
+      const ctxBar = el('.ctx-box.slim', null, [
+        el('span.ctx-chip', null, '# ' + ep.code), el('span.ctx-title', null, ep.title),
+        el('span.ctx-dept', null, App.dept(su.dept).label)
+      ]);
+
+      const detailsPanel = el('.et-panel', null, [
         el('.et-list', null, [
           editRow('Task name', nameInput, () => nameInput.value, {
             locked: !canName, hint: canName ? null : 'Only Producers and Managers can rename a task'
@@ -372,7 +402,26 @@ window.App = window.App || {};
         (App.workspace && App.masterPathSet && App.masterPathSet()
           ? App.workspace.inlineSection(epId, key)
           : (App.uploads ? App.uploads.inlineSection(epId, key) : null))
-      ];
+      ]);
+
+      /* The conversation gets its own tab rather than sitting under the form:
+         a thread grows without limit, and stacked below fixed-height sections
+         it pushed Save Changes off the bottom of a long discussion. */
+      const chatBadge = el('span.modal-tab-badge.hidden');
+      const chatPanel = el('.et-panel', null,
+        App.chat ? App.chat.inlineSection(epId, key, {
+          onCount: (n) => {
+            chatBadge.textContent = String(n);
+            chatBadge.classList.toggle('hidden', !n);
+          }
+        }) : null);
+
+      const tabs = modalTabs([
+        { key: 'details', label: 'Details', panel: detailsPanel },
+        { key: 'chat', label: 'Discussion', panel: chatPanel, badge: chatBadge }
+      ], opts && opts.tab);   // a bell click lands straight on the conversation
+
+      const sections = [ctxBar, detailsPanel, chatPanel];
 
       const footer = [
         el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
@@ -398,7 +447,7 @@ window.App = window.App || {};
         }, [App.icon('save'), ' Save Changes'])
       ];
 
-      App.modal.open(card('pencil', 'Edit Task', 'Update task details and schedule', sections, footer));
+      App.modal.open(card('pencil', 'Edit Task', 'Update task details and schedule', sections, footer, null, tabs));
       App.track.flowStart('Task edit', { dept: su.dept });   // after open(): its defensive close() must not cancel this
     }
   };

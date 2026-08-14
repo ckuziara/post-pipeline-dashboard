@@ -31,6 +31,7 @@ window.App = window.App || {};
     App.vc && App.vc.syncOpen && App.vc.syncOpen();   // live-refresh the Version Control panel on state sync
     App.uploads && App.uploads._refresh && App.uploads._refresh();   // live-refresh the attachments section
     App.workspace && App.workspace.syncOpen && App.workspace.syncOpen();   // reflect a teammate's delivery
+    App.chat && App.chat.syncOpen && App.chat.syncOpen();                  // and a teammate's message
     if (App.tooltip) App.tooltip.reset();   // a redraw strips hovered nodes without firing mouseleave
 
     // guard: only admins may sit on the Admin or Planning views
@@ -109,6 +110,14 @@ window.App = window.App || {};
   function renderRoleSelect() {
     const box = document.getElementById('role-select'); box.innerHTML = '';
     const user = App.state.user;
+
+    // the notification bell — mentions and messages on your tasks. Chat owns
+    // its state; this only gives it a place to live in the topbar.
+    if (App.chat && App.api.online && App.api.me) {
+      const bellBox = el('span.bell-box');
+      box.appendChild(bellBox);
+      App.chat.bellMount(bellBox);
+    }
 
     // signed in: show who you are, with sign-out
     if (user) {

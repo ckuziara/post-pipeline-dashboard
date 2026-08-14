@@ -7,6 +7,16 @@
       "runtimeArgs": ["server.js"],
       "port": 8771,
       "autoPort": true
+    },
+    {
+      "name": "postpipeline-chat-dev",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "DATABASE_URL=\"$(neon connection-string br-soft-night-za8cr1h4 --project-id misty-surf-81665550 --role-name neondb_owner)\" exec node server.js"
+      ],
+      "port": 8771,
+      "autoPort": true
     }
   ]
 }
