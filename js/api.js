@@ -120,6 +120,9 @@ window.App = window.App || {};
       es.addEventListener('notification', e => {
         try { App.chat && App.chat.onNotify(JSON.parse(e.data)); } catch (err) {}
       });
+      es.addEventListener('reference_pinned', e => {
+        try { App.chat && App.chat.onPinned(JSON.parse(e.data)); } catch (err) {}
+      });
       this._es = es;
     },
 
@@ -235,9 +238,16 @@ window.App = window.App || {};
     chatThread(taskId) {
       return this._chat('GET', '/api/tasks/' + encodeURIComponent(taskId) + '/messages');
     },
-    chatSend(taskId, content, crossReferences) {
-      return this._chat('POST', '/api/tasks/' + encodeURIComponent(taskId) + '/messages',
-        { content, crossReferences: crossReferences || [] });
+    // cross-references are extracted server-side from the content itself —
+    // the client has nothing trustworthy to add
+    chatSend(taskId, content) {
+      return this._chat('POST', '/api/tasks/' + encodeURIComponent(taskId) + '/messages', { content });
+    },
+    chatReferences(taskId) {
+      return this._chat('GET', '/api/tasks/' + encodeURIComponent(taskId) + '/references');
+    },
+    removeChatReference(taskId, id) {
+      return this._chat('DELETE', '/api/tasks/' + encodeURIComponent(taskId) + '/references?id=' + encodeURIComponent(id));
     },
     chatStartRevision(taskId, label) {
       return this._chat('POST', '/api/tasks/' + encodeURIComponent(taskId) + '/revisions',

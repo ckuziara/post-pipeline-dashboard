@@ -604,6 +604,60 @@ if (config.databaseUrl) {
   }
 }
 
+/* Reference extraction — the interceptors from spec section 3, web side.
+
+   The spec's regexes assume things this app doesn't have (numeric task ids for
+   "#402"), so the task form here is the board's own names:
+
+     #LA-101            an episode
+     #LA-101/Blocking   a task in it (space works as well as the slash)
+
+   LucidLink detection is the spec's regex verbatim. Cross-references are
+   computed HERE, not trusted from the client — they end up as chips other
+   people click, so what they point at has to be the server's own reading of
+   the message. A mention that doesn't resolve to a real episode stays plain
+   text: a chip that goes nowhere is worse than no chip. */
+const LUCIDLINK_REGEX = /(lucid:\/\/|https:\/\/[\w-]+\.lucid\.link\/)[^\s]+/gi;
+const EP_MENTION_REGEX = /#([A-Za-z]{1,6}(?:-|\s)?\d{1,5})\b/g;
+
+function extractReferences(content, data) {
+  const refs = [];
+  const text = String(content || '');
+
+  const lucid = text.match(LUCIDLINK_REGEX) || [];
+  lucid.forEach(url => refs.push({ kind: 'lucidlink', url: url.replace(/[).,;]+$/, '') }));
+
+  const normCode = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const episodes = (data && data.episodes) || [];
+  let m;
+  EP_MENTION_REGEX.lastIndex = 0;
+  while ((m = EP_MENTION_REGEX.exec(text))) {
+    const ep = episodes.find(e => normCode(e.code) === normCode(m[1]));
+    if (!ep) continue;
+    // a task name may follow — try the next two words, then one, so
+    // "#LA-101/Final LRC" wins over a bare "#LA-101 Final ..." misread
+    const after = text.slice(m.index + m[0].length).match(/^[\/\s]+([A-Za-z][\w-]*)(?:\s+([A-Za-z][\w-]*))?/);
+    const pipe = (data.shows.find(s => s.id === ep.showId) || {}).pipeline || null;
+    const tasks = pipe || [];   // seed shows: fall back to per-episode names below
+    const names = new Map();
+    (tasks.length ? tasks : []).forEach(t => names.set(t.key, String(t.name)));
+    if (!names.size && ep.statuses) Object.keys(ep.statuses).forEach(k => names.set(k, k));
+    const tryName = (phrase) => {
+      if (!phrase) return null;
+      const n = phrase.toLowerCase();
+      const hits = [...names.entries()].filter(([k, nm]) =>
+        nm.toLowerCase() === n || k === n || nm.toLowerCase().startsWith(n));
+      return hits.length === 1 ? hits[0][0] : null;
+    };
+    let taskKey = null;
+    if (after) taskKey = tryName(after[2] ? after[1] + ' ' + after[2] : null) || tryName(after[1]);
+    refs.push(taskKey
+      ? { kind: 'task', epId: ep.id, code: ep.code, taskKey, label: ep.code + ' / ' + (names.get(taskKey) || taskKey) }
+      : { kind: 'episode', epId: ep.id, code: ep.code, label: ep.code });
+  }
+  return refs;
+}
+
 /* Notification fan-out — the spec's alert rules, applied server-side when a
    message lands. Two reasons someone is told, and only two:
 
@@ -997,7 +1051,7 @@ const server = http.createServer(async (req, res) => {
          :taskId is `episodeId::taskKey` — the identity the rest of the app
          already uses (js/uploads.js, js/workspace.js). There is no tasks table
          to hand out uuids, so this is the stable name a task actually has. */
-      const taskChat = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(messages|revisions)$/);
+      const taskChat = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(messages|revisions|references)$/);
       if (taskChat) {
         if (!chat) {
           return sendJson(res, 503, {
@@ -1017,13 +1071,28 @@ const server = http.createServer(async (req, res) => {
         if (route.startsWith('GET') && taskChat[2] === 'messages') {
           const limit = parseInt(url.searchParams.get('limit') || '100', 10);
           const before = url.searchParams.get('before') || null;
-          const [messages, current] = await Promise.all([
+          const [messages, current, references] = await Promise.all([
             chat.listThread({ episodeId, taskKey, limit, before }),
-            chat.currentRevision({ episodeId, taskKey })
+            chat.currentRevision({ episodeId, taskKey }),
+            chat.listReferences({ episodeId, taskKey })
           ]);
           // dividers are messages with a revision_id and is_system_event, so the
           // client renders one continuous stream — no separate merge step
-          return sendJson(res, 200, { taskId: episodeId + '::' + taskKey, messages, currentRevision: current });
+          return sendJson(res, 200, { taskId: episodeId + '::' + taskKey, messages, currentRevision: current, references });
+        }
+
+        /* Pinned references — the durable list, separate from the messages
+           that produced it. Removal is open to anyone signed in: it's a
+           pinboard, and an out-of-date pin hurts everyone who trusts it. */
+        if (route.startsWith('GET') && taskChat[2] === 'references') {
+          return sendJson(res, 200, { references: await chat.listReferences({ episodeId, taskKey }) });
+        }
+        if (route.startsWith('DELETE') && taskChat[2] === 'references') {
+          const id = url.searchParams.get('id');
+          if (!id) return sendJson(res, 400, { error: 'id is required' });
+          const gone = await chat.removeReference(id);
+          if (gone) sseEmit('reference_pinned', { taskId: episodeId + '::' + taskKey, removed: id });
+          return sendJson(res, 200, { ok: true, removed: gone });
         }
 
         if (route.startsWith('POST') && taskChat[2] === 'messages') {
@@ -1031,14 +1100,32 @@ const server = http.createServer(async (req, res) => {
           if (!body.content || !String(body.content).trim()) {
             return sendJson(res, 400, { error: 'content is required' });
           }
+          // cross-references are computed here, never taken from the client —
+          // they become chips other people click
+          const board = await storage.get();
+          const refs = extractReferences(body.content, board && board.data);
           let msg;
           try {
             msg = await chat.postMessage({
               episodeId, taskKey, authorId: me.id, content: String(body.content),
-              crossReferences: Array.isArray(body.crossReferences) ? body.crossReferences : []
+              crossReferences: refs
             });
           } catch (e) {
             return sendJson(res, 400, { error: e.message });
+          }
+          /* A LucidLink URL in a message is also PINNED — the spec's
+             interceptor, minus the Slack ephemeral prompt it can't have yet.
+             The pin outlives the message scrollback, which is its point. */
+          for (const r of refs) {
+            if (r.kind !== 'lucidlink') continue;
+            try {
+              const pin = await chat.addReference({
+                episodeId, taskKey, messageId: msg.id, url: r.url,
+                displayName: r.url.split('/').filter(Boolean).pop() || r.url,
+                createdByUserId: me.id
+              });
+              sseEmit('reference_pinned', { taskId: episodeId + '::' + taskKey, reference: pin });
+            } catch (e) { console.error('[chat] pin failed:', e.message); }
           }
           sseEmit('new_message', { taskId: episodeId + '::' + taskKey, message: msg });
           // fire-and-forget: the message is saved either way, and the sender

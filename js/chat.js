@@ -109,6 +109,16 @@ window.App = window.App || {};
       this._scroll();
     },
 
+    /* A pin arriving (or being removed) over SSE — refresh just the strip. */
+    onPinned(payload) {
+      const m = this._mounted;
+      if (!m || !m.box.isConnected || !m.thread) return;
+      if (!payload || payload.taskId !== taskIdOf(m.epId, m.taskKey)) return;
+      App.api.chatReferences(payload.taskId)
+        .then(r => { m.thread.references = r.references; this._render(); })
+        .catch(() => {});
+    },
+
     /* ---- the notification bell ------------------------------------------
        Lives in the topbar (mounted by render.js). Unread state is owned by
        the server; this is a cache of it, corrected by three signals: the boot
@@ -210,7 +220,7 @@ window.App = window.App || {};
       if (!content) return;
       m.sending = true; this._render();
       try {
-        const r = await App.api.chatSend(taskIdOf(m.epId, m.taskKey), content);
+        const r = await App.api.chatSend(taskIdOf(m.epId, m.taskKey), content);   // refs extracted server-side
         if (m.thread && !m.thread.messages.some(x => x.id === r.message.id)) {
           m.thread.messages.push(r.message);
         }
@@ -273,6 +283,22 @@ window.App = window.App || {};
         return;
       }
 
+      /* Pinned references — the durable outcome of LucidLink interception.
+         Above the log because they outlive the scrollback that produced them. */
+      const pins = (m.thread.references || []);
+      if (pins.length) {
+        box.appendChild(el('.chat-pins', null, pins.map(p =>
+          el('.chat-pin', null, [
+            el('a.chat-pin-link', { href: p.url, target: '_blank', rel: 'noopener',
+              title: p.url + (p.created_by_name ? '\nPinned by ' + p.created_by_name : '') },
+              [App.icon('link'), ' ' + (p.display_name || p.url)]),
+            el('button.chat-pin-x', { title: 'Remove this pin',
+              onclick: () => App.api.removeChatReference(taskIdOf(m.epId, m.taskKey), p.id)
+                .then(() => this.reload()).catch(e => App.toast(e.message, true))
+            }, '✕')
+          ]))));
+      }
+
       const log = el('.chat-log');
       if (!m.thread.messages.length) {
         log.appendChild(el('.chat-empty', null, 'No discussion yet. The first message starts the thread.'));
@@ -288,7 +314,7 @@ window.App = window.App || {};
 
       const input = el('textarea.chat-input', {
         rows: 2,
-        placeholder: 'Write a message…  (Enter to send, Shift+Enter for a new line)',
+        placeholder: 'Write a message…  @name mentions · #' + ((App.state.data.episodes[0] || {}).code || 'LA-101') + '/Task links a task',
         disabled: m.sending
       });
       input.value = m.draft || '';
@@ -347,6 +373,41 @@ window.App = window.App || {};
     }
   };
 
+  /* A cross-reference chip. Every kind goes somewhere: a task chip opens that
+     task's own conversation, an episode chip lands on its board card, a
+     LucidLink chip is simply the link. The server only emits chips it could
+     resolve, so none of these can dead-end. */
+  function chip(r) {
+    if (!r || typeof r !== 'object') return el('span.chat-ref', null, String(r));
+    if (r.kind === 'lucidlink') {
+      return el('a.chat-ref.link', { href: r.url, target: '_blank', rel: 'noopener', title: r.url },
+        [App.icon('link'), ' ' + (r.url.split('/').filter(Boolean).pop() || 'LucidLink')]);
+    }
+    if (r.kind === 'task') {
+      /* The server resolves WHICH task; the display name is re-derived here,
+         because seed shows carry no stored pipeline server-side and the label
+         would otherwise be the raw key ("blocking" instead of "Blocking"). */
+      const ep = App.state.data.episodes.find(e => e.id === r.epId);
+      const label = (r.code || '') + ' / ' + (ep ? App.taskNameFor(ep, r.taskKey) : r.taskKey);
+      return el('button.chat-ref.jump', {
+        type: 'button', title: 'Open ' + label + '’s discussion',
+        onclick: () => { App.modal.close(); App.editTask.open(r.epId, r.taskKey, { tab: 'chat' }); }
+      }, ['# ' + label]);
+    }
+    if (r.kind === 'episode') {
+      return el('button.chat-ref.jump', {
+        type: 'button', title: 'Show ' + r.code + ' on the board',
+        onclick: () => {
+          App.modal.close();
+          App.state.view = 'board';
+          App.state.expanded[r.epId] = true;
+          App.render();
+        }
+      }, ['# ' + r.code]);
+    }
+    return el('span.chat-ref', null, r.label || r.kind);
+  }
+
   function divider(msg) {
     return el('.chat-divider', null, [el('span', null, msg.content), el('span.chat-divider-at', null, ago(msg.created_at))]);
   }
@@ -361,8 +422,7 @@ window.App = window.App || {};
       el('.chat-body', null, [
         el('.chat-meta', null, [el('span.chat-who', null, mine ? 'You' : who), ' · ' + ago(msg.created_at)]),
         el('.chat-text', null, msg.content),
-        refs.length ? el('.chat-refs', null, refs.map(r =>
-          el('span.chat-ref', null, String(r)))) : null
+        refs.length ? el('.chat-refs', null, refs.map(r => chip(r))) : null
       ])
     ]);
   }
