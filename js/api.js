@@ -117,6 +117,9 @@ window.App = window.App || {};
       es.addEventListener('notification_cleared', e => {
         try { App.chat && App.chat.onCleared(JSON.parse(e.data)); } catch (err) {}
       });
+      es.addEventListener('notification', e => {
+        try { App.chat && App.chat.onNotify(JSON.parse(e.data)); } catch (err) {}
+      });
       this._es = es;
     },
 

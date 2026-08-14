@@ -3100,3 +3100,40 @@ select.fld { cursor: pointer; }
   .modal-head.has-tabs { flex-wrap: wrap; }
   .modal-tabs { order: 3; width: 100%; margin: 8px 0 0; }
 }
+
+/* ---- notification bell (js/chat.js, mounted in the topbar) ---------------- */
+.bell-box { position: relative; display: inline-flex; }
+.bell {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2);
+}
+.bell:hover { color: var(--text); background: var(--surface-3); }
+.bell-ic { width: 15px; height: 15px; }
+.bell-badge {
+  position: absolute; top: -5px; right: -5px;
+  min-width: 16px; padding: 0 4px; border-radius: 999px;
+  font-size: 9.5px; font-weight: 800; line-height: 1.7; text-align: center;
+  background: var(--danger); color: #fff;
+}
+.bell-pop {
+  position: fixed; z-index: 960; width: 340px; max-height: 420px; overflow-y: auto;
+  margin-top: 40px; right: 16px; top: 12px;
+  background: var(--surface-2); border: 1px solid var(--border-2);
+  border-radius: 12px; box-shadow: var(--shadow); padding: 6px;
+}
+.bell-empty { font-size: 11.5px; color: var(--text-3); padding: 14px 12px; line-height: 1.5; }
+.bell-item {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  border: 0; background: none; border-radius: 8px; padding: 9px 10px;
+  font-family: inherit;
+}
+.bell-item:hover { background: var(--surface-3); }
+.bell-item-top { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
+.bell-item-code { font-size: 11px; font-weight: 700; color: var(--text); }
+.bell-item-why {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--accent); flex: none;
+}
+.bell-item-text { font-size: 11.5px; color: var(--text-2); line-height: 1.45; word-break: break-word; }
+.bell-more { font-size: 10.5px; color: var(--text-3); text-align: center; padding: 7px 0 4px; }

@@ -84,6 +84,14 @@ window.App = window.App || {};
       m.busy = false;
       this._render();
       this._count();
+      /* Reading the thread is the web's version of the spec's reply/react
+         clear: it's on screen, so it stops being unread. Server no-ops (and
+         stays silent) when there was nothing to clear. */
+      if (m.thread) {
+        App.api.markNotificationsRead({ taskId: taskIdOf(m.epId, m.taskKey) })
+          .then(r => { if (r && r.cleared) this.bellBoot(); })
+          .catch(() => {});
+      }
     },
 
     /* A message arriving over SSE. Every client hears every message, so the
@@ -101,7 +109,99 @@ window.App = window.App || {};
       this._scroll();
     },
 
-    onCleared() { /* notification badge state — stage 5 */ },
+    /* ---- the notification bell ------------------------------------------
+       Lives in the topbar (mounted by render.js). Unread state is owned by
+       the server; this is a cache of it, corrected by three signals: the boot
+       fetch, a live `notification` event naming this user, and a
+       `notification_cleared` from any tab — including someone else's read on
+       another machine, which is the point of clearing over SSE. */
+    _bell: { items: [], count: 0, open: false, node: null, loaded: false },
+
+    async bellBoot() {
+      if (!App.api.online || !App.api.me) return;
+      try {
+        const r = await App.api.notifications();
+        this._bell.items = r.unread || [];
+        this._bell.count = r.count || 0;
+        this._bell.me = r.userId || null;
+        this._bell.loaded = !r.disabled;
+      } catch (e) { this._bell.loaded = false; }
+      this._bellDraw();
+    },
+
+    onNotify(payload) {
+      // every client hears every event; it's ours only if we're named
+      const me = this._myUserIdGuess();
+      if (!payload || !Array.isArray(payload.userIds)) return;
+      if (me && !payload.userIds.includes(me)) return;
+      // unknown self (fetch not landed yet): refetch anyway — it's cheap and
+      // teaches us our id for next time
+      this.bellBoot();
+    },
+
+    onCleared(payload) {
+      const me = this._myUserIdGuess();
+      if (payload && payload.userId && me && payload.userId !== me) return;
+      this.bellBoot();
+    },
+
+    /* The users row is created lazily server-side, so the client learns its
+       own uuid from the first notifications fetch (rows carry user_id). */
+    _myUserIdGuess() {
+      const it = this._bell.items[0];
+      return (it && it.user_id) || this._bell.me || null;
+    },
+
+    bellMount(box) {
+      this._bell.node = box;
+      this._bellDraw();
+      if (!this._bell.loaded) this.bellBoot();
+    },
+
+    _bellDraw() {
+      const b = this._bell;
+      if (!b.node || !b.node.isConnected) return;
+      b.node.innerHTML = '';
+      const btn = el('button.bell', {
+        title: b.count ? b.count + ' unread' : 'Notifications',
+        onclick: (e) => { e.stopPropagation(); b.open = !b.open; this._bellDraw(); }
+      }, [
+        App.icon('bolt', { cls: 'bell-ic' }),
+        b.count ? el('span.bell-badge', null, String(Math.min(b.count, 99))) : null
+      ]);
+      b.node.appendChild(btn);
+      if (!b.open) return;
+
+      const pop = el('.bell-pop', { onclick: (e) => e.stopPropagation() });
+      if (!b.items.length) {
+        pop.appendChild(el('.bell-empty', null, 'Nothing unread. Mentions and messages on your tasks land here.'));
+      }
+      b.items.slice(0, 12).forEach(n => {
+        const ep = App.state.data.episodes.find(e => e.id === n.episode_id);
+        const code = ep ? ep.code : n.episode_id;
+        const taskName = ep ? App.taskNameFor(ep, n.task_key) : n.task_key;
+        pop.appendChild(el('button.bell-item', {
+          onclick: async () => {
+            b.open = false; this._bellDraw();
+            try { await App.api.markNotificationsRead({ taskId: n.episode_id + '::' + n.task_key }); } catch (e) {}
+            if (ep) App.editTask.open(n.episode_id, n.task_key, { tab: 'chat' });
+            else App.toast('That episode is no longer on the board', true);
+          }
+        }, [
+          el('.bell-item-top', null, [
+            el('span.bell-item-code', null, code + ' · ' + taskName),
+            el('span.bell-item-why', null, n.type === 'mention' ? 'mentioned you' : 'your task')
+          ]),
+          el('.bell-item-text', null, (n.author_name ? n.author_name + ': ' : '') + String(n.content || '').slice(0, 90))
+        ]));
+      });
+      if (b.count > 12) pop.appendChild(el('.bell-more', null, '+' + (b.count - 12) + ' more'));
+      b.node.appendChild(pop);
+      // one shot: any click elsewhere closes it
+      setTimeout(() => document.addEventListener('click', () => {
+        if (b.open) { b.open = false; this._bellDraw(); }
+      }, { once: true }), 0);
+    },
 
     async _send(text) {
       const m = this._mounted;

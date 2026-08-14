@@ -217,7 +217,7 @@ window.App = window.App || {};
      rebuilt: the Details panel holds live form controls whose values the
      footer's Save reads, so tearing them down on a tab change would either
      lose what someone typed or force the save to read from somewhere else. */
-  function modalTabs(defs) {
+  function modalTabs(defs, initialKey) {
     const strip = el('.modal-tabs');
     const show = (key) => {
       defs.forEach(d => {
@@ -225,11 +225,12 @@ window.App = window.App || {};
         d.btn.classList.toggle('active', d.key === key);
       });
     };
-    defs.forEach((d, i) => {
-      d.btn = el('button.modal-tab' + (i === 0 ? '.active' : ''), {
+    const first = defs.some(d => d.key === initialKey) ? initialKey : defs[0].key;
+    defs.forEach((d) => {
+      d.btn = el('button.modal-tab' + (d.key === first ? '.active' : ''), {
         type: 'button', onclick: () => show(d.key)
       }, [d.label, d.badge || null]);
-      d.panel.classList.toggle('hidden', i !== 0);
+      d.panel.classList.toggle('hidden', d.key !== first);
       strip.appendChild(d.btn);
     });
     return strip;
@@ -279,7 +280,7 @@ window.App = window.App || {};
 
   // ---- Edit Task ----
   App.editTask = {
-    open(epId, key) {
+    open(epId, key, opts) {
       const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
       const su = App.subitem(ep, key); if (!su) return;
       const role = App.state.role;
@@ -418,7 +419,7 @@ window.App = window.App || {};
       const tabs = modalTabs([
         { key: 'details', label: 'Details', panel: detailsPanel },
         { key: 'chat', label: 'Discussion', panel: chatPanel, badge: chatBadge }
-      ]);
+      ], opts && opts.tab);   // a bell click lands straight on the conversation
 
       const sections = [ctxBar, detailsPanel, chatPanel];
 

@@ -111,6 +111,14 @@ window.App = window.App || {};
     const box = document.getElementById('role-select'); box.innerHTML = '';
     const user = App.state.user;
 
+    // the notification bell — mentions and messages on your tasks. Chat owns
+    // its state; this only gives it a place to live in the topbar.
+    if (App.chat && App.api.online && App.api.me) {
+      const bellBox = el('span.bell-box');
+      box.appendChild(bellBox);
+      App.chat.bellMount(bellBox);
+    }
+
     // signed in: show who you are, with sign-out
     if (user) {
       box.appendChild(el('.user-chip', { title: user.email + ' — signed in via ' + (App.api.me && App.api.me.via === 'google' ? 'Google' : 'team sign-in') }, [
