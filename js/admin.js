@@ -625,6 +625,72 @@ window.App = window.App || {};
      there for whoever needs it, from wherever they are. The list loads async
      (it's a round trip) and redraws itself in place, so the rest of the panel
      doesn't wait on it. Admin-only, enforced server-side too. */
+  /* Slack channel mappings — where each show's task chatter goes. A mapping
+     is prerequisite plumbing for the bridge, so this card works (and is worth
+     filling in) even while the bot's install is still pending IT approval:
+     the moment credentials land, threads start flowing to whatever is mapped
+     here. */
+  function slackCard() {
+    const card = el('.adm-permcard');
+    card.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, [App.icon('plug'), ' Slack channels']),
+      el('.adm-permcard-desc', null, 'Map a show to the Slack channel its task discussions post into. ' +
+        'Add a department-specific row to split one show across channels — the department row wins. ' +
+        'In Slack: channel name → ⋯ → Copy channel ID.')
+    ]));
+
+    const showSel = el('select.fld');
+    App.activeShows().forEach(sw => {
+      const o = document.createElement('option'); o.value = sw.id; o.textContent = sw.name; showSel.appendChild(o);
+    });
+    const deptSel = el('select.fld');
+    [['', 'Whole show']].concat(Object.keys(App.DEPARTMENTS).map(k => [k, App.DEPARTMENTS[k].label]))
+      .forEach(([v, l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; deptSel.appendChild(o); });
+    const chanFld = el('input.fld', { type: 'text', placeholder: 'Channel ID — C0123ABCD', maxlength: '30' });
+    const addBtn = el('button.adm-btn', null, 'Map channel');
+    card.appendChild(el('.adm-backup-bar', null, [showSel, deptSel, chanFld, addBtn]));
+
+    const list = el('.wf-list', null, el('.adm-empty', null, 'Loading…'));
+    card.appendChild(list);
+    const note = el('.adm-name-sub.adm-backup-cap');
+    card.appendChild(note);
+
+    const draw = (r) => {
+      list.innerHTML = '';
+      note.textContent = r.bridge
+        ? 'The Slack bridge is connected — mapped shows post live.'
+        : 'The bridge isn’t connected yet (bot credentials pending) — mappings save now and take effect the moment it is.';
+      if (!r.mappings.length) { list.appendChild(el('.adm-empty', null, 'No channels mapped yet.')); return; }
+      r.mappings.forEach(m => {
+        const show = App.state.data.shows.find(x => x.id === m.show_id);
+        list.appendChild(el('.show-arch-row', null, [
+          el('span.show-arch-dot', { style: { background: show ? show.color : 'var(--text-3)' } }),
+          el('div', { style: { minWidth: 0 } }, [
+            el('.adm-name', null, (show ? show.name : m.show_id) +
+              (m.dept_key ? ' · ' + App.dept(m.dept_key).label : '')),
+            el('.adm-name-sub', null, m.slack_channel_id + (m.dept_key ? '' : ' · whole show'))
+          ]),
+          el('button.adm-btn.subtle', {
+            onclick: () => App.api._chat('DELETE', '/api/slack/channels?id=' + encodeURIComponent(m.id))
+              .then(load).catch(e => App.toast(e.message, true))
+          }, 'Unmap')
+        ]));
+      });
+    };
+    const load = () => App.api._chat('GET', '/api/slack/channels').then(draw)
+      .catch(e => { list.innerHTML = ''; list.appendChild(el('.adm-empty', null, e.message)); });
+
+    addBtn.addEventListener('click', () => {
+      App.api._chat('POST', '/api/slack/channels', {
+        showId: showSel.value, deptKey: deptSel.value || null, slackChannelId: chanFld.value
+      }).then(() => { chanFld.value = ''; App.toast('Channel mapped'); load(); })
+        .catch(e => App.toast(e.message, true));
+    });
+
+    load();
+    return card;
+  }
+
   function backupsCard() {
     const card = el('.adm-permcard');
     card.appendChild(el('.adm-permcard-head', null, [
@@ -804,7 +870,10 @@ window.App = window.App || {};
     wrapP.appendChild(arch);
 
     // the whole-board safety net sits last — per-show tools first, big red button last
-    if (App.api && App.api.online && App.api.me && App.api.me.admin) wrapP.appendChild(backupsCard());
+    if (App.api && App.api.online && App.api.me && App.api.me.admin) {
+      wrapP.appendChild(slackCard());
+      wrapP.appendChild(backupsCard());
+    }
 
     return wrapP;
   }
