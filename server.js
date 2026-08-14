@@ -19,6 +19,7 @@ const crypto = require('crypto');
 const folders = require('./folders');
 const { makePgChat, parseTaskId } = require('./chat-store');
 const { makeKeyVault } = require('./keyvault');
+const { makeSlackBridge } = require('./slack-bridge');
 
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
@@ -750,6 +751,14 @@ async function notifyForMessage(msg, episodeId, taskKey, authorUserId) {
   }
 }
 
+/* Slack bridge — 2-way sync on Bolt's own receiver, second port. Null until
+   SLACK_BOT_TOKEN + SLACK_SIGNING_SECRET exist (IT approval pending), and the
+   app runs exactly as today without it. */
+const slack = makeSlackBridge({
+  chat, storage, sseEmit,
+  appUrl: ENV.APP_URL || null
+});
+
 /* Server-side audit. The client tracker (js/track.js) can't be trusted to
    record something it never sees — a relay call spends the user's money, so
    the record of it is written here, from the session, not from the browser.
@@ -1131,7 +1140,7 @@ const server = http.createServer(async (req, res) => {
           // fire-and-forget: the message is saved either way, and the sender
           // shouldn't wait on other people's alerts
           notifyForMessage(msg, episodeId, taskKey, me.id);
-          /* TODO(stage 3): mirror into the Slack thread via slack_thread_mappings. */
+          if (slack) slack.mirrorMessage(episodeId, taskKey, msg);
           return sendJson(res, 201, { message: msg });
         }
 
@@ -1141,6 +1150,7 @@ const server = http.createServer(async (req, res) => {
             episodeId, taskKey, label: body.label || null, createdByUserId: me.id
           });
           sseEmit('new_message', { taskId: episodeId + '::' + taskKey, message: divider });
+          if (slack) slack.mirrorMessage(episodeId, taskKey, divider);
           return sendJson(res, 201, { revision, divider });
         }
 
@@ -1206,6 +1216,40 @@ const server = http.createServer(async (req, res) => {
           });
         }
 
+        return sendJson(res, 405, { error: 'Method not allowed' });
+      }
+
+      /* ---- Slack channel mappings (Admin → Shows) --------------------------
+         Which channel a show (optionally one department of it) posts into.
+         Admin-only: pointing a show's chatter at a Slack channel is a
+         visibility decision, the same class as backups. */
+      if (url.pathname === '/api/slack/channels') {
+        if (!chat) return sendJson(res, 503, { error: 'Needs Postgres — set DATABASE_URL.' });
+        const s = getSession(req);
+        if (!config.adminEmails.map(e => e.toLowerCase()).includes(s.email)) {
+          return sendJson(res, 403, { error: 'Only admins can manage Slack channels' });
+        }
+        if (route === 'GET /api/slack/channels') {
+          return sendJson(res, 200, { mappings: await chat.listChannels(), bridge: !!slack });
+        }
+        if (route === 'POST /api/slack/channels') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          const channelId = String(body.slackChannelId || '').trim();
+          // Slack channel ids look like C0123ABCD — catching a pasted #name
+          // here beats a silent post failure later
+          if (!/^[CG][A-Z0-9]{6,}$/i.test(channelId)) {
+            return sendJson(res, 400, { error: 'That doesn’t look like a channel ID (C…). In Slack: channel → ⋯ → Copy channel ID.' });
+          }
+          const row = await chat.setChannel({
+            showId: String(body.showId || ''), deptKey: body.deptKey || null, slackChannelId: channelId.toUpperCase()
+          });
+          return sendJson(res, 200, { mapping: row });
+        }
+        if (route === 'DELETE /api/slack/channels') {
+          const id = url.searchParams.get('id');
+          if (!id) return sendJson(res, 400, { error: 'id is required' });
+          return sendJson(res, 200, { ok: true, removed: await chat.removeChannel(id) });
+        }
         return sendJson(res, 405, { error: 'Method not allowed' });
       }
 
@@ -1741,6 +1785,14 @@ const server = http.createServer(async (req, res) => {
   if (chat) {
     try { await chat.init(); }
     catch (e) { console.error('Chat store init failed (chat disabled):', e.message); }
+  }
+  // Slack rides its own listener so Bolt can verify raw request signatures
+  if (slack) {
+    const slackPort = Number(ENV.SLACK_PORT || Number(PORT) + 1);
+    try {
+      await slack.start(slackPort);
+      console.log('  • Slack bridge:  listening on :' + slackPort + ' (POST /slack/events)');
+    } catch (e) { console.error('Slack bridge failed to start:', e.message); }
   }
 
   server.listen(PORT, config.host, () => {

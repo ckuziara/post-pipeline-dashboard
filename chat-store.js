@@ -248,6 +248,12 @@ function makePgChat(pool) {
          returning *`,
         [showId, deptKey || null, slackChannelId]));
     },
+    async listChannels() {
+      return (await q('select * from slack_channel_mappings order by created_at')).rows;
+    },
+    async removeChannel(id) {
+      return (await q('delete from slack_channel_mappings where id = $1', [id])).rowCount > 0;
+    },
     async findChannel({ showId, deptKey }) {
       return one(await q(
         `select * from slack_channel_mappings
