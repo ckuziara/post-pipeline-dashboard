@@ -263,6 +263,11 @@ window.App = window.App || {};
     box.appendChild(kpi('k-purple', review.length, '', 'Ready for review', review));
     box.appendChild(kpi('k-red', overdue.length, '', 'Overdue subitems', overdue));
     if (blocked.length) box.appendChild(kpi('k-red', blocked.length, '', 'Blocked by deps', blocked));
+    // Timeline has no separate toolbar of its own the way Board does (see
+    // App.board.showManager), so Add Show rides along in the kpis strip.
+    if (App.canManageShows(App.state.role)) {
+      box.appendChild(el('button.btn-addshow', { onclick: () => App.addShow.open() }, '＋ Add show'));
+    }
   }
 
   // ---- Director: ready-for-review queue ----

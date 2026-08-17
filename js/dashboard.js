@@ -1,10 +1,18 @@
 /* Dashboard view — a personal workspace: greeting + daily quote, then a grid
    of widgets dealt from a role-specific layout. "Edit" turns on layout mode,
-   where a tile can be dragged to reorder and resized by dragging an edge. A
-   widget has three vetted sizes (Small / Medium / Large) rather than a free
-   span, and shows more of its data at each — so resizing can't leave a tile
-   too cramped to read. Rows are packed to a full twelve columns, so the grid
-   never opens a gap. Order and sizes persist per device AND per role.
+   where a tile can be dragged to swap places and resized by dragging an
+   edge or corner — traditional tiling-window-manager logic, not a picker of
+   canned sizes: growing a tile from an edge pushes whatever is in the way
+   back in that same direction (grow right → push right; grow left → push
+   left; grow down → push down), cascading through however many tiles are in
+   the way. When a push runs out of room across the grid's 12 columns, the
+   tile in the way drops below the grid instead of clipping or overlapping —
+   see resolveCollisions. Width is a ratio of the page (1-12 twelfths) and
+   height is a pixel value with much finer resolution than width, both
+   continuous rather than a pick from three canned sizes. How much data a
+   data-driven widget shows scales continuously with its height (see capOf).
+   The whole layout (every widget's position and size) persists per device
+   AND per role.
    Widgets: Priority (department roles), At Risk, Journal (js/journal.js),
    Delivered, Pipeline Status, Department & Team workload, Upcoming. */
 window.App = window.App || {};
@@ -21,34 +29,43 @@ window.App = window.App || {};
     ['Approved is a state of mind. Also a status.', 'This app']
   ];
 
-  /* Three fixed sizes per widget instead of a free-form span, so a resize can
-     never leave a tile too narrow for its content or too wide to tile with its
-     neighbours. A size sets two things and deliberately not a third:
-
-       span  columns, drawn from {4, 6, 12} only — every combination of those
-             fills a 12-column row exactly, which is what keeps the grid from
-             opening up horizontal gaps
-       cap   how many rows of data to show, so the tile doesn't just stretch
-
-     HEIGHT IS NEVER DECLARED. A card is as tall as what's inside it and no
-     taller — a tile forced to a neighbour's height is just a card with a hole
-     in it. The grid aligns tiles to the top of their row instead of stretching
-     them (see `align-items: start` in style.css). */
-  const SIZES = ['sm', 'md', 'lg'];
-  const SIZE_LABEL = { sm: 'Small', md: 'Medium', lg: 'Large' };
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  const COLS = 12;          // columns in the grid — matches .dash-grid's math
+  const GAP = 12;           // px gutter between tiles, inset from each cell's raw rect
+  const HEIGHT_STEP = 12;   // px per resize step — fine-grained relative to a whole column
+
+  /* Per-widget geometry limits. Width is in twelfths of the page (1-12);
+     height is px. Both are continuous — a drag can land on any column or
+     any few pixels, not one of three presets — and both are independently
+     clamped (minW/maxW, minH/maxH) so a tile can't be dragged narrower than
+     its content reads or shorter than its chrome needs.
+
+     itemPx + headPx are what let a data-driven widget's row COUNT track its
+     height continuously (see capOf) instead of jumping between three fixed
+     counts: headPx is the fixed chrome (title, padding, any always-shown
+     line), itemPx is what one more row of data costs. A widget without
+     itemPx (journal, pipeline, delivered) doesn't scale its content by
+     height at all — journal is a fixed notebook, pipeline always lists the
+     same five statuses, and delivered's extra content is a WIDTH thing (see
+     the `delivered` widget below), not a height one. */
   const WIDGETS = {
-    priority:  { sm: 4, md: 6, lg: 12, cap: { sm: 2, md: 4, lg: 8 } },
-    atRisk:    { sm: 4, md: 6, lg: 12, cap: { sm: 3, md: 6, lg: 10 } },
-    journal:   { sm: 4, md: 6, lg: 12 },
-    delivered: { sm: 4, md: 6, lg: 12 },
-    pipeline:  { sm: 4, md: 6, lg: 12 },
-    deptLoad:  { sm: 4, md: 6, lg: 12, cap: { sm: 3, md: 5, lg: 9 } },
-    upcoming:  { sm: 4, md: 6, lg: 12, cap: { sm: 3, md: 6, lg: 10 } },
-    teamLoad:  { sm: 4, md: 6, lg: 12, cap: { sm: 4, md: 8, lg: 12 } }
+    priority:  { minW: 3, maxW: 12, minH: 140, maxH: 700, itemPx: 34, headPx: 90 },
+    atRisk:    { minW: 3, maxW: 12, minH: 180, maxH: 900, itemPx: 52, headPx: 100 },
+    journal:   { minW: 3, maxW: 12, minH: 260, maxH: 700 },
+    delivered: { minW: 3, maxW: 12, minH: 120, maxH: 500 },
+    pipeline:  { minW: 3, maxW: 12, minH: 140, maxH: 400 },
+    deptLoad:  { minW: 3, maxW: 12, minH: 90,  maxH: 500, itemPx: 27, headPx: 45 },
+    upcoming:  { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
+    teamLoad:  { minW: 3, maxW: 12, minH: 100, maxH: 700, itemPx: 36, headPx: 45 }
   };
-  // how many data rows this widget shows at this size
-  const capOf = (id, size) => (WIDGETS[id].cap || {})[size] || 6;
+  // how many data rows this widget shows at this height — grows continuously
+  // rather than at three breakpoints; widgets without itemPx aren't scaled
+  // by height at all (see the WIDGETS comment above)
+  const capOf = (id, heightPx) => {
+    const w = WIDGETS[id];
+    if (!w.itemPx) return Infinity;
+    return Math.max(1, Math.floor((heightPx - w.headPx) / w.itemPx));
+  };
 
   /* Who sees what. A department lead wants their own queue and little else; a
      producer or manager is accountable for the whole slate and wants the
@@ -65,12 +82,33 @@ window.App = window.App || {};
      slate, not for picking up the next task on one department's list.
 
      Chosen by capability, not by role name, so re-granting rights in
-     Admin → Access Control moves someone's dashboard with them. */
+     Admin → Access Control moves someone's dashboard with them.
+
+     Each entry is {id, col, row, w, h} — an explicit starting rectangle
+     (col/w in twelfths, row/h in px), the same shape a saved layout takes.
+     This is the one arrangement hand-laid out rather than derived; every
+     other layout a person sees is this one plus whatever they've dragged. */
   const LAYOUTS = {
-    oversight: [['atRisk', 'md'], ['journal', 'md'], ['pipeline', 'sm'], ['teamLoad', 'sm'],
-                ['deptLoad', 'sm'], ['upcoming', 'md'], ['delivered', 'md']],
-    review:    [['atRisk', 'md'], ['journal', 'md'], ['upcoming', 'md'], ['delivered', 'md']],
-    dept:      [['priority', 'md'], ['journal', 'md'], ['delivered', 'sm']]
+    oversight: [
+      { id: 'atRisk',    col: 0, row: 0,   w: 6, h: 430 },
+      { id: 'journal',   col: 6, row: 0,   w: 6, h: 420 },
+      { id: 'pipeline',  col: 0, row: 442, w: 4, h: 175 },
+      { id: 'teamLoad',  col: 4, row: 442, w: 4, h: 190 },
+      { id: 'deptLoad',  col: 8, row: 442, w: 4, h: 130 },
+      { id: 'upcoming',  col: 0, row: 644, w: 6, h: 400 },
+      { id: 'delivered', col: 6, row: 644, w: 6, h: 150 }
+    ],
+    review: [
+      { id: 'atRisk',    col: 0, row: 0,   w: 6, h: 430 },
+      { id: 'journal',   col: 6, row: 0,   w: 6, h: 420 },
+      { id: 'upcoming',  col: 0, row: 442, w: 6, h: 400 },
+      { id: 'delivered', col: 6, row: 442, w: 6, h: 150 }
+    ],
+    dept: [
+      { id: 'priority',  col: 0, row: 0,   w: 6, h: 250 },
+      { id: 'journal',   col: 6, row: 0,   w: 6, h: 420 },
+      { id: 'delivered', col: 0, row: 262, w: 4, h: 150 }
+    ]
   };
   function layoutKind(role) {
     if (App.roleDept(role)) return 'dept';                                    // a department lead
@@ -89,30 +127,86 @@ window.App = window.App || {};
     { key: 'review',   label: 'In Review',     sub: 'Currently being reviewed', color: '#a25ddc', open: true  }
   ];
 
-  // grid geometry, kept in step with .dash-grid in style.css
-  const COLS = 12;
+  const rectsOverlap = (a, b) =>
+    a.col < b.col + b.w && a.col + a.w > b.col && a.row < b.row + b.h && a.row + a.h > b.row;
 
-  /* Pack tiles into rows in order, first-fit, then hand any spare columns back
-     to the tiles in that row. Nothing is left over, so the grid can't show a
-     hole where a row didn't happen to add up to twelve — which is the whole
-     reason spans are restricted to {4, 6, 12}. Heights are left alone: each
-     card keeps its own, and the row is as tall as its tallest member. */
-  function packRows(entries) {
-    const rows = [];
-    let cur = [], used = 0;
-    entries.forEach(t => {
-      if (used + t.span > COLS) { rows.push(cur); cur = []; used = 0; }
-      cur.push(t); used += t.span;
-    });
-    if (cur.length) rows.push(cur);
+  /* Traditional tiling-window-manager push: after `moved`'s rect has already
+     been grown/shrunk on the `dir` edge (see wireResize), shove every other
+     tile that now overlaps it further along that same axis — growing right
+     pushes things right, growing down pushes things down, and so on.
 
-    rows.forEach(row => {
-      let spare = COLS - row.reduce((n, t) => n + t.span, 0);
-      for (let i = row.length - 1; spare > 0; i = (i - 1 + row.length) % row.length) {
-        row[i].span++; spare--;                       // widen from the end, one column at a time
-      }
+     This has to cascade past direct contact with `moved`: pushing tile B
+     out of the way can just as easily walk it into tile C, which then needs
+     pushing too, and so on transitively. A queue does that properly — every
+     tile that gets pushed is itself re-checked against everyone else before
+     the pass ends — rather than only ever comparing against the original
+     `moved` rect, which would leave B correctly clear of `moved` but still
+     overlapping C. Bounded to a fixed number of steps as a safety net
+     rather than proving termination; a real layout settles well inside it.
+
+     Pushing sideways can run a tile off the 12-column grid — there's
+     nowhere further to push it into. Rather than clip or overlap it, that
+     tile drops to below whatever pushed it instead: "when a window size
+     gets too small, shift widgets down to fit them all in." */
+  function resolveCollisions(layout, movedId, dir) {
+    const queue = [movedId];
+    let guard = 0;
+    while (queue.length && guard++ < 300) {
+      // shift OUTSIDE the predicate — find() can probe the predicate once
+      // per element it checks before matching, which would silently drain
+      // several queue entries per pass instead of exactly one
+      const nextId = queue.shift();
+      const cur = layout.find(w => w.id === nextId);
+      if (!cur) continue;   // defensive: a ref that no longer resolves shouldn't be able to crash the drag
+      layout.forEach(w => {
+        if (w === cur || !rectsOverlap(cur, w)) return;
+        if (dir === 'r') {
+          const push = (cur.col + cur.w) - w.col;
+          if (w.col + push + w.w <= COLS) w.col += push;
+          else w.row = cur.row + cur.h;
+        } else if (dir === 'l') {
+          const push = (w.col + w.w) - cur.col;
+          if (w.col - push >= 0) w.col -= push;
+          else w.row = cur.row + cur.h;
+        } else if (dir === 'b') {
+          w.row += (cur.row + cur.h) - w.row;
+        } else if (dir === 't') {
+          const push = (w.row + w.h) - cur.row;
+          w.row = Math.max(0, w.row - push);
+          if (w.row === 0 && rectsOverlap(cur, w)) w.row = cur.row + cur.h;
+        }
+        queue.push(w.id);
+      });
+    }
+    return layout;
+  }
+
+  function clampTile(t) {
+    const w = WIDGETS[t.id];
+    t.w = clamp(t.w, w.minW, w.maxW);
+    t.h = clamp(t.h, w.minH, w.maxH);
+    t.col = clamp(t.col, 0, COLS - t.w);
+    t.row = Math.max(0, t.row);
+    return t;
+  }
+
+  /* Vertical compaction: every tile is pulled up to sit exactly GAP below
+     whatever's directly above it in its own column span — or to row 0 if
+     nothing is above it — so the space between tiles is always the same
+     distance, never a leftover gap from wherever a push or a drag happened
+     to leave it. Column and width are never touched here, only row, and
+     tiles are processed top-to-bottom so each one settles against neighbours
+     that have already been settled. Pure micro-adjustment: nothing here
+     changes what's next to what, only how tightly it all sits — run after
+     every drag, resize, and on every plain render, so the layout can't drift
+     out of alignment over time. */
+  function compact(layout) {
+    const colBottom = new Array(COLS).fill(0);
+    layout.slice().sort((a, b) => a.row - b.row).forEach(t => {
+      t.row = Math.max(...colBottom.slice(t.col, t.col + t.w));
+      for (let c = t.col; c < t.col + t.w; c++) colBottom[c] = t.row + t.h + GAP;
     });
-    return rows;
+    return layout;
   }
 
   App.dashboard = {
@@ -128,7 +222,7 @@ window.App = window.App || {};
 
       const grid = el('.dash-grid' + (this._editing ? '.editing' : ''));
       if (!episodes.length) {
-        grid.appendChild(el('.empty', { style: { gridColumn: 'span 12' } }, 'No episodes match the current filters.'));
+        grid.appendChild(el('.empty', null, 'No episodes match the current filters.'));
         wrap.appendChild(grid);
         return wrap;
       }
@@ -138,47 +232,59 @@ window.App = window.App || {};
       episodes.forEach(ep => App.subsView(ep).forEach(su => subs.push({ ep, su })));
       const m = { episodes, subs, delivered: episodes.filter(App.isDelivered).length };
 
-      const dflt = LAYOUTS[layoutKind(App.state.role)];
-      const allowed = dflt.map(e => e[0]);
-      const order = (App.prefs.get(this.orderKey(), null) || allowed.slice())
-        .filter(id => WIDGETS[id] && allowed.includes(id));   // a role never inherits another's widgets
-      allowed.forEach(id => { if (!order.includes(id)) order.push(id); });   // newly added widgets join at the end
-
-      // size class first, then pack: the packer widens tiles to close any gap,
-      // so a cell's final span can exceed its class's nominal width
-      const entries = order.map(id => {
-        const size = this.sizeOf(id, dflt);
-        return { id: id, size: size, span: WIDGETS[id][size] };
-      });
-      packRows(entries).forEach(row => row.forEach(t => grid.appendChild(this.cell(t, m))));
-      this.wireDrag(grid, order);
-      if (this._editing) this.wireResize(grid, dflt);
+      const layout = this.getLayout();
+      layout.forEach(t => grid.appendChild(this.cell(t, m)));
+      // absolutely-positioned children don't contribute to a parent's auto
+      // height, so the grid's own height is set explicitly from whatever the
+      // layout actually uses
+      grid.style.height = (Math.max(0, ...layout.map(t => t.row + t.h)) + GAP) + 'px';
+      this.wireDrag(grid);
+      if (this._editing) this.wireResize(grid);
       wrap.appendChild(grid);
       return wrap;
     },
 
-    // Rearranging and resizing are per device AND per role — one person
-    // switching hats shouldn't drag a producer's layout onto a creative's.
-    orderKey() { return 'dashOrder:' + App.state.role; },
-    sizeKey() { return 'dashSize:' + App.state.role; },
+    // Layout is per device AND per role — one person switching hats
+    // shouldn't drag a producer's layout onto a creative's.
+    layoutKey() { return 'dashLayout:' + App.state.role; },
 
-    // stored size class wins over the layout's default for that widget
-    sizeOf(id, dflt) {
-      const saved = (App.prefs.get(this.sizeKey(), null) || {})[id];
-      if (SIZES.indexOf(saved) >= 0) return saved;
-      const entry = (dflt || []).find(e => e[0] === id);
-      return (entry && entry[1]) || 'md';
+    /* The working layout. With no save yet, that's just the hand-laid-out
+       default (LAYOUTS) verbatim — its positions are curated, not something
+       to re-derive. Once a save exists, it wins, filtered to widgets this
+       role still gets and re-clamped in case a widget's own min/max changed
+       since it was saved; anything the role gets that isn't in the save
+       (newly added since) drops in below everything else rather than being
+       left out. */
+    getLayout() {
+      const dflt = LAYOUTS[layoutKind(App.state.role)];
+      const saved = App.prefs.get(this.layoutKey(), null);
+      if (!saved) return compact(dflt.map(d => clampTile(Object.assign({}, d))));
+
+      const allowed = dflt.map(d => d.id);
+      const layout = saved
+        .filter(t => WIDGETS[t.id] && allowed.includes(t.id))
+        .map(t => clampTile(Object.assign({}, t)));
+      const have = new Set(layout.map(t => t.id));
+      dflt.forEach(d => {
+        if (have.has(d.id)) return;
+        const bottom = layout.length ? Math.max(...layout.map(t => t.row + t.h)) + GAP : 0;
+        layout.push(clampTile(Object.assign({}, d, { row: bottom })));
+      });
+      // always re-compact on the way out: a saved layout can drift out of
+      // tight alignment (a widget's min/max changed, one was dropped in
+      // above), so every read re-settles it rather than trusting storage
+      return compact(layout);
     },
-    setSize(id, size) {
-      const all = Object.assign({}, App.prefs.get(this.sizeKey(), null) || {});
-      all[id] = size;
-      App.prefs.set(this.sizeKey(), all);
+    saveLayout(layout) {
+      App.prefs.set(this.layoutKey(), layout.map(t => ({ id: t.id, col: t.col, row: t.row, w: t.w, h: t.h })));
     },
 
     greeting() {
       const user = App.state.user;
       const name = user ? user.name.split(' ')[0] : App.role(App.state.role).label;
-      const h = App.today().getHours();
+      // App.today() zeroes the clock (it's a date, for day-boundary math) — the
+      // greeting needs the actual wall-clock hour, so it reads real time directly
+      const h = new Date().getHours();
       const hello = h < 12 ? 'Good Morning' : h < 17 ? 'Good Afternoon' : 'Good Evening';
       const q = QUOTES[dayIndex() % QUOTES.length];
       const editing = this._editing;
@@ -191,8 +297,7 @@ window.App = window.App || {};
           (editing ? el('button.ghost.dash-reset', {
             title: 'Put every widget back to its default size and position',
             onclick: () => {
-              App.prefs.set(this.orderKey(), null);
-              App.prefs.set(this.sizeKey(), null);
+              App.prefs.set(this.layoutKey(), null);
               App.render();
             }
           }, 'Reset layout') : null),
@@ -204,23 +309,43 @@ window.App = window.App || {};
       ]);
     },
 
-    /* one grid cell: uniform chrome (grip + title + sub) around a widget body.
-       `t` is a packed tile — { id, size, span }. No height is set: the card is
-       as tall as its content. In edit mode the tile becomes the drag handle and
-       grows thin edge and corner zones; the body goes inert so arranging can't
-       touch a widget's content. */
+    // px rect for a tile, gutter already subtracted — the single source of
+    // truth both the initial render and every live resize preview draw from
+    rectStyle(t) {
+      return {
+        left: 'calc(' + (t.col / COLS * 100) + '% + ' + (GAP / 2) + 'px)',
+        width: 'calc(' + (t.w / COLS * 100) + '% - ' + GAP + 'px)',
+        top: (t.row + GAP / 2) + 'px',
+        height: (t.h - GAP) + 'px'
+      };
+    },
+
+    /* one tile: uniform chrome (grip + title + sub) around a widget body.
+       `t` is {id, col, row, w, h} — col/w in twelfths, row/h in px. The
+       whole grid is absolutely positioned (see .dash-grid in style.css) so
+       every tile can sit at an exact, independent rectangle instead of
+       flowing through CSS grid tracks — that's what lets a resize push
+       neighbours by an exact amount rather than only ever repacking into
+       rows. The card stretches to fill its rect (`.widget { height: 100% }`)
+       rather than sizing to its own content, so a short widget's leftover
+       height never shows up as a hole — internal content that doesn't fill
+       it just leaves calm padding, and `.widget-body` scrolls on the rare
+       overflow. `.dw-narrow` swaps in a denser layout below a width
+       threshold — see the widget builders below, which key off `t.w`
+       directly for anything wider or richer. In edit mode the tile becomes
+       the drag handle and grows thin edge and corner zones; the body goes
+       inert so arranging can't touch a widget's content. */
     cell(t, m) {
-      const built = this[t.id](m, t.size);        // -> { title, sub, body, bare }
+      const built = this[t.id](m, t);        // -> { title, sub, body, bare }
       const editing = this._editing;
-      const cell = el('.dw.dw-' + t.size + (editing ? '.dw-editable' : ''), {
-        style: { gridColumn: 'span ' + t.span }
+      const cell = el('.dw' + (t.w <= 4 ? '.dw-narrow' : '') + (editing ? '.dw-editable' : ''), {
+        style: this.rectStyle(t)
       });
       cell.dataset.wid = t.id;
-      if (editing) cell.setAttribute('draggable', 'true');
       cell.appendChild(el('.widget', null, [
         el('.widget-head', null, [
           el('.dw-head-l', null, [
-            (editing ? el('span.dw-grip', { title: 'Drag to move' }, '⠿') : null),
+            (editing ? el('span.dw-grip', { title: 'Drag to move — drop anywhere, even empty space' }, '⠿') : null),
             el('.widget-title', null, built.title)
           ]),
           built.sub ? el('.widget-sub', null, built.sub) : null
@@ -228,7 +353,7 @@ window.App = window.App || {};
         el('.widget-body' + (built.bare ? '.bare' : ''), null, built.body)
       ]));
       if (editing) {
-        const tip = 'Drag out to grow, in to shrink — currently ' + SIZE_LABEL[t.size];
+        const tip = 'Drag an edge or corner to resize — pushes whatever is in the way';
         // an edge grabs one axis, a corner either; both are just hairlines on hover
         ['t', 'r', 'b', 'l'].forEach(side => {
           const z = el('span.dw-edge.e-' + side, { title: tip });
@@ -240,34 +365,40 @@ window.App = window.App || {};
           z.dataset.grab = c;
           cell.appendChild(z);
         });
-        cell.appendChild(el('span.dw-size', null, SIZE_LABEL[t.size]));
+        cell.appendChild(el('span.dw-size', null, Math.round(t.w / COLS * 100) + '% · ' + t.h + 'px'));
       }
       return cell;
     },
 
-    /* ---- resize by dragging an edge or a corner ----
-       Widgets step between three vetted sizes rather than any span the cursor
-       lands on, so a tile can't be dragged narrower than its content reads or
-       wider than the row can hold. Dragging away from the tile moves up a size,
-       towards it moves down; STEP_PX is how far the cursor travels per step. A
-       corner watches both axes and takes whichever moved further, so it behaves
-       like the nearer edge when the drag is mostly horizontal or vertical. */
-    wireResize(grid, dflt) {
+    /* ---- resize by dragging an edge or a corner: traditional tiling logic ----
+       Only the grabbed edge moves — the opposite edge stays put, so dragging
+       the LEFT edge out grows the tile leftward instead of just widening it
+       from a fixed left edge, and likewise for every other edge. Whatever
+       that growth now overlaps gets pushed further along the same axis (see
+       resolveCollisions), cascading through however many tiles are in the
+       way; a push that would run off the grid instead drops the tile below.
+       Width moves in whole columns (tracking the cursor 1:1 against the
+       grid's own column width); height moves in small HEIGHT_STEP px steps
+       — finer resolution than width, since a stray few px of height rarely
+       matters but a stray column visibly misaligns the grid. A corner drags
+       both axes and pushes on both. */
+    wireResize(grid) {
       let d = null;
-      const STEP_PX = 90;
 
       grid.addEventListener('pointerdown', (e) => {
         const z = e.target.closest('.dw-edge, .dw-corner');
         if (!z) return;
-        const cell = z.closest('.dw');
+        const cellEl = z.closest('.dw');
         e.preventDefault();
-        const size = this.sizeOf(cell.dataset.wid, dflt);
-        d = { cell: cell, grab: z.dataset.grab, x: e.clientX, y: e.clientY, from: size, to: size };
-        cell.classList.add('dw-resizing');
+        d = {
+          id: cellEl.dataset.wid, cellEl, grab: z.dataset.grab, x: e.clientX, y: e.clientY,
+          start: this.getLayout(), colPx: grid.getBoundingClientRect().width / COLS
+        };
+        cellEl.classList.add('dw-resizing');
         // The tile is draggable for reordering, and a native drag starting here
         // would fire pointercancel and kill the resize mid-gesture. Turn the
         // move affordance off for the duration of this drag.
-        cell.removeAttribute('draggable');
+        cellEl.removeAttribute('draggable');
         // capture keeps the drag alive past the grid's edge; harmless if the
         // pointer is already gone (synthetic events, a released touch)
         try { z.setPointerCapture(e.pointerId); } catch (err) {}
@@ -275,67 +406,140 @@ window.App = window.App || {};
 
       grid.addEventListener('pointermove', (e) => {
         if (!d) return;
-        // outward travel on each axis the grabbed handle owns
-        const dx = d.grab.indexOf('r') >= 0 ? e.clientX - d.x : d.grab.indexOf('l') >= 0 ? d.x - e.clientX : 0;
-        const dy = d.grab.indexOf('b') >= 0 ? e.clientY - d.y : d.grab.indexOf('t') >= 0 ? d.y - e.clientY : 0;
-        const out = Math.abs(dx) >= Math.abs(dy) ? dx : dy;
-        const next = SIZES[clamp(SIZES.indexOf(d.from) + Math.round(out / STEP_PX), 0, SIZES.length - 1)];
-        if (next === d.to) return;
+        const w = WIDGETS[d.id];
+        const dCols = Math.round((e.clientX - d.x) / d.colPx);
+        const dRows = Math.round((e.clientY - d.y) / HEIGHT_STEP) * HEIGHT_STEP;
+        const grab = d.grab;
+
+        // fresh copy of the pre-drag layout every move, not cumulative on
+        // top of the last preview — otherwise dragging out then back in
+        // isn't 1:1 with the cursor
+        const next = d.start.map(t => Object.assign({}, t));
+        const t = next.find(x => x.id === d.id);
+
+        if (grab.indexOf('r') >= 0) t.w = clamp(t.w + dCols, w.minW, w.maxW);
+        if (grab.indexOf('l') >= 0) {
+          const nw = clamp(t.w - dCols, w.minW, w.maxW);
+          t.col = clamp(t.col + (t.w - nw), 0, COLS - nw);
+          t.w = nw;
+        }
+        if (grab.indexOf('b') >= 0) t.h = clamp(t.h + dRows, w.minH, w.maxH);
+        if (grab.indexOf('t') >= 0) {
+          const nh = clamp(t.h - dRows, w.minH, w.maxH);
+          t.row = Math.max(0, t.row + (t.h - nh));
+          t.h = nh;
+        }
+        if (grab.indexOf('r') >= 0) resolveCollisions(next, d.id, 'r');
+        if (grab.indexOf('l') >= 0) resolveCollisions(next, d.id, 'l');
+        if (grab.indexOf('b') >= 0) resolveCollisions(next, d.id, 'b');
+        if (grab.indexOf('t') >= 0) resolveCollisions(next, d.id, 't');
+
         d.to = next;
-        d.cell.style.gridColumn = 'span ' + WIDGETS[d.cell.dataset.wid][next];   // preview; the packer has the last word
-        const badge = d.cell.querySelector('.dw-size');
-        if (badge) badge.textContent = SIZE_LABEL[next];
+        // live preview: every tile the push touched moves, not just the one
+        // being dragged
+        next.forEach(nt => {
+          const el2 = grid.querySelector('.dw[data-wid="' + nt.id + '"]');
+          if (!el2) return;
+          Object.assign(el2.style, this.rectStyle(nt));
+          el2.classList.toggle('dw-narrow', nt.w <= 4);
+        });
+        grid.style.height = (Math.max(0, ...next.map(x => x.row + x.h)) + GAP) + 'px';
+        const badge = d.cellEl.querySelector('.dw-size');
+        if (badge) badge.textContent = Math.round(t.w / COLS * 100) + '% · ' + t.h + 'px';
       });
 
       const finish = () => {
         if (!d) return;
         const cur = d;
         d = null;
-        cur.cell.classList.remove('dw-resizing');
-        cur.cell.setAttribute('draggable', 'true');
-        if (cur.to !== cur.from) this.setSize(cur.cell.dataset.wid, cur.to);
-        App.render();                  // re-pack, and let the widget refit its new box
+        cur.cellEl.classList.remove('dw-resizing');
+        cur.cellEl.setAttribute('draggable', 'true');
+        if (cur.to) this.saveLayout(cur.to);
+        App.render();                  // rebuild from the saved layout, narrow classes and all
       };
       grid.addEventListener('pointerup', finish);
       grid.addEventListener('pointercancel', finish);
     },
 
-    // ---- drag to rearrange (HTML5 DnD; edit mode only) ----
-    wireDrag(grid, order) {
-      let dragId = null;
-      grid.addEventListener('dragstart', (e) => {
-        const cell = e.target.closest && e.target.closest('.dw');
-        // the whole tile drags, but only in edit mode, and never from a resize handle
-        if (!cell || !this._editing || (e.target.closest && e.target.closest('.dw-edge, .dw-corner'))) { e.preventDefault(); return; }
-        dragId = cell.dataset.wid;
-        cell.classList.add('dw-dragging');
-        e.dataTransfer.effectAllowed = 'move';
-        try { e.dataTransfer.setData('text/plain', dragId); } catch (err) {}
-      });
-      grid.addEventListener('dragover', (e) => {
-        if (!dragId) return;
+    /* ---- drag to move — iPhone-springboard logic (pointer-driven, edit
+       mode only) ----
+       The dragged tile rides under the cursor at the exact pixel position,
+       ignoring the grid entirely (`.dw-dragging` gets no CSS transition, so
+       there's zero lag). Every OTHER tile, though, is free to land anywhere
+       in real, empty space — hovering over an occupied spot pushes whatever
+       is there downward to make room, live, on every pointermove, the same
+       way iOS shuffles icons out from under your thumb while you're still
+       holding one; moving away un-pushes them, because each move recomputes
+       from the untouched pre-drag layout rather than the previous preview
+       (see wireResize for the same reasoning). Those other tiles DO get a
+       CSS transition (see `.dw` in style.css), so the making-room reads as
+       a slide, not a snap. Dropping on genuinely empty ground pushes
+       nothing — the tile just lands there. */
+    wireDrag(grid) {
+      let d = null;
+
+      grid.addEventListener('pointerdown', (e) => {
+        const grip = e.target.closest('.dw-grip');
+        if (!grip) return;
+        const cellEl = grip.closest('.dw');
         e.preventDefault();
-        const over = e.target.closest && e.target.closest('.dw');
-        grid.querySelectorAll('.dw-over').forEach(c => c.classList.remove('dw-over'));
-        if (over && over.dataset.wid !== dragId) over.classList.add('dw-over');
+        const layout = this.getLayout();
+        const tile = layout.find(t => t.id === cellEl.dataset.wid);
+        const gridRect = grid.getBoundingClientRect();
+        const cellRect = cellEl.getBoundingClientRect();
+        d = {
+          id: tile.id, cellEl, layout, tile,
+          offX: e.clientX - cellRect.left, offY: e.clientY - cellRect.top,
+          colPx: gridRect.width / COLS, lastCol: tile.col, lastRow: tile.row
+        };
+        cellEl.classList.add('dw-dragging');
+        try { grip.setPointerCapture(e.pointerId); } catch (err) {}
       });
-      grid.addEventListener('drop', (e) => {
-        e.preventDefault();
-        const over = e.target.closest && e.target.closest('.dw');
-        if (dragId && over && over.dataset.wid !== dragId) {
-          const next = order.filter(x => x !== dragId);
-          next.splice(next.indexOf(over.dataset.wid), 0, dragId);
-          App.prefs.set(this.orderKey(), next);
-          dragId = null;
-          App.render();
-          return;
-        }
-        dragId = null;
+
+      grid.addEventListener('pointermove', (e) => {
+        if (!d) return;
+        const gridRect = grid.getBoundingClientRect();
+        // the dragged tile itself: raw cursor-relative px, no grid snap —
+        // it should feel like it's riding directly under the pointer
+        const px = e.clientX - gridRect.left - d.offX;
+        const py = e.clientY - gridRect.top - d.offY;
+        d.cellEl.style.left = px + 'px';
+        d.cellEl.style.top = py + 'px';
+
+        const col = clamp(Math.round(px / d.colPx), 0, COLS - d.tile.w);
+        const row = Math.max(0, Math.round(py));
+        if (col === d.lastCol && row === d.lastRow) return;   // proposed cell hasn't changed — skip the re-pack
+        d.lastCol = col; d.lastRow = row;
+
+        // fresh copy of the PRE-DRAG layout every move, not the previous
+        // preview — so moving away from a spot un-pushes it instead of the
+        // push compounding
+        const next = d.layout.map(t => Object.assign({}, t));
+        const moved = next.find(t => t.id === d.id);
+        moved.col = col; moved.row = row;
+        resolveCollisions(next, d.id, 'b');   // shove anything in the way down to make room
+        d.preview = next;
+
+        next.forEach(t => {
+          if (t.id === d.id) return;   // its DOM is driven by raw px above, not this
+          const el2 = grid.querySelector('.dw[data-wid="' + t.id + '"]');
+          if (!el2) return;
+          Object.assign(el2.style, this.rectStyle(t));
+          el2.classList.toggle('dw-narrow', t.w <= 4);
+        });
+        grid.style.height = (Math.max(row + d.tile.h, ...next.map(t => t.row + t.h)) + GAP) + 'px';
       });
-      grid.addEventListener('dragend', () => {
-        dragId = null;
-        grid.querySelectorAll('.dw-over, .dw-dragging').forEach(c => c.classList.remove('dw-over', 'dw-dragging'));
-      });
+
+      const finishDrag = () => {
+        if (!d) return;
+        const cur = d;
+        d = null;
+        cur.cellEl.classList.remove('dw-dragging');
+        if (cur.preview) this.saveLayout(cur.preview.map(clampTile));
+        App.render();
+      };
+      grid.addEventListener('pointerup', finishDrag);
+      grid.addEventListener('pointercancel', finishDrag);
     },
 
     /* ------------------------------------------------------- widgets ---- */
@@ -350,7 +554,7 @@ window.App = window.App || {};
        work out of their whole team's. Anyone we can't match to a directory
        person (offline demo, an admin who isn't on the team list) has no
        assignments to filter by, so they keep the old department queue. */
-    priority(m, size) {
+    priority(m, t) {
       const meId = App.state.user && App.state.user.personId;
       const dept = App.roleDept(App.state.role);
       const scoped = meId ? m.subs.filter(x => x.su.assignee === meId)
@@ -375,7 +579,7 @@ window.App = window.App || {};
       Object.keys(buckets).forEach(k => buckets[k].sort((a, b) => a.su.due < b.su.due ? -1 : 1));
 
       const groups = PRIORITY_GROUPS.filter(g => buckets[g.key].length)
-        .map(g => this.priorityGroup(g, buckets[g.key], size));
+        .map(g => this.priorityGroup(g, buckets[g.key], t));
       const open = scoped.filter(x => x.su.status !== 'approved').length;
 
       return {
@@ -388,7 +592,7 @@ window.App = window.App || {};
       };
     },
 
-    priorityGroup(g, items, size) {
+    priorityGroup(g, items, t) {
       const pkey = 'dashPri:' + g.key;
       const open = App.prefs.get(pkey, g.open);
       const box = el('.pr-group', { style: { borderLeftColor: g.color } });
@@ -399,14 +603,14 @@ window.App = window.App || {};
       }, [
         el('span.chev' + (open ? '.open' : ''), null, '▶'),
         el('span.pr-label', null, g.label),
-        (size === 'sm' ? null : el('span.pr-sub', null, g.sub)),   // no room for the blurb when narrow
+        (t.w <= 4 ? null : el('span.pr-sub', null, g.sub)),   // no room for the blurb when narrow
         el('span.pr-count', { style: { color: g.color } }, String(items.length))
       ]));
 
       if (open) {
         const rows = el('.pr-rows');
-        // capped to what the tile can actually hold at this size
-        const cap = capOf('priority', size);
+        // capped to what the tile can actually hold at this height
+        const cap = capOf('priority', t.h);
         items.slice(0, cap).forEach(({ ep, su }) => {
           const st = App.status(su.status);
           rows.appendChild(el('.pr-row', {
@@ -429,7 +633,7 @@ window.App = window.App || {};
       return { title: 'Journal', sub: 'your daily notes', body: App.journal.render(), bare: true };
     },
 
-    atRisk(m, size) {
+    atRisk(m, t) {
       const items = [];
       const todayIso = App.isoDate(App.today());
       m.subs.forEach(({ ep, su }) => {
@@ -439,16 +643,21 @@ window.App = window.App || {};
         if (overdue || blocked) items.push({ ep, su, overdue, blocked, late: App.daysUntil(su.due) });
       });
       items.sort((a, b) => a.late - b.late);
-      const cap = capOf('atRisk', size);
+      const narrow = t.w <= 4;
+      const cap = capOf('atRisk', t.h);
       const body = items.length ? el('.risk-list', null, items.slice(0, cap).map(x => {
         const dep = App.dept(x.su.dept);
-        return el('.risk-item', { title: dep.label + ' — ' + x.su.name + ' · ' + x.ep.code + ' ' + x.ep.title + ' · due ' + App.fmtDate(x.su.due) }, [
-          (size === 'sm' ? el('span.dot', { style: { background: dep.color, width: '8px', height: '8px', borderRadius: '50%', flex: 'none' } })
+        return el('.risk-item', {
+          title: dep.label + ' — ' + x.su.name + ' · ' + x.ep.code + ' ' + x.ep.title + ' · due ' + App.fmtDate(x.su.due),
+          onclick: () => App.editTask.open(x.ep.id, x.su.key)
+        }, [
+          (narrow ? el('span.dot', { style: { background: dep.color, width: '8px', height: '8px', borderRadius: '50%', flex: 'none' } })
             : el('span.dept-chip', { style: { padding: '1px 7px', fontSize: '10px' } }, [el('span.dot', { style: { background: dep.color } }), dep.label])),
           el('.ri-main', null, [
             el('.ri-title', null, x.su.name + '  ·  ' + x.ep.code),
-            (size === 'sm' ? null : el('.ri-sub', null, x.ep.title + ' — due ' + App.fmtDate(x.su.due)))
+            (narrow ? null : el('.ri-sub', null, x.ep.title + ' — due ' + App.fmtDate(x.su.due)))
           ]),
+          riChatBtn(x.ep.id, x.su.key),
           x.overdue ? el('span.ri-tag.over', null, Math.abs(x.late) + 'd overdue') : null,
           x.blocked ? el('span.ri-tag.blk', null, 'blocked') : null
         ]);
@@ -457,17 +666,17 @@ window.App = window.App || {};
       return { title: 'At Risk', sub: items.length + ' overdue or blocked', body };
     },
 
-    delivered(m, size) {
+    delivered(m, t) {
       const total = m.episodes.length;
       const pct = total ? Math.round(m.delivered / total * 100) : 0;
       const figure = el('div', null, [
         el('.big-num', null, [String(m.delivered), el('span.of', null, ' / ' + total)]),
         el('.widget-sub', { style: { marginTop: '4px' } }, pct + '% of the slate delivered')
       ]);
-      // small drops the donut (the number is the point); large earns a per-show
-      // breakdown of where the delivered episodes actually came from
-      const body = el('.donut-wrap', null, [(size === 'sm' ? null : donut(pct, '#00c875')), figure]);
-      if (size === 'lg') {
+      // narrow drops the donut (the number is the point); a wide tile earns a
+      // per-show breakdown of where the delivered episodes actually came from
+      const body = el('.donut-wrap', null, [(t.w <= 4 ? null : donut(pct, '#00c875')), figure]);
+      if (t.w >= 9) {
         const rows = App.activeShows().map(sh => {
           const eps = m.episodes.filter(ep => ep.showId === sh.id);
           return { sh: sh, done: eps.filter(App.isDelivered).length, n: eps.length };
@@ -482,7 +691,7 @@ window.App = window.App || {};
       return { title: 'Delivered Episodes', sub: 'fully approved', body: body };
     },
 
-    pipeline(m, size) {
+    pipeline(m, t) {
       const count = { not_started: 0, ready: 0, in_progress: 0, review: 0, approved: 0 };
       m.subs.forEach(x => count[x.su.status]++);
       const rows = App.STATUS_ORDER.map(sk => {
@@ -491,20 +700,20 @@ window.App = window.App || {};
         return el('.bar-row', null, [
           el('.bl', { title: s.label + ' — ' + v + ' of ' + m.subs.length }, [el('span.swatch', { style: { width: '11px', height: '11px', borderRadius: '3px', background: s.color, display: 'inline-block' } }), s.label]),
           el('.bt', null, [el('.bf', { style: { width: pct + '%', background: s.color } })]),
-          el('.bv', null, size === 'sm' ? String(v) : v + '  ' + pct + '%')
+          el('.bv', null, t.w <= 4 ? String(v) : v + '  ' + pct + '%')
         ]);
       });
       return { title: 'Pipeline Status', sub: m.subs.length + ' subitems', body: rows };
     },
 
-    deptLoad(m, size) {
+    deptLoad(m, t) {
       const active = m.subs.filter(x => x.su.status !== 'approved');
       const max = Math.max(1, ...Object.keys(App.DEPARTMENTS).map(k => active.filter(x => x.su.dept === k).length));
       const rows = Object.keys(App.DEPARTMENTS)
         .map(dk => ({ d: App.dept(dk), n: active.filter(x => x.su.dept === dk).length }))
         .filter(r => r.n > 0)
         .sort((a, b) => b.n - a.n)
-        .slice(0, capOf('deptLoad', size))
+        .slice(0, capOf('deptLoad', t.h))
         .map(r => el('.bar-row', null, [
           el('.bl', null, [el('span.swatch', { style: { width: '11px', height: '11px', borderRadius: '3px', background: r.d.color, display: 'inline-block' } }), r.d.label]),
           el('.bt', null, [el('.bf', { style: { width: Math.round(r.n / max * 100) + '%', background: r.d.color } })]),
@@ -513,14 +722,14 @@ window.App = window.App || {};
       return { title: 'Department Workload', sub: 'open subitems', body: rows.length ? rows : el('.dw-calm', null, 'Nothing open.') };
     },
 
-    teamLoad(m, size) {
+    teamLoad(m, t) {
       const editors = App.state.data.people.filter(p => App.roleDept(p.role));
       const rows = editors.map(p => {
         const mine = m.subs.filter(x => x.su.assignee === p.id);
         const activeN = mine.filter(x => ['ready', 'in_progress', 'review'].includes(x.su.status)).length;
         const wip = mine.filter(x => x.su.status === 'in_progress').length;
         return { p, activeN, wip };
-      }).filter(r => r.activeN > 0).sort((a, b) => b.activeN - a.activeN).slice(0, capOf('teamLoad', size));
+      }).filter(r => r.activeN > 0).sort((a, b) => b.activeN - a.activeN).slice(0, capOf('teamLoad', t.h));
       const max = Math.max(1, ...rows.map(r => r.activeN));
       const body = rows.length ? rows.map(r => el('.bar-row', null, [
         el('.bl', null, [
@@ -533,19 +742,29 @@ window.App = window.App || {};
       return { title: 'Team Workload', sub: 'live tasks per editor', body };
     },
 
-    upcoming(m, size) {
+    upcoming(m, t) {
+      const narrow = t.w <= 4;
       const list = m.episodes.filter(ep => !App.isDelivered(ep))
         .map(ep => ({ ep, due: App.epDue(ep) }))
-        .sort((a, b) => a.due < b.due ? -1 : 1).slice(0, capOf('upcoming', size));
+        .sort((a, b) => a.due < b.due ? -1 : 1).slice(0, capOf('upcoming', t.h));
       const body = list.length ? el('.risk-list', null, list.map(x => {
         const show = App.show(x.ep.showId);
         const days = App.daysUntil(x.due);
-        return el('.risk-item', { title: x.ep.code + ' · ' + x.ep.title + ' — ' + show.name + ' · ' + App.progressPct(x.ep) + '% complete' }, [
+        // same "current focus" pick as App.epStatusLabel — the task the sub-line
+        // names is the one a click should land on, falling back to whatever's
+        // first when nothing's actively moving yet
+        const subs = App.subitems(x.ep);
+        const focus = subs.find(s => s.status === 'in_progress') || subs.find(s => s.status === 'review') || subs[0];
+        return el('.risk-item', {
+          title: x.ep.code + ' · ' + x.ep.title + ' — ' + show.name + ' · ' + App.progressPct(x.ep) + '% complete',
+          onclick: focus ? () => App.editTask.open(x.ep.id, focus.key) : null
+        }, [
           el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color), fontSize: '10px', padding: '2px 7px' } }, x.ep.code),
           el('.ri-main', null, [
-            el('.ri-title', null, size === 'sm' ? x.ep.title : x.ep.title + '  ·  ' + show.name),
-            (size === 'sm' ? null : el('.ri-sub', null, App.progressPct(x.ep) + '% complete · ' + App.epStatusLabel(x.ep)))
+            el('.ri-title', null, narrow ? x.ep.title : x.ep.title + '  ·  ' + show.name),
+            (narrow ? null : el('.ri-sub', null, App.progressPct(x.ep) + '% complete · ' + App.epStatusLabel(x.ep)))
           ]),
+          focus ? riChatBtn(x.ep.id, focus.key) : null,
           el('span.ri-tag' + (days < 0 ? '.over' : ''), { style: days >= 0 ? { background: 'var(--surface-3)', color: 'var(--text-2)' } : {} },
             days < 0 ? Math.abs(days) + 'd late' : days === 0 ? 'today' : 'in ' + days + 'd')
         ]);
@@ -553,6 +772,17 @@ window.App = window.App || {};
       return { title: 'Upcoming Deliveries', sub: 'next episodes to land', body };
     }
   };
+
+  // A shortcut into a task's Discussion tab from a risk-list row, without
+  // making the whole row a two-destination click: it stops propagation so it
+  // doesn't also fire the row's own onclick (which opens the same dialog on
+  // Details).
+  function riChatBtn(epId, taskKey) {
+    return el('button.ri-chat', {
+      title: 'Open discussion', type: 'button',
+      onclick: (e) => { e.stopPropagation(); App.editTask.open(epId, taskKey, { tab: 'chat' }); }
+    }, App.icon('chat'));
+  }
 
   // deterministic day index (no Math.random at module load)
   function dayIndex() { const t = App.today(); return Math.floor((t - new Date(t.getFullYear(), 0, 0)) / 86400000); }

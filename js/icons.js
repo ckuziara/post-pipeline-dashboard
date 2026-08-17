@@ -89,7 +89,8 @@ window.App = window.App || {};
     // control rather than a cog.
     gear:     '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7.2"/>' +
               '<path d="M12 4.8V3M12 21v-1.8M4.8 12H3M21 12h-1.8' +
-              'M6.9 6.9 5.6 5.6M18.4 18.4l1.3 1.3M6.9 17.1 5.6 18.4M18.4 5.6l1.3-1.3"/>'
+              'M6.9 6.9 5.6 5.6M18.4 18.4l1.3 1.3M6.9 17.1 5.6 18.4M18.4 5.6l1.3-1.3"/>',
+    chat:     '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H9l-4 4v-4H5.5A1.5 1.5 0 0 1 4 14.5v-9Z"/>'
   };
   // aliases so call sites can use the name that reads best where they are
   P.show = P.clapper; P.video = P.camera; P.audio = P.headphones;

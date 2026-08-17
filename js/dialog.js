@@ -197,17 +197,28 @@ window.App = window.App || {};
   };
 
   /* `tabs` is optional and sits in the header beside the title — only the Edit
-     Task dialog passes one, so every other caller is untouched by it. */
+     Task dialog passes one, so every other caller is untouched by it. A null
+     title drops the header bar entirely: the tabs float above the card's own
+     top edge like sticky-note tabs (see .modal-card.tabbed in style.css),
+     since that dialog is a window onto a task rather than a single "Edit X"
+     action, and which fields are editable is already decided per-row inside
+     Details. */
   function card(icon, title, subtitle, sections, footer, cls, tabs) {
-    return el('.modal-card' + (cls ? '.' + cls : ''), { onclick: (e) => e.stopPropagation() }, [
-      el('.modal-head' + (tabs ? '.has-tabs' : ''), null, [
-        el('.modal-head-main', null, [
-          App.icon(icon, { cls: 'modal-ic' }),
-          el('div', null, [el('.modal-title', null, title), subtitle ? el('.modal-subtitle', null, subtitle) : null])
-        ]),
-        tabs || null,
-        el('button.modal-x', { onclick: () => App.modal.close(), title: 'Close' }, '✕')
-      ]),
+    const tabbed = !title && tabs;
+    const head = title
+      ? el('.modal-head' + (tabs ? '.has-tabs' : ''), null, [
+          el('.modal-head-main', null, [
+            App.icon(icon, { cls: 'modal-ic' }),
+            el('div', null, [el('.modal-title', null, title), subtitle ? el('.modal-subtitle', null, subtitle) : null])
+          ]),
+          tabs || null,
+          el('button.modal-x', { onclick: () => App.modal.close(), title: 'Close' }, '✕')
+        ])
+      : null;
+    return el('.modal-card' + (cls ? '.' + cls : '') + (tabbed ? '.tabbed' : ''), { onclick: (e) => e.stopPropagation() }, [
+      head,
+      tabbed ? tabs : null,
+      tabbed ? el('button.modal-x.float-x', { onclick: () => App.modal.close(), title: 'Close' }, '✕') : null,
       el('.modal-body', null, sections),
       el('.modal-foot', null, footer)
     ]);
@@ -447,7 +458,7 @@ window.App = window.App || {};
         }, [App.icon('save'), ' Save Changes'])
       ];
 
-      App.modal.open(card('pencil', 'Edit Task', 'Update task details and schedule', sections, footer, null, tabs));
+      App.modal.open(card(null, null, null, sections, footer, null, tabs));
       App.track.flowStart('Task edit', { dept: su.dept });   // after open(): its defensive close() must not cancel this
     }
   };
@@ -677,6 +688,80 @@ window.App = window.App || {};
       }
 
       App.modal.open(card('calendar', ms.name, App.fmtDate(ms.date) + ' · ' + ep.code, sections, footer));
+    }
+  };
+
+  /* ---- BYOK: connect/remove your own Gemini API key ----
+     The key is opened from the preferences popover (App.prefsMenu), not tied to
+     any episode/task, so it gets its own top-level entry point rather than
+     living under editTask. Status is re-fetched each time it opens rather than
+     cached, since usedToday/dailyLimit drift outside this dialog. */
+  App.byokKey = {
+    open() {
+      const el = App.el;
+      const body = el('.byok-body', null, el('.pop-note', null, 'Checking your key…'));
+      const footer = [el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Close')];
+      App.modal.open(card('key', 'Your Gemini API key', 'Used for AI features that run under your own quota', body, footer));
+      this._load(body);
+    },
+
+    async _load(body) {
+      let status;
+      try { status = await App.api.keyStatus(); }
+      catch (e) { body.replaceChildren(el('.pop-note', null, e.message)); return; }
+      body.replaceChildren(this._render(status, body));
+    },
+
+    _render(status, body) {
+      const el = App.el;
+      const intro = el('.pop-note', null, [
+        'Bring your own key from ',
+        el('a', { href: 'https://aistudio.google.com/apikey', target: '_blank', rel: 'noopener' }, 'Google AI Studio'),
+        ' — calls are billed to your Google account, not the team’s.'
+      ]);
+
+      if (status.connected) {
+        const used = status.used_today || 0;
+        return el('div', null, [
+          intro,
+          el('.byok-status.connected', null, [
+            el('span.dot', { style: { background: '#6ee0aa' } }),
+            'Connected · key ending ' + status.key_hint,
+          ]),
+          el('.pop-note', null, used + ' of ' + status.dailyLimit + ' calls used today · resets midnight UTC'),
+          el('button.btn-danger', {
+            style: { marginTop: '12px' },
+            onclick: async () => {
+              try { await App.api.removeKey(); App.toast('Gemini key removed'); this._load(body); }
+              catch (e) { App.toast(e.message, true); }
+            }
+          }, 'Remove key')
+        ]);
+      }
+
+      const input = el('input.fld', { type: 'password', placeholder: 'AIza…', autocomplete: 'off' });
+      const save = async () => {
+        const apiKey = input.value.trim();
+        if (!apiKey) { App.toast('Paste your API key first', true); return; }
+        save_btn.disabled = true;
+        try {
+          await App.api.saveKey(apiKey);
+          App.toast('Gemini key connected');
+          this._load(body);
+        } catch (e) {
+          App.toast(e.message, true);
+          save_btn.disabled = false;
+        }
+      };
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+      const save_btn = el('button.btn-primary', { onclick: save }, [App.icon('save'), ' Connect key']);
+
+      return el('div', null, [
+        intro,
+        el('.byok-status', null, [el('span.dot', { style: { background: '#888' } }), 'No key connected']),
+        field('Gemini API key', input),
+        save_btn
+      ]);
     }
   };
 

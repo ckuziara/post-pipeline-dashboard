@@ -910,10 +910,18 @@ window.App = window.App || {};
         App.render();       // anything that samples the palette (timeline labels)
       });
 
+      // Not view-scoped, and not tied to any episode/task, so it gets its own
+      // section below Appearance rather than a slot in viewRows.
+      const byokRow = el('.prefs-row', { onclick: () => { this.close(); App.byokKey.open(); } }, [
+        el('.prefs-row-title', null, 'Your Gemini API key'),
+        el('button.prefs-btn', { onclick: (e) => { e.stopPropagation(); this.close(); App.byokKey.open(); } }, 'Manage')
+      ]);
+
       const pop = el('.prefs-pop', { onclick: e => e.stopPropagation() },
         [el('.prefs-title', null, label + ' preferences')]
           .concat(rows.length ? rows : [el('.prefs-note', null, 'No display options for this view.')])
-          .concat([el('.prefs-title.sep', null, 'Appearance'), themeRow]));
+          .concat([el('.prefs-title.sep', null, 'Appearance'), themeRow])
+          .concat(App.api.online ? [el('.prefs-title.sep', null, 'AI features'), byokRow] : []));
       const r = document.getElementById('brand-logo').getBoundingClientRect();
       pop.style.top = (r.bottom + 8) + 'px';
       pop.style.left = Math.max(8, r.left) + 'px';
