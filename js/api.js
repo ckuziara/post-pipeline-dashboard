@@ -256,6 +256,11 @@ window.App = window.App || {};
     notifications() { return this._chat('GET', '/api/notifications'); },
     markNotificationsRead(body) { return this._chat('POST', '/api/notifications/read', body || {}); },
 
+    /* ---- BYOK: the signed-in user's own Gemini key ---- */
+    keyStatus() { return this._chat('GET', '/api/key'); },
+    saveKey(apiKey) { return this._chat('POST', '/api/save-key', { apiKey }); },
+    removeKey() { return this._chat('DELETE', '/api/key'); },
+
     /* ---- per-subtask workspace (Project / Assets / Deliver) ----
        All of these POST because the server needs the pipeline to resolve a task's
        folder, and seed shows don't carry one in stored state. */

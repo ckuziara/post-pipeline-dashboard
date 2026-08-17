@@ -550,6 +550,7 @@ button.ghost:hover { background: var(--hover); color: var(--text); }
 .kpi.k-red::before { background: var(--danger); }
 .kpi-num { font-size: 16px; font-weight: 800; line-height: 1; letter-spacing: -.3px; white-space: nowrap; }
 .kpi-sub { font-size: 11.5px; font-weight: 600; color: var(--text-3); }
+.kpis .btn-addshow { margin-left: auto; align-self: center; }
 .kpi-label { font-size: 10.5px; color: var(--text-2); white-space: nowrap; }
 
 /* ----------------------------------------------------------------- main scroller */
@@ -955,6 +956,9 @@ body.gantt-dragging { user-select: none; }
 }
 .status-opt:hover { filter: brightness(1.1); outline: 2px solid rgba(255,255,255,.28); }
 .pop-note { font-size: 10px; color: var(--text-3); padding: 4px 6px 2px; border-top: 1px solid var(--border); margin-top: 2px; }
+.byok-body { min-width: 320px; }
+.byok-status { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--text); margin: 10px 0; }
+.byok-status .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 
 /* =================================================================
    DASHBOARD
@@ -966,21 +970,34 @@ body.gantt-dragging { user-select: none; }
 .dash-quote { font-size: 12px; color: #ffd34d; font-style: italic; margin-top: 4px; }
 .dash-quote .qa { color: var(--text-3); font-style: normal; }
 
-/* Columns are packed in JS (App.dashboard → packRows) so every row adds up to a
-   full twelve — hence plain row flow, not dense: placement is already decided
-   and nothing needs back-filling into a hole. Heights are content-driven:
-   `align-items: start` keeps a short card its own height instead of stretching
-   it to match a taller neighbour and leaving dead space inside it. */
-.dash-grid {
-  display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px;
-  grid-auto-rows: auto; grid-auto-flow: row; align-items: start;
-}
-.dw { min-width: 0; }
+/* Every tile is placed by JS (App.dashboard → getLayout/resolveCollisions)
+   as an exact, independent pixel rectangle rather than flowing through CSS
+   grid tracks — that's what lets a resize push a specific neighbour by a
+   specific amount instead of only ever repacking everything into rows.
+   `.dw`'s left/top/width/height come from inline style (see `rectStyle` in
+   dashboard.js), inset by half the gutter on each side so adjacent tiles
+   read as separated without a literal gap property to reason about. Tiles
+   stretch to fill that exact rect — see `.widget { height: 100% }` below —
+   rather than sizing to content, so a box is never taller than what it was
+   assigned; content that doesn't fill it just leaves calm padding, and the
+   rare overflow scrolls internally (`.widget-body`). The container's own
+   height is set from JS too, since absolutely-positioned children don't
+   contribute to a parent's auto height. */
+.dash-grid { position: relative; }
+.dw { position: absolute; min-width: 0; min-height: 0; }
 .dw-head-l { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .dw-grip { cursor: grab; color: var(--text-3); font-size: 12px; line-height: 1; user-select: none; }
 .dw-grip:hover { color: var(--text); }
-.dw.dw-dragging { opacity: .4; }
-.dw.dw-over .widget { outline: 2px dashed var(--accent); outline-offset: 2px; }
+/* Springboard feel: every tile in edit mode glides to its new spot rather
+   than snapping — that's the "other widgets visibly moving to make room"
+   while a drag or resize is live (see wireDrag/wireResize in dashboard.js,
+   which recompute left/top/width/height on every pointermove). The tile
+   actually under the pointer is excluded — it must track the cursor with
+   zero lag, not ease toward it. */
+.dash-grid.editing .dw { transition: left .16s ease, top .16s ease, width .16s ease, height .16s ease; }
+.dw.dw-dragging, .dw.dw-resizing { transition: none; z-index: 50; }
+.dw.dw-dragging { cursor: grabbing; }
+.dw.dw-dragging .widget { box-shadow: 0 14px 30px rgba(0,0,0,.45); transform: scale(1.03); }
 
 /* ---- layout edit mode (Dashboard → Edit) ----
    Tiles become movable and resizable; their contents go inert so arranging a
@@ -989,7 +1006,10 @@ body.gantt-dragging { user-select: none; }
    is a hairline along that edge on hover — no furniture sitting on the tile. */
 .dash-grid.editing .widget { outline: 1px dashed var(--border-2); outline-offset: -1px; }
 .dash-grid.editing .widget-body { pointer-events: none; user-select: none; }
-.dw-editable { position: relative; cursor: grab; }
+/* .dw is already position:absolute (its left/top/width/height come from JS —
+   see rectStyle in dashboard.js), which also anchors the edge/corner resize
+   handles below; editable mode doesn't need its own positioning context. */
+.dw-editable { cursor: grab; }
 .dw-editable.dw-resizing { cursor: default; }
 .dw-edge, .dw-corner { position: absolute; z-index: 4; touch-action: none; }
 .dw-edge::after {
@@ -1030,34 +1050,36 @@ body.gantt-dragging { user-select: none; }
 .dw-size {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
   z-index: 3; pointer-events: none; opacity: 0; transition: opacity .12s;
-  font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  font-size: 11px; font-weight: 700; letter-spacing: .02em;
   color: var(--text-2); background: var(--bg-2);
   border: 1px solid var(--border-2); border-radius: 6px; padding: 3px 10px;
 }
 .dw-editable:hover .dw-size, .dw-resizing .dw-size { opacity: 1; }
 
-/* size-aware trims: a narrow tile gives up the label gutter and the padding
-   before it gives up rows of data */
-.dw-sm .widget-body { padding: 11px; }
-.dw-sm .bar-row { grid-template-columns: 86px 1fr 28px; gap: 7px; margin-bottom: 7px; }
-.dw-sm .risk-item { padding: 7px 9px; gap: 8px; }
-/* a narrow tile can't afford the full department chip in a list row */
-.dw-md .risk-item .dept-chip { max-width: 86px; overflow: hidden; }
-.dw-sm .big-num { font-size: 40px; letter-spacing: -1.5px; }
-.dw-sm .big-num .of { font-size: 20px; }
-.dw-sm .pr-chip { width: 78px; font-size: 9px; padding: 2px 6px; }
-.dw-sm .pr-head { padding: 8px 10px; gap: 7px; }
-.dw-sm .pr-row { padding: 6px 10px; gap: 7px; }
+/* width-aware trims: a narrow tile (≤4 of 12 columns — see `t.span <= 4` in
+   dashboard.js) gives up the label gutter and the padding before it gives up
+   rows of data */
+.dw-narrow .widget-body { padding: 11px; }
+.dw-narrow .bar-row { grid-template-columns: 86px 1fr 28px; gap: 7px; margin-bottom: 7px; }
+.dw-narrow .risk-item { padding: 7px 9px; gap: 8px; }
+/* the full department chip only ever renders on a non-narrow tile, but it
+   can still run long there */
+.risk-item .dept-chip { max-width: 86px; overflow: hidden; }
+.dw-narrow .big-num { font-size: 40px; letter-spacing: -1.5px; }
+.dw-narrow .big-num .of { font-size: 20px; }
+.dw-narrow .pr-chip { width: 78px; font-size: 9px; padding: 2px 6px; }
+.dw-narrow .pr-head { padding: 8px 10px; gap: 7px; }
+.dw-narrow .pr-row { padding: 6px 10px; gap: 7px; }
 /* large tiles put the headline figure and its breakdown side by side */
 .dw-wide { display: flex; align-items: center; gap: 28px; flex: 1; min-width: 0; }
 .dw-wide .dw-split { flex: 1; min-width: 0; }
 .dw-calm { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-3); font-size: 12.5px; min-height: 60px; }
 
-.widget { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; min-height: 116px; }
+.widget { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; min-height: 116px; height: 100%; }
 .widget-head { padding: 12px 15px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex: none; }
 .widget-title { font-size: 12.5px; font-weight: 700; }
 .widget-sub { font-size: 10.5px; color: var(--text-3); }
-.widget-body { padding: 15px; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.widget-body { padding: 15px; flex: 1; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
 .widget-body.bare { padding: 0; }
 .col-3 { grid-column: span 3; } .col-4 { grid-column: span 4; } .col-5 { grid-column: span 5; }
 .col-6 { grid-column: span 6; } .col-7 { grid-column: span 7; } .col-8 { grid-column: span 8; } .col-12 { grid-column: span 12; }
@@ -1107,11 +1129,18 @@ body.gantt-dragging { user-select: none; }
 .pr-more { font-size: 10.5px; color: var(--text-3); padding: 7px 12px; }
 
 .risk-list { display: flex; flex-direction: column; gap: 8px; }
-.risk-item { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); }
+.risk-item { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); cursor: pointer; }
+.risk-item:hover { background: var(--hover); }
 .risk-item .ri-main { flex: 1; min-width: 0; }
 .risk-item .ri-title { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .risk-item .ri-sub { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .risk-item .ri-tag { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+.ri-chat {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--text-3);
+  font-size: 13px;
+}
+.ri-chat:hover { background: var(--surface-3); color: var(--text); }
 .ri-tag.over { background: rgba(255,91,110,.16); color: #ffa7b0; }
 .ri-tag.blk { background: rgba(253,171,61,.16); color: #ffce8e; }
 
@@ -3068,22 +3097,31 @@ select.fld { cursor: pointer; }
 .chat-rev-go:hover { background: var(--accent-2); }
 .chat-rev-x:hover { color: var(--text); background: var(--surface-3); }
 
-/* ---- modal header tabs (js/dialog.js modalTabs) ----------------------------
-   Only the Edit Task dialog uses these. Panels are hidden rather than
-   destroyed, so the form controls the footer's Save reads stay alive while
-   you're reading the discussion. */
-.modal-head.has-tabs { align-items: flex-start; }
-.modal-tabs { display: flex; gap: 4px; margin-left: auto; margin-right: 12px; padding-top: 2px; }
-.modal-tab {
-  display: inline-flex; align-items: center; gap: 6px;
-  border: 1px solid transparent; background: none; color: var(--text-3);
-  font-family: inherit; font-size: 12px; font-weight: 600;
-  padding: 6px 12px; border-radius: 8px; cursor: pointer;
-  transition: color .14s ease, background .14s ease, border-color .14s ease;
+/* ---- floating tab strip (js/dialog.js modalTabs) ---------------------------
+   Only the Edit Task dialog uses these, with a null title (see the `tabbed`
+   branch of card() in dialog.js) — no header bar at all. The tabs float
+   above the card's own top edge like sticky-note tabs poking out of a
+   folder, positioned absolutely so they take no layout space. The active
+   tab's background matches the card and dips 1px into its top border,
+   erasing that stretch of it so the tab reads as fused to the body beneath —
+   the same illusion a foreground browser tab uses. */
+.modal-card.tabbed { position: relative; }
+.modal-card.tabbed > .modal-tabs {
+  position: absolute; top: 0; left: 18px; transform: translateY(-100%);
+  display: flex; gap: 4px; z-index: 2;
 }
-.modal-tab:hover { color: var(--text-2); background: var(--surface-3); }
+.modal-tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  border: 1px solid var(--border-2); border-bottom: none;
+  background: var(--bg-2); color: var(--text-3);
+  font-family: inherit; font-size: 13px; font-weight: 700;
+  padding: 9px 16px; border-radius: 10px 10px 0 0; cursor: pointer;
+  transition: color .14s ease, background .14s ease;
+}
+.modal-tab:hover { color: var(--text-2); }
 .modal-tab.active {
-  color: var(--text); background: var(--surface-3); border-color: var(--border-2);
+  color: var(--text); background: var(--surface);
+  margin-bottom: -1px; padding-bottom: 10px;
 }
 .modal-tab-badge {
   min-width: 17px; text-align: center;
@@ -3093,12 +3131,14 @@ select.fld { cursor: pointer; }
 }
 .modal-tab.active .modal-tab-badge { color: #fff; background: var(--accent); border-color: var(--accent); }
 .modal-tab-badge.hidden { display: none; }
+.modal-card.tabbed > .float-x { position: absolute; top: 14px; right: 14px; z-index: 2; }
+.modal-card.tabbed .modal-body { padding-top: 44px; }
 
 .et-panel.hidden { display: none; }
 
 @media (max-width: 620px) {
-  .modal-head.has-tabs { flex-wrap: wrap; }
-  .modal-tabs { order: 3; width: 100%; margin: 8px 0 0; }
+  .modal-card.tabbed > .modal-tabs { left: 10px; }
+  .modal-tab { padding: 8px 12px; font-size: 12px; }
 }
 
 /* ---- notification bell (js/chat.js, mounted in the topbar) ---------------- */
