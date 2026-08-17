@@ -1026,6 +1026,32 @@ window.App = window.App || {};
       }
     });
     App.render();
+    openTaskFromHash();
+    // a Slack link clicked into an already-open tab changes only the hash
+    window.addEventListener('hashchange', openTaskFromHash);
+  }
+
+  /* Deep link: #task=<episodeId>::<taskKey> opens that task's discussion —
+     the URL the Slack Task Card advertises. One-shot: the hash is cleared
+     once acted on, so closing the dialog and reloading doesn't trap the user
+     back in it. A stale link (episode deleted since) says so rather than
+     silently landing on the dashboard, which is exactly where a dead link
+     would otherwise leave someone none the wiser. */
+  function openTaskFromHash() {
+    const m = location.hash.match(/^#task=(.+)$/);
+    if (!m) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    if (!App.state.data) return;                    // login screen showed instead
+    const composite = decodeURIComponent(m[1]);
+    const sep = composite.indexOf('::');
+    if (sep < 0) return;
+    const epId = composite.slice(0, sep), taskKey = composite.slice(sep + 2);
+    const ep = App.state.data.episodes.find(e => e.id === epId);
+    if (!ep || !App.subitem(ep, taskKey)) {
+      App.toast('That task is no longer on the board', true);
+      return;
+    }
+    App.editTask.open(epId, taskKey, { tab: 'chat' });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
