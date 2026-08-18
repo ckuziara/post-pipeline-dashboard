@@ -26,6 +26,16 @@ services:
         value: "true"
       - key: ACCESS_CODE           # REQUIRED while DEV_LOGIN is true on a public URL —
         sync: false                # shared team code, else anyone with the link can sign in
+      # BYOK relay (keyvault.js): needs Postgres AND at least one MASTER_KEY_V*,
+      # or /api/save-key, /api/key and /api/call-gemini 503 — gracefully, but
+      # silently, since nothing else here says these two are required.
+      #   1. openssl rand -base64 32
+      #   2. paste it as MASTER_KEY_V1 below
+      - key: MASTER_KEY_V1
+        sync: false
+      - key: MASTER_KEY_CURRENT    # which MASTER_KEY_V* is used for new/re-saved keys.
+        value: "1"                 # bump alongside adding MASTER_KEY_V2 to rotate —
+                                    # old rows still decrypt under v1 until re-saved.
       # NOTE: MASTER_PATH is deliberately NOT set here. The production-folder
       # automation (/api/folders, /api/task/*) and "open in app" actions need a
       # mounted LucidLink volume and a local desktop to spawn apps on, so they

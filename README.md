@@ -104,6 +104,9 @@ cookies, so no session store is needed either.
    - `ACCESS_CODE` — **required** while `DEV_LOGIN` is `true` (see below)
    - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — from the SSO step below
      (leave blank at first; team sign-in still works)
+   - `MASTER_KEY_V1` — only if you want BYOK (bring-your-own Gemini key) live;
+     see below. Leave blank and the feature 503s gracefully — everything else
+     works either way
    - `ADMIN_EMAILS`, `ALLOWED_DOMAIN` — already defaulted in `render.yaml`
 3. Deploy. Render gives you a URL like `https://post-pipeline-dashboard.onrender.com`.
 
@@ -167,6 +170,32 @@ fine on a trusted office network, but no passwords, so do the below when ready):
 > raw LAN IP — so on a laptop the Google button works over localhost, and once
 > deployed (Render) it works for everyone. Over plain LAN, teammates use the
 > team sign-in, which still gives them their correct role via directory email.
+
+### Enabling BYOK (bring-your-own Gemini key)
+
+Lets each signed-in user connect their own Google Gemini key from the
+preferences popover; the server encrypts it and relays their prompts, billed
+to *their* Google account, not the team's. Needs Postgres (`DATABASE_URL`)
+and one more secret the relay doesn't have without:
+
+1. `openssl rand -base64 32`
+2. Set it as `MASTER_KEY_V1` in Render (or `server-config.json` locally).
+3. `MASTER_KEY_CURRENT` defaults to `1` in `render.yaml` — leave it unless
+   you're rotating (see below).
+
+Without `MASTER_KEY_V1`, `/api/save-key`, `/api/key` and `/api/call-gemini`
+answer `503` with a message saying so — the rest of the board is unaffected.
+
+**Rotating the key:** add `MASTER_KEY_V2` alongside `MASTER_KEY_V1` (don't
+remove v1) and set `MASTER_KEY_CURRENT=2`. Every row already stored records
+which version encrypted it, so old keys keep decrypting under v1 while new
+saves use v2 — nothing needs re-encrypting in bulk, and nothing goes down
+mid-rotation.
+
+> The key itself never reaches Postgres — only ciphertext does, encrypted in
+> the Node process (`keyvault.js`). Passing a master key into SQL as a query
+> parameter would put it in statement logs and `pg_stat_statements`, handing
+> the one secret to the same system holding everything it protects.
 
 ## Files
 ```
