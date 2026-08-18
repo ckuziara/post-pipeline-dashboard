@@ -691,6 +691,44 @@ window.App = window.App || {};
     }
   };
 
+  /* ---- Admin: set a teammate's password ----
+     Opened from the User Directory row, same admin-only right as changing
+     someone's role. The server never hands back whether a password already
+     exists (that's not exposed to the client at all — see the note on the
+     `passwords` store in server.js), so this always reads as "set", never
+     "change": there's nothing here to pre-fill or confirm against. */
+  App.setPasswordDialog = {
+    open(person) {
+      if (!person.email) {
+        App.toast('Add a work email for ' + person.name + ' first — the sign-in needs one', true);
+        return;
+      }
+      const el = App.el;
+      const pass = el('input.fld', { type: 'password', placeholder: 'At least 8 characters', autocomplete: 'new-password' });
+      const confirmPass = el('input.fld', { type: 'password', placeholder: 'Type it again', autocomplete: 'new-password' });
+      const hint = el('.fld-hint', null,
+        person.name + ' will be able to sign in with ' + person.email + ' and this password, ' +
+        'alongside whatever they already use.');
+
+      const save = el('button.btn-primary', {
+        onclick: async () => {
+          if (pass.value.length < 8) { App.toast('Password must be at least 8 characters', true); return; }
+          if (pass.value !== confirmPass.value) { App.toast('Those two don’t match', true); return; }
+          try {
+            await App.api.setPersonPassword(person.email, pass.value);
+            App.modal.close();
+            App.track.audit('account.passwordSet', { target: person.name });
+            App.toast('Password set for ' + person.name);
+          } catch (e) { App.toast(e.message, true); }
+        }
+      }, [App.icon('lock'), ' Set password']);
+
+      const sections = [field('New password', pass), field('Confirm', confirmPass), hint];
+      const footer = [el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'), save];
+      App.modal.open(card('lock', 'Set a password', person.name + ' · ' + person.email, sections, footer));
+    }
+  };
+
   /* ---- BYOK: connect/remove your own Gemini API key ----
      The key is opened from the preferences popover (App.prefsMenu), not tied to
      any episode/task, so it gets its own top-level entry point rather than
