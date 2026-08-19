@@ -991,6 +991,15 @@ const server = http.createServer(async (req, res) => {
   const route = req.method + ' ' + url.pathname;
 
   try {
+    /* Slack, before anything else touches this request. Bolt's handleEvent
+       reads the raw body itself to verify X-Slack-Signature — readBody()
+       (used everywhere below) would consume that stream first and break
+       verification, so this has to run before every other branch, not just
+       before the ones that happen to call readBody(). */
+    if (slack && route === 'POST /slack/events') {
+      return slack.handleEvent(req, res);
+    }
+
     /* ---- auth ---- */
     if (route === 'GET /api/me') {
       const s = getSession(req);
@@ -1786,14 +1795,9 @@ const server = http.createServer(async (req, res) => {
     try { await chat.init(); }
     catch (e) { console.error('Chat store init failed (chat disabled):', e.message); }
   }
-  // Slack rides its own listener so Bolt can verify raw request signatures
-  if (slack) {
-    const slackPort = Number(ENV.SLACK_PORT || Number(PORT) + 1);
-    try {
-      await slack.start(slackPort);
-      console.log('  • Slack bridge:  listening on :' + slackPort + ' (POST /slack/events)');
-    } catch (e) { console.error('Slack bridge failed to start:', e.message); }
-  }
+  // Slack is embedded in the dispatcher above (POST /slack/events) — nothing
+  // to start; App's constructor already wired the receiver.
+  if (slack) console.log('  • Slack bridge:  embedded at POST /slack/events');
 
   server.listen(PORT, config.host, () => {
     const nets = os.networkInterfaces();
