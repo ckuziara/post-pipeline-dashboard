@@ -36,6 +36,14 @@ window.App = window.App || {};
 
     // guard: only admins may sit on the Admin or Planning views
     if ((App.state.view === 'admin' || App.state.view === 'planning') && !App.isAdminRole(App.state.role)) App.state.view = 'timeline';
+    /* guard: phone mode only ever offers Dashboard / Board / Admin (see
+       renderViewTabs), so a view that isn't reachable from the tab bar there
+       isn't reachable here either — the redirect fires every render, so
+       rotating a phone or shrinking a test window off Timeline/Planning/
+       Reviews mid-session lands on Dashboard rather than a view with no tab
+       to get back out of. Runs after the admin guard above, since that one
+       can itself hand back 'timeline', which still needs catching here. */
+    if (App.isPhone() && ['timeline', 'planning', 'review'].includes(App.state.view)) App.state.view = 'dashboard';
 
     renderBrandMark();
     renderViewTabs();
@@ -95,10 +103,20 @@ window.App = window.App || {};
 
   function renderViewTabs() {
     const box = document.getElementById('view-tabs'); box.innerHTML = '';
-    const tabs = [['timeline', 'chart', 'Timeline'], ['board', 'grid', 'Board'], ['dashboard', 'compass', 'Dashboard']];
-    if (App.state.role === 'director') tabs.push(['review', 'target', 'Reviews']);
+    const phone = App.isPhone();
+    /* Phone mode caps the tab bar at Dashboard, Board and (role permitting)
+       Admin — Timeline's drag-to-reschedule and hover tooltips and
+       Planning's variant-comparison tables are desktop surfaces that don't
+       reduce to a phone screen, so rather than cram a worse version of them
+       in, they're simply not offered here. See App.isPhone in state.js and
+       the redirect guard in App.render above, which keeps someone from
+       being stuck on one of them if the window narrows while they're on it. */
+    const tabs = phone
+      ? [['dashboard', 'compass', 'Dashboard'], ['board', 'grid', 'Board']]
+      : [['timeline', 'chart', 'Timeline'], ['board', 'grid', 'Board'], ['dashboard', 'compass', 'Dashboard']];
+    if (!phone && App.state.role === 'director') tabs.push(['review', 'target', 'Reviews']);
     // budget modelling is oversight work, so it rides the same gate as Admin
-    if (App.isAdminRole(App.state.role)) tabs.push(['planning', 'sparkle', 'Planning']);
+    if (!phone && App.isAdminRole(App.state.role)) tabs.push(['planning', 'sparkle', 'Planning']);
     if (App.isAdminRole(App.state.role)) tabs.push(['admin', 'tools', 'Admin']);
     tabs.forEach(([v, ic, lbl]) => {
       box.appendChild(el('button.view-tab' + (App.state.view === v ? '.active' : ''),
