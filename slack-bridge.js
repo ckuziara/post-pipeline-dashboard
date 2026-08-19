@@ -1,10 +1,20 @@
 /* Slack ↔ task chat, both directions — spec stages 3 and 4's Slack half.
 
-   Bolt's HTTPReceiver runs on its OWN port (SLACK_PORT, default main+1)
-   rather than inside server.js's dispatcher. Signature verification wants the
-   raw request body, and the dispatcher's readBody() would consume it — two
-   listeners is a smaller cost than hand-rolling a timing-safe HMAC check and
-   replay window that Bolt already gets right.
+   Bolt's HTTPReceiver is embedded in server.js's own dispatcher rather than
+   given a second port to listen on. A second port was the first design here,
+   and it runs fine locally — but Render (and most single-service hosts) only
+   exposes the ONE port the platform proxies to the internet, so a listener
+   on port+1 is unreachable from Slack's servers no matter how correctly it's
+   configured. Same code path everywhere now: one port, dev or hosted.
+
+   Embedding still gets signature verification for free, which was the
+   reason for a second listener in the first place: Bolt's HTTPReceiver
+   exposes `requestListener`, a bound (req, res) handler that reads the raw
+   body and verifies X-Slack-Signature itself — exactly what `.start(port)`
+   hands to its own internal http.Server. server.js calls handleEvent(req, res)
+   for POST /slack/events BEFORE its own readBody() ever touches the request,
+   so Bolt still gets the untouched stream it needs; nothing here re-implements
+   the timing-safe HMAC check or replay window Bolt already gets right.
 
    ── DIRECTION, AND WHY THERE'S NO LOOP ────────────────────────────────────
    web → Slack   server.js calls mirrorMessage() after a message saves.
@@ -246,10 +256,11 @@ function makeSlackBridge({ chat, storage, sseEmit, appUrl }) {
   return {
     kind: 'slack',
     mirrorMessage,
-    async start(port) {
-      await app.start(port);
-      return port;
-    },
+    // The receiver's own (req, res) handler — App's constructor already
+    // called receiver.init(this), so this is live and ready with no
+    // separate start-up step. Bound, so `slack.handleEvent` alone works as
+    // a callback without the caller worrying about `this`.
+    handleEvent: receiver.requestListener,
     _setWebClient(c) { web = c; }   // offline tests inject a fake outbound client
   };
 }

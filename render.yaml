@@ -36,6 +36,18 @@ services:
       - key: MASTER_KEY_CURRENT    # which MASTER_KEY_V* is used for new/re-saved keys.
         value: "1"                 # bump alongside adding MASTER_KEY_V2 to rotate —
                                     # old rows still decrypt under v1 until re-saved.
+      # Slack bridge (slack-bridge.js): needs Postgres AND both of these, or
+      # /slack/events falls through to the main dispatcher's 404/405 and
+      # Slack's own request-verification handshake fails. Get both from
+      # api.slack.com/apps → your app → OAuth & Permissions (bot token) and
+      # Basic Information → App Credentials (signing secret).
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false
+      - key: APP_URL               # this service's own public URL — without it,
+        sync: false                # Slack Task Card "Open in Post Pipeline" links
+                                    # post with no URL at all
       # NOTE: MASTER_PATH is deliberately NOT set here. The production-folder
       # automation (/api/folders, /api/task/*) and "open in app" actions need a
       # mounted LucidLink volume and a local desktop to spawn apps on, so they

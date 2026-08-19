@@ -197,6 +197,37 @@ mid-rotation.
 > parameter would put it in statement logs and `pg_stat_statements`, handing
 > the one secret to the same system holding everything it protects.
 
+### Enabling the Slack bridge
+
+Two-way sync between a task's chat thread and a Slack channel — messages
+posted either side show up on the other. Needs Postgres (`DATABASE_URL`,
+same one contextual chat uses) and two secrets from your Slack app:
+
+1. **api.slack.com/apps** → your app → **OAuth & Permissions** → Bot User
+   OAuth Token (`xoxb-…`) → set as `SLACK_BOT_TOKEN`.
+2. Same app → **Basic Information** → App Credentials → Signing Secret →
+   set as `SLACK_SIGNING_SECRET`.
+3. Set `APP_URL` to this service's own public URL (e.g.
+   `https://post-pipeline-dashboard.onrender.com`) — without it, the "Open
+   in Post Pipeline" link on a Slack Task Card posts with no URL at all.
+4. In the Slack app's **Event Subscriptions**, set the Request URL to
+   `https://<your-app>/slack/events`. Slack calls it immediately to verify
+   — a green checkmark means the two secrets above are both correct.
+
+Without `SLACK_BOT_TOKEN` / `SLACK_SIGNING_SECRET`, `/slack/events` falls
+through to the board's normal 404/405 handling — the rest of the app is
+unaffected, same as BYOK's `503` above.
+
+> `/slack/events` is handled by the same server and the same port as
+> everything else — Bolt's request handler (`slack-bridge.js`) is called
+> directly from the main dispatcher for that one route, before the
+> dispatcher's own body-reading touches the request, so Bolt still gets
+> the raw body it needs to verify `X-Slack-Signature` itself. An earlier
+> version gave Bolt a second port to listen on instead; that runs fine on
+> a laptop, but Render (like most single-service hosts) only proxies the
+> one public port, so nothing could ever reach a second listener from the
+> internet no matter how correctly it was configured.
+
 ## Files
 ```
 index.html          shell + script/style includes
