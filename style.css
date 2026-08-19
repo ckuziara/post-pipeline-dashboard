@@ -3237,6 +3237,23 @@ select.fld { cursor: pointer; }
    ============================================================ */
 @media (max-width: 640px) {
 
+  /* ---- let the whole page scroll, not just #view ----
+     Desktop keeps the topbar/toolbar permanently on screen and scrolls only
+     #view in the space left over (#app pinned to 100vh, #view the one
+     child with overflow:auto) — the filter cluster is short enough there
+     that always-visible is worth the fixed real estate. On a phone the same
+     cluster (role pill, Show/Dept/Owner, search) runs to two or three rows
+     and pinning it permanently would leave less room for content than the
+     content itself. So here #app is allowed to grow past 100vh and #view
+     gives up its own scrollbar — topbar, toolbar and the view scroll
+     together as one normal page, which is what lets the filters scroll out
+     of the way at all. See the requestAnimationFrame block in App.render
+     (js/render.js) for how a fresh view opens already past them by
+     default, and a same-view re-render restores exactly where the reader
+     was rather than snapping back down here every time. */
+  #app { height: auto; min-height: 100vh; }
+  #view { overflow: visible; }
+
   /* ---- topbar & tabs ---- */
   #topbar { flex-wrap: wrap; height: auto; min-height: 56px; row-gap: 8px; padding: 10px 14px; }
   /* the mark alone still identifies the app; on a phone the tab bar needs
