@@ -61,10 +61,19 @@ window.App = window.App || {};
     else document.getElementById('kpis').innerHTML = '';
 
     const view = document.getElementById('view');
+    const phone = App.isPhone();
 
     // Preserve scroll position when re-rendering within the same view
     const sameView = App.state._lastRenderedView === App.state.view;
-    const savedScroll = (sameView && view) ? view.scrollTop : 0;
+    const savedScroll = (sameView && view && !phone) ? view.scrollTop : 0;
+    /* Phone mode scrolls the whole page (topbar, toolbar and #view all in one
+       flow — see the phone media query in style.css, which turns off #view's
+       own inner scrollbar) rather than #view alone, so the position worth
+       keeping across a same-view re-render is window.scrollY instead. Every
+       filter change, live sync tick and mutation calls App.render() while
+       staying on the same view, so this is the common case — it has to never
+       fight someone's own scroll position. */
+    const savedWinScroll = (sameView && phone) ? window.scrollY : null;
 
     // Snapshot the gantt's scroll position while its DOM is still alive — this
     // makes restoration correct for EVERY render trigger (filters, edits,
@@ -79,8 +88,24 @@ window.App = window.App || {};
     else if (App.state.view === 'dashboard') view.appendChild(App.dashboard.render(episodes));
     else { view.appendChild(App.gantt.render(episodes)); App.gantt.afterMount(); }
 
-    // Restore scroll after the browser has painted the new content
-    if (savedScroll > 0) requestAnimationFrame(() => { if (view) view.scrollTop = savedScroll; });
+    if (phone) {
+      /* Landing on a view (a tab tap, the phone redirect guard, or the very
+         first render after signing in) opens already past the topbar/toolbar
+         cluster — "scrolled out of the way" by default — rather than atop
+         the filters every time. #view's own top edge is exactly that
+         boundary, and it adapts on its own to whichever chrome is actually
+         visible (the toolbar is hidden entirely on Admin) without needing to
+         add up each piece by hand. A same-view re-render restores exactly
+         where the reader was instead — see savedWinScroll above. */
+      requestAnimationFrame(() => {
+        if (!view) return;
+        if (savedWinScroll != null) { window.scrollTo(0, savedWinScroll); return; }
+        window.scrollTo(0, Math.max(0, view.getBoundingClientRect().top + window.scrollY));
+      });
+    } else if (savedScroll > 0) {
+      // Restore scroll after the browser has painted the new content
+      requestAnimationFrame(() => { if (view) view.scrollTop = savedScroll; });
+    }
     // Which views each role actually works in. Deduped to once a minute inside
     // App.track, so the constant re-renders here cost one event, not hundreds.
     App.track && App.track.feature('view.' + App.state.view);
