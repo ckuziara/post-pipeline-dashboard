@@ -66,6 +66,17 @@ window.App = window.App || {};
     if (!w.itemPx) return Infinity;
     return Math.max(1, Math.floor((heightPx - w.headPx) / w.itemPx));
   };
+  // The inverse of capOf, for phone mode: rather than pick a pixel height
+  // and let the row count fall out of it, pick the row count directly (5 —
+  // a glance's worth) and derive the height capOf would need to show that
+  // many, clamped to the widget's own min/max so it stays a height that
+  // widget could legitimately have on desktop too.
+  const PHONE_ROWS = 5;
+  function phoneRows(id) {
+    const w = WIDGETS[id];
+    if (!w.itemPx) return w.minH;
+    return clamp(w.headPx + PHONE_ROWS * w.itemPx, w.minH, w.maxH);
+  }
 
   /* Who sees what. A department lead wants their own queue and little else; a
      producer or manager is accountable for the whole slate and wants the
@@ -220,8 +231,8 @@ window.App = window.App || {};
       const wrap = el('.dash');
       wrap.appendChild(this.greeting());
 
-      const grid = el('.dash-grid' + (this._editing ? '.editing' : ''));
       if (!episodes.length) {
+        const grid = el('.dash-grid');
         grid.appendChild(el('.empty', null, 'No episodes match the current filters.'));
         wrap.appendChild(grid);
         return wrap;
@@ -232,6 +243,9 @@ window.App = window.App || {};
       episodes.forEach(ep => App.subsView(ep).forEach(su => subs.push({ ep, su })));
       const m = { episodes, subs, delivered: episodes.filter(App.isDelivered).length };
 
+      if (App.isPhone()) { wrap.appendChild(this.renderPhone(m)); return wrap; }
+
+      const grid = el('.dash-grid' + (this._editing ? '.editing' : ''));
       const layout = this.getLayout();
       layout.forEach(t => grid.appendChild(this.cell(t, m)));
       // absolutely-positioned children don't contribute to a parent's auto
@@ -242,6 +256,39 @@ window.App = window.App || {};
       if (this._editing) this.wireResize(grid);
       wrap.appendChild(grid);
       return wrap;
+    },
+
+    /* Phone mode: a plain top-to-bottom stack, nothing draggable or
+       resizable — there's no pointer precision on a touch screen for
+       grabbing a 4px resize handle, and no room to drag a tile sideways
+       past its neighbours anyway at this width. Every tile is full width,
+       in the same curated order LAYOUTS hand-lays-out for this role (not
+       whatever a desktop drag session saved — that positioning answers a
+       question, "where on a wide grid", that doesn't exist here).
+
+       Reuses each widget's own body-building function unmodified, passing
+       `w: 4` — the same width every widget already treats as "narrow" on
+       desktop (a dept-chip's label drops, the sub-blurb drops, a donut
+       drops in favour of just the number) — so "only the important
+       details" is the existing narrow path, not a second one invented for
+       phones specifically. Height is capped low on purpose (a handful of
+       rows per list, via phoneRows below) rather than full desktop depth:
+       the point of a phone dashboard is a glance, and a tap into the row
+       (every list item already opens App.editTask) is the way to the rest. */
+    renderPhone(m) {
+      const ids = LAYOUTS[layoutKind(App.state.role)].map(t => t.id);
+      const stack = el('.dash-phone');
+      ids.forEach(id => {
+        const built = this[id](m, { w: 4, h: phoneRows(id) });
+        stack.appendChild(el('.widget', null, [
+          el('.widget-head', null, [
+            el('.dw-head-l', null, el('.widget-title', null, built.title)),
+            built.sub ? el('.widget-sub', null, built.sub) : null
+          ]),
+          el('.widget-body' + (built.bare ? '.bare' : ''), null, built.body)
+        ]));
+      });
+      return stack;
     },
 
     // Layout is per device AND per role — one person switching hats
@@ -293,7 +340,10 @@ window.App = window.App || {};
           el('.dash-hi', null, hello + ', ' + name + '!'),
           el('.dash-quote', null, ['“' + q[0] + '”', el('span.qa', null, ' — ' + q[1])])
         ]),
-        el('.dash-tools', null, [
+        // there's nothing to drag or resize on a phone stack, so the whole
+        // edit-layout affordance — which only makes sense against the
+        // desktop tiling grid — doesn't get offered
+        (App.isPhone() ? null : el('.dash-tools', null, [
           (editing ? el('button.ghost.dash-reset', {
             title: 'Put every widget back to its default size and position',
             onclick: () => {
@@ -305,7 +355,7 @@ window.App = window.App || {};
             title: editing ? 'Finish editing the layout' : 'Move and resize widgets',
             onclick: () => this.toggleEdit()
           }, editing ? '✓ Done' : [App.icon('pencil'), ' Edit'])
-        ])
+        ]))
       ]);
     },
 

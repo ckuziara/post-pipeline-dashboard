@@ -1389,6 +1389,20 @@ body.gantt-dragging { user-select: none; }
 .adm-row:hover { background: var(--hover); }
 .adm-row.editing { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); cursor: default; }
 .adm-row .cell.u { display: flex; align-items: center; gap: 11px; min-width: 0; }
+/* The name+email wrapper (a bare div — only the editing-mode one gets its
+   own .adm-edit-stack class) is a flex item with default overflow:visible,
+   so its automatic minimum width is its content's min-content size: on a
+   narrow column that's wider than the space actually available, and rather
+   than the ellipsis below doing anything, the whole block overflows the
+   cell and bleeds visibly into the next column. min-width:0 hands the
+   shrinking down to .adm-name/.adm-name-sub's own overflow:hidden, which is
+   what was supposed to be clipping it all along. */
+.adm-row .cell.u > div:not(.adm-edit-stack) { min-width: 0; overflow: hidden; }
+/* Every other grid-item cell (dept chip, integrations, load bar) defaults to
+   min-width:auto, so on a narrow row its track can still expand to fit that
+   cell's min-content and eat space the name column needed — same family of
+   bug as above, just stealing width instead of visibly overflowing. */
+.adm-thead > .cell, .adm-row > .cell { min-width: 0; }
 .adm-name { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .adm-name-sub { font-size: 10.5px; color: var(--text-3); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .adm-edit-stack { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
@@ -3206,3 +3220,107 @@ select.fld { cursor: pointer; }
   font-size: 11px; cursor: pointer; padding: 2px 4px; border-radius: 5px;
 }
 .chat-pin-x:hover { color: var(--danger); background: var(--surface-3); }
+
+/* ============================================================
+   PHONE MODE — App.isPhone(), <= 640px (same breakpoint as PHONE_MQ in
+   js/state.js; keep both numbers in sync if either ever changes).
+
+   Only Dashboard, Board and Admin are reachable at this width (see
+   renderViewTabs in js/render.js) — Timeline and Planning are drag/resize,
+   hover-tooltip surfaces that don't survive a touch screen, so they're
+   simply not offered rather than crammed in worse. Everything below is in
+   service of two things: nothing to tap or read is smaller than
+   comfortable one-handed, and a dense grid drops its secondary columns
+   rather than squeeze them or force a sideways scroll — the detail they'd
+   have shown is a tap into a dialog away (App.editTask, or the row's own
+   inline edit in the User Directory).
+   ============================================================ */
+@media (max-width: 640px) {
+
+  /* ---- topbar & tabs ---- */
+  #topbar { flex-wrap: wrap; height: auto; min-height: 56px; row-gap: 8px; padding: 10px 14px; }
+  /* the mark alone still identifies the app; on a phone the tab bar needs
+     the width more than the wordmark does */
+  .brand-name, .brand-sub { display: none; }
+  .topbar-spacer { display: none; }
+  .view-tabs { flex-wrap: wrap; }
+  .view-tab { padding: 12px 16px; font-size: 13.5px; }
+  .view-tab .ic { font-size: 15px; }
+  /* the name is also in the chip's title tooltip; the avatar plus role
+     dropdown is enough to identify who's signed in and act as them */
+  .user-name { display: none; }
+  .role-select { padding: 5px 10px; }
+  .role-dd { font-size: 14px; }
+
+  /* ---- toolbar (Show / Dept / Owner / search — Board & Dashboard) ---- */
+  #toolbar { padding: 10px 14px; gap: 10px; }
+  /* the select's current value already says what it is; the label above
+     it is the kind of secondary text this mode is explicitly trimming */
+  .toolbar-label { display: none; }
+  .filter, #search {
+    padding: 12px 13px; font-size: 14px; min-height: 46px; box-sizing: border-box;
+  }
+  #search { min-width: 0; flex: 1 1 170px; }
+
+  /* ---- buttons, inputs & chips, everywhere Dashboard/Board/Admin use them ---- */
+  .btn-primary, .btn-ghost, .btn-danger { padding: 13px 18px; font-size: 14.5px; min-height: 46px; }
+  button.ghost { padding: 12px 16px; font-size: 13.5px; min-height: 44px; }
+  .btn-mini { width: 40px; height: 40px; font-size: 15px; }
+  .fld { padding: 13px 14px; font-size: 15px; min-height: 46px; box-sizing: border-box; }
+  .fld-label { font-size: 13.5px; }
+  select.fld { padding-right: 30px; }
+  .modal-overlay { padding: 16px 10px; }
+  .modal-title { font-size: 19px; }
+  .modal-subtitle { font-size: 12.5px; }
+
+  /* ---- Board: an episode row's status/stage/date cluster already drops
+     at 700px (see .ep-right above); at phone width the subitem grid does
+     the same thing for the same reason — Department, Start, Due and
+     Dependency are exactly the fields App.editTask already shows in full,
+     so tapping the row for them beats reading seven columns squeezed into
+     one screen width. Name, owner and status (which doubles as the quick
+     status-change control) are what's actually acted on day to day, so
+     those three stay. ---- */
+  .subtable { overflow-x: visible; }
+  .subgrid { min-width: 0; }
+  .subrow { grid-template-columns: 1fr 38px 108px; column-gap: 8px; }
+  .subrow .cell.c-dept, .subrow .cell.c-date, .subrow .cell.c-deps { display: none; }
+  .subrow.head .cell:nth-child(2), .subrow.head .cell:nth-child(5),
+  .subrow.head .cell:nth-child(6), .subrow.head .cell:nth-child(7) { display: none; }
+  .subrow .cell.c-name { font-size: 13.5px; }
+  .status-cell { font-size: 12px; min-height: 46px; }
+  .status-opt { min-height: 46px; font-size: 12.5px; }
+
+  /* ---- Admin: User Directory — same reasoning as the Board grid above.
+     Integrations and the live-task load bar are read-only glance info;
+     dropping them leaves name, role/department and the row's own actions
+     (which already open into inline edit, department a select, password a
+     dialog) as what phone mode calls "important". */
+  .adm-table:not(.no-integ) .adm-thead .cell:nth-child(3),
+  .adm-table:not(.no-integ) .adm-thead .cell:nth-child(4),
+  .adm-table:not(.no-integ) .adm-row .cell:nth-child(3),
+  .adm-table:not(.no-integ) .adm-row .cell:nth-child(4) { display: none; }
+  .adm-table:not(.no-integ) .adm-thead,
+  .adm-table:not(.no-integ) .adm-row { grid-template-columns: 1.6fr 1fr 76px; }
+  .adm-table.no-integ .adm-thead .cell:nth-child(3),
+  .adm-table.no-integ .adm-row .cell:nth-child(3) { display: none; }
+  .adm-table.no-integ .adm-thead,
+  .adm-table.no-integ .adm-row { grid-template-columns: 1.6fr 1fr 76px; }
+  .adm-row { padding: 12px 14px; }
+  .adm-name { font-size: 13.5px; }
+  .adm-tab { padding: 11px 14px; font-size: 13px; }
+
+  /* ---- Dashboard phone stack (App.dashboard.renderPhone) — a plain
+     top-to-bottom list, not the absolutely-positioned tiling grid, so the
+     desktop rect math (.dw's position:absolute) is overridden back to a
+     normal block each widget just sizes itself. ---- */
+  .dash-hello { flex-wrap: wrap; }
+  .dash-hi { font-size: 19px; }
+  .dash-phone { display: flex; flex-direction: column; gap: 12px; }
+  .dash-phone .widget { height: auto; min-height: 0; }
+  .dash-phone .widget-body { overflow-y: visible; }
+  .widget-title { font-size: 13.5px; }
+  .widget-sub { font-size: 11.5px; }
+  .bar-row .bl, .bar-row .bv { font-size: 12.5px; }
+  .pr-row, .risk-item { min-height: 46px; }
+}

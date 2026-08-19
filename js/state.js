@@ -435,6 +435,23 @@ window.App = window.App || {};
   App.isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
   App.shortcutLabel = (keys) => (App.isMac ? '⌘' : 'Ctrl+') + keys;
 
+  /* Phone mode — driven by viewport width, not device sniffing, so a narrow
+     desktop window and a real phone get the same treatment (and a tablet or
+     a phone turned sideways doesn't). Timeline and Planning are dense,
+     drag-and-resize, hover-tooltip surfaces that don't survive a touch
+     screen at this width, so phone mode drops them from the tab bar
+     entirely (see renderViewTabs in render.js) rather than trying to cram
+     them in — Dashboard, Board and (role permitting) Admin cover what's
+     actually usable one-handed.
+     The matchMedia listener means rotating a phone or resizing a test
+     window flips the mode live — App.render() re-derives the tab bar and
+     the phone/desktop redirect guard on every call, so nothing needs to
+     poll. Same breakpoint as the CSS "phone" media query in style.css —
+     keep the two numbers in sync if either ever changes. */
+  const PHONE_MQ = window.matchMedia('(max-width: 640px)');
+  App.isPhone = () => PHONE_MQ.matches;
+  PHONE_MQ.addEventListener('change', () => { if (App.state.data) App.render(); });
+
   App.uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
   App.initials = (name) => name.split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
 
