@@ -145,7 +145,17 @@ window.App = window.App || {};
         box.appendChild(el('.ws-note', null, 'Reading the production folders…'));
         return;
       }
-      box.appendChild(this._project(ep, su, m.data));
+      /* Project is dropped from the phone panel entirely, not just its
+         upload/create action — "Create Project" opens a multi-step picker
+         (application → template → copy) built for a mouse and a desktop app
+         to hand off to, neither of which exists on a phone, and "Open
+         Project"/"Open folder" launch a desktop app on the machine running
+         the server, which is meaningless from a phone anyway. Assets and
+         Deliver stay: what's already there is worth seeing on the go, and
+         Deliver's own upload actions are what's actually being asked for
+         below — this just also removes the one section that has no
+         read-only mode to fall back to. */
+      if (!App.isPhone()) box.appendChild(this._project(ep, su, m.data));
       box.appendChild(this._assets(ep, su, m.data));
       box.appendChild(this._deliver(ep, su, m.data));
     },
@@ -453,39 +463,48 @@ window.App = window.App || {};
         return wrap;
       }
 
-      const status = el('.ws-progress');
-      const drop = el('.ws-drop', null, [
-        el('.ws-drop-main', null, [App.icon('upload'), '  Drop files here to deliver']),
-        el('.ws-drop-sub', null, 'or click to browse the volume — held in !!_Mezzanine/' +
-          d.deliverable + ' until this task is approved')
-      ]);
+      /* Phone drops every way to ADD something here — the drop zone (there's
+         nothing to drag from on a phone), "Pick from the volume" (a mounted
+         drive on the machine running the server, not the phone), and "Add a
+         link". What's already delivered still renders below exactly as on
+         desktop — this is the one place in the panel that genuinely has a
+         read-only mode to fall back to, unlike Project. */
+      const phone = App.isPhone();
+      if (!phone) {
+        const status = el('.ws-progress');
+        const drop = el('.ws-drop', null, [
+          el('.ws-drop-main', null, [App.icon('upload'), '  Drop files here to deliver']),
+          el('.ws-drop-sub', null, 'or click to browse the volume — held in !!_Mezzanine/' +
+            d.deliverable + ' until this task is approved')
+        ]);
 
-      ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => {
-        e.preventDefault(); e.stopPropagation(); drop.classList.add('over');
-      }));
-      ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => {
-        e.preventDefault(); e.stopPropagation(); if (ev === 'dragleave') drop.classList.remove('over');
-      }));
-      drop.addEventListener('drop', e => {
-        drop.classList.remove('over');
-        const files = e.dataTransfer && e.dataTransfer.files;
-        if (files && files.length) this._upload([...files], status);
-      });
-      /* Clicking opens OUR file browser, never <input type="file">. A native file
-         dialog crashes the embedded webview the app runs in — the same reason
-         window.confirm() had to be replaced — and a native dialog is Finder,
-         which this whole feature exists to avoid. */
-      drop.addEventListener('click', () => this._pickFromMount());
+        ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => {
+          e.preventDefault(); e.stopPropagation(); drop.classList.add('over');
+        }));
+        ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => {
+          e.preventDefault(); e.stopPropagation(); if (ev === 'dragleave') drop.classList.remove('over');
+        }));
+        drop.addEventListener('drop', e => {
+          drop.classList.remove('over');
+          const files = e.dataTransfer && e.dataTransfer.files;
+          if (files && files.length) this._upload([...files], status);
+        });
+        /* Clicking opens OUR file browser, never <input type="file">. A native file
+           dialog crashes the embedded webview the app runs in — the same reason
+           window.confirm() had to be replaced — and a native dialog is Finder,
+           which this whole feature exists to avoid. */
+        drop.addEventListener('click', () => this._pickFromMount());
 
-      wrap.appendChild(drop);
-      wrap.appendChild(status);
+        wrap.appendChild(drop);
+        wrap.appendChild(status);
 
-      wrap.appendChild(el('.ws-actions', null, [
-        // big media is already on the mount — copy it in place instead of
-        // pushing gigabytes through the browser
-        el('button.btn-ghost.ws-btn', { onclick: () => this._pickFromMount() }, [App.icon('archive'), ' Pick from the volume']),
-        el('button.btn-ghost.ws-btn', { onclick: () => this._addLink() }, [App.icon('link'), ' Add a link'])
-      ]));
+        wrap.appendChild(el('.ws-actions', null, [
+          // big media is already on the mount — copy it in place instead of
+          // pushing gigabytes through the browser
+          el('button.btn-ghost.ws-btn', { onclick: () => this._pickFromMount() }, [App.icon('archive'), ' Pick from the volume']),
+          el('button.btn-ghost.ws-btn', { onclick: () => this._addLink() }, [App.icon('link'), ' Add a link'])
+        ]));
+      }
 
       const fileRow = (f, which) => el('button.ws-item', {
         onclick: () => this._open({ which, name: f.name })
@@ -507,7 +526,9 @@ window.App = window.App || {};
           App.icon('link', { cls: 'ws-ic' }),
           el('a.ws-name', { href: l.url, target: '_blank', rel: 'noopener noreferrer' }, l.url.replace(/^https?:\/\//, '')),
           el('span.ws-meta', null, l.by),
-          el('button.ws-x', { title: 'Remove link', onclick: () => { App.removeTaskLink(ep.id, su.key, l.id); this._render(); } }, '✕')
+          // removing is a mutation, not a view — stays off phone with the
+          // rest of this section's editing actions
+          phone ? null : el('button.ws-x', { title: 'Remove link', onclick: () => { App.removeTaskLink(ep.id, su.key, l.id); this._render(); } }, '✕')
         ])));
         wrap.appendChild(el('.ws-delivered', null, [
           el('.ws-sub', null, [
