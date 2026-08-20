@@ -928,15 +928,40 @@ function openNatively(target) {
   child.unref();
 }
 
-// The master directory + the show/episode/pipeline a workspace request refers to,
-// or an { error } describing what's missing.
-async function resolveTaskContext(body) {
+/* The master directory + the show/episode/pipeline a workspace request
+   refers to, or an { error } describing what's missing.
+
+   `masterOk` is kept separate from board/pipeline validity on purpose: not
+   having a reachable master directory is an environment fact (this
+   particular server has no mounted volume), not a reason to fail a request
+   about an episode and task that are perfectly real. Every caller EXCEPT
+   the read-only workspace endpoint still wants the old fail-fast behaviour
+   — creating a project or accepting an upload genuinely can't proceed
+   without a real filesystem — so that's the default; only a caller that
+   explicitly opts in via `allowMissingMaster` gets a context back instead
+   of an error when the mount isn't there. */
+async function resolveTaskContext(body, opts) {
   const { data } = await storage.get();
   if (!data) return { error: 'no board state yet' };
   const masterPath = ENV.MASTER_PATH || (data.storage && data.storage.masterPath) || '';
-  if (!masterPath) return { error: 'No master directory set — an admin can set one in Admin → Workflow → Storage' };
-  if (!path.isAbsolute(masterPath)) return { error: 'Master directory must be an absolute path' };
-  if (!fs.existsSync(masterPath)) return { error: 'Master directory not found — is LucidLink mounted?' };
+  let masterOk = true, masterError = null;
+  if (!masterPath) {
+    masterOk = false;
+    masterError = 'No master directory set — an admin can set one in Admin → Workflow → Storage';
+  } else if (!path.isAbsolute(masterPath)) {
+    masterOk = false;
+    masterError = 'Master directory must be an absolute path';
+  } else if (!fs.existsSync(masterPath)) {
+    masterOk = false;
+    // Distinct from the two cases above on purpose: those are configuration
+    // mistakes an admin can fix in Admin → Workflow → Storage. This one is
+    // an environment fact instead — a path that's real on the machine that
+    // set it (a studio Mac with the volume mounted) simply doesn't exist on
+    // whichever server answered this request (e.g. a hosted deploy with no
+    // LucidLink mount) — no amount of re-typing the path in Admin fixes that.
+    masterError = 'Production folders aren’t available from this server — open the board from a machine with the volume mounted.';
+  }
+  if (!masterOk && !(opts && opts.allowMissingMaster)) return { error: masterError };
 
   const ep = (data.episodes || []).find(e => e.id === body.epId);
   if (!ep) return { error: 'unknown episode' };
@@ -947,7 +972,7 @@ async function resolveTaskContext(body) {
   catch (e) { return { error: e.message }; }
   const paths = folders.taskPaths(ep, pipeline, body.taskKey);
   if (!paths) return { error: 'that task is not in this show’s pipeline' };
-  return { data, masterPath, show, ep, pipeline, paths };
+  return { data, masterPath: masterOk ? masterPath : null, masterOk, masterError, show, ep, pipeline, paths };
 }
 
 /* ------------------------------------------------------------- helpers ---- */
@@ -1368,13 +1393,51 @@ const server = http.createServer(async (req, res) => {
          pipeline in the body — seed shows don't carry one in stored state. */
       if (route === 'POST /api/task/workspace') {
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body);
+        // Read-only, and most of what it shows (whose turn it is, what's
+        // pending) comes from board state, not the filesystem — so this is
+        // the one caller that keeps going without a mounted master directory,
+        // rather than failing the whole request the way every other
+        // task-workspace route still does.
+        const ctx = await resolveTaskContext(body, { allowMissingMaster: true });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
-        const { data, masterPath, show, ep, pipeline, paths } = ctx;
-
-        const rel = (p) => folders.resolveIn(masterPath, show, p);
+        const { data, masterPath, masterOk, masterError, show, ep, pipeline, paths } = ctx;
         const task = pipeline.find(t => t.key === body.taskKey);
 
+        /* Dependency STATUS is board data — always known. Dependency FILES
+           need the mount — `items` is left undefined (not []) when it
+           can't be checked, so the client can tell "asked, found nothing"
+           apart from "couldn't ask". That distinction is what lets Assets
+           keep saying something useful (who it's waiting on, and why)
+           without ever claiming a file count it didn't actually check. */
+        const deps = (task.deps || []).map(depKey => {
+          const dt = pipeline.find(t => t.key === depKey);
+          if (!dt) return null;
+          const dp = folders.taskPaths(ep, pipeline, depKey);
+          const items = (masterOk && dp) ? folders.listDir(folders.resolveIn(masterPath, show, dp.publish)) : null;
+          return {
+            key: depKey, name: dt.name, dept: dt.dept,
+            status: (ep.statuses && ep.statuses[depKey]) || 'not_started',
+            publish: dp ? dp.publish : null,
+            sameFolder: !!dp && dp.publish === paths.publish,
+            items: items ? items.map(i => ({ name: i.name, dir: i.dir, size: i.size, path: i.path })) : null
+          };
+        }).filter(Boolean);
+
+        if (!masterOk) {
+          return sendJson(res, 200, {
+            ok: true, masterOk: false, masterError,
+            deliverable: paths.deliverable,
+            paths: { work: paths.work, mezzanine: paths.mezzanine, publish: paths.publish },
+            deps
+            // Deliberately no root/absolute/work/mezzanine/publish/templates —
+            // every one of those is a filesystem listing this server can't
+            // perform, and standing in a stale or empty array for "I don't
+            // have this" is exactly the kind of confidently-wrong answer
+            // that's worse than the section saying so plainly instead.
+          });
+        }
+
+        const rel = (p) => folders.resolveIn(masterPath, show, p);
         // project files = what's sitting in the task's working folder
         const workAbs = rel(paths.work);
         const work = folders.listDir(workAbs);
@@ -1384,26 +1447,8 @@ const server = http.createServer(async (req, res) => {
         // to start a project from readme.txt.
         const templates = folders.templatesFor(masterPath, show);
 
-        // dependency assets — the heart of the Assets panel
-        const deps = (task.deps || []).map(depKey => {
-          const dt = pipeline.find(t => t.key === depKey);
-          if (!dt) return null;
-          const dp = folders.taskPaths(ep, pipeline, depKey);
-          const items = dp ? folders.listDir(rel(dp.publish)) : [];
-          return {
-            key: depKey, name: dt.name, dept: dt.dept,
-            status: (ep.statuses && ep.statuses[depKey]) || 'not_started',
-            publish: dp ? dp.publish : null,
-            // An earlier iteration of the SAME deliverable (Animatic V2 → V3,
-            // Layout → Blocking) shares this task's folder, so it isn't an
-            // incoming handoff — the UI lists it as a version, not an asset.
-            sameFolder: !!dp && dp.publish === paths.publish,
-            items: items.map(i => ({ name: i.name, dir: i.dir, size: i.size, path: i.path }))
-          };
-        }).filter(Boolean);
-
         return sendJson(res, 200, {
-          ok: true,
+          ok: true, masterOk: true,
           local: isLocalRequest(req),
           root: folders.resolveIn(masterPath, show, ''),
           deliverable: paths.deliverable,

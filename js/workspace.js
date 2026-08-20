@@ -165,8 +165,16 @@ window.App = window.App || {};
       const wrap = el('.ws-block');
       wrap.appendChild(el('.ws-head', null, [
         el('.modal-section-title', { style: { margin: '0' } }, [App.icon('mixer'), ' Project']),
-        el('span.ws-path', { title: d.absolute.work }, d.deliverable + '/')
+        el('span.ws-path', d.masterOk ? { title: d.absolute.work } : null, d.deliverable + '/')
       ]));
+
+      /* Every project action needs a real filesystem to create, list or open
+         a file in — there's no read-only fallback the way Assets and Deliver
+         have one, so this server saying so plainly is the whole section. */
+      if (!d.masterOk) {
+        wrap.appendChild(el('.ws-note', null, d.masterError));
+        return wrap;
+      }
 
       const projects = d.work.filter(f => !f.dir);
       const actions = el('.ws-actions');
@@ -376,10 +384,17 @@ window.App = window.App || {};
       // and are already listed under Project.
       const deps = d.deps.filter(x => !x.sameFolder);
       const priorVersions = d.deps.filter(x => x.sameFolder);
-      const ready = deps.filter(x => x.items.length || App.taskLinks(ep.id, x.key).length).length;
+      /* `items` is null rather than [] for a dependency this server couldn't
+         check (no mounted master directory) — see server.js. Kept out of the
+         ready count entirely: "0 of 3 ready" would read as nothing's arrived,
+         when the honest answer is this server can't tell. */
+      const checked = deps.filter(x => x.items !== null);
+      const unchecked = deps.length - checked.length;
+      const ready = checked.filter(x => x.items.length || App.taskLinks(ep.id, x.key).length).length;
       wrap.appendChild(el('.ws-head', null, [
         el('.modal-section-title', { style: { margin: '0' } }, [App.icon('download'), ' Assets']),
-        el('span.ws-path', null, deps.length ? ready + ' of ' + deps.length + ' ready' : 'no incoming assets')
+        el('span.ws-path', null, !deps.length ? 'no incoming assets'
+          : ready + ' of ' + checked.length + ' ready' + (unchecked ? ' · ' + unchecked + ' unconfirmed' : ''))
       ]));
 
       if (!deps.length) {
@@ -392,8 +407,9 @@ window.App = window.App || {};
 
       deps.forEach(dep => {
         const links = App.taskLinks(ep.id, dep.key);
-        const items = dep.items;
-        const has = items.length + links.length;
+        const items = dep.items;              // an array, or null if unchecked
+        const unknown = items === null;
+        const has = unknown ? links.length : items.length + links.length;
         const dept = App.dept(dep.dept);
         const st = App.status(dep.status);
 
@@ -402,15 +418,17 @@ window.App = window.App || {};
           el('span.dept-chip', { style: { padding: '1px 7px', fontSize: '10px' } },
             [el('span.dot', { style: { background: dept.color } }), dept.label]),
           el('span.ws-dep-name', null, dep.name),
-          has
-            ? el('span.ws-chip.ok', null, '✓ ' + has + ' asset' + (has === 1 ? '' : 's'))
+          has ? el('span.ws-chip.ok', null, '✓ ' + has + ' asset' + (has === 1 ? '' : 's'))
+            // unknown: this server can't list files at all — distinct from
+            // "checked, and there's genuinely nothing" (Pending, below)
+            : unknown ? el('span.ws-chip.pending', { title: 'This server has no access to production files — upstream status: ' + st.label }, '? Unconfirmed')
             // nothing published yet — say why, using the upstream task's own status
             : el('span.ws-chip.pending', { title: 'Upstream status: ' + st.label }, '⏳ Pending')
         ]));
 
         if (has) {
           const list = el('.ws-list');
-          items.forEach(f => list.appendChild(el('button.ws-item', {
+          (items || []).forEach(f => list.appendChild(el('button.ws-item', {
             title: f.path,
             onclick: () => this._openDep(dep, f.name)
           }, [
@@ -430,10 +448,12 @@ window.App = window.App || {};
           row.appendChild(list);
         } else {
           row.appendChild(el('.ws-note.tight', null,
-            st.key === 'approved'
-              ? 'Approved, but nothing was delivered for it.'
-              : 'Waiting on ' + dept.label + ' — currently ' + st.label +
-                '. Anything already delivered stays in Mezzanine until it’s approved.'));
+            unknown
+              ? 'This server can’t check ' + dept.label + '’s files — currently ' + st.label + '.'
+              : st.key === 'approved'
+                ? 'Approved, but nothing was delivered for it.'
+                : 'Waiting on ' + dept.label + ' — currently ' + st.label +
+                  '. Anything already delivered stays in Mezzanine until it’s approved.'));
         }
         wrap.appendChild(row);
       });
@@ -454,7 +474,7 @@ window.App = window.App || {};
       const wrap = el('.ws-block');
       wrap.appendChild(el('.ws-head', null, [
         el('.modal-section-title', { style: { margin: '0' } }, [App.icon('upload'), ' Deliver']),
-        el('span.ws-path', { title: d.absolute.mezzanine }, '!!_Mezzanine/' + d.deliverable + '/')
+        el('span.ws-path', d.masterOk ? { title: d.absolute.mezzanine } : null, '!!_Mezzanine/' + d.deliverable + '/')
       ]));
 
       const canEdit = App.canEditTask(App.state.role, su);
@@ -463,14 +483,17 @@ window.App = window.App || {};
         return wrap;
       }
 
-      /* Phone drops every way to ADD something here — the drop zone (there's
-         nothing to drag from on a phone), "Pick from the volume" (a mounted
-         drive on the machine running the server, not the phone), and "Add a
-         link". What's already delivered still renders below exactly as on
-         desktop — this is the one place in the panel that genuinely has a
-         read-only mode to fall back to, unlike Project. */
+      /* Two different reasons end up hiding the same upload UI, so both are
+         checked together rather than nested: phone drops it because there's
+         nothing to drag from and no mounted drive to pick from on a phone;
+         no master directory drops it because this SERVER has no mounted
+         drive, on any device. What's already delivered — files a server
+         with a real mount put there, and links, which are board state and
+         never needed a mount at all — still renders below either way; this
+         is the one section that genuinely has a read-only mode to fall back
+         to, unlike Project. */
       const phone = App.isPhone();
-      if (!phone) {
+      if (!phone && d.masterOk) {
         const status = el('.ws-progress');
         const drop = el('.ws-drop', null, [
           el('.ws-drop-main', null, [App.icon('upload'), '  Drop files here to deliver']),
@@ -544,22 +567,29 @@ window.App = window.App || {};
       }
 
       // already approved and published — what downstream tasks can actually see
-      if (d.publish.length) {
+      const publish = d.publish || [];
+      if (publish.length) {
         const list = el('.ws-list');
-        d.publish.forEach(f => list.appendChild(fileRow(f, 'publish')));
+        publish.forEach(f => list.appendChild(fileRow(f, 'publish')));
         wrap.appendChild(el('.ws-delivered', null, [
           el('.ws-sub', null, ['Published · ', el('span.ws-chip.ok', null, 'in use downstream')]),
           list
         ]));
       }
 
-      /* Nothing awaiting approval and nothing published — on desktop the
-         drop zone above still gives the section content, but on phone that's
-         gone too, and without this the whole block reads as just a bare
-         "Deliver" header with nothing under it. Assets already says
-         something in its own empty case; this is the same courtesy. */
-      if (phone && !mezz.length && !links.length && !d.publish.length) {
-        wrap.appendChild(el('.ws-note', null, 'Nothing delivered yet — adding files or a link needs a desktop.'));
+      /* Nothing awaiting approval, nothing published, and (for whichever
+         reason) no drop zone above to give the section content either — on
+         desktop with a working mount that combination can't happen, since
+         the drop zone itself is always there; here it means the block would
+         otherwise be a bare "Deliver" header over empty space. Assets
+         already says something in its own empty case; this is the same
+         courtesy, worded for whichever reason actually applies — a missing
+         mount is a fact about this server, true on any device, so it's
+         named first when both happen to apply at once. */
+      if ((phone || !d.masterOk) && !mezz.length && !links.length && !publish.length) {
+        wrap.appendChild(el('.ws-note', null, !d.masterOk
+          ? d.masterError
+          : 'Nothing delivered yet — adding files or a link needs a desktop.'));
       }
       return wrap;
     },
