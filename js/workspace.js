@@ -552,6 +552,15 @@ window.App = window.App || {};
           list
         ]));
       }
+
+      /* Nothing awaiting approval and nothing published — on desktop the
+         drop zone above still gives the section content, but on phone that's
+         gone too, and without this the whole block reads as just a bare
+         "Deliver" header with nothing under it. Assets already says
+         something in its own empty case; this is the same courtesy. */
+      if (phone && !mezz.length && !links.length && !d.publish.length) {
+        wrap.appendChild(el('.ws-note', null, 'Nothing delivered yet — adding files or a link needs a desktop.'));
+      }
       return wrap;
     },
 
