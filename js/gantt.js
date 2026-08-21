@@ -223,6 +223,15 @@ window.App = window.App || {};
         body.appendChild(el('.today-line', { style: { left: tx + 'px' } }));
       }
 
+      // "+ Create" row — drawn before Producer Notes so it sits at the very
+      // top. If the role lost the right mid-session (the role selector
+      // changed while it was armed), clear it silently rather than render an
+      // interactive track the current role can't actually use.
+      if (App.state.creatingOnGantt && !(App.canManageShows(App.state.role) || App.canEditSchedule(App.state.role))) {
+        App.state.creatingOnGantt = false;
+      }
+      if (App.state.creatingOnGantt) this.createRow(body, startIso, dw, xOf);
+
       // Producer Notes swimlane — per-show annotations, only meaningful when a
       // single show is in view (nonsensical mixed across shows on "All shows").
       if (App.state.filters.show !== 'all') this.producerNotesLane(body, App.state.filters.show, startIso, dw, xOf);
@@ -391,6 +400,18 @@ window.App = window.App || {};
       scroll.addEventListener('mousemove', hoverHandler);
 
       const downHandler = (e) => {
+        // "+ Create" — DRAWING: empty cell on the blank Create row → draw a
+        // new episode/task. Permission is live-checked here too, not just
+        // trusted from render time, matching the same discipline the notes
+        // branch right below already uses (App.canEditNotes() inline).
+        const createTrack = e.target.closest('.g-row.create-row .g-track.cr-drawable');
+        if (createTrack && App.state.creatingOnGantt &&
+            (App.canManageShows(App.state.role) || App.canEditSchedule(App.state.role))) {
+          e.preventDefault();
+          this.startCreateDraw(e, createTrack);
+          return;
+        }
+
         // producer notes — DRAWING: empty grid cell in a notes row → draw a new note
         const drawTrack = e.target.closest('.g-row.pn-row .g-track.pn-drawable');
         if (drawTrack && !e.target.closest('.pn-note') && App.canEditNotes()) {
@@ -465,7 +486,7 @@ window.App = window.App || {};
       const dw = this._dw, hw = this._hideWeekends, xOf = this._xOf;
       const colDelta = Math.round((e.clientX - d.startClientX) / dw);
 
-      if (d.kind === 'note-draw') {
+      if (d.kind === 'note-draw' || d.kind === 'create-draw') {
         const cur = d.startCol + Math.round((e.clientX - d.startClientX) / dw);
         const a = Math.max(0, Math.min(d.startCol, cur)), b = Math.max(0, Math.max(d.startCol, cur));
         d.curA = a; d.curB = b;
@@ -473,8 +494,9 @@ window.App = window.App || {};
         d.ghost.style.left = (a * dw) + 'px';
         d.ghost.style.width = ((b - a + 1) * dw) + 'px';
         const sIso = App.addVisibleDays(this._startIso, a, hw), dIso = App.addVisibleDays(this._startIso, b, hw);
+        const dotColor = d.kind === 'create-draw' ? '#9b5bff' : '#5b6cff';
         const tip = dragTipEl(); tip.innerHTML = '';
-        tip.appendChild(el('span.tip-dot', { style: { background: '#5b6cff' } }));
+        tip.appendChild(el('span.tip-dot', { style: { background: dotColor } }));
         tip.appendChild(document.createTextNode(App.fmtRange(sIso, dIso)));
         tip.style.display = 'flex'; tip.style.left = e.clientX + 'px'; tip.style.top = (e.clientY - 38) + 'px';
         return;
@@ -542,6 +564,21 @@ window.App = window.App || {};
             const nEl = this._scrollEl && this._scrollEl.querySelector('.pn-note[data-note-id="' + id + '"]');
             if (nEl) this.openNoteEditor(nEl);
           });
+        }
+        return;
+      }
+
+      if (d.kind === 'create-draw') {
+        d.ghost.remove();
+        if (d.moved) {
+          const sIso = App.addVisibleDays(this._startIso, d.curA, this._hideWeekends);
+          const dIso = App.addVisibleDays(this._startIso, d.curB, this._hideWeekends);
+          // one-shot per toolbar click: turn the toggle off and re-render
+          // before opening the modal, so a Cancel doesn't leave the row
+          // sitting there armed for an accidental second draw
+          App.state.creatingOnGantt = false;
+          App.render();
+          App.createFromDrag.open({ startIso: sIso, dueIso: dIso, showId: App.state.filters.show });
         }
         return;
       }
@@ -1040,6 +1077,21 @@ window.App = window.App || {};
     // Click-drag an empty grid cell to draw a new note, click a note to
     // edit/recolour/delete, drag the middle to move or an edge to resize
     // (weekend-aware, same math as task bars).
+    /* "+ Create" row — a blank canvas at the very top of the timeline,
+       identical in every sort mode (no per-row context to infer show/episode/
+       department from once a row spans more than one episode, so nothing here
+       tries to). Drawing a date range opens App.createFromDrag (js/dialog.js)
+       to ask explicitly and confirm before anything is written — unlike a
+       Producer Note, an episode or task is a structural, team-visible entity,
+       not a lightweight annotation that's safe to save-then-edit. */
+    createRow(body, startIso, dw, xOf) {
+      const row = el('.g-row.create-row');
+      row.appendChild(el('.g-label.create-label', null,
+        el('.l-title', null, el('span', { style: { fontSize: '10px', color: 'var(--text-3)' } }, 'Drag to create an episode or task →'))));
+      row.appendChild(el('.g-track.cr-drawable'));
+      body.appendChild(row);
+    },
+
     producerNotesLane(body, showId, startIso, dw, xOf) {
       const show = App.show(showId);
       if (!show) return;
@@ -1133,6 +1185,24 @@ window.App = window.App || {};
       trackEl.appendChild(ghost);
       this._drag = {
         kind: 'note-draw', showId: App.state.filters.show, ghost,
+        startCol, startClientX: e.clientX, curA: startCol, curB: startCol, moved: false
+      };
+      document.body.classList.add('gantt-dragging');
+      document.body.style.cursor = 'ew-resize';
+    },
+
+    // mirrors startNoteDraw exactly — same ghost/ drag mechanics, different
+    // color so a create-draw never reads as "drawing a note"
+    startCreateDraw(e, trackEl) {
+      const dw = this._dw;
+      const rect = trackEl.getBoundingClientRect();
+      const startCol = Math.max(0, Math.round((e.clientX - rect.left) / dw));
+      const ghost = el('.create-ghost', {
+        style: { left: (startCol * dw) + 'px', width: dw + 'px', background: '#9b5bff', color: '#fff' }
+      }, el('span', null, 'New'));
+      trackEl.appendChild(ghost);
+      this._drag = {
+        kind: 'create-draw', ghost,
         startCol, startClientX: e.clientX, curA: startCol, curB: startCol, moved: false
       };
       document.body.classList.add('gantt-dragging');

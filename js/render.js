@@ -254,6 +254,17 @@ window.App = window.App || {};
           title: 'Re-Arrange: reorder a show’s remaining episodes'
         }, '⇅ Re-Arrange'));
       }
+
+      /* Two different rights (episode creation is Producer-only via
+         canManageShows; task creation is the broader canEditSchedule), so the
+         button shows if either passes — the dialog itself only offers what
+         the role in front of it can actually do. */
+      if (App.canManageShows(App.state.role) || App.canEditSchedule(App.state.role)) {
+        bar.appendChild(el('button.ghost' + (App.state.creatingOnGantt ? '.active' : ''), {
+          onclick: () => { App.state.creatingOnGantt = !App.state.creatingOnGantt; App.render(); },
+          title: 'Drag on the timeline to create a new episode or task'
+        }, '＋ Create'));
+      }
     }
 
     /* Legend — Timeline only, where bars are colour-coded by show and there's

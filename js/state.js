@@ -804,6 +804,7 @@ window.App = window.App || {};
     planning: { view: 'hub', editing: null, variant: 'C', selected: [] },  // planning module sub-navigation
     expanded: {},                     // episodeId -> bool (board)
     ganttExpanded: {},                // episodeId -> bool (timeline subitem drill-down)
+    creatingOnGantt: false,           // "+ Create" toggle armed — transient, never synced to teammates
     zoom: 16,                         // px per day on the timeline
     data: null
   };
