@@ -202,7 +202,8 @@ window.App = window.App || {};
         el('.adm-load-track', null, el('.adm-load-fill', { style: { width: pct + '%' } }))
       ])),
       el('.cell.adm-actions', null, editing
-        ? [el('button.btn-mini', { onclick: e => { e.stopPropagation(); App.state.admin.editing = null; App.render(); }, title: 'Done editing' }, '✓'),
+        ? [el('button.btn-mini', { onclick: e => { e.stopPropagation(); App.setPasswordDialog.open(p); }, title: 'Set password' }, App.icon('lock')),
+           el('button.btn-mini', { onclick: e => { e.stopPropagation(); App.state.admin.editing = null; App.render(); }, title: 'Done editing' }, '✓'),
            el('button.btn-mini.danger', { onclick: e => { e.stopPropagation(); App.removePerson(p.id); }, title: 'Remove user' }, '✕')]
         : App.icon('pencil', { cls: 'adm-edit-hint' }))
     ]);

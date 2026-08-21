@@ -585,6 +585,79 @@ function aggregate(rows, since) {
 
 const activity = config.databaseUrl ? makePgActivity(config.databaseUrl) : makeFileActivity();
 
+/* ------------------------------------------------ passwords (2 backends) --
+   Deliberately NOT part of board state (data.people). GET /api/state ships
+   the whole board to every signed-in browser verbatim — that's the entire
+   sync mechanism — so a hash stored alongside a person's name and email would
+   go out to every teammate's browser on every load. Hashed or not, that's an
+   offline-crackable password list handed to anyone who opens dev tools. This
+   store never rides that payload; it is read only by the two auth routes.
+
+   scrypt, not bcrypt: Node's crypto ships it, so this stays dependency-free.
+   N=16384 (2^14) is Node's own recommended minimum work factor. Format is
+   "salt:hash", both hex, so a future rehash to stronger parameters can be
+   read and verified as long as it exposes the same two hex fields. */
+const PASSWORD_PATH = path.join(DATA_DIR, 'passwords.json');
+const SCRYPT_OPTS = { N: 16384, r: 8, p: 1 };
+const SCRYPT_KEYLEN = 64;
+
+function hashPassword(plain) {
+  const salt = crypto.randomBytes(16);
+  const key = crypto.scryptSync(plain, salt, SCRYPT_KEYLEN, SCRYPT_OPTS);
+  return salt.toString('hex') + ':' + key.toString('hex');
+}
+// Constant-time compare of a hash that IS constant length, so no length or
+// early-exit leakage — same discipline as codeMatches() above.
+function verifyPassword(plain, stored) {
+  if (!stored || typeof stored !== 'string') return false;
+  const [saltHex, hashHex] = stored.split(':');
+  if (!saltHex || !hashHex) return false;
+  const salt = Buffer.from(saltHex, 'hex');
+  const want = Buffer.from(hashHex, 'hex');
+  if (want.length !== SCRYPT_KEYLEN) return false;
+  const got = crypto.scryptSync(plain, salt, SCRYPT_KEYLEN, SCRYPT_OPTS);
+  return crypto.timingSafeEqual(got, want);
+}
+
+function makeFilePasswords() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  let rows = readJson(PASSWORD_PATH, {});   // { [lowercased email]: hash }
+  return {
+    kind: 'json file',
+    async init() {},
+    async get(email) { return rows[email.toLowerCase()] || null; },
+    async set(email, hash) { rows[email.toLowerCase()] = hash; writeJson(PASSWORD_PATH, rows); },
+    async clear(email) { delete rows[email.toLowerCase()]; writeJson(PASSWORD_PATH, rows); }
+  };
+}
+
+function makePgPasswords(connectionString) {
+  const pool = getPgPool(connectionString);
+  return {
+    kind: 'postgres',
+    async init() {
+      await pool.query(
+        'CREATE TABLE IF NOT EXISTS user_passwords (' +
+        'email text PRIMARY KEY, hash text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())'
+      );
+    },
+    async get(email) {
+      const r = await pool.query('SELECT hash FROM user_passwords WHERE email = $1', [email.toLowerCase()]);
+      return r.rows[0] ? r.rows[0].hash : null;
+    },
+    async set(email, hash) {
+      await pool.query(
+        'INSERT INTO user_passwords (email, hash, updated_at) VALUES ($1, $2, now()) ' +
+        'ON CONFLICT (email) DO UPDATE SET hash = $2, updated_at = now()',
+        [email.toLowerCase(), hash]
+      );
+    },
+    async clear(email) { await pool.query('DELETE FROM user_passwords WHERE email = $1', [email.toLowerCase()]); }
+  };
+}
+
+const passwords = config.databaseUrl ? makePgPasswords(config.databaseUrl) : makeFilePasswords();
+
 /* Contextual task chat. Postgres only — there is no file backend, so chat is
    simply absent when the board runs on the JSON store (local preview). Shares
    the one pool rather than opening a second. Null here is a supported state,
@@ -1075,6 +1148,29 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
+    /* Real credentialed sign-in — works whether devLogin/accessCode are on or
+       off, unlike /auth/dev, because the password itself is the gate: an
+       admin chose to grant this specific person a way in, the same act as
+       adding them to the People directory in the first place. No domain
+       check either, for the same reason bootstrap admins in adminEmails may
+       sit outside allowedDomain — a password an admin set is authorization,
+       independent of what domain the address happens to be on. */
+    if (route === 'POST /auth/password') {
+      const body = JSON.parse(await readBody(req) || '{}');
+      const email = String(body.email || '').trim().toLowerCase();
+      const pw = String(body.password || '');
+      if (!email || !pw) return sendJson(res, 400, { error: 'Enter your email and password' });
+      const hash = await passwords.get(email);
+      // Same "invalid email or password" either way — confirming an address
+      // has no password set is a small enumeration leak otherwise.
+      if (!hash || !verifyPassword(pw, hash)) {
+        return sendJson(res, 401, { error: 'Incorrect email or password' });
+      }
+      const name = email.split('@')[0].split(/[._-]/).map(w => w[0] ? w[0].toUpperCase() + w.slice(1) : w).join(' ');
+      res.setHeader('Set-Cookie', sessionCookie(createSession({ email, name, picture: '', via: 'password' }), { secure: isSecure(req) }));
+      return sendJson(res, 200, { ok: true });
+    }
+
     if (route === 'POST /auth/logout') {
       res.setHeader('Set-Cookie', sessionCookie('', { expire: true, secure: isSecure(req) }));
       return sendJson(res, 200, { ok: true });
@@ -1086,6 +1182,57 @@ const server = http.createServer(async (req, res) => {
 
       if (route === 'GET /api/state') return sendJson(res, 200, await storage.get());
       if (route === 'GET /api/version') return sendJson(res, 200, { version: await storage.version() });
+
+      /* ---- passwords ----
+         Two different rights, deliberately not merged into one route: an
+         admin sets ANYONE's password without knowing the old one (the same
+         authority that adds someone to the People directory); a signed-in
+         user changes their OWN and must prove they still hold it. Neither
+         touches data.people or storage — see the note where `passwords` is
+         defined for why a hash can never ride the board sync. */
+      if (route === 'POST /api/admin/password') {
+        const s = getSession(req);
+        if (!config.adminEmails.map(e => e.toLowerCase()).includes(s.email)) {
+          return sendJson(res, 403, { error: 'Only admins can set another user’s password' });
+        }
+        const body = JSON.parse(await readBody(req) || '{}');
+        const email = String(body.email || '').trim().toLowerCase();
+        const pw = String(body.password || '');
+        if (!/^\S+@\S+\.\S+$/.test(email)) return sendJson(res, 400, { error: 'That’s not a valid email' });
+        if (pw.length < 8) return sendJson(res, 400, { error: 'Password must be at least 8 characters' });
+        await passwords.set(email, hashPassword(pw));
+        auditServer(s, 'account.passwordSet', { target: email });
+        return sendJson(res, 200, { ok: true });
+      }
+      if (route === 'DELETE /api/admin/password') {
+        const s = getSession(req);
+        if (!config.adminEmails.map(e => e.toLowerCase()).includes(s.email)) {
+          return sendJson(res, 403, { error: 'Only admins can remove a password' });
+        }
+        const body = JSON.parse(await readBody(req) || '{}');
+        const email = String(body.email || '').trim().toLowerCase();
+        if (!email) return sendJson(res, 400, { error: 'Missing email' });
+        await passwords.clear(email);
+        auditServer(s, 'account.passwordCleared', { target: email });
+        return sendJson(res, 200, { ok: true });
+      }
+      if (route === 'POST /api/account/password') {
+        const s = getSession(req);
+        const body = JSON.parse(await readBody(req) || '{}');
+        const current = String(body.currentPassword || '');
+        const next = String(body.newPassword || '');
+        if (next.length < 8) return sendJson(res, 400, { error: 'New password must be at least 8 characters' });
+        const hash = await passwords.get(s.email);
+        if (!hash) {
+          return sendJson(res, 409, { error: 'You don’t have a password set yet — ask an admin to set one first' });
+        }
+        if (!verifyPassword(current, hash)) {
+          return sendJson(res, 403, { error: 'Current password is incorrect' });
+        }
+        await passwords.set(s.email, hashPassword(next));
+        auditServer(s, 'account.passwordChanged', {});
+        return sendJson(res, 200, { ok: true });
+      }
 
       /* ---- contextual task chat -------------------------------------------
          Spec section 4. Every other route here is an exact string match; these
@@ -1834,6 +1981,9 @@ const server = http.createServer(async (req, res) => {
   // likewise backups — the board must still serve if the table can't be made
   try { await backups.init(); }
   catch (e) { console.error('Backup store init failed (backups disabled):', e.message); }
+  // and passwords — Google/dev sign-in must still work if this table can't be made
+  try { await passwords.init(); }
+  catch (e) { console.error('Password store init failed (password sign-in disabled):', e.message); }
   // chat is Postgres-only and equally optional: the tracker predates it and
   // must still serve without it
   if (chat) {

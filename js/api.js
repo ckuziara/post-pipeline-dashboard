@@ -324,6 +324,45 @@ window.App = window.App || {};
       location.href = location.pathname + location.hash;
     },
 
+    async passwordLogin(email, password) {
+      const r = await fetch('/auth/password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      if (!r.ok) throw new Error((await r.json()).error || 'sign-in failed');
+      location.href = location.pathname + location.hash;
+    },
+
+    // admin only — sets or replaces another person's password
+    async setPersonPassword(email, password) {
+      const r = await fetch('/api/admin/password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not set password');
+    },
+
+    async clearPersonPassword(email) {
+      const r = await fetch('/api/admin/password', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not remove password');
+    },
+
+    // self-service — changing your own requires proving you still hold it
+    async changeMyPassword(currentPassword, newPassword) {
+      const r = await fetch('/api/account/password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword, newPassword })
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not change password');
+    },
+
     async logout() {
       await fetch('/auth/logout', { method: 'POST' });
       location.href = location.pathname;

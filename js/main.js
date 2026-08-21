@@ -776,6 +776,20 @@ window.App = window.App || {};
     emailInput.addEventListener('keydown', e => { if (e.key === 'Enter') devSubmit(); });
     if (codeInput) codeInput.addEventListener('keydown', e => { if (e.key === 'Enter') devSubmit(); });
 
+    /* Password sign-in. Unlike dev sign-in this is real, admin-granted
+       authorization — an admin set this specific person's password the same
+       way they add them to the People directory — so it's offered regardless
+       of devLogin or the access code: those two gate the insecure bypass,
+       not this. Whether a given address actually HAS a password is only
+       findable by trying, same as the "incorrect email or password" reply
+       the server gives either way. */
+    const pwEmail = el('input.login-input', { type: 'email', placeholder: 'you@moonbug.com' });
+    const pwPass = el('input.login-input', { type: 'password', placeholder: 'Password' });
+    const pwSubmit = () => App.api.passwordLogin(pwEmail.value, pwPass.value)
+      .catch(e => App.toast(e.message, true));
+    pwEmail.addEventListener('keydown', e => { if (e.key === 'Enter') pwPass.focus(); });
+    pwPass.addEventListener('keydown', e => { if (e.key === 'Enter') pwSubmit(); });
+
     document.body.appendChild(el('.login-screen', null, el('.login-card', null, [
       App.icon('clapper', { cls: 'login-logo', size: 26 }),
       el('.login-title', null, 'Post Pipeline'),
@@ -784,7 +798,12 @@ window.App = window.App || {};
       el('a.login-google' + (opts.googleConfigured ? '' : '.disabled'),
         { href: opts.googleConfigured ? '/auth/google' : null },
         [el('span.login-g', { html: G_LOGO }), 'Sign in with Google']),
-      (!opts.googleConfigured ? el('.login-hint', null, 'Google SSO isn’t configured yet — the server owner can enable it (see README). Use the team sign-in below for now.') : null),
+      (!opts.googleConfigured ? el('.login-hint', null, 'Google SSO isn’t configured yet — the server owner can enable it (see README). Use one of the options below for now.') : null),
+      el('.login-div', null, el('span', null, 'or')),
+      el('.login-dev.stacked', null, [
+        pwEmail, pwPass,
+        el('button.btn-primary', { onclick: pwSubmit }, 'Sign in with password')
+      ]),
       (opts.devLogin ? el('.login-div', null, el('span', null, 'or')) : null),
       (opts.devLogin ? el('.login-dev' + (codeInput ? '.stacked' : ''), null, [
         emailInput,
