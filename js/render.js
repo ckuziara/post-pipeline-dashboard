@@ -244,27 +244,6 @@ window.App = window.App || {};
         el('button.ghost', { onclick: () => App.gantt.zoomBy(1.25), title: 'Zoom in (' + App.shortcutLabel('+') + ', or Ctrl+scroll on the chart)' }, '+'),
         el('button.ghost', { onclick: () => App.gantt.centerToday(), title: 'Scroll to today' }, '⊙ Today')
       ]));
-
-      /* Re-Arrange opens straight into its own dialog, which picks the show
-         itself — the current filter just preselects it when there is one. Only
-         offered to whoever may move dates at all. */
-      if (App.canEditSchedule(App.state.role)) {
-        bar.appendChild(el('button.ghost', {
-          onclick: () => App.rearrange.open(f.show !== 'all' ? f.show : null),
-          title: 'Re-Arrange: reorder a show’s remaining episodes'
-        }, '⇅ Re-Arrange'));
-      }
-
-      /* Two different rights (episode creation is Producer-only via
-         canManageShows; task creation is the broader canEditSchedule), so the
-         button shows if either passes — the dialog itself only offers what
-         the role in front of it can actually do. */
-      if (App.canManageShows(App.state.role) || App.canEditSchedule(App.state.role)) {
-        bar.appendChild(el('button.ghost' + (App.state.creatingOnGantt ? '.active' : ''), {
-          onclick: () => { App.state.creatingOnGantt = !App.state.creatingOnGantt; App.render(); },
-          title: 'Drag on the timeline to create a new episode or task'
-        }, '＋ Create'));
-      }
     }
 
     /* Legend — Timeline only, where bars are colour-coded by show and there's
@@ -317,11 +296,41 @@ window.App = window.App || {};
     box.appendChild(kpi('k-purple', review.length, '', 'Ready for review', review));
     box.appendChild(kpi('k-red', overdue.length, '', 'Overdue subitems', overdue));
     if (blocked.length) box.appendChild(kpi('k-red', blocked.length, '', 'Blocked by deps', blocked));
-    // Timeline has no separate toolbar of its own the way Board does (see
-    // App.board.showManager), so Add Show rides along in the kpis strip.
-    if (App.canManageShows(App.state.role)) {
-      box.appendChild(el('button.btn-addshow', { onclick: () => App.addShow.open() }, '＋ Add show'));
+
+    /* Re-Arrange, Create and Add Show all reshape the schedule rather than
+       filter the view, so they cluster together on the right of the KPI
+       strip, in one wrapper that owns the push-right — not each button
+       floating there on its own margin. Timeline has no separate toolbar of
+       its own the way Board does (see App.board.showManager), so this strip
+       is where they ride. */
+    const show = App.state.filters.show;
+    const actions = el('.kpi-actions');
+
+    // Re-Arrange opens straight into its own dialog, which picks the show
+    // itself — the current filter just preselects it when there is one. Only
+    // offered to whoever may move dates at all.
+    if (App.canEditSchedule(App.state.role)) {
+      actions.appendChild(el('button.ghost', {
+        onclick: () => App.rearrange.open(show !== 'all' ? show : null),
+        title: 'Re-Arrange: reorder a show’s remaining episodes'
+      }, '⇅ Re-Arrange'));
     }
+
+    /* Two different rights (episode creation is Producer-only via
+       canManageShows; task creation is the broader canEditSchedule), so the
+       button shows if either passes — the dialog itself only offers what
+       the role in front of it can actually do. */
+    if (App.canManageShows(App.state.role) || App.canEditSchedule(App.state.role)) {
+      actions.appendChild(el('button.ghost' + (App.state.creatingOnGantt ? '.active' : ''), {
+        onclick: () => { App.state.creatingOnGantt = !App.state.creatingOnGantt; App.render(); },
+        title: 'Drag on the timeline to create a new episode or task'
+      }, '＋ Create'));
+    }
+
+    if (App.canManageShows(App.state.role)) {
+      actions.appendChild(el('button.btn-addshow', { onclick: () => App.addShow.open() }, '＋ Add show'));
+    }
+    if (actions.children.length) box.appendChild(actions);
   }
 
   // ---- Director: ready-for-review queue ----
