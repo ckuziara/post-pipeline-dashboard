@@ -429,6 +429,13 @@ window.App = window.App || {};
     });
     wrap.appendChild(card);
     if (App.connectorEnabled('lucidlink')) wrap.appendChild(lucidConnectionCard());
+    // channel mapping is Slack-specific config, same relationship LucidLink's
+    // connection card has to its own toggle above — and the same admin gate
+    // the server itself enforces on /api/slack/channels, not just the role
+    // check that gets you onto this page at all.
+    if (App.connectorEnabled('slack') && App.api && App.api.online && App.api.me && App.api.me.admin) {
+      wrap.appendChild(slackCard());
+    }
     return wrap;
   }
 
@@ -871,7 +878,6 @@ window.App = window.App || {};
 
     // the whole-board safety net sits last — per-show tools first, big red button last
     if (App.api && App.api.online && App.api.me && App.api.me.admin) {
-      wrapP.appendChild(slackCard());
       wrapP.appendChild(backupsCard());
     }
 
