@@ -555,6 +555,52 @@ window.App = window.App || {};
     App.toast('Removed “' + g.su.name + '”');
   };
 
+  /* Add one new task to a show's pipeline, with real dates rather than a
+     template duration — the counterpart to the Pipeline Editor's addTask()
+     (which only edits the in-memory template) for when the dates are already
+     known, e.g. drawn on the Timeline. Reaches every episode of the show,
+     same as any other pipeline edit (App.pipelineFor has no per-episode
+     opt-in — presence in the pipeline is enough).
+
+     `referenceEpId` anchors the drawn dates: every OTHER episode gets the
+     same offset-from-its-own-start and the same duration, the identical
+     mechanism App.replicatePlan-style copies already use elsewhere. No
+     dependencies and no anchor task — this is a floating new task, wired up
+     afterward via the pipeline editor's own dependency picker if needed. */
+  App.addTaskAcrossShow = function ({ showId, referenceEpId, name, dept, startIso, dueIso }) {
+    if (!App.canEditSchedule(App.state.role)) {
+      App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
+    }
+    const show = App.state.data.shows.find(s => s.id === showId); if (!show) return;
+    const refEp = App.state.data.episodes.find(e => e.id === referenceEpId); if (!refEp) return;
+    name = (name || '').trim(); if (!name) { App.toast('Name the task first', true); return; }
+
+    const key = 'task_' + App.uid().slice(0, 6);
+    const offsetDays = App.diffDays(startIso, App.epStart(refEp));
+    const duration = App.diffDays(dueIso, startIso);
+    let touched = 0;
+    App.mutate(d => {
+      const s = d.shows.find(x => x.id === showId); if (!s) return;
+      // materialize the template before splicing — a legacy show with no
+      // stored pipeline reads App.defaultPipelineFor's fallback, but writing
+      // needs a real array to push onto, not the shared default object
+      const pipe = (s.pipeline || App.defaultPipelineFor(s.type)).map(t => ({ ...t, deps: t.deps.slice() }));
+      pipe.push({ key, name, dept, days: Math.max(1, duration + 1), minDays: 1, deps: [] });
+      s.pipeline = pipe;
+      d.episodes.filter(e => e.showId === showId).forEach(e => {
+        const base = App.epStart(e);
+        const start = App.shiftIso(base, offsetDays), due = App.shiftIso(start, duration);
+        e.dates = e.dates || {}; e.statuses = e.statuses || {};
+        e.dates[key] = { start, due };
+        e.statuses[key] = 'not_started';
+        App.refreshReadiness(e);
+        touched++;
+      });
+    }, 'the new task');
+    App.track.audit('task.addAcrossShow', { show: show.name, task: name, dept: App.dept(dept).label, episodes: touched });
+    App.toast('“' + name + '” added across ' + touched + ' episode' + (touched === 1 ? '' : 's') + ' of ' + show.name);
+  };
+
   // ---- shows ----
   // pipeline: the show's own task template [{key,name,dept,days,minDays,deps}].
   // scale: squeeze/extend factor from the Add Show dialog (1 = recommended pace;
@@ -604,6 +650,59 @@ window.App = window.App || {};
         .then(r => App.toast(r.created + ' folder' + (r.created === 1 ? '' : 's') + ' created for ' +
           r.episodes + ' episode' + (r.episodes === 1 ? '' : 's') + ' at ' + r.root))
         .catch(e => App.toast('Show created, but folders failed: ' + e.message, true));
+    }
+  };
+
+  /* Existing episode codes aren't necessarily contiguous — a show's episodes
+     can be numbered 101, 102, 103, 104 or skip around after an archive/delete
+     — so the next number is found by scanning what's actually there, not by
+     counting how many episodes exist. */
+  App.nextEpisodeNumber = function (show) {
+    const re = new RegExp('^' + show.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '-(\\d+)$');
+    const nums = App.state.data.episodes.filter(e => e.showId === show.id)
+      .map(e => { const m = re.exec(e.code); return m ? parseInt(m[1], 10) : null; })
+      .filter(n => n != null);
+    return nums.length ? Math.max(...nums) + 1 : 1;
+  };
+
+  /* Add one new episode to a show that already exists — App.createShow only
+     ever creates a show and its first batch of episodes together; there was
+     no way to add a single one afterward. Mirrors createShow's per-episode
+     construction exactly, just for one episode against the show's existing
+     pipeline. Only the start date is used for scheduling — the pipeline runs
+     its own natural length from there; fitting it to a drawn deadline is a
+     different, bigger feature (see App.solveScale) and out of scope here. */
+  App.addEpisode = function ({ showId, code, title, startIso }) {
+    if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add episodes', true); return; }
+    const show = App.state.data.shows.find(s => s.id === showId); if (!show) return;
+    code = (code || '').trim(); title = (title || '').trim();
+    if (!code || !title) { App.toast('Give the episode a code and a title', true); return; }
+    const pipeline = show.pipeline || App.defaultPipelineFor(show.type);
+    startIso = startIso || App.isoDate(App.today());
+    const sch = App.schedulePipeline(pipeline, startIso, 1);
+    if (!sch) { App.toast('The pipeline has a dependency cycle', true); return; }
+
+    let newEpId = null;
+    App.mutate(d => {
+      const byDept = {};
+      d.people.forEach(p => { const dep = App.roleDept(p.role); if (dep) (byDept[dep] = byDept[dep] || []).push(p.id); });
+      const assignees = {};
+      pipeline.forEach(t => { const pool = byDept[t.dept] || []; if (pool.length) assignees[t.key] = pool[0]; });
+      const ep = {
+        id: newEpId = App.uid(), showId, code, title, index: d.episodes.length,
+        shiftDays: 0, dates: sch.dates,
+        statuses: App.deriveStatusesFromDates(pipeline, sch.dates, assignees), assignees
+      };
+      d.episodes.push(ep);
+    }, 'the new episode');
+    App.track.audit('episode.add', { show: show.name, episode: code, title });
+    App.toast('Added ' + code + ' — “' + title + '”');
+    // same follow-up App.createShow does — additive and idempotent, so it's
+    // safe to call for just this one new episode's folders
+    if (App.masterPathSet() && newEpId) {
+      App.api.flush()
+        .then(() => App.api.createFolders({ showId, pipeline }))
+        .catch(e => App.toast(code + ' created, but folders failed: ' + e.message, true));
     }
   };
 
