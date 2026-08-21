@@ -142,76 +142,90 @@ function makeSlackBridge({ chat, storage, sseEmit, appUrl }) {
     // messages is what breaks the echo loop
     if (message.subtype || message.bot_id) return;
 
-    if (message.thread_ts) {
-      const mapping = await chat.findTaskBySlackThread(message.channel, message.thread_ts);
-      if (!mapping) return;
-      const user = await resolveSlackUser(message.user);
-      let saved;
-      if (user && user.id) {
-        saved = await chat.postMessage({
-          episodeId: mapping.episode_id, taskKey: mapping.task_key,
-          authorId: user.id, content: message.text || ''
-        });
-      } else {
-        // a voice with no identity still gets heard — named in the text
-        const who = (user && user.name) || 'someone on Slack';
-        saved = await chat.postMessage({
-          episodeId: mapping.episode_id, taskKey: mapping.task_key,
-          content: 'From Slack (' + who + '): ' + (message.text || ''), isSystemEvent: true
-        });
-      }
-      sseEmit('new_message', { taskId: taskIdOf(mapping.episode_id, mapping.task_key), message: saved });
+    /* Every step below can throw — a Postgres hiccup, a bad Slack payload, a
+       write that fails a constraint — and until now nothing caught any of
+       it. Bolt does catch a listener that throws and logs the raw error, but
+       with no label and no context, so a real failure here looked exactly
+       like "nothing happened." Same discipline mirrorMessage already has on
+       the outbound side, just applied to the direction that was missing it. */
+    try {
+      if (message.thread_ts) {
+        const mapping = await chat.findTaskBySlackThread(message.channel, message.thread_ts);
+        if (!mapping) return;
+        const user = await resolveSlackUser(message.user);
+        let saved;
+        if (user && user.id) {
+          saved = await chat.postMessage({
+            episodeId: mapping.episode_id, taskKey: mapping.task_key,
+            authorId: user.id, content: message.text || ''
+          });
+        } else {
+          // a voice with no identity still gets heard — named in the text
+          const who = (user && user.name) || 'someone on Slack';
+          saved = await chat.postMessage({
+            episodeId: mapping.episode_id, taskKey: mapping.task_key,
+            content: 'From Slack (' + who + '): ' + (message.text || ''), isSystemEvent: true
+          });
+        }
+        sseEmit('new_message', { taskId: taskIdOf(mapping.episode_id, mapping.task_key), message: saved });
 
-      // spec 3A: a LucidLink URL in a thread reply → ephemeral offer to pin
-      const lucid = (message.text || '').match(LUCIDLINK_REGEX);
-      if (lucid) {
-        await web.chat.postEphemeral({
-          channel: message.channel, user: message.user,
-          ...blocks.pinPrompt(lucid[0], taskIdOf(mapping.episode_id, mapping.task_key))
-        });
+        // spec 3A: a LucidLink URL in a thread reply → ephemeral offer to pin
+        const lucid = (message.text || '').match(LUCIDLINK_REGEX);
+        if (lucid) {
+          await web.chat.postEphemeral({
+            channel: message.channel, user: message.user,
+            ...blocks.pinPrompt(lucid[0], taskIdOf(mapping.episode_id, mapping.task_key))
+          });
+        }
+        return;
       }
-      return;
+
+      /* spec 3B: a task mentioned in a top-level channel message → offer to
+         route it into the task's thread. The board's own mention form
+         (#LA-101/Task), resolved against live board state. */
+      const board = await storage.get();
+      const data = board && board.data;
+      if (!data) return;
+      const m = (message.text || '').match(/#([A-Za-z]{1,6}(?:-|\s)?\d{1,5})(?:[\/\s]+([A-Za-z][\w-]*))?/);
+      if (!m) return;
+      const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+      const ep = data.episodes.find(e => norm(e.code) === norm(m[1]));
+      if (!ep) return;
+      const show = data.shows.find(s => s.id === ep.showId);
+      const pipe = (show && show.pipeline) || [];
+      const t = m[2] && pipe.find(x =>
+        x.name.toLowerCase() === m[2].toLowerCase() || x.name.toLowerCase().startsWith(m[2].toLowerCase()));
+      if (!t) return;                                // episode alone has no thread to route to
+      await web.chat.postEphemeral({
+        channel: message.channel, user: message.user,
+        ...blocks.routePrompt(ep.code + ' / ' + t.name, taskIdOf(ep.id, t.key), message.text)
+      });
+    } catch (e) {
+      console.error('[slack] inbound message failed:', e.data ? e.data.error : e.message);
     }
-
-    /* spec 3B: a task mentioned in a top-level channel message → offer to
-       route it into the task's thread. The board's own mention form
-       (#LA-101/Task), resolved against live board state. */
-    const board = await storage.get();
-    const data = board && board.data;
-    if (!data) return;
-    const m = (message.text || '').match(/#([A-Za-z]{1,6}(?:-|\s)?\d{1,5})(?:[\/\s]+([A-Za-z][\w-]*))?/);
-    if (!m) return;
-    const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
-    const ep = data.episodes.find(e => norm(e.code) === norm(m[1]));
-    if (!ep) return;
-    const show = data.shows.find(s => s.id === ep.showId);
-    const pipe = (show && show.pipeline) || [];
-    const t = m[2] && pipe.find(x =>
-      x.name.toLowerCase() === m[2].toLowerCase() || x.name.toLowerCase().startsWith(m[2].toLowerCase()));
-    if (!t) return;                                // episode alone has no thread to route to
-    await web.chat.postEphemeral({
-      channel: message.channel, user: message.user,
-      ...blocks.routePrompt(ep.code + ' / ' + t.name, taskIdOf(ep.id, t.key), message.text)
-    });
   });
 
   /* Reaction on any message in a mapped thread = "seen" — the spec's
      read-state clear, same effect as opening the thread in the web app. */
   app.event('reaction_added', async ({ event }) => {
-    const item = event.item || {};
-    if (item.type !== 'message') return;
-    const mapping = await chat.findTaskBySlackThread(item.channel, item.ts)
-      || await chat.findTaskBySlackThread(item.channel, event.item.thread_ts || item.ts);
-    if (!mapping) return;
-    const user = await resolveSlackUser(event.user);
-    if (!user || !user.id) return;
-    const cleared = await chat.markThreadRead(user.id, {
-      episodeId: mapping.episode_id, taskKey: mapping.task_key
-    });
-    if (cleared > 0) {
-      sseEmit('notification_cleared', {
-        taskId: taskIdOf(mapping.episode_id, mapping.task_key), userId: user.id
+    try {
+      const item = event.item || {};
+      if (item.type !== 'message') return;
+      const mapping = await chat.findTaskBySlackThread(item.channel, item.ts)
+        || await chat.findTaskBySlackThread(item.channel, event.item.thread_ts || item.ts);
+      if (!mapping) return;
+      const user = await resolveSlackUser(event.user);
+      if (!user || !user.id) return;
+      const cleared = await chat.markThreadRead(user.id, {
+        episodeId: mapping.episode_id, taskKey: mapping.task_key
       });
+      if (cleared > 0) {
+        sseEmit('notification_cleared', {
+          taskId: taskIdOf(mapping.episode_id, mapping.task_key), userId: user.id
+        });
+      }
+    } catch (e) {
+      console.error('[slack] reaction handling failed:', e.data ? e.data.error : e.message);
     }
   });
 
