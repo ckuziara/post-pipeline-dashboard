@@ -595,6 +595,121 @@ window.App = window.App || {};
     }
   };
 
+  /* ---- Create from a Timeline drag ----
+     Opened after drawing a date range on the Timeline's "+ Create" row (see
+     js/gantt.js). Nothing is written until this dialog's own Create button —
+     the drag only captures dates; who it belongs to (show, episode,
+     department) is always asked explicitly rather than guessed from which
+     row happened to be nearby, which is genuinely ambiguous once a row spans
+     more than one episode (Department/Show sort modes).
+
+     Episode and Task are two different rights (App.canManageShows vs
+     App.canEditSchedule, held by different roles), so the toggle only offers
+     what the current role can actually do — if just one applies, that's the
+     only form shown, no toggle at all. */
+  App.createFromDrag = {
+    open({ startIso, dueIso, showId }) {
+      const canEp = App.canManageShows(App.state.role);
+      const canTask = App.canEditSchedule(App.state.role);
+      if (!canEp && !canTask) return;   // toolbar button is already gated; belt and braces
+
+      let mode = canEp && canTask
+        ? (App.prefs.get('timelineSort', 'department') === 'episode' ? 'episode' : 'task')
+        : (canEp ? 'episode' : 'task');
+
+      const shows = App.activeShows();
+      const showSel = el('select.fld');
+      if (!shows.some(s => s.id === showId)) {
+        const ph = document.createElement('option');
+        ph.value = ''; ph.textContent = 'Choose a show…'; ph.disabled = true; showSel.appendChild(ph);
+      }
+      shows.forEach(s => {
+        const o = document.createElement('option'); o.value = s.id; o.textContent = s.name; showSel.appendChild(o);
+      });
+      showSel.value = shows.some(s => s.id === showId) ? showId : '';
+
+      // ---- episode-mode fields ----
+      const epNumFld = el('input.fld', { type: 'number', min: '1', style: { maxWidth: '90px' } });
+      const epTitleFld = el('input.fld', { type: 'text', placeholder: 'Episode title' });
+      const epHint = el('.fld-hint', null,
+        'Starts ' + App.fmtDate(startIso) + ' — the pipeline runs its own natural length from there.');
+      const epSection = el('div', null, [
+        field('Episode number', epNumFld),
+        field('Title', epTitleFld),
+        epHint
+      ]);
+
+      // ---- task-mode fields ----
+      const refEpSel = el('select.fld');
+      const deptSel = el('select.fld');
+      Object.keys(App.DEPARTMENTS).forEach(k => {
+        const o = document.createElement('option'); o.value = k; o.textContent = App.DEPARTMENTS[k].label; deptSel.appendChild(o);
+      });
+      const nameFld = el('input.fld', { type: 'text', placeholder: 'Task name' });
+      const taskHint = el('.fld-hint', null, App.fmtRange(startIso, dueIso) + ' — applies across every episode of the show.');
+      const taskSection = el('div', null, [
+        field('Reference episode', refEpSel, 'Every other episode gets the same offset from its own start, and the same duration.'),
+        field('Department', deptSel),
+        field('Task name', nameFld),
+        taskHint
+      ]);
+
+      const refreshForShow = () => {
+        const show = App.show(showSel.value);
+        const eps = App.activeEpisodes().filter(e => e.showId === showSel.value)
+          .sort((a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1);
+        refEpSel.innerHTML = '';
+        eps.forEach(e => {
+          const o = document.createElement('option'); o.value = e.id; o.textContent = e.code + ' — ' + e.title; refEpSel.appendChild(o);
+        });
+        if (showSel.value && shows.some(s => s.id === showSel.value)) {
+          epNumFld.value = App.nextEpisodeNumber(show);
+          epTitleFld.value = 'Episode ' + epNumFld.value;
+        }
+      };
+      showSel.addEventListener('change', refreshForShow);
+      if (showSel.value) refreshForShow();
+
+      const showPicked = () => !!(showSel.value && shows.some(s => s.id === showSel.value));
+
+      const createBtn = el('button.btn-primary', {
+        onclick: () => {
+          if (!showPicked()) { App.toast('Pick a show first', true); return; }
+          App.modal.close();
+          if (mode === 'episode') {
+            App.addEpisode({ showId: showSel.value, code: App.show(showSel.value).prefix + '-' + epNumFld.value,
+              title: epTitleFld.value, startIso });
+          } else {
+            App.addTaskAcrossShow({ showId: showSel.value, referenceEpId: refEpSel.value,
+              name: nameFld.value, dept: deptSel.value, startIso, dueIso });
+          }
+        }
+      }, [App.icon('save'), ' Create']);
+
+      // .hidden isn't a bare utility class in this codebase — every existing
+      // use scopes it to a specific element (.et-panel.hidden etc.) — so this
+      // toggles display directly rather than adding a new CSS rule for it.
+      const showMode = () => {
+        epSection.style.display = mode === 'episode' ? '' : 'none';
+        taskSection.style.display = mode === 'task' ? '' : 'none';
+      };
+      const sections = [field('Show', showSel)];
+      if (canEp && canTask) {
+        const epBtn = el('button.seg' + (mode === 'episode' ? '.active' : ''),
+          { onclick: () => { mode = 'episode'; epBtn.classList.add('active'); taskBtn.classList.remove('active'); showMode(); } }, 'New Episode');
+        const taskBtn = el('button.seg' + (mode === 'task' ? '.active' : ''),
+          { onclick: () => { mode = 'task'; taskBtn.classList.add('active'); epBtn.classList.remove('active'); showMode(); } }, 'New Task');
+        sections.push(el('.prefs-seg', null, [epBtn, taskBtn]));
+      }
+      showMode();
+      sections.push(epSection, taskSection);
+
+      const footer = [el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'), createBtn];
+      App.modal.open(card('calendar', canEp && canTask ? 'Create on the Timeline' : (canEp ? 'New Episode' : 'New Task'),
+        App.fmtRange(startIso, dueIso), sections, footer));
+    }
+  };
+
   /* ---- Milestone (Delivery / Live date) ----
      These aren't tasks, so there's nothing to drag — they're the dates the
      episode is committed to, and this is the only place they change. For the

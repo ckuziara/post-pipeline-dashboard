@@ -516,6 +516,8 @@ button.ghost {
   padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; transition: .12s;
 }
 button.ghost:hover { background: var(--hover); color: var(--text); }
+button.ghost.active { background: rgba(155,91,255,.16); border-color: #9b5bff; color: #cbb2ff; }
+button.ghost.active:hover { background: rgba(155,91,255,.24); }
 
 /* ----------------------------------------------------------------- toolbar */
 #toolbar {
@@ -550,7 +552,12 @@ button.ghost:hover { background: var(--hover); color: var(--text); }
 .kpi.k-red::before { background: var(--danger); }
 .kpi-num { font-size: 16px; font-weight: 800; line-height: 1; letter-spacing: -.3px; white-space: nowrap; }
 .kpi-sub { font-size: 11.5px; font-weight: 600; color: var(--text-3); }
-.kpis .btn-addshow { margin-left: auto; align-self: center; }
+/* Re-Arrange / Create / Add Show cluster together on the right of the KPI
+   strip — the wrapper owns the push-right now, not the button itself, so the
+   three sit adjacent instead of Add Show alone floating away from the others. */
+.kpi-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+.kpis .btn-addshow { align-self: center; }
+.kpi-actions .btn-addshow { margin-left: 0; }
 .kpi-label { font-size: 10.5px; color: var(--text-2); white-space: nowrap; }
 
 /* ----------------------------------------------------------------- main scroller */
@@ -756,6 +763,21 @@ body.gantt-dragging { user-select: none; }
 .bar.adjustable:hover::before, .bar.dragging::before { transform: translate(-50%, -50%) scaleX(1.15); }
 .bar.adjustable:hover::after, .bar.dragging::after { transform: translate(50%, -50%) scaleX(1.15); }
 .drag-tip { font-weight: 700; }
+
+/* ---- "+ Create" row (Timeline, draw to create an episode/task) ----
+   Same header+track shape as the Producer Notes row just below, with its own
+   accent (purple, not the notes' yellow/blue) so a create-draw never reads
+   as "drawing a note". */
+.create-row { background: rgba(155,91,255,.05); }
+.create-label .l-title { color: var(--text-3); font-weight: 600; }
+.g-track.cr-drawable { cursor: crosshair; }
+.create-ghost {
+  position: absolute; top: 50%; transform: translateY(-50%); height: 18px;
+  border-radius: 5px; display: flex; align-items: center; justify-content: center; padding: 0 8px;
+  font-size: 10px; font-weight: 700; white-space: nowrap;
+  opacity: .8; pointer-events: none; border: 1px dashed rgba(255,255,255,.7);
+  box-shadow: 0 2px 6px rgba(0,0,0,.3);
+}
 
 /* ---- Producer Notes swimlane (Timeline, per-show) ---- */
 .pn-head { background: var(--bg-2); border-top: 1px solid var(--border-2); }
