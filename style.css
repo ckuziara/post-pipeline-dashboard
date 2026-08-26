@@ -661,11 +661,14 @@ button.ghost.active:hover { background: rgba(155,91,255,.24); }
 .g-row.sub { min-height: 23px; background: rgba(0,0,0,.16); }
 
 /* latch scrolling (preference): episode rows pin beneath the time header while
-   their tasks scroll past — the row most recently scrolled into wins the slot */
-.gantt.latch .g-row:not(.sub) {
+   their tasks scroll past — the row most recently scrolled into wins the slot.
+   Portrait has no equivalent (see settleRows' guard in js/gantt.js) — the
+   :not() keeps the two preferences from combining into something broken
+   rather than the "no additional effect" the Timeline View toggle promises. */
+.gantt.latch:not(.gantt-portrait) .g-row:not(.sub) {
   position: sticky; top: var(--latch-top, 82px); z-index: 5; background: var(--surface);
 }
-.gantt.latch .g-row:not(.sub):hover { background: var(--hover); }
+.gantt.latch:not(.gantt-portrait) .g-row:not(.sub):hover { background: var(--hover); }
 .g-label {
   position: sticky; left: 0; z-index: 4;
   width: 220px; min-width: 220px; padding: 3px 12px;
@@ -896,6 +899,84 @@ body.gantt-dragging { user-select: none; }
   background: #5b9bff; color: #fff; font-size: 9.5px; font-weight: 700;
   padding: 2px 7px; border-radius: 0 0 6px 6px; white-space: nowrap;
 }
+
+/* =================================================================
+   TIMELINE — Portrait orientation (Timeline View preference)
+
+   Time runs top-to-bottom instead of left-to-right. Department sort only —
+   see the `portrait` guard in js/gantt.js render(). Everything here is scoped
+   under .gantt-portrait, so none of it can touch the rules above; Landscape's
+   markup and CSS are untouched by this section entirely.
+
+   The general move: every piece of chrome glues to the edge that is NOT its
+   own varying axis (this is already how Landscape works — .time-head glues
+   top because it varies with X, .g-label glues left because it varies with
+   Y). Portrait keeps that rule and just swaps which edge is which:
+     .date-rail   (varies with Y now) → sticky LEFT, stacked vertically
+     .g-label     (varies with X now) → sticky TOP,  laid out horizontally
+   DATE_RAIL_W/COL_HEAD_H/COL_W/SUB_COL_W in js/gantt.js must match the pixel
+   values below — the same "must match style.css" contract LABEL_W already has.
+================================================================= */
+.gantt.gantt-portrait .gantt-inner { display: flex; align-items: flex-start; min-width: 0; width: max-content; }
+.gantt.gantt-portrait .gantt-body { display: flex; flex-direction: row; align-items: flex-start; position: relative; height: var(--gantt-time-h); }
+
+/* portrait's mirror of .time-head: sticky LEFT, date segments run downward */
+.date-rail {
+  position: sticky; left: 0; z-index: 6; flex: none;
+  width: 78px; min-width: 78px; height: var(--gantt-time-h);
+  background: var(--bg-2); border-right: 1px solid var(--border-2);
+  display: flex; flex-direction: column;
+}
+.date-rail .th-corner { position: sticky; top: 0; z-index: 9; }
+.date-rail .thead-row.thead-col { display: flex; flex-direction: column; flex: 1; }
+.date-rail .thead-row.thead-col.primary .thead-cell { border-right: none; border-bottom: 1px solid var(--border-2); }
+.date-rail .thead-row.thead-col.secondary .thead-cell { border-right: none; border-bottom: 1px solid var(--border); }
+
+/* portrait's mirror of .g-row: a column instead of a row. Reuses the exact
+   same .g-row/.g-label/.g-track elements departmentRows()/epTaskLines()
+   already build for Landscape — nothing in that JS needed to change, only
+   how far it grows and which way its own children stack. An overlapping
+   episode-bar's extra .g-row.sub (see epTaskLines' interval-stacking) lands
+   as a side-by-side sub-column here for free, from this flex-row alone. */
+.gantt.gantt-portrait .g-row {
+  flex-direction: column; align-items: stretch;
+  border-top: none; border-right: 1px solid var(--border);
+  width: 96px; min-width: 96px; flex: none; height: var(--gantt-time-h);
+}
+.gantt.gantt-portrait .g-row.sub { width: 76px; min-width: 76px; }
+
+/* portrait's mirror of .g-label: sticky TOP instead of sticky LEFT, fixed
+   height instead of fixed width, text reading normally left-to-right rather
+   than rotated — a rotated label was explicitly the thing not to build. */
+.gantt.gantt-portrait .g-label {
+  position: sticky; top: 0; left: auto; z-index: 4;
+  width: 100%; height: 44px; min-height: 44px;
+  flex-direction: row; align-items: center; justify-content: center; text-align: center;
+  border-right: none; border-bottom: 1px solid var(--border-2);
+  padding: 3px 6px; gap: 0;
+}
+.gantt.gantt-portrait .g-row.sub .g-label { padding-left: 6px; background: var(--surface-2); }
+.gantt.gantt-portrait .g-label .l-title,
+.gantt.gantt-portrait .g-label .l-sub { justify-content: center; white-space: nowrap; }
+.gantt.gantt-portrait .g-track { flex: 1; width: 100%; }
+
+/* bars: fixed width (the column), variable height (the duration) — the
+   inverse of Landscape's fixed height / variable width */
+.gantt.gantt-portrait .bar {
+  left: 50%; top: 0; bottom: auto; transform: translateX(-50%); height: auto; width: 80%;
+  flex-direction: column; justify-content: center; white-space: normal; text-align: center;
+  padding: 3px 2px; min-height: 17px;
+}
+.gantt.gantt-portrait .g-row.sub .bar { min-height: 12px; }
+.gantt.gantt-portrait .bar .bar-out { left: 50%; top: calc(100% + 8px); transform: translateX(-50%); }
+
+/* full-span chrome: same elements, spanning the cross axis (now horizontal)
+   instead of the time axis (now vertical) */
+.gantt.gantt-portrait .grid-line { left: 0; right: 0; top: 0; bottom: auto; width: auto; height: 1px; }
+.gantt.gantt-portrait .grid-col { left: 0; right: 0; top: auto; bottom: auto; width: auto; border-right: none; border-bottom: 1px solid rgba(255,255,255,.04); }
+.gantt.gantt-portrait .grid-col.month { border-right: none; border-bottom: 1px solid var(--border-2); }
+.gantt.gantt-portrait .today-line { left: 0; right: 0; top: auto; bottom: auto; width: auto; height: 2px; }
+.gantt.gantt-portrait .today-flag { top: 0; left: 0; transform: none; border-radius: 0 6px 6px 0; }
 
 /* =================================================================
    BOARD  (Monday table)

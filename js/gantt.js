@@ -7,6 +7,26 @@ window.App = window.App || {};
   const el = (s, p, c) => App.el(s, p, c);
   const LABEL_W = 220;   // must match .g-label width in style.css
 
+  /* Portrait (Timeline View preference, Department sort only — see render()):
+     time runs top-to-bottom instead of left-to-right. These four are portrait's
+     mirror of LABEL_W — same "must match style.css" contract, just for the
+     axis that's now vertical. Not derived from anything; sized for a vertical
+     bar plus a short label to stay legible, per the "enough width" ask. */
+  const COL_W = 96;        // must match .gantt-portrait .g-row width in style.css
+  const SUB_COL_W = 76;    // must match .gantt-portrait .g-row.sub width
+  const DATE_RAIL_W = 78;  // must match .date-rail width
+  const COL_HEAD_H = 44;   // must match .gantt-portrait .g-label / .th-corner height
+
+  /* Writes a bar's position along the time axis. The pixel VALUES are always
+     xOf(iso)/xOf.width(s,d) — colOf/dw don't care which screen axis time is
+     drawn on — only which CSS property they land in changes. Centralizes what
+     used to be nine separate `{ left: xOf(s)+'px', width: ... }` literals so
+     Portrait didn't mean writing a tenth, eleventh, ... variant by hand. */
+  function setBarPos(style, axis, xOf, s, d) {
+    if (axis && axis.portrait) { style.top = xOf(s) + 'px'; style.height = xOf.width(s, d) + 'px'; }
+    else { style.left = xOf(s) + 'px'; style.width = xOf.width(s, d) + 'px'; }
+  }
+
   // ---- ISO week helpers ----
   function isoWeek(d) {
     const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -132,11 +152,33 @@ window.App = window.App || {};
     return row;
   }
 
-  function gridLines(grid, ctx, unit, strong) {
+  function gridLines(grid, ctx, unit, strong, portrait) {
     segments(ctx, unit).forEach(seg => {
-      const left = seg.colStart + seg.colSpan;
-      if (left > 0 && left < ctx.totalCols) grid.appendChild(el('.grid-line' + (strong ? '.strong' : ''), { style: { left: (left * ctx.dw) + 'px' } }));
+      const off = seg.colStart + seg.colSpan;
+      if (off > 0 && off < ctx.totalCols) {
+        const style = portrait ? { top: (off * ctx.dw) + 'px' } : { left: (off * ctx.dw) + 'px' };
+        grid.appendChild(el('.grid-line' + (strong ? '.strong' : ''), { style }));
+      }
     });
+  }
+
+  // Portrait's mirror of buildSegRow: the same segments(), stacked vertically
+  // (sized by height) instead of horizontally (sized by width). Cell markup
+  // (.wd/.dnum or .seg-main/.seg-sub) is reused verbatim — it was already two
+  // lines stacked within a cell, so only the cell's own outer dimension flips.
+  function buildSegColumn(ctx, unit, cls) {
+    const todayIso = App.isoDate(App.today());
+    const col = el('.thead-row.thead-col.' + cls);
+    segments(ctx, unit).forEach(seg => {
+      const h = seg.colSpan * ctx.dw;
+      let mod = '';
+      if (unit === 'days') { const wk = seg.day.getDay() === 0 || seg.day.getDay() === 6; mod = (wk ? '.weekend' : '') + (App.isoDate(seg.day) === todayIso ? '.is-today' : ''); }
+      const cell = el('.thead-cell.' + cls + mod, { style: { height: h + 'px', minHeight: h + 'px' } });
+      if (unit === 'days') { cell.appendChild(el('.wd', null, seg.sub)); cell.appendChild(el('.dnum', null, seg.label)); }
+      else { cell.appendChild(el('span.seg-main', null, seg.label)); if (seg.sub) cell.appendChild(el('span.seg-sub', null, seg.sub)); }
+      col.appendChild(cell);
+    });
+    return col;
   }
 
   App.gantt = {
@@ -145,7 +187,17 @@ window.App = window.App || {};
     _rafId: null,
 
     render(episodes) {
-      const wrap = el('.gantt' + (App.prefs.get('latchScroll', false) ? '.latch' : ''));
+      const sort = App.prefs.get('timelineSort', 'department');
+      /* Portrait (time runs top-to-bottom) is Department-sort only for now —
+         Episode/Show build their rows through separate, independent code that
+         hasn't been given a column-based mirror yet. The preference itself
+         isn't scoped to a sort mode, so switching to Episode/Show with
+         Portrait selected just quietly renders Landscape — no error, nothing
+         to explain, and it starts working again the moment you switch back. */
+      const portrait = sort === 'department' && App.prefs.get('timelineOrientation', 'landscape') === 'portrait';
+      const axis = { portrait };
+
+      const wrap = el('.gantt' + (App.prefs.get('latchScroll', false) ? '.latch' : '') + (portrait ? '.gantt-portrait' : ''));
       if (!episodes.length) { wrap.appendChild(el('.empty', null, 'No episodes match the current filters.')); return wrap; }
 
       // Only the Episode sort draws the end-of-episode milestones, and there
@@ -153,7 +205,6 @@ window.App = window.App || {};
       // end. The other two sorts stop at the work: a show line would carry
       // every episode's dates at once, and a department line has no episode to
       // pin them to.
-      const sort = App.prefs.get('timelineSort', 'department');
       const marks = sort === 'episode';
       let min = '9999', max = '0000';
       episodes.forEach(ep => {
@@ -197,30 +248,47 @@ window.App = window.App || {};
       this._hideWeekends = hideWeekends;
       this._xOf = xOf;
       this._startIso = startIso;
+      this._axis = axis;
 
       const tier = tierFor(dw);
       const scroll = el('.gantt-scroll', { style: { maxHeight: 'calc(100vh - 230px)' } });
-      const inner = el('.gantt-inner', { style: { width: (LABEL_W + timeW) + 'px' } });
-
-      inner.appendChild(this.buildHead(ctx, tier));
-
+      const inner = el('.gantt-inner');
       const body = el('.gantt-body');
-      const grid = el('.grid-bg', { style: { left: LABEL_W + 'px', width: timeW + 'px' } });
+
+      // timeW is the same colOf/dw math either way — colOf doesn't know or
+      // care which screen axis it's drawn on. Portrait just points it down
+      // instead of across: the header becomes a rail on the left, and every
+      // .g-row gets that same length as its own height (via --gantt-time-h)
+      // instead of the whole board getting it as one shared width.
+      if (portrait) {
+        wrap.style.setProperty('--gantt-time-h', (COL_HEAD_H + timeW) + 'px');
+        inner.appendChild(this.buildDateRail(ctx, tier));
+      } else {
+        inner.style.width = (LABEL_W + timeW) + 'px';
+        inner.appendChild(this.buildHead(ctx, tier));
+      }
+
+      const grid = el('.grid-bg', portrait
+        ? { style: { top: COL_HEAD_H + 'px', height: timeW + 'px' } }
+        : { style: { left: LABEL_W + 'px', width: timeW + 'px' } });
       if (!hideWeekends && tier.secondary === 'days') {
         for (let i = 0; i < totalCalDays; i++) {
           const day = App.addDays(start, i);
-          if (day.getDay() === 0 || day.getDay() === 6)
-            grid.appendChild(el('.grid-col.weekend', { style: { left: (i * dw) + 'px', width: dw + 'px' } }));
+          if (day.getDay() === 0 || day.getDay() === 6) {
+            const style = portrait ? { top: (i * dw) + 'px', height: dw + 'px' } : { left: (i * dw) + 'px', width: dw + 'px' };
+            grid.appendChild(el('.grid-col.weekend', { style }));
+          }
         }
       }
-      gridLines(grid, ctx, tier.secondary, false);
-      gridLines(grid, ctx, tier.primary, true);
+      gridLines(grid, ctx, tier.secondary, false, portrait);
+      gridLines(grid, ctx, tier.primary, true, portrait);
       body.appendChild(grid);
 
       const todayIso = App.isoDate(App.today());
       if (todayIso >= startIso && todayIso <= App.isoDate(end)) {
-        const tx = LABEL_W + xOf(todayIso) + dw / 2;
-        body.appendChild(el('.today-line', { style: { left: tx + 'px' } }));
+        const off = xOf(todayIso) + dw / 2;
+        const style = portrait ? { top: (COL_HEAD_H + off) + 'px' } : { left: (LABEL_W + off) + 'px' };
+        body.appendChild(el('.today-line', { style }));
       }
 
       // "+ Create" row — drawn before Producer Notes so it sits at the very
@@ -234,7 +302,10 @@ window.App = window.App || {};
 
       // Producer Notes swimlane — per-show annotations, only meaningful when a
       // single show is in view (nonsensical mixed across shows on "All shows").
-      if (App.state.filters.show !== 'all') this.producerNotesLane(body, App.state.filters.show, startIso, dw, xOf);
+      // Not yet given a Portrait transpose (it has its own unrelated .portrait
+      // meaning already — narrow notes flipping to vertical text — and its own
+      // transpose problem); hidden in Portrait rather than half-drawn.
+      if (App.state.filters.show !== 'all' && !portrait) this.producerNotesLane(body, App.state.filters.show, startIso, dw, xOf);
 
       const byStart = (a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1;
       if (sort === 'show') {
@@ -250,8 +321,15 @@ window.App = window.App || {};
         episodes.slice().sort(byStart).forEach(ep => this.episodeStackedRow(body, ep, startIso, dw, timeW, xOf));
       } else {
         // 'department': one row per department, spanning every show in view;
-        // expand into one line per task, each holding a bar per episode
-        this.departmentRows(body, episodes, startIso, dw, timeW, xOf);
+        // expand into one line per task, each holding a bar per episode.
+        // In Portrait, .gantt-body is flex-row (CSS), so this exact same
+        // row-emitting call reads left-to-right as columns instead of
+        // top-to-bottom as rows — including a department's expansion into
+        // per-task .g-row.sub elements, and each task's own interval-stacked
+        // "levels" (epTaskLines) landing as side-by-side sub-columns instead
+        // of extra stacked rows. Nothing about that grouping/stacking logic
+        // changes; only where axis is threaded down into the bars themselves.
+        this.departmentRows(body, episodes, startIso, dw, timeW, xOf, axis);
       }
 
       inner.appendChild(body);
@@ -263,7 +341,8 @@ window.App = window.App || {};
       this.setupDrag();
 
       // settle: when scrolling stops, ease the nearest row flush under the
-      // sticky chrome so no task row is ever left half-cut at the top
+      // sticky chrome so no task row is ever left half-cut at the top.
+      // Landscape only — see the guard at the top of settleRows().
       scroll.addEventListener('scroll', () => {
         clearTimeout(this._settleT);
         this._settleT = setTimeout(() => this.settleRows(), 160);
@@ -274,12 +353,21 @@ window.App = window.App || {};
           e.preventDefault();
           const old = App.state.zoom, nz = clampZoom(old * wheelZoomFactor(e));
           if (Math.abs(nz - old) > 0.001) {
-            const sx = e.clientX - scroll.getBoundingClientRect().left;
-            this._preserve = { dayOffset: (scroll.scrollLeft + sx - LABEL_W) / old, screenX: sx };
+            if (portrait) {
+              const sy = e.clientY - scroll.getBoundingClientRect().top;
+              this._preserve = { dayOffset: (scroll.scrollTop + sy - COL_HEAD_H) / old, screenPos: sy };
+            } else {
+              const sx = e.clientX - scroll.getBoundingClientRect().left;
+              this._preserve = { dayOffset: (scroll.scrollLeft + sx - LABEL_W) / old, screenPos: sx };
+            }
             App.state.zoom = nz; App.render();
           }
           return;
         }
+        // Portrait's primary scroll axis is already the one a plain wheel
+        // moves (deltaY = vertical = time), so it needs no sideways-scroll
+        // fallback the way Landscape does.
+        if (portrait) return;
         const canV = scroll.scrollHeight > scroll.clientHeight + 16;
         const canH = scroll.scrollWidth > scroll.clientWidth + 1;
         if ((e.shiftKey || !canV) && canH && e.deltaY !== 0) { scroll.scrollLeft += e.deltaY; e.preventDefault(); }
@@ -346,13 +434,19 @@ window.App = window.App || {};
     // edge fixed). Both are clamped live to the task's minDays; dependency
     // ordering is checked live for a warning outline and confirmed again in
     // App.moveTask on drop (which applies the change regardless and toasts).
-    dragZone(bar, clientX) {
+    // `axis` picks which physical edge is being measured — the zone names
+    // ('resize-left'/'resize-right') keep their Landscape meaning either way
+    // (the task's START edge / DUE edge), since onDragMove already reads them
+    // that way regardless of which screen axis is current.
+    dragZone(bar, e, axis) {
       const r = bar.getBoundingClientRect();
-      if (r.width < 16) return 'move';                 // too narrow to grab an edge precisely
-      const edge = Math.min(8, r.width / 3);
-      const x = clientX - r.left;
-      if (x <= edge) return 'resize-left';
-      if (x >= r.width - edge) return 'resize-right';
+      const portrait = !!(axis && axis.portrait);
+      const mainSize = portrait ? r.height : r.width;
+      if (mainSize < 16) return 'move';                 // too narrow to grab an edge precisely
+      const edge = Math.min(8, mainSize / 3);
+      const pos = portrait ? (e.clientY - r.top) : (e.clientX - r.left);
+      if (pos <= edge) return 'resize-left';
+      if (pos >= mainSize - edge) return 'resize-right';
       return 'move';
     },
 
@@ -367,7 +461,7 @@ window.App = window.App || {};
           if (this._hoverBar && this._hoverBar !== noteEl) { this._hoverBar.style.cursor = ''; this._hoverBar.classList.remove('adjustable'); }
           this._hoverBar = noteEl;
           noteEl.classList.add('adjustable');
-          noteEl.style.cursor = this.dragZone(noteEl, e.clientX) === 'move' ? 'grab' : 'ew-resize';
+          noteEl.style.cursor = this.dragZone(noteEl, e, null) === 'move' ? 'grab' : 'ew-resize';   // notes: always Landscape
           return;
         }
         const bar = e.target.closest('.bar');
@@ -395,7 +489,8 @@ window.App = window.App || {};
           }
           bar.classList.toggle('adjustable', ok);
         }
-        bar.style.cursor = this.dragZone(bar, e.clientX) === 'move' ? 'grab' : 'ew-resize';
+        const resizeCursor = (this._axis && this._axis.portrait) ? 'ns-resize' : 'ew-resize';
+        bar.style.cursor = this.dragZone(bar, e, this._axis) === 'move' ? 'grab' : resizeCursor;
       };
       scroll.addEventListener('mousemove', hoverHandler);
 
@@ -430,7 +525,7 @@ window.App = window.App || {};
           if (!note) return;
           e.preventDefault();
           hideTip();
-          const zone = this.dragZone(noteEl, e.clientX);
+          const zone = this.dragZone(noteEl, e, null);   // notes: always Landscape
           this._drag = {
             kind: 'note', el: noteEl, showId, id, zone, startClientX: e.clientX,
             origStart: note.start, origDue: note.due, curStart: note.start, curDue: note.due, moved: false
@@ -454,12 +549,12 @@ window.App = window.App || {};
 
         e.preventDefault();
         hideTip();
-        const zone = this.dragZone(bar, e.clientX);
+        const zone = this.dragZone(bar, e, this._axis);
         const pipe = App.pipelineFor(ep);
         const task = pipe.find(t => t.key === suKey);
         const byKey = {}; App.subitems(ep).forEach(s => { byKey[s.key] = s; });
         this._drag = {
-          bar, epId, suKey, zone, startClientX: e.clientX, startedAt: Date.now(), moved: false,
+          bar, epId, suKey, zone, startClientX: e.clientX, startClientY: e.clientY, startedAt: Date.now(), moved: false,
           origStart: su.start, origDue: su.due, curStart: su.start, curDue: su.due,
           minDays: (task && task.minDays) || 1,
           deps: (task ? task.deps : []).map(k => byKey[k]).filter(Boolean),
@@ -467,7 +562,7 @@ window.App = window.App || {};
         };
         bar.classList.add('dragging');
         document.body.classList.add('gantt-dragging');
-        document.body.style.cursor = zone === 'move' ? 'grabbing' : 'ew-resize';
+        document.body.style.cursor = zone === 'move' ? 'grabbing' : ((this._axis && this._axis.portrait) ? 'ns-resize' : 'ew-resize');
       };
       scroll.addEventListener('mousedown', downHandler);
 
@@ -484,7 +579,10 @@ window.App = window.App || {};
     onDragMove(e) {
       const d = this._drag; if (!d) return;
       const dw = this._dw, hw = this._hideWeekends, xOf = this._xOf;
-      const colDelta = Math.round((e.clientX - d.startClientX) / dw);
+      // notes are Landscape-only regardless of the current axis (Producer Notes
+      // hidden entirely in Portrait — see render()), so their delta always
+      // reads clientX. Only the bar-drag branch below ever reads clientY.
+      const colDeltaX = Math.round((e.clientX - d.startClientX) / dw);
 
       if (d.kind === 'note-draw' || d.kind === 'create-draw') {
         const cur = d.startCol + Math.round((e.clientX - d.startClientX) / dw);
@@ -505,9 +603,9 @@ window.App = window.App || {};
       if (d.kind === 'note') {
         if (Math.abs(e.clientX - d.startClientX) > 3) d.moved = true;
         let ns = d.origStart, nd = d.origDue;
-        if (d.zone === 'move') { ns = App.addVisibleDays(d.origStart, colDelta, hw); nd = App.addVisibleDays(d.origDue, colDelta, hw); }
-        else if (d.zone === 'resize-left') { ns = App.addVisibleDays(d.origStart, colDelta, hw); if (ns > nd) ns = nd; }
-        else { nd = App.addVisibleDays(d.origDue, colDelta, hw); if (nd < ns) nd = ns; }
+        if (d.zone === 'move') { ns = App.addVisibleDays(d.origStart, colDeltaX, hw); nd = App.addVisibleDays(d.origDue, colDeltaX, hw); }
+        else if (d.zone === 'resize-left') { ns = App.addVisibleDays(d.origStart, colDeltaX, hw); if (ns > nd) ns = nd; }
+        else { nd = App.addVisibleDays(d.origDue, colDeltaX, hw); if (nd < ns) nd = ns; }
         d.curStart = ns; d.curDue = nd;
         d.el.style.left = xOf(ns) + 'px';
         d.el.style.width = xOf.width(ns, nd) + 'px';
@@ -518,7 +616,12 @@ window.App = window.App || {};
         return;
       }
 
-      if (Math.abs(e.clientX - d.startClientX) > DRAG_SLOP) d.moved = true;
+      // the only branch that can be Portrait — notes (handled above) never
+      // render there, so this is where clientY actually gets read
+      const portrait = !!(this._axis && this._axis.portrait);
+      const mainDelta = portrait ? (e.clientY - d.startClientY) : (e.clientX - d.startClientX);
+      const colDelta = Math.round(mainDelta / dw);
+      if (Math.abs(mainDelta) > DRAG_SLOP) d.moved = true;
 
       let newStart = d.origStart, newDue = d.origDue;
       if (d.zone === 'move') {
@@ -533,8 +636,8 @@ window.App = window.App || {};
       }
       d.curStart = newStart; d.curDue = newDue;
 
-      d.bar.style.left = xOf(newStart) + 'px';
-      d.bar.style.width = xOf.width(newStart, newDue) + 'px';
+      if (portrait) { d.bar.style.top = xOf(newStart) + 'px'; d.bar.style.height = xOf.width(newStart, newDue) + 'px'; }
+      else { d.bar.style.left = xOf(newStart) + 'px'; d.bar.style.width = xOf.width(newStart, newDue) + 'px'; }
 
       const broken = d.deps.some(dep => newStart <= dep.due) || d.dependents.some(dep => dep.start <= newDue);
       d.bar.classList.toggle('warn', broken);
@@ -632,6 +735,10 @@ window.App = window.App || {};
     settleRows() {
       const s = this._scrollEl;
       if (!s || !s.isConnected) return;
+      // This exists for latch scrolling, which Portrait doesn't support (see
+      // render()) — summing offsetHeight across what are, in Portrait,
+      // side-by-side columns rather than stacked rows wouldn't mean anything.
+      if (this._axis && this._axis.portrait) return;
       if (this._settling) { this._settling = false; this._settledTop = s.scrollTop; return; }
       const st = s.scrollTop;
       if (this._settledTop != null && Math.abs(st - this._settledTop) < 2) return;
@@ -683,6 +790,26 @@ window.App = window.App || {};
       row.appendChild(cols);
       head.appendChild(row);
       return head;
+    },
+
+    /* Portrait's mirror of buildHead — sticky LEFT instead of sticky top,
+       date segments stacked vertically instead of side by side. The corner
+       is sized to COL_HEAD_H (matching every column's own .g-label height)
+       rather than LABEL_W, so the first date segment starts at the same page
+       Y as every track's own content — both are pushed down by the same
+       shared constant, so they line up without either measuring the other. */
+    buildDateRail(ctx, tier) {
+      const rail = el('.date-rail');
+      rail.appendChild(el('.th-corner', {
+        style: { position: 'sticky', top: '0', zIndex: '9', height: COL_HEAD_H + 'px', minHeight: COL_HEAD_H + 'px',
+                 background: 'var(--bg-2)', borderBottom: '1px solid var(--border-2)', display: 'flex',
+                 alignItems: 'center', padding: '0 6px', fontSize: '10px', fontWeight: '700', color: 'var(--text-3)' }
+      }, 'DATE'));
+      const rows = el('', { style: { display: 'flex', height: (ctx.totalCols * ctx.dw) + 'px' } });
+      rows.appendChild(buildSegColumn(ctx, tier.primary, 'primary'));
+      rows.appendChild(buildSegColumn(ctx, tier.secondary, 'secondary'));
+      rail.appendChild(rows);
+      return rail;
     },
 
     // Shared episode summary row (the collapsed/top line for both the
@@ -768,18 +895,18 @@ window.App = window.App || {};
     // `fill` overrides the bar colour, which the Department sort uses to paint
     // by show instead — there the Y axis already carries the department, so
     // the useful thing to read off a bar is which show it belongs to.
-    taskBar(track, ep, su, dep, xOf, dw, labelText, fill) {
-      const sl = xOf(su.start), sw = xOf.width(su.start, su.due);
+    taskBar(track, ep, su, dep, xOf, dw, labelText, fill, axis) {
       const st = App.status(su.status);
       const done = su.status === 'approved';
       const ring = su.status === 'ready' || su.status === 'in_progress' || su.status === 'review';
       const bg = fill || dep.color;
       const bare = isCoarse(dw);                 // shape only — see isCoarse
+      const style = { background: bg, color: pickInk(bg) };
+      setBarPos(style, axis, xOf, su.start, su.due);
+      if (ring) style.outlineColor = st.color;
       const sbar = el('.bar' + (done ? '.delivered' : '') + (ring ? '.st-ring' : '') + (bare ? '.bare' : ''), {
         title: (labelText ? labelText + ' — ' : '') + su.name + ' — ' + st.label + ' · ' + App.fmtRange(su.start, su.due),
-        style: Object.assign(
-          { left: sl + 'px', width: sw + 'px', background: bg, color: pickInk(bg) },
-          ring ? { outlineColor: st.color } : null)
+        style
       }, bare ? null : [
         el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, labelText || su.name),
         (App.isRiskBlocked(ep, su.key) ? App.icon('blocked', { cls: 'blk', title: 'In progress while a dependency is unapproved' }) : null)
@@ -861,7 +988,7 @@ window.App = window.App || {};
     // as an episode-coded bar in its show's colour — a line here mixes shows,
     // and the department is already named on the axis. Bars spill onto
     // continuation rows whenever two would overlap in time.
-    epTaskLines(body, dep, title, items, xOf, dw) {
+    epTaskLines(body, dep, title, items, xOf, dw, axis) {
       const sorted = items.slice().sort((a, b) => a.su.start < b.su.start ? -1 : 1);
       const levels = [];
       sorted.forEach(it => {
@@ -877,13 +1004,17 @@ window.App = window.App || {};
           el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } }, li === 0 ? [
             this.deptDot(dep),
             el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, title)
-          ] : [])   // continuation row — no marker on the Y axis
+          ] : [])   // continuation row (Landscape) / continuation column (Portrait) — no marker
         ]));
         const st = el('.g-track');
-        // identity lives on each bar, not the row: one line holds many episodes
+        // identity lives on each bar, not the row: one line holds many episodes.
+        // A "level" here is an interval-stacking lane (see the loop above) —
+        // in Landscape an overlap becomes an extra stacked row; in Portrait,
+        // .gantt-body's flex-row (CSS) turns that same extra .g-row.sub into
+        // an extra side-by-side sub-column instead. Same algorithm either way.
         lvl.items.forEach(({ ep, su }) => {
           const show = App.show(ep.showId);
-          this.taskBar(st, ep, su, dep, xOf, dw, ep.code, show && show.color);
+          this.taskBar(st, ep, su, dep, xOf, dw, ep.code, show && show.color, axis);
         });
         srow.appendChild(st);
         body.appendChild(srow);
@@ -934,8 +1065,9 @@ window.App = window.App || {};
     // "Department" sort: one top row per department, spanning every episode in
     // view; expand → one line per task in that department, each line holding a
     // bar per episode running it.
-    departmentRows(body, episodes, startIso, dw, timeW, xOf) {
+    departmentRows(body, episodes, startIso, dw, timeW, xOf, axis) {
       const { order, byDept } = this.groupByDept(episodes);
+      const portrait = !!(axis && axis.portrait);
 
       order.forEach(dk => {
         const dep = App.dept(dk), group = byDept[dk];
@@ -969,20 +1101,22 @@ window.App = window.App || {};
         ]));
 
         const track = el('.g-track');
+        const barStyle = {
+          background: 'linear-gradient(' + (portrait ? '180deg' : '90deg') + ',' + dep.color + ',' + shade(dep.color, -16) + ')',
+          color: pickInk(dep.color)
+        };
+        setBarPos(barStyle, axis, xOf, min, max);
         const bar = el('.bar' + (complete ? '.delivered' : ''), {
           title: dep.label + ' — ' + group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's') +
                  ' across ' + epCount + ' episode' + (epCount === 1 ? '' : 's') + ' · ' + prog + '% complete',
-          style: {
-            left: xOf(min) + 'px', width: xOf.width(min, max) + 'px',
-            background: 'linear-gradient(90deg,' + dep.color + ',' + shade(dep.color, -16) + ')',
-            color: pickInk(dep.color)
-          }
+          style: barStyle
         }, [el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, dep.label)]);
         if (!complete && prog > 0) {
-          bar.appendChild(el('', { style: {
-            position: 'absolute', left: '0', top: '0', bottom: '0', width: prog + '%',
-            background: 'rgba(255,255,255,.22)', borderRadius: '6px', pointerEvents: 'none'
-          } }));
+          const fillStyle = portrait
+            ? { position: 'absolute', top: '0', left: '0', right: '0', height: prog + '%' }
+            : { position: 'absolute', left: '0', top: '0', bottom: '0', width: prog + '%' };
+          fillStyle.background = 'rgba(255,255,255,.22)'; fillStyle.borderRadius = '6px'; fillStyle.pointerEvents = 'none';
+          bar.appendChild(el('', { style: fillStyle }));
         }
         attachBar(bar, complete ? { color: '#00c875', label: 'Complete' } : { color: '#fdab3d', label: prog + '% complete' });
         track.appendChild(bar);
@@ -990,7 +1124,7 @@ window.App = window.App || {};
         body.appendChild(row);
         if (!expanded) return;
 
-        group.keys.forEach(k => this.epTaskLines(body, dep, group.tasks[k].name, group.tasks[k].items, xOf, dw));
+        group.keys.forEach(k => this.epTaskLines(body, dep, group.tasks[k].name, group.tasks[k].items, xOf, dw, axis));
       });
     },
 
@@ -1275,15 +1409,22 @@ window.App = window.App || {};
     afterMount() {
       const scroll = this._scrollEl;
       if (!scroll) return;
+      const portrait = !!(this._axis && this._axis.portrait);
 
       // Measure the sticky time-head height and expose it as a CSS variable so
-      // lane-head sticky top aligns flush beneath it (avoids a hardcoded px value).
-      const head = scroll.querySelector('.time-head');
-      if (head) {
-        scroll.style.setProperty('--gantt-head-h', head.offsetHeight + 'px');
-        // latch scrolling pins episode rows one slot lower: under the lane band
-        const lane = scroll.querySelector('.lane-head');
-        scroll.style.setProperty('--latch-top', (head.offsetHeight + (lane ? lane.offsetHeight : 0)) + 'px');
+      // lane-head sticky top aligns flush beneath it (avoids a hardcoded px
+      // value). Landscape only — Portrait has no lane-head/latch equivalent
+      // (see render()'s Producer Notes note and settleRows' guard), and its
+      // own header (.date-rail) is sized from the DATE_RAIL_W/COL_HEAD_H
+      // constants, not measured, the same way LABEL_W isn't measured either.
+      if (!portrait) {
+        const head = scroll.querySelector('.time-head');
+        if (head) {
+          scroll.style.setProperty('--gantt-head-h', head.offsetHeight + 'px');
+          // latch scrolling pins episode rows one slot lower: under the lane band
+          const lane = scroll.querySelector('.lane-head');
+          scroll.style.setProperty('--latch-top', (head.offsetHeight + (lane ? lane.offsetHeight : 0)) + 'px');
+        }
       }
 
       // Restore synchronously — the element is already in the DOM, so setting
@@ -1291,12 +1432,20 @@ window.App = window.App || {};
       // a frame (rAF) shows one frame at position 0 and reads as a jump.
       const st = App.state.gantt || {};
       if (this._preserve) {                                    // zoom — keep the anchored date under the cursor
-        scroll.scrollLeft = this._preserve.dayOffset * App.state.zoom + LABEL_W - this._preserve.screenX;
-        scroll.scrollTop = st.scrollTop || 0;
+        if (portrait) {
+          scroll.scrollTop = this._preserve.dayOffset * App.state.zoom + COL_HEAD_H - this._preserve.screenPos;
+          scroll.scrollLeft = st.scrollLeft || 0;
+        } else {
+          scroll.scrollLeft = this._preserve.dayOffset * App.state.zoom + LABEL_W - this._preserve.screenPos;
+          scroll.scrollTop = st.scrollTop || 0;
+        }
         this._preserve = null;
       } else if (this._wantCenter) {                           // first load — centre on today
         const t = scroll.querySelector('.today-line');
-        if (t) scroll.scrollLeft = Math.max(0, parseFloat(t.style.left) - scroll.clientWidth * 0.38);
+        if (t) {
+          if (portrait) scroll.scrollTop = Math.max(0, parseFloat(t.style.top) - scroll.clientHeight * 0.38);
+          else scroll.scrollLeft = Math.max(0, parseFloat(t.style.left) - scroll.clientWidth * 0.38);
+        }
         this._wantCenter = false;
       } else {                                                 // every other re-render — exact position
         scroll.scrollLeft = st.scrollLeft || 0;
@@ -1311,7 +1460,11 @@ window.App = window.App || {};
 
     zoomBy(f) {
       const old = App.state.zoom, s = this._scrollEl;
-      if (s) { const sx = s.clientWidth / 2; this._preserve = { dayOffset: (s.scrollLeft + sx - LABEL_W) / old, screenX: sx }; }
+      const portrait = !!(this._axis && this._axis.portrait);
+      if (s) {
+        if (portrait) { const sy = s.clientHeight / 2; this._preserve = { dayOffset: (s.scrollTop + sy - COL_HEAD_H) / old, screenPos: sy }; }
+        else { const sx = s.clientWidth / 2; this._preserve = { dayOffset: (s.scrollLeft + sx - LABEL_W) / old, screenPos: sx }; }
+      }
       App.state.zoom = clampZoom(old * f);
       App.render();
     },
@@ -1322,7 +1475,9 @@ window.App = window.App || {};
       const s = this._scrollEl;
       if (!s) { this._wantCenter = true; App.render(); return; }
       const t = s.querySelector('.today-line');
-      if (t) s.scrollTo({ left: Math.max(0, parseFloat(t.style.left) - s.clientWidth * 0.38), behavior: 'smooth' });
+      if (!t) return;
+      if (this._axis && this._axis.portrait) s.scrollTo({ top: Math.max(0, parseFloat(t.style.top) - s.clientHeight * 0.38), behavior: 'smooth' });
+      else s.scrollTo({ left: Math.max(0, parseFloat(t.style.left) - s.clientWidth * 0.38), behavior: 'smooth' });
     }
   };
 
