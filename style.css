@@ -532,6 +532,28 @@ button.ghost.active:hover { background: rgba(155,91,255,.24); }
 .filter:focus, #search:focus { outline: none; border-color: var(--accent); }
 #search { min-width: 210px; }
 .filter { cursor: pointer; }
+
+/* Show/Dept/Owner multi-select — a button styled to the same footprint as
+   the .filter selects it replaced, so the toolbar's layout doesn't shift. */
+.filter-multi {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 220px;
+}
+.filter-multi-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filter-multi-chev { font-size: 9px; color: var(--text-3); flex: none; }
+.filter-pop {
+  position: fixed; z-index: 950; min-width: 190px; max-height: 320px; overflow-y: auto;
+  background: var(--surface-2); border: 1px solid var(--border-2); border-radius: 12px;
+  box-shadow: var(--shadow); padding: 6px; animation: pop-in .14s ease;
+}
+.filter-pop-row {
+  display: flex; align-items: center; gap: 9px; padding: 8px 10px;
+  border-radius: 8px; cursor: pointer; font-size: 12.5px; white-space: nowrap;
+}
+.filter-pop-row:hover { background: var(--hover); }
+.filter-pop-row input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; margin: 0; flex: none; }
+.filter-pop-row.active { color: var(--accent); font-weight: 600; }
+.filter-pop-check { width: 14px; flex: none; color: var(--accent); font-weight: 700; }
+.filter-pop-sep { height: 1px; background: var(--border); margin: 4px 2px; }
 .toolbar-label { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .6px; margin-right: -4px; }
 .legend { display: flex; gap: 13px; align-items: center; margin-left: auto; flex-wrap: wrap; }
 .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); }

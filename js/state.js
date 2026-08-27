@@ -799,7 +799,11 @@ window.App = window.App || {};
   App.state = {
     view: 'dashboard',                // timeline | board | dashboard — every role starts here
     role: 'producer',
-    filters: { show: 'all', dept: 'all', person: 'all', q: '' },
+    // show/dept/person are multi-select: an empty array means "All" (no
+    // restriction) — the direct replacement for the old 'all' sentinel. See
+    // App.filterHas / App.singleShowFilter in render.js for how consumers
+    // read them.
+    filters: { show: [], dept: [], person: [], q: '' },
     admin: { view: 'hub', role: 'producer', q: '', editing: null },  // admin page sub-navigation
     planning: { view: 'hub', editing: null, variant: 'C', selected: [] },  // planning module sub-navigation
     expanded: {},                     // episodeId -> bool (board)

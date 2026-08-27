@@ -451,7 +451,11 @@ window.App = window.App || {};
       if (archived) t.archived = true; else delete t.archived;
     }, archived ? 'archiving the show' : 'restoring the show');
     App.track.audit(archived ? 'show.archive' : 'show.restore', { show: s.name });
-    if (archived && App.state.filters.show === showId) { App.state.filters.show = 'all'; App.render(); }
+    // drop just this one out of the selection — leaves any other selected shows alone
+    if (archived && App.state.filters.show.includes(showId)) {
+      App.state.filters.show = App.state.filters.show.filter(id => id !== showId);
+      App.render();
+    }
     App.toast((archived ? 'Archived “' : 'Restored “') + s.name + '”');
   };
 
@@ -745,7 +749,7 @@ window.App = window.App || {};
         d.episodes = d.episodes.filter(e => e.showId !== showId);
       });
       App.track.audit('show.remove', { show: show.name });
-      if (App.state.filters.show === showId) App.state.filters.show = 'all';
+      App.state.filters.show = App.state.filters.show.filter(id => id !== showId);
       App.render();
       App.toast('Removed “' + show.name + '”');
     }, { title: 'Remove show', yesLabel: 'Remove' });
@@ -822,7 +826,10 @@ window.App = window.App || {};
         d.episodes.forEach(e => { if (e.assignees) Object.keys(e.assignees).forEach(k => { if (e.assignees[k] === id) delete e.assignees[k]; }); });
       });
       App.track.audit('person.remove', { person: p.name, role: p.role });
-      if (App.state.filters.person === id) { App.state.filters.person = 'all'; App.render(); }
+      if (App.state.filters.person.includes(id)) {
+        App.state.filters.person = App.state.filters.person.filter(x => x !== id);
+        App.render();
+      }
       App.toast(p.name + ' removed');
     }, { title: 'Remove team member', yesLabel: 'Remove' });
   };
@@ -831,11 +838,11 @@ window.App = window.App || {};
   App.setRole = function (role) {
     App.state.role = role;
     const r = App.role(role), f = App.state.filters;
-    f.person = 'all';
+    f.person = [];
     // every role lands on the Dashboard — it's the personal starting point
     // (own priorities, journal, roll-ups) whatever the role goes on to do
     App.state.view = 'dashboard';
-    if (r.dept) f.dept = r.dept; else f.dept = 'all';
+    f.dept = r.dept ? [r.dept] : [];
     App.render();
   };
 
@@ -856,7 +863,7 @@ window.App = window.App || {};
     App.state.baseRole = App.state.role;
     const r = App.role(App.state.role);
     App.state.view = 'dashboard';
-    if (r.dept) App.state.filters.dept = r.dept;
+    if (r.dept) App.state.filters.dept = [r.dept];
     return true;
   }
 
@@ -1058,6 +1065,7 @@ window.App = window.App || {};
     document.addEventListener('click', () => {
       App.board.closePop && App.board.closePop();
       App.prefsMenu.close();
+      App.filterMenu && App.filterMenu.close();
     });
     /* ---- keyboard shortcuts ----
        Every one of these is scoped to what's actually on screen: a shortcut

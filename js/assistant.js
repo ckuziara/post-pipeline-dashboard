@@ -41,8 +41,8 @@ window.App = window.App || {};
      expensive than asking. */
 
   function focusShow() {
-    const id = App.state.filters.show;
-    if (id === 'all') return null;
+    const id = App.singleShowFilter();
+    if (!id) return null;
     return App.activeShows().find(s => s.id === id) || null;
   }
 
@@ -1264,8 +1264,14 @@ window.App = window.App || {};
 
     const show = focusShow();
     if (!show) {
+      // multi-select collapses "nothing chosen" and "more than one chosen"
+      // onto the same null from focusShow() — both need a show narrowed to
+      // exactly one, but they're different asks, so the wording says which.
+      const n = App.state.filters.show.length;
       return { reason: 'no_show',
-        error: 'Pick a show in the toolbar first. These changes reach every episode of a show at once, so “All shows” isn’t something I should guess at.' };
+        error: n > 1
+          ? 'Pick just one show in the toolbar — with ' + n + ' selected I can’t tell which one these changes are for.'
+          : 'Pick a show in the toolbar first. These changes reach every episode of a show at once, so “All shows” isn’t something I should guess at.' };
     }
     /* Permission is checked per intent rather than up front: a department
        owner may not move dates, but nothing stops them asking what's blocked.
@@ -1508,7 +1514,8 @@ window.App = window.App || {};
       const scope = document.getElementById('ai-scope');
       if (scope) {
         const show = focusShow();
-        scope.textContent = show ? show.name : 'No show selected';
+        const n = App.state.filters.show.length;
+        scope.textContent = show ? show.name : n > 1 ? n + ' shows selected' : 'No show selected';
         scope.classList.toggle('none', !show);
       }
     },
