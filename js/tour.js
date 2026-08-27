@@ -404,7 +404,7 @@ window.App = window.App || {};
 
         // ---- 4. filter to the new show on the board ----
         await step(async () => {
-          if (newShowId) { App.state.filters.show = newShowId; App.render(); }
+          if (newShowId) { App.state.filters.show = [newShowId]; App.render(); }
           await this.sleep(500);
           const grp = document.querySelector('.ep-row');
           await this.moveToEl(grp, 800);

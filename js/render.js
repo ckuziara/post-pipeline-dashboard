@@ -5,21 +5,36 @@ window.App = window.App || {};
   'use strict';
   const el = (s, p, c) => App.el(s, p, c);
 
+  // Show/Dept/Owner are multi-select arrays; an empty array means "All" (no
+  // restriction) — every predicate below reads them through this one helper
+  // rather than each re-deriving what "nothing selected" should mean.
+  App.filterHas = (arr, id) => !arr.length || arr.includes(id);
+
+  /* A handful of features (Producer Notes, drag-to-create, Re-Arrange's
+     preselect, the Schedule Assistant) are inherently per-show — a note or a
+     dragged-out task has to belong to exactly one show, and a scheduling
+     command needs one clear target. Multi-select doesn't remove that need;
+     it just means "exactly one show chosen" is no longer the same thing as
+     "the filter isn't empty." This is the one place that distinction is
+     made, so those features see the same null-means-unavailable signal they
+     already handled for the old 'all' state, whether 0 or 2+ are selected. */
+  App.singleShowFilter = () => App.state.filters.show.length === 1 ? App.state.filters.show[0] : null;
+
   // detail listings (board rows, timeline sub-bars, dashboard aggregates) honour
   // the department / owner filters; episode-level rollups always use all subitems.
   App.subsView = function (ep) {
     const f = App.state.filters;
     return App.subitems(ep).filter(su =>
-      (f.dept === 'all' || su.dept === f.dept) &&
-      (f.person === 'all' || su.assignee === f.person));
+      App.filterHas(f.dept, su.dept) &&
+      App.filterHas(f.person, su.assignee));
   };
 
   App.visibleEpisodes = function () {
     const f = App.state.filters;
     let eps = App.activeEpisodes().filter(ep =>      // archived shows/episodes never surface
-      (f.show === 'all' || ep.showId === f.show) &&
+      App.filterHas(f.show, ep.showId) &&
       (f.q === '' || (ep.title + ' ' + ep.code).toLowerCase().includes(f.q.toLowerCase())));
-    if (f.person !== 'all') eps = eps.filter(ep => Object.values(ep.assignees || {}).includes(f.person));
+    if (f.person.length) eps = eps.filter(ep => Object.values(ep.assignees || {}).some(a => f.person.includes(a)));
     return eps;
   };
 
@@ -210,16 +225,16 @@ window.App = window.App || {};
     const f = App.state.filters;
 
     bar.appendChild(el('span.toolbar-label', null, 'Show'));
-    bar.appendChild(selectEl([['all', 'All shows']].concat(App.activeShows().map(s => [s.id, s.name])),
-      f.show, v => { f.show = v; App.render(); }));
+    bar.appendChild(multiSelectEl('show', App.activeShows().map(s => [s.id, s.name]), f.show, 'All shows',
+      arr => { f.show = arr; App.render(); }));
 
     bar.appendChild(el('span.toolbar-label', null, 'Dept'));
-    bar.appendChild(selectEl([['all', 'All departments']].concat(Object.keys(App.DEPARTMENTS).map(k => [k, App.DEPARTMENTS[k].label])),
-      f.dept, v => { f.dept = v; App.render(); }));
+    bar.appendChild(multiSelectEl('dept', Object.keys(App.DEPARTMENTS).map(k => [k, App.DEPARTMENTS[k].label]), f.dept, 'All departments',
+      arr => { f.dept = arr; App.render(); }));
 
     bar.appendChild(el('span.toolbar-label', null, 'Owner'));
-    bar.appendChild(selectEl([['all', 'Everyone']].concat(App.state.data.people.filter(p => App.roleDept(p.role)).map(p => [p.id, p.name])),
-      f.person, v => { f.person = v; App.render(); }));
+    bar.appendChild(multiSelectEl('person', App.state.data.people.filter(p => App.roleDept(p.role)).map(p => [p.id, p.name]), f.person, 'Everyone',
+      arr => { f.person = arr; App.render(); }));
 
     const search = el('input#search', {
       type: 'text', placeholder: 'Search episodes…  ' + App.shortcutLabel('F'), value: f.q });
@@ -303,15 +318,14 @@ window.App = window.App || {};
        floating there on its own margin. Timeline has no separate toolbar of
        its own the way Board does (see App.board.showManager), so this strip
        is where they ride. */
-    const show = App.state.filters.show;
     const actions = el('.kpi-actions');
 
     // Re-Arrange opens straight into its own dialog, which picks the show
-    // itself — the current filter just preselects it when there is one. Only
-    // offered to whoever may move dates at all.
+    // itself — the current filter just preselects it when exactly one show
+    // is selected. Only offered to whoever may move dates at all.
     if (App.canEditSchedule(App.state.role)) {
       actions.appendChild(el('button.ghost', {
-        onclick: () => App.rearrange.open(show !== 'all' ? show : null),
+        onclick: () => App.rearrange.open(App.singleShowFilter()),
         title: 'Re-Arrange: reorder a show’s remaining episodes'
       }, '⇅ Re-Arrange'));
     }
@@ -370,15 +384,77 @@ window.App = window.App || {};
   }
 
   // ---- helpers ----
-  function selectEl(options, value, onChange) {
-    const sel = el('select.filter');
-    options.forEach(([v, label]) => {
-      const o = document.createElement('option');
-      o.value = v; o.textContent = label; if (v === value) o.selected = true;
-      sel.appendChild(o);
+  /* Multi-select trigger + popover for the toolbar's Show/Dept/Owner filters.
+     Same open/close shape as App.prefsMenu (js/main.js) — a fixed-position
+     popover anchored off the trigger's own rect, appended to <body>, and
+     dismissed by the one global click listener every other toolbar popover
+     already shares (see main.js's boot()). Only one is ever open at a time.
+
+     Unlike prefsMenu's trigger (the brand logo, a stable node that survives
+     every render), the toolbar is torn down and rebuilt wholesale on every
+     App.render() — and picking a checkbox calls onChange, which sets the
+     filter and calls App.render() synchronously. A popover left open across
+     that rebuild would be anchored to a button no longer in the document.
+     So the open state is tracked by KEY, not by DOM reference: each redraw
+     checks whether ITS filter was the one open and, if so, redraws the
+     popover fresh against the new button — the same trick the search box
+     above already uses to survive a rebuild mid-keystroke, applied here to
+     "stay open mid-selection" instead of "keep the caret." */
+  App.filterMenu = {
+    openKey: null,
+    _pop: null,
+    close() {
+      if (this._pop) { this._pop.remove(); this._pop = null; }
+      this.openKey = null;
+    }
+  };
+
+  function multiSelectEl(key, options, selected, allLabel, onChange) {
+    // 0 selected -> allLabel; 1 -> its name; 2+ -> first two names + a count,
+    // the same truncation shape the KPI tooltips already use for long lists.
+    const label = () => {
+      if (!selected.length) return allLabel;
+      const names = selected.map(id => { const o = options.find(o => o[0] === id); return o ? o[1] : id; });
+      return names.length <= 2 ? names.join(', ') : names.slice(0, 2).join(', ') + ' +' + (names.length - 2) + ' more';
+    };
+
+    const btn = el('button.filter.filter-multi', { type: 'button', title: label() }, [
+      el('span.filter-multi-label', null, label()),
+      el('span.filter-multi-chev', null, '▾')
+    ]);
+
+    const draw = () => {
+      if (App.filterMenu._pop) { App.filterMenu._pop.remove(); App.filterMenu._pop = null; }
+      const pop = el('.filter-pop', { onclick: e => e.stopPropagation() });
+      pop.appendChild(el('.filter-pop-row' + (!selected.length ? '.active' : ''), {
+        onclick: () => onChange([])
+      }, [el('span.filter-pop-check', null, !selected.length ? '✓' : ''), el('span', null, allLabel)]));
+      pop.appendChild(el('.filter-pop-sep'));
+      options.forEach(([v, name]) => {
+        const cb = el('input', { type: 'checkbox' });
+        cb.checked = selected.includes(v);
+        pop.appendChild(el('.filter-pop-row', {
+          onclick: (e) => {
+            if (e.target !== cb) cb.checked = !cb.checked;
+            onChange(cb.checked ? selected.concat([v]) : selected.filter(x => x !== v));
+          }
+        }, [cb, el('span', null, name)]));
+      });
+      const r = btn.getBoundingClientRect();
+      pop.style.top = (r.bottom + 6) + 'px';
+      pop.style.left = r.left + 'px';
+      document.body.appendChild(pop);
+      App.filterMenu._pop = pop;
+    };
+
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (App.filterMenu.openKey === key) App.filterMenu.close();
+      else { App.filterMenu.openKey = key; draw(); }
     });
-    sel.addEventListener('change', e => onChange(e.target.value));
-    return sel;
+    // survives the rebuild a selection just triggered — see the note above
+    if (App.filterMenu.openKey === key) draw();
+    return btn;
   }
 
   let _t = null;

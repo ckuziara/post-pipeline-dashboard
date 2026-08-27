@@ -305,7 +305,8 @@ window.App = window.App || {};
       // Not yet given a Portrait transpose (it has its own unrelated .portrait
       // meaning already — narrow notes flipping to vertical text — and its own
       // transpose problem); hidden in Portrait rather than half-drawn.
-      if (App.state.filters.show !== 'all' && !portrait) this.producerNotesLane(body, App.state.filters.show, startIso, dw, xOf);
+      const singleShow = App.singleShowFilter();
+      if (singleShow && !portrait) this.producerNotesLane(body, singleShow, startIso, dw, xOf);
 
       const byStart = (a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1;
       if (sort === 'show') {
@@ -681,7 +682,7 @@ window.App = window.App || {};
           // sitting there armed for an accidental second draw
           App.state.creatingOnGantt = false;
           App.render();
-          App.createFromDrag.open({ startIso: sIso, dueIso: dIso, showId: App.state.filters.show });
+          App.createFromDrag.open({ startIso: sIso, dueIso: dIso, showId: App.singleShowFilter() });
         }
         return;
       }
@@ -1318,7 +1319,7 @@ window.App = window.App || {};
       }, el('span', null, 'New note'));
       trackEl.appendChild(ghost);
       this._drag = {
-        kind: 'note-draw', showId: App.state.filters.show, ghost,
+        kind: 'note-draw', showId: App.singleShowFilter(), ghost,
         startCol, startClientX: e.clientX, curA: startCol, curB: startCol, moved: false
       };
       document.body.classList.add('gantt-dragging');

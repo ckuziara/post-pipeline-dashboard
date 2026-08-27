@@ -304,7 +304,9 @@ window.App = window.App || {};
     _rerender() {
       const card = this._card; if (!card) return;
       card.innerHTML = '';
-      const showName = App.state.filters.show === 'all' ? 'All shows' : App.show(App.state.filters.show).name;
+      const singleShow = App.singleShowFilter();
+      const n = App.state.filters.show.length;
+      const showName = singleShow ? App.show(singleShow).name : n > 1 ? n + ' shows' : 'All shows';
       const live = App.lucid.isLive();
       const items = this.tracked();
 
