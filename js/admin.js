@@ -241,7 +241,6 @@ window.App = window.App || {};
     box.appendChild(head('Role Permissions', 'Select a role to configure its capabilities. Changes apply immediately.'));
 
     const roleKey = App.state.admin.role;
-    const locked = roleKey === 'producer';
     const layout = el('.adm-split');
 
     const side = el('.adm-side');
@@ -252,8 +251,12 @@ window.App = window.App || {};
       }, [App.icon(r.ico, { cls: 'adm-role-ic' }), r.label]));
     });
 
+    // Every permission is editable for every role, Producer included — the
+    // one thing App.setRolePerm itself refuses is switching off Admin Access
+    // on the last role that still holds it, since that's what would actually
+    // lock everyone out. That's enforced at the point of the toggle (with its
+    // own toast), not by disabling the control here.
     const panel = el('.adm-perms');
-    if (locked) panel.appendChild(el('.adm-note', null, [App.icon('lock'), ' The Producer role always keeps full access, so nobody can be locked out.']));
     PERMS.forEach(cat => {
       const card = el('.adm-permcard');
       card.appendChild(el('.adm-permcard-head', null, [
@@ -262,8 +265,8 @@ window.App = window.App || {};
       ]));
       cat.items.forEach(item => {
         const on = item.get(roleKey);
-        card.appendChild(el('.adm-permrow' + (locked ? '.locked' : ''), {
-          onclick: locked ? null : () => item.set(roleKey, !on)
+        card.appendChild(el('.adm-permrow', {
+          onclick: () => item.set(roleKey, !on)
         }, [
           el('div', null, [
             el('.adm-perm-title' + (item.danger && on ? '.danger' : ''), null, item.title),
