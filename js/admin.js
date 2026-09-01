@@ -224,6 +224,8 @@ window.App = window.App || {};
         get: k => App.canRemoveTask(k), set: (k, v) => App.setRolePerm(k, 'removeTask', v, 'Remove Tasks') }
     ]},
     { title: 'Pipeline Oversight', desc: 'High-level access to shows and scheduling.', items: [
+      { title: 'Reviews Tab', desc: 'Can open the Reviews tab — the queue of every task waiting for review, across all shows in view.',
+        get: k => App.canSeeReviewQueue(k), set: (k, v) => App.setRolePerm(k, 'reviewQueue', v, 'Reviews Tab') },
       { title: 'Change the Schedule', desc: 'Can move task dates — in the Edit Task dialog and by dragging bars on the Timeline — for every department, not just their own.',
         get: k => App.canEditSchedule(k), set: (k, v) => App.setRolePerm(k, 'editSchedule', v, 'Change the Schedule') },
       { title: 'Manage Shows', danger: true, desc: 'Can create new shows — and permanently remove a show together with all of its episodes.',

@@ -51,6 +51,10 @@ window.App = window.App || {};
 
     // guard: only admins may sit on the Admin or Planning views
     if ((App.state.view === 'admin' || App.state.view === 'planning') && !App.isAdminRole(App.state.role)) App.state.view = 'timeline';
+    /* guard: same for Reviews, now that it's a revocable permission rather
+       than a fixed director-only tab — an admin turning it off mid-session
+       would otherwise leave that person parked on a view whose tab is gone. */
+    if (App.state.view === 'review' && !App.canSeeReviewQueue(App.state.role)) App.state.view = 'timeline';
     /* guard: phone mode only ever offers Dashboard / Board / Admin (see
        renderViewTabs), so a view that isn't reachable from the tab bar there
        isn't reachable here either — the redirect fires every render, so
@@ -154,7 +158,7 @@ window.App = window.App || {};
     const tabs = phone
       ? [['dashboard', 'compass', 'Dashboard'], ['board', 'grid', 'Board']]
       : [['timeline', 'chart', 'Timeline'], ['board', 'grid', 'Board'], ['dashboard', 'compass', 'Dashboard']];
-    if (!phone && App.state.role === 'director') tabs.push(['review', 'target', 'Reviews']);
+    if (!phone && App.canSeeReviewQueue(App.state.role)) tabs.push(['review', 'target', 'Reviews']);
     // budget modelling is oversight work, so it rides the same gate as Admin
     if (!phone && App.isAdminRole(App.state.role)) tabs.push(['planning', 'sparkle', 'Planning']);
     if (App.isAdminRole(App.state.role)) tabs.push(['admin', 'tools', 'Admin']);
