@@ -247,6 +247,18 @@ window.App = window.App || {};
     return strip;
   }
 
+  /* Small number fields hold a whole value, not a string being built up: land
+     in one and the digits you type should replace what's there, not tack onto
+     it (typing "3" in a field reading 1 means three, not thirteen). Selecting
+     on focus does that, deferred a tick because a click places its caret after
+     focus fires and would otherwise drop the selection. */
+  function selectOnFocus(input) {
+    input.addEventListener('focus', () => {
+      setTimeout(() => { if (document.activeElement === input) input.select(); }, 0);
+    });
+    return input;
+  }
+
   function field(label, control, hint) {
     return el('.field', null, [el('label.fld-label', null, label), control, hint ? el('.fld-hint', null, hint) : null]);
   }
@@ -1196,10 +1208,10 @@ window.App = window.App || {};
       setTimeout(() => document.addEventListener('click', closeDepMenu), 0);
     }
 
-    const numFld = (t, prop, min) => el('input.fld.fld-num', {
+    const numFld = (t, prop, min) => selectOnFocus(el('input.fld.fld-num', {
       type: 'number', value: String(t[prop] != null ? t[prop] : min), min: String(min), max: '365',
       onchange: (e) => { t[prop] = Math.max(min, Math.min(365, parseInt(e.target.value) || min)); e.target.value = t[prop]; onChange(); }
-    });
+    }));
 
     // whole weeks read better than "28d" for the long waits a lag is used for
     const lagLabel = (n) => (n % 7 === 0 ? (n / 7) + 'w' : n + 'd');
@@ -1215,12 +1227,110 @@ window.App = window.App || {};
       }, '＋')
     ]);
 
-    const moveBtns = (i, extraCls) => el('.pipe-move' + (extraCls || ''), null, [
-      el('button.btn-move', { type: 'button', disabled: i === 0, title: tip('Move up'),
-        onclick: (e) => { e.stopPropagation(); snapshot(); [pipe[i - 1], pipe[i]] = [pipe[i], pipe[i - 1]]; renderPipe(); } }, '▲'),
-      el('button.btn-move', { type: 'button', disabled: i === pipe.length - 1, title: tip('Move down'),
-        onclick: (e) => { e.stopPropagation(); snapshot(); [pipe[i], pipe[i + 1]] = [pipe[i + 1], pipe[i]]; renderPipe(); } }, '▼')
-    ]);
+    /* ---- drag to reorder ----
+       Replaces a pair of ▲▼ buttons, which made moving a task five rows up a
+       five-click job. Grab the grip and the row lifts under the cursor while
+       the rest slide apart to open a gap where it will land — the phone
+       home-screen gesture. Nothing is re-rendered mid-drag: the rows are moved
+       with transforms only, and the pipeline array is spliced once on drop, so
+       the animation can't fight a rebuild.
+
+       Rows are measured at pick-up rather than per frame; the list doesn't
+       reflow during a drag, so those measurements stay true, and it keeps the
+       move handler to arithmetic. */
+    let dragState = null;
+
+    const rowEls = () => [...pipeList.querySelectorAll('.pipe-row:not(.milestone)')];
+
+    function beginDrag(e, grip) {
+      const row = grip.closest('.pipe-row');
+      const rows = rowEls();
+      const from = rows.indexOf(row);
+      if (from < 0 || rows.length < 2) return;
+      e.preventDefault();
+      closeDepMenu();
+
+      const gap = parseFloat(getComputedStyle(pipeList).rowGap) || 0;
+      const box = rows.map(r => ({ el: r, top: r.offsetTop, h: r.offsetHeight }));
+      dragState = {
+        row, rows: box, from, to: from, y: e.clientY, gap,
+        // how far a displaced row has to travel to clear the one being dragged
+        step: box[from].h + gap
+      };
+      pipeList.classList.add('reordering');
+      row.classList.add('pipe-dragging');
+      row.style.width = row.offsetWidth + 'px';      // pin the width; it leaves the flow visually
+      try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+    }
+
+    function moveDrag(e) {
+      const d = dragState; if (!d) return;
+      const dy = e.clientY - d.y;
+      d.row.style.transform = 'translateY(' + dy + 'px)';
+
+      // where the dragged row's own middle now sits, against everyone else's
+      const mid = d.rows[d.from].top + d.rows[d.from].h / 2 + dy;
+      let to = d.from;
+      d.rows.forEach((r, i) => {
+        if (i === d.from) return;
+        const rMid = r.top + r.h / 2;
+        if (i < d.from && mid < rMid) to = Math.min(to, i);
+        if (i > d.from && mid > rMid) to = Math.max(to, i);
+      });
+      if (to !== d.to) {
+        d.to = to;
+        d.rows.forEach((r, i) => {
+          if (i === d.from) return;
+          const shift = (i > d.from && i <= to) ? -d.step : (i < d.from && i >= to) ? d.step : 0;
+          r.el.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+        });
+      }
+    }
+
+    function endDrag() {
+      const d = dragState; if (!d) return;
+      dragState = null;
+      pipeList.classList.remove('reordering');
+      d.row.classList.remove('pipe-dragging');
+      d.row.style.transform = ''; d.row.style.width = '';
+      d.rows.forEach(r => { r.el.style.transform = ''; });
+      if (d.to === d.from) return;
+      snapshot();
+      pipe.splice(d.to, 0, pipe.splice(d.from, 1)[0]);
+      renderPipe(); onChange();
+    }
+
+    pipeList.addEventListener('pointerdown', (e) => {
+      const grip = e.target.closest('.pipe-grip');
+      if (grip) beginDrag(e, grip);
+    });
+    pipeList.addEventListener('pointermove', moveDrag);
+    pipeList.addEventListener('pointerup', endDrag);
+    pipeList.addEventListener('pointercancel', endDrag);
+
+    // the grip stays keyboard-operable — the arrow buttons it replaced were the
+    // only way to reorder without a pointer
+    const moveBy = (i, delta) => {
+      const to = Math.max(0, Math.min(pipe.length - 1, i + delta));
+      if (to === i) return;
+      snapshot();
+      pipe.splice(to, 0, pipe.splice(i, 1)[0]);
+      renderPipe(); onChange();
+      const g = rowEls()[to] && rowEls()[to].querySelector('.pipe-grip');
+      if (g) g.focus();
+    };
+
+    const dragGrip = (i, t, extraCls) => el('button.pipe-grip' + (extraCls || ''), {
+      type: 'button',
+      title: tip('Drag to reorder — or use the arrow keys'),
+      'aria-label': 'Reorder ' + (t.name || 'task') + ' (position ' + (i + 1) + ' of ' + pipe.length + ')',
+      onclick: (e) => e.stopPropagation(),          // a grab is not a click into edit mode
+      onkeydown: (e) => {
+        if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+        e.preventDefault(); e.stopPropagation();
+        moveBy(i, e.key === 'ArrowUp' ? -1 : 1);
+      }
+    }, '⠿');
 
     function compactRow(t, i) {
       const dep = App.dept(t.dept);
@@ -1236,7 +1346,7 @@ window.App = window.App || {};
         el('span.pipe-deps-sum', { title: tip(depNames.join(', ')) }, depNames.length ? '◷ ' + depNames.join(', ') : ''),
         (t.lag ? el('span.pipe-lag', { title: tip('Waits ' + t.lag + ' days after ' + (depNames.join(', ') || 'its dependency') + ' finishes') }, '+' + lagLabel(t.lag)) : null),
         el('span.pipe-dur', { title: tip('Nominal ' + t.days + ' days · minimum ' + t.minDays) }, t.days + 'd'),
-        moveBtns(i, '.hov')
+        dragGrip(i, t, '.hov')
       ]);
     }
 
@@ -1273,9 +1383,10 @@ window.App = window.App || {};
 
       return el('.pipe-row.editing', null, [
         leadCell(i),
-        moveBtns(i),
+        dragGrip(i, t),
         el('input.fld.fld-name', { type: 'text', value: t.name, placeholder: 'Task name',
-          oninput: (e) => { t.name = e.target.value; } }),
+          oninput: (e) => { t.name = e.target.value; },
+          onchange: () => onChange() }),        // renaming counts as an edit; on blur, not per keystroke
         deptSel,
         el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'days'), numFld(t, 'days', 1)]),
         el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'min'), numFld(t, 'minDays', 1)]),
@@ -1420,16 +1531,27 @@ window.App = window.App || {};
       if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
       App.track.feature('show.addDialog');
 
+      /* A dismissed dialog keeps what was typed in it: clicking the backdrop to
+         check something on the board behind shouldn't cost a half-planned show.
+         The draft is written on close and cleared the moment the show is
+         actually created — see App.draft. */
+      const DRAFT = 'addShow';
+      const d0 = App.draft.get(DRAFT) || {};
+      const restored = !!d0.name || !!d0.code || !!d0.pipe;
+      let created = false;                          // a real save clears the draft instead
+
       // working copy of the pipeline this show will own — reloaded when the
       // show type or preset changes (each type has its own default task set,
       // plus any named presets saved in Admin → Workflow → Pipelines)
-      let pipe = App.defaultPipelineFor('animation');
-      let targetTouched = false;                    // has the user hand-picked an end date?
+      let pipe = (Array.isArray(d0.pipe) && d0.pipe.length)
+        ? JSON.parse(JSON.stringify(d0.pipe))
+        : App.defaultPipelineFor(d0.type || 'animation');
+      let targetTouched = !!d0.targetTouched;       // has the user hand-picked an end date?
       const editor = App.pipelineEditor(pipe, { onChange: () => updateSchedule(), tooltips: false });
 
       // ---------- show details ----------
-      const nameInput = el('input.fld', { type: 'text', placeholder: 'e.g. Little Angel' });
-      const codeInput = el('input.fld', { type: 'text', placeholder: 'e.g. LA', maxlength: '6' });
+      const nameInput = el('input.fld', { type: 'text', placeholder: 'e.g. Little Angel', value: d0.name || '' });
+      const codeInput = el('input.fld', { type: 'text', placeholder: 'e.g. LA', maxlength: '6', value: d0.code || '' });
       const typeSel = el('select.fld', {
         onchange: () => { rebuildPresetOptions(); loadPipeline(); }
       });
@@ -1460,7 +1582,7 @@ window.App = window.App || {};
         editor.setPipe(pipe);
         updateSchedule();
       }
-      const countInput = el('input.fld', { type: 'number', value: '3', min: '1', max: '100' });
+      const countInput = selectOnFocus(el('input.fld', { type: 'number', value: String(d0.epCount || 3), min: '1', max: '100' }));
       const epList = el('.ep-name-list');
       /* Episode rows carry a name and the date that episode goes live. Live
          dates default to the even cadence, but each is editable: naming a date
@@ -1468,7 +1590,7 @@ window.App = window.App || {};
          where they are. `epLive[i]` holds only the dates actually typed — a
          blank entry means "wherever the cadence puts it" and keeps following
          the plan when the start, cadence or pipeline changes. */
-      const epNameVals = [], epLive = [];
+      const epNameVals = (d0.epNames || []).slice(), epLive = (d0.epLive || []).slice();
       const epCountBadge = el('span.count-badge');
       const rebuildEps = () => {
         const n = Math.max(1, Math.min(EP_MAX, parseInt(countInput.value) || 1));
@@ -1494,9 +1616,62 @@ window.App = window.App || {};
       };
 
       // ---------- schedule ----------
-      const startInput = el('input.fld', { type: 'date', value: App.isoDate(App.today()) });
-      const cadenceInput = el('input.fld', { type: 'number', value: '14', min: '1', max: '90' });
-      const endInput = el('input.fld', { type: 'date' });
+      const startInput = el('input.fld', { type: 'date', value: d0.start || App.isoDate(App.today()) });
+      /* Episode rate. People plan in "two a week", not "every 3.5 days", so the
+         rate is what's typed and the day-gap the scheduler wants is derived
+         from it. Older drafts stored a raw day count; fold one back into a rate
+         so a half-finished plan still opens. */
+      const RATE_DAYS = { week: 7, month: 30 };
+      const rateFromDays = (days) => {
+        if (!days) return { n: 2, unit: 'week' };
+        // a gap of a week or less is a weekly rate; anything longer only reads
+        // sensibly per month (14 days is "2 per month", not "0.5 per week")
+        return days <= RATE_DAYS.week
+          ? { n: Math.max(1, Math.round(RATE_DAYS.week / days)), unit: 'week' }
+          : { n: Math.max(1, Math.round(RATE_DAYS.month / days)), unit: 'month' };
+      };
+      const r0 = d0.rateUnit ? { n: d0.rateN, unit: d0.rateUnit } : rateFromDays(parseInt(d0.cadence) || 14);
+      const rateNum = selectOnFocus(el('input.fld.rate-num', { type: 'number', value: String(r0.n || 2), min: '1' }));
+      // both units worth seeing at once — a segmented toggle rather than a
+      // dropdown that hides one of the two behind a click
+      let rateUnitVal = r0.unit === 'month' ? 'month' : 'week';
+      const rateSegs = {};
+      const rateSeg = el('.prefs-seg.rate-seg', null,
+        [['week', 'Week'], ['month', 'Month']].map(([v, l]) => {
+          const b = el('button.seg', {
+            type: 'button',
+            onclick: () => { rateUnitVal = v; updateSchedule(); }
+          }, l);
+          rateSegs[v] = b;
+          return b;
+        }));
+      const rateHint = el('.fld-hint');
+
+      /* One episode a day is the ceiling — two can't kick off on the same day —
+         so the rate is capped at the number of days in the unit: 7 a week, 30 a
+         month. Clamped here rather than only on the input, so switching Month →
+         Week can't leave 30 standing in a field that tops out at 7. */
+      const rateMax = () => RATE_DAYS[rateUnitVal];
+      const clampRate = () => {
+        const max = rateMax();
+        rateNum.max = String(max);
+        const n = Math.max(1, Math.min(max, parseInt(rateNum.value) || 1));
+        if (String(n) !== rateNum.value) rateNum.value = String(n);
+        return n;
+      };
+      const cadenceDays = () => Math.max(1, Math.round(RATE_DAYS[rateUnitVal] / clampRate()));
+
+      // the day-gap is the thing that actually schedules, so always show it
+      function paintRateHint() {
+        const days = cadenceDays();
+        const every = days === 1 ? 'every day' : 'every ' + days + ' days';
+        Object.keys(rateSegs).forEach(v => rateSegs[v].classList.toggle('active', v === rateUnitVal));
+        // episodes kick off on whole days, so a rate that doesn't divide evenly
+        // into the period is an approximation — say so rather than implying it's exact
+        const exact = RATE_DAYS[rateUnitVal] % clampRate() === 0;
+        rateHint.textContent = 'An episode kicks off ' + (exact ? '' : 'roughly ') + every;
+      }
+      const endInput = el('input.fld', { type: 'date', value: (targetTouched && d0.end) || '' });
       const recPill = el('.rec-pill');
       const endFeedback = el('.end-feedback');
       const useRecBtn = el('button.btn-icon', {
@@ -1506,7 +1681,7 @@ window.App = window.App || {};
 
       const readPlan = () => ({
         start: startInput.value || App.isoDate(App.today()),
-        cadence: Math.max(1, parseInt(cadenceInput.value) || 14),
+        cadence: cadenceDays(),
         epCount: Math.max(1, Math.min(EP_MAX, parseInt(countInput.value) || 1))
       });
 
@@ -1553,7 +1728,9 @@ window.App = window.App || {};
           endFeedback.textContent = '⤢ Extended to ' + Math.round(solved.scale * 100) + '% of nominal — extra breathing room on every task';
         }
 
+        paintRateHint();
         paintEpisodeDates();
+        refreshPresetBtn();
       }
 
       /* Every episode's kick-off and live date under the current plan.
@@ -1608,7 +1785,7 @@ window.App = window.App || {};
             ? 'Starts ' + App.fmtDate(p.start) + ' — ' + Math.abs(p.shift) + ' day' +
               (Math.abs(p.shift) === 1 ? '' : 's') + (p.shift < 0 ? ' earlier' : ' later') +
               ' than the cadence, to go live on ' + App.fmtDate(p.live)
-            : 'Starts ' + App.fmtDate(p.start) + ' — on the ' + readPlan().cadence + '-day cadence';
+            : 'Starts ' + App.fmtDate(p.start) + ' — on the ' + readPlan().cadence + '-day rate';
         });
       }
 
@@ -1620,7 +1797,7 @@ window.App = window.App || {};
         if (String(n) !== countInput.value) { countInput.value = n; rebuildEps(); updateSchedule(); }
       });
       startInput.addEventListener('change', updateSchedule);
-      cadenceInput.addEventListener('change', updateSchedule);
+      rateNum.addEventListener('input', updateSchedule);
       endInput.addEventListener('change', () => { targetTouched = true; updateSchedule(); });
 
       /* ---------- collapsible sections ----------
@@ -1655,6 +1832,74 @@ window.App = window.App || {};
       ]);
       const epPanel = collapsible('Episodes', [epCountBadge], epBody);
 
+      /* ---------- "Save as Preset" ----------
+         A pipeline tweaked for one show is usually a pipeline the studio wants
+         again. Rather than making the producer rebuild it under Admin →
+         Workflow, offer to name and keep it right here — but only once it
+         actually differs from what it was loaded from, so the button doesn't
+         invite saving a copy of the standard pipeline under a new name.
+
+         Compared through a normaliser, not raw JSON: the editor stamps
+         optional fields (vc, lag) onto tasks it touches, and a task carrying
+         `vc: false` is not an adjustment. */
+      const normPipe = (p) => JSON.stringify((p || []).map(t => ({
+        key: t.key, name: (t.name || '').trim(), dept: t.dept,
+        days: t.days, minDays: t.minDays, deps: t.deps.slice().sort(),
+        lag: t.lag || 0, vc: !!t.vc
+      })));
+      const baselinePipe = () => {
+        const preset = presetSel.value && (App.state.data.pipelinePresets || []).find(p => p.id === presetSel.value);
+        return preset ? preset.pipeline : App.defaultPipelineFor(typeSel.value);
+      };
+      const pipeAdjusted = () => normPipe(pipe) !== normPipe(baselinePipe());
+
+      const presetName = el('input.fld', { type: 'text', placeholder: 'e.g. Blippi 2-week turnaround' });
+      const presetBar = el('.preset-save-bar', { style: { display: 'none' } }, [
+        el('span.preset-save-lbl', null, 'Save this pipeline as'),
+        presetName,
+        el('button.btn-primary.preset-save-go', { type: 'button', onclick: () => savePreset() }, 'Save'),
+        el('button.btn-ghost', { type: 'button', onclick: () => showPresetBar(false) }, 'Cancel')
+      ]);
+      const savePresetBtn = el('button.btn-icon.preset-save-btn', {
+        type: 'button', title: 'Save this adjusted pipeline as a reusable preset',
+        onclick: (e) => { e.stopPropagation(); showPresetBar(true); }
+      }, 'Save as Preset');
+
+      function showPresetBar(on) {
+        presetBar.style.display = on ? '' : 'none';
+        if (!on) return;
+        // a name worth pre-filling: the show if it has one, else the type
+        if (!presetName.value) {
+          const base = nameInput.value.trim();
+          presetName.value = base ? base + ' pipeline' : 'Custom ' + (typeSel.value === 'animation' ? 'Animation' : 'Live Action');
+        }
+        presetName.focus(); presetName.select();
+      }
+
+      function savePreset() {
+        const id = App.uid();
+        const ok = App.savePipelinePreset({ id: id, name: presetName.value, type: typeSel.value, pipeline: pipe });
+        if (!ok) return;                        // savePipelinePreset has already said why
+        showPresetBar(false);
+        presetName.value = '';
+        /* Adopt what was just saved: the dropdown now offers it and the editor
+           is sitting on it, so the pipeline reads as unadjusted again — which
+           is true, and it stops the button re-offering the same save. */
+        rebuildPresetOptions();
+        presetSel.value = id;
+        refreshPresetBtn();
+      }
+
+      function refreshPresetBtn() {
+        const show = pipeAdjusted() && App.isAdminRole(App.state.role);
+        savePresetBtn.style.display = show ? '' : 'none';
+        if (!show) showPresetBar(false);
+      }
+      presetName.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); savePreset(); }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); showPresetBar(false); }
+      });
+
       // ---------- pipeline editor (shared component) ----------
       const addTaskBtn = el('button.btn-icon', {
         type: 'button',
@@ -1667,21 +1912,65 @@ window.App = window.App || {};
       const pipeBody = el('.pipe-body', null, [
         el('.fld-hint', { style: { margin: '8px 0' } },
           '“days” is the nominal duration, “min” the floor it can be squeezed to. Dependencies gate when a task can start. Click a task to edit it.'),
+        presetBar,
         editor.list
       ]);
       // the pipeline controls only make sense once the section is expanded
-      const pipeTools = [editor.undoBtn, editor.redoBtn, addTaskBtn];
+      const pipeTools = [savePresetBtn, editor.undoBtn, editor.redoBtn, addTaskBtn];
       pipeTools.forEach(b => { b.style.display = 'none'; });
       const pipePanel = collapsible('Customize Pipeline Tasks',
-        [editor.count, editor.undoBtn, editor.redoBtn, addTaskBtn],
+        [editor.count, savePresetBtn, editor.undoBtn, editor.redoBtn, addTaskBtn],
         pipeBody,
-        (open) => { pipeTools.forEach(b => { b.style.display = open ? '' : 'none'; }); });
+        (open) => {
+          pipeTools.forEach(b => { b.style.display = open ? '' : 'none'; });
+          if (open) refreshPresetBtn(); else showPresetBar(false);
+        });
 
-      rebuildEps();
+      // the draft's type and preset are adopted WITHOUT calling loadPipeline():
+      // that would rebuild the task list from the preset and throw away any
+      // per-task edits the draft is carrying
+      if (d0.type) typeSel.value = d0.type;
       rebuildPresetOptions();
+      if (d0.preset) presetSel.value = d0.preset;
+      rebuildEps();
       updateSchedule();
 
+      /* What the draft actually holds. Read at close time rather than tracked
+         per keystroke, so it can never drift from what's on screen. */
+      const snapshot = () => ({
+        name: nameInput.value, code: codeInput.value,
+        type: typeSel.value, preset: presetSel.value,
+        start: startInput.value, epCount: countInput.value,
+        rateN: rateNum.value, rateUnit: rateUnitVal,
+        end: endInput.value, targetTouched: targetTouched,
+        epNames: [...epList.querySelectorAll('.ep-name-fld')].map(i => i.value),
+        epLive: epLive.slice(),
+        pipe: pipe
+      });
+      /* Only keep a draft that's worth keeping: opening the dialog and closing
+         it again shouldn't leave one behind, or the next Add Show would restore
+         a form nobody filled in. */
+      const worthKeeping = () => {
+        const s = snapshot();
+        if (s.name.trim() || s.code.trim() || s.targetTouched) return true;
+        if (s.epLive.some(Boolean)) return true;
+        if (normPipe(s.pipe) !== normPipe(App.defaultPipelineFor(s.type))) return true;
+        return s.epNames.some((n, i) => n.trim() && n.trim() !== 'Episode ' + (i + 1));
+      };
+      const keepDraft = () => {
+        if (created) { App.draft.clear(DRAFT); return; }
+        if (worthKeeping()) App.draft.set(DRAFT, snapshot());
+        else App.draft.clear(DRAFT);
+      };
+
       const sections = [
+        (restored ? el('.draft-note', null, [
+          el('span', null, [App.icon('save'), ' Picking up where you left off — nothing was lost.']),
+          el('button.draft-clear', {
+            type: 'button', title: 'Clear this draft and start a new show',
+            onclick: () => { App.draft.clear(DRAFT); created = true; App.modal.close(); App.addShow.open(); }
+          }, 'Start fresh')
+        ]) : null),
         el('.modal-section-title', null, 'Show Details'),
         el('.plan-grid', null, [
           field('Show Name', nameInput, 'The full title of the series'),
@@ -1694,7 +1983,11 @@ window.App = window.App || {};
           el('.plan-grid', null, [
             field('Project Start Date', startInput),
             field('Number of Episodes', countInput),
-            field('Episode Cadence', cadenceInput, 'Days between episode kick-offs')
+            el('.field', null, [
+              el('label.fld-label', null, 'Episode Rate'),
+              el('.rate-row', null, [rateNum, rateSeg]),
+              rateHint
+            ])
           ]),
           el('.plan-grid.two.end-row', null, [
             field('Project End Date', endInput, 'Pull it earlier to squeeze the pipeline, push it later to extend'),
@@ -1737,13 +2030,17 @@ window.App = window.App || {};
             });
             App.createShow({ name, code, type: typeSel.value, epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives });
             App.track.flowDone('Create show', true, { episodes: epNames.length });
+            created = true;                       // the draft has served its purpose
             editor.closeMenus();
             App.modal.close();
           }
         }, '＋ Create Show')
       ];
 
-      App.modal.open(card('clapper', 'Add New Show', 'Plan the schedule and customize the pipeline', sections, footer, 'wide'));
+      // onClose fires for ✕, the backdrop, Escape and Cancel alike, which is
+      // exactly the set of ways someone leaves without meaning to lose the form
+      App.modal.open(card('clapper', 'Add New Show', 'Plan the schedule and customize the pipeline', sections, footer, 'wide'),
+        { onClose: keepDraft });
       App.track.flowStart('Create show');   // after open() for the same reason
     }
   };

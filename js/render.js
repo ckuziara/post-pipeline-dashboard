@@ -130,6 +130,8 @@ window.App = window.App || {};
     // its transcript survives a redraw; this only follows the view and the show
     // filter it's scoped to.
     App.assistant && App.assistant.sync();
+    // remember where the reader is, so a refresh puts them back (App.session)
+    App.session && App.session.save();
   };
 
   // the brand mark doubles as the preferences button: clapper normally, gear

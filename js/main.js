@@ -512,10 +512,15 @@ window.App = window.App || {};
         id: preset.id || App.uid(),
         name,
         type: preset.type === 'live_action' ? 'live_action' : 'animation',
-        pipeline: preset.pipeline.map(t => ({
-          key: t.key, name: (t.name || '').trim() || t.key, dept: t.dept,
-          days: t.days, minDays: t.minDays, deps: t.deps.slice()
-        }))
+        // carry the optional flags the editor can set — dropping them here
+        // silently discarded a task's lag and its version-control toggle
+        pipeline: preset.pipeline.map(t => {
+          const o = { key: t.key, name: (t.name || '').trim() || t.key, dept: t.dept,
+                      days: t.days, minDays: t.minDays, deps: t.deps.slice() };
+          if (t.lag) o.lag = t.lag;
+          if (t.vc) o.vc = true;
+          return o;
+        })
       };
       const i = d.pipelinePresets.findIndex(x => x.id === clean.id);
       if (i >= 0) d.pipelinePresets[i] = clean; else d.pipelinePresets.push(clean);
@@ -1058,6 +1063,11 @@ window.App = window.App || {};
       App.load();                                           // no backend: localStorage mode
     }
 
+    /* Both paths park the user on the Dashboard — it's home. Put them back
+       where they actually were if they've already been here today, so a
+       refresh mid-task isn't a trip back to the start (see App.session). */
+    App.session.restore();
+
     document.getElementById('brand-logo').addEventListener('click', e => {
       e.stopPropagation();
       App.prefsMenu.toggle();
@@ -1082,6 +1092,10 @@ window.App = window.App || {};
     };
     const inTextField = (t) => !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
 
+    // pop-out windows are fed by this page; don't leave them orphaned behind it
+    window.addEventListener('pagehide', () => {
+      App.dashboard.closeAllPops && App.dashboard.closeAllPops();
+    });
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
         App.board.closePop && App.board.closePop();
