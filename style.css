@@ -2195,10 +2195,10 @@ select.fld { cursor: pointer; }
 
 .pipe-row {
   display: grid; align-items: center; gap: 7px;
-  /* lead · move · name · dept · days · min · wait · deps.
+  /* lead · grip · name · dept · days · min · wait · deps.
      Days/Min/Wait are all the same fixed width — they hold the same kind of
      small number — and Deps takes the slack instead. */
-  grid-template-columns: 20px 18px minmax(88px, 1.1fr) 90px 60px 60px 60px minmax(108px, 1.3fr);
+  grid-template-columns: 20px 22px minmax(88px, 1.1fr) 90px 60px 60px 60px minmax(108px, 1.3fr);
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 7px 9px;
 }
 .pipe-actions { display: flex; align-items: center; gap: 4px; flex: none; }
@@ -2207,10 +2207,10 @@ select.fld { cursor: pointer; }
 /* Bottom-align the editing row so every input shares one baseline — the
    Days/Min columns carry a label above their input, which would otherwise push
    those inputs lower than the label-less Name/Dept/Deps fields. Small controls
-   (number, move arrows, actions) stay vertically centred. */
+   (number, grip, actions) stay vertically centred. */
 .pipe-row.editing { border-color: var(--accent); background: rgba(91,108,255,.06); align-items: end; }
 .pipe-row.editing .pipe-lead,
-.pipe-row.editing .pipe-move,
+.pipe-row.editing .pipe-grip,
 .pipe-row.editing .pipe-actions { align-self: center; }
 
 /* compact (read-only) row — click to expand into the editor */
@@ -2236,9 +2236,32 @@ select.fld { cursor: pointer; }
   border-radius: 12px; padding: 2px 8px;
 }
 /* mandatory end-of-episode milestones — listed, but nothing to interact with */
-.pipe-row.compact .pipe-move { flex: none; flex-direction: row; gap: 3px; }
-.pipe-row.compact .pipe-move.hov { opacity: 0; transition: opacity .12s; }
-.pipe-row.compact:hover .pipe-move.hov { opacity: 1; }
+/* ---- drag to reorder (pipeline editor) ----
+   The grip is the only grab point, so a click anywhere else on the row still
+   opens it for editing. Hidden until the row is hovered, like the insert ＋. */
+.pipe-grip {
+  flex: none; width: 22px; padding: 0;
+  background: none; border: 0; color: var(--text-3); font-size: 12px; line-height: 1;
+  cursor: grab; touch-action: none; user-select: none;
+}
+.pipe-grip:hover { color: var(--text); }
+.pipe-grip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 5px; }
+.pipe-row.compact .pipe-grip.hov { opacity: 0; transition: opacity .12s; }
+.pipe-row.compact:hover .pipe-grip.hov,
+.pipe-row.compact .pipe-grip.hov:focus-visible { opacity: 1; }
+
+/* The lifted row follows the cursor 1:1 — no transition on it, or it would lag
+   behind the pointer. Everything else glides, which is what reads as the rows
+   flicking apart to open a gap. */
+.pipe-list.reordering { cursor: grabbing; }
+.pipe-list.reordering .pipe-row { transition: transform .18s cubic-bezier(.2,.8,.2,1); }
+.pipe-list.reordering .pipe-row:hover { background: none; border-color: var(--border); }
+.pipe-row.pipe-dragging {
+  transition: none !important; position: relative; z-index: 3;
+  background: var(--surface-2); border-color: var(--accent);
+  box-shadow: 0 10px 24px rgba(0,0,0,.45); cursor: grabbing;
+}
+.pipe-row.pipe-dragging .pipe-grip { cursor: grabbing; color: var(--text); opacity: 1; }
 
 /* pipeline task version-control toggle (LucidLink) */
 .pipe-vc {
@@ -2271,7 +2294,6 @@ select.fld { cursor: pointer; }
 .pipe-row:hover .pipe-lead .pipe-insert { opacity: 1; }
 .pipe-lead .pipe-insert:hover { background: var(--accent); border-color: transparent; color: #fff; }
 .pipe-lead .pipe-insert:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
-.pipe-move { display: flex; flex-direction: column; gap: 2px; }
 /* ---- Dependency clash: impact list + before/after picture ---- */
 .si-headline {
   display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
@@ -2494,8 +2516,12 @@ select.fld { cursor: pointer; }
   font-size: 11px; line-height: 1; cursor: pointer; flex: none;
 }
 .dep-add:hover { color: var(--accent); border-color: var(--accent); }
+/* The pipeline editor lives inside the Add Show / Edit Show dialog, and this
+   menu is appended to <body> to escape that dialog's own scroll container — so
+   it has to clear .modal-overlay (400) or it opens behind the very dialog that
+   asked for it. Still under .app-tooltip (900) and the toasts (999). */
 .dep-menu {
-  position: fixed; z-index: 300; min-width: 200px; max-width: 260px; max-height: 260px; overflow-y: auto;
+  position: fixed; z-index: 420; min-width: 200px; max-width: 260px; max-height: 260px; overflow-y: auto;
   background: var(--surface-2); border: 1px solid var(--border-2); border-radius: 10px;
   box-shadow: var(--shadow); padding: 5px;
 }
@@ -3466,3 +3492,81 @@ select.fld { cursor: pointer; }
   .bar-row .bl, .bar-row .bv { font-size: 12.5px; }
   .pr-row, .risk-item { min-height: 46px; }
 }
+
+/* ----------------------------------------------------------------- dialog drafts
+   A dismissed form keeps what was typed into it (see App.draft); this is the
+   note that says so, with the way out for someone who wanted a blank form. */
+.draft-note {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 0 0 14px; padding: 9px 12px;
+  background: rgba(91,108,255,.09); border: 1px solid rgba(91,108,255,.28);
+  border-radius: 9px; font-size: 12px; color: var(--text-2);
+}
+.draft-note > span { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.draft-note .ico { flex: none; }
+.draft-clear {
+  flex: none; white-space: nowrap; font-size: 11.5px; font-weight: 700;
+  color: var(--text-2); background: var(--surface-3);
+  border: 1px solid var(--border-2); border-radius: 7px; padding: 5px 11px;
+}
+.draft-clear:hover { color: var(--text); border-color: var(--text-3); }
+
+/* Episode rate — a number and its unit read as one control ("2 per week"),
+   so they share a row rather than sitting as two separate fields. */
+.rate-row { display: flex; align-items: stretch; gap: 8px; }
+.rate-row .fld { margin: 0; }
+.rate-row .rate-num { width: 82px; flex: none; text-align: center; }
+.rate-row .rate-seg { flex: 1; min-width: 0; justify-content: center; }
+.rate-row .rate-seg .seg { flex: 1; padding: 6px 8px; white-space: nowrap; }
+
+/* ----------------------------------------------------------------- save as preset
+   Offered in the pipeline section's header only once the pipeline actually
+   differs from what it was loaded from; naming happens inline rather than in a
+   second dialog, which would have to close the one we're standing in. */
+.preset-save-btn {
+  width: auto; padding: 0 10px; font-size: 11px; font-weight: 700; white-space: nowrap;
+  color: var(--accent); border-color: rgba(91,108,255,.45);
+}
+.preset-save-btn:hover { background: rgba(91,108,255,.14); color: var(--text); }
+.preset-save-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 10px; padding: 9px 11px;
+  background: rgba(91,108,255,.08); border: 1px solid rgba(91,108,255,.3); border-radius: 9px;
+}
+.preset-save-lbl { font-size: 11.5px; font-weight: 700; color: var(--text-2); white-space: nowrap; }
+.preset-save-bar .fld { flex: 1; min-width: 160px; margin: 0; }
+.preset-save-bar .btn-primary.preset-save-go,
+.preset-save-bar .btn-ghost { padding: 8px 14px; font-size: 12px; flex: none; }
+
+/* ----------------------------------------------------------------- widget pop-out
+   A widget can be opened in its own browser window (App.dashboard.popOut), so
+   the Journal or the priority queue can sit beside another app or on a second
+   screen. The grid keeps a placeholder in its place. */
+.dw-head-r { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dw-pop {
+  flex: none; width: 22px; height: 22px; padding: 0; border-radius: 6px;
+  background: none; border: 1px solid transparent; color: var(--text-3);
+  font-size: 12px; line-height: 1; opacity: 0; transition: opacity .12s, color .12s;
+}
+.dw:hover .dw-pop, .dw-pop:focus-visible { opacity: 1; }
+.dw-pop:hover { color: var(--text); border-color: var(--border-2); background: var(--hover); }
+
+/* the popped widget fills its window instead of a grid rect */
+.dash-pop { padding: 12px; min-height: 100vh; box-sizing: border-box; background: var(--bg); }
+.dw-popped { position: static; width: auto; height: auto; }
+.dw-popped .widget { height: calc(100vh - 24px); }
+.dw-popped .dw-pop { opacity: 1; }
+
+/* the gap left behind, same rect so nothing reflows */
+.dw-holder-card {
+  height: 100%; align-items: center; justify-content: center; gap: 6px;
+  border-style: dashed; background: none;
+}
+.dw-holder-title { font-size: 12.5px; font-weight: 700; color: var(--text-2); }
+.dw-holder-note { font-size: 11px; color: var(--text-3); }
+.dw-holder-btn {
+  margin-top: 4px; font-size: 11.5px; font-weight: 700; color: var(--text-2);
+  background: var(--surface-3); border: 1px solid var(--border-2);
+  border-radius: 7px; padding: 5px 12px;
+}
+.dw-holder-btn:hover { color: var(--text); border-color: var(--accent); }

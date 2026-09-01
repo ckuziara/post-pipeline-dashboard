@@ -121,6 +121,14 @@ window.App = window.App || {};
       { id: 'delivered', col: 0, row: 262, w: 4, h: 150 }
     ]
   };
+  // the placeholder a popped-out widget leaves behind names it without having
+  // to build the widget itself
+  const WIDGET_TITLE = {
+    priority: 'Priority', atRisk: 'At Risk', journal: 'Journal', delivered: 'Delivered Episodes',
+    pipeline: 'Pipeline Status', deptLoad: 'Department Workload', upcoming: 'Upcoming Deliveries',
+    teamLoad: 'Team Workload'
+  };
+
   function layoutKind(role) {
     if (App.roleDept(role)) return 'dept';                                    // a department lead
     if (App.isAdminRole(role) && App.canApprove(role)) return 'oversight';    // producer / manager
@@ -227,6 +235,106 @@ window.App = window.App || {};
     _editing: false,
     toggleEdit() { this._editing = !this._editing; App.render(); },
 
+    /* ---- pop out a widget into its own window ----
+       A real browser window, not an in-page panel: the point is to keep the
+       Journal (or the priority queue) visible while working in another app, or
+       on a second screen. Each popped widget gets its own window; the grid
+       keeps a placeholder in its place so the layout doesn't silently reflow
+       and there's an obvious way back.
+
+       The widget is rebuilt into the window on every App.render, so a popped
+       tile stays as live as a docked one. Session state — closing the tab
+       closes the windows with it. */
+    _pop: {},          // id -> { win, mount, pip }
+    _pipId: null,      // which widget holds the single Picture-in-Picture window
+
+    popped(id) { return !!this._pop[id]; },
+
+    /* Two ways to get a floating window, in order of preference:
+
+         Document Picture-in-Picture — a real always-on-top window, which is
+         the point of popping a widget out: it stays visible over other apps.
+         Chromium only, and only ONE at a time per page.
+
+         window.open — everywhere else, and for a second widget once PiP is
+         taken. Subject to the popup blocker, so it needs a real click.
+
+       Either way it must run from a user gesture, which is why this is only
+       ever reached from the button's own onclick. */
+    async popOut(id) {
+      if (this._pop[id]) { try { this._pop[id].win.focus(); } catch (e) {} return; }
+
+      const usePiP = window.documentPictureInPicture && !this._pipId;
+      let w = null;
+      if (usePiP) {
+        try {
+          w = await window.documentPictureInPicture.requestWindow({ width: 460, height: 560 });
+          this._pipId = id;
+        } catch (e) { w = null; }                 // fall through to a plain window
+      }
+      if (!w) {
+        w = window.open('', 'ppw_' + id, 'width=480,height=560');
+        if (!w) {
+          App.toast('Your browser blocked the pop-out window', true);
+          if (this._pipId === id) this._pipId = null;
+          return;
+        }
+      }
+
+      const d = w.document;
+      d.head.innerHTML = '';
+      d.body.innerHTML = '';
+      d.title = 'Post Pipeline — ' + (WIDGET_TITLE[id] || id);
+      // borrow the app's own stylesheets and theme attributes, so the popped
+      // widget is the same widget rather than an unstyled copy of its markup
+      document.querySelectorAll('link[rel="stylesheet"], style').forEach(n => d.head.appendChild(n.cloneNode(true)));
+      ['data-theme', 'data-mode', 'data-skin'].forEach(k => {
+        const v = document.documentElement.getAttribute(k);
+        if (v) d.documentElement.setAttribute(k, v);
+      });
+      const mount = d.createElement('div');
+      mount.className = 'dash-pop';
+      d.body.appendChild(mount);
+
+      this._pop[id] = { win: w, mount: mount, pip: this._pipId === id };
+      // however the window goes away — its own ✕, or the tab being closed
+      w.addEventListener('pagehide', () => {
+        delete this._pop[id];
+        if (this._pipId === id) this._pipId = null;
+        App.render();
+      });
+      App.render();
+    },
+
+    popIn(id) {
+      const p = this._pop[id];
+      if (!p) return;
+      delete this._pop[id];
+      if (this._pipId === id) this._pipId = null;
+      try { p.win.close(); } catch (e) {}
+      App.render();
+    },
+
+    // orphaned pop-outs outlive the page that was feeding them, so take them with us
+    closeAllPops() {
+      Object.keys(this._pop).forEach(id => { try { this._pop[id].win.close(); } catch (e) {} });
+      this._pop = {};
+      this._pipId = null;
+    },
+
+    // called at the end of each render: refill every open pop-out
+    paintPops(m) {
+      Object.keys(this._pop).forEach(id => {
+        const p = this._pop[id];
+        if (!p.win || p.win.closed) { delete this._pop[id]; return; }
+        const t = this.getLayout().find(x => x.id === id) || { id: id, w: COLS, h: 320 };
+        p.mount.innerHTML = '';
+        // a pop-out is its own window, so it ignores the grid rect entirely
+        const cellEl = this.cell({ id: id, w: t.w, h: t.h, col: 0, row: 0 }, m, true);
+        p.mount.appendChild(cellEl);
+      });
+    },
+
     render(episodes) {
       const wrap = el('.dash');
       wrap.appendChild(this.greeting());
@@ -247,7 +355,7 @@ window.App = window.App || {};
 
       const grid = el('.dash-grid' + (this._editing ? '.editing' : ''));
       const layout = this.getLayout();
-      layout.forEach(t => grid.appendChild(this.cell(t, m)));
+      layout.forEach(t => grid.appendChild(this.popped(t.id) ? this.popHolder(t) : this.cell(t, m)));
       // absolutely-positioned children don't contribute to a parent's auto
       // height, so the grid's own height is set explicitly from whatever the
       // layout actually uses
@@ -255,7 +363,21 @@ window.App = window.App || {};
       this.wireDrag(grid);
       if (this._editing) this.wireResize(grid);
       wrap.appendChild(grid);
+      this.paintPops(m);
       return wrap;
+    },
+
+    // the gap a popped widget leaves behind: same rect, so nothing reflows,
+    // and the only thing in it is the way back
+    popHolder(t) {
+      const cell = el('.dw.dw-holder', { style: this.rectStyle(t) });
+      cell.dataset.wid = t.id;
+      cell.appendChild(el('.widget.dw-holder-card', null, [
+        el('.dw-holder-title', null, WIDGET_TITLE[t.id] || t.id),
+        el('.dw-holder-note', null, 'Open in its own window'),
+        el('button.dw-holder-btn', { type: 'button', onclick: () => this.popIn(t.id) }, 'Bring back')
+      ]));
+      return cell;
     },
 
     /* Phone mode: a plain top-to-bottom stack, nothing draggable or
@@ -385,20 +507,32 @@ window.App = window.App || {};
        directly for anything wider or richer. In edit mode the tile becomes
        the drag handle and grows thin edge and corner zones; the body goes
        inert so arranging can't touch a widget's content. */
-    cell(t, m) {
+    cell(t, m, popped) {
       const built = this[t.id](m, t);        // -> { title, sub, body, bare }
-      const editing = this._editing;
-      const cell = el('.dw' + (t.w <= 4 ? '.dw-narrow' : '') + (editing ? '.dw-editable' : ''), {
-        style: this.rectStyle(t)
+      const editing = this._editing && !popped;
+      const cell = el('.dw' + (t.w <= 4 ? '.dw-narrow' : '') + (editing ? '.dw-editable' : '') + (popped ? '.dw-popped' : ''), {
+        // a pop-out owns its whole window, so it takes no grid rect
+        style: popped ? null : this.rectStyle(t)
       });
       cell.dataset.wid = t.id;
+      /* Pop-out / dock lives in the head next to the sub-label. Hidden while
+         editing: that mode is about arranging the grid, and a widget that has
+         left the grid isn't part of that. */
+      const popBtn = editing ? null : el('button.dw-pop', {
+        type: 'button',
+        title: popped ? 'Put this widget back on the dashboard' : 'Open this widget in its own window',
+        onclick: (e) => { e.stopPropagation(); popped ? this.popIn(t.id) : this.popOut(t.id); }
+      }, popped ? '⤡' : '⤢');
       cell.appendChild(el('.widget', null, [
         el('.widget-head', null, [
           el('.dw-head-l', null, [
             (editing ? el('span.dw-grip', { title: 'Drag to move — drop anywhere, even empty space' }, '⠿') : null),
             el('.widget-title', null, built.title)
           ]),
-          built.sub ? el('.widget-sub', null, built.sub) : null
+          el('.dw-head-r', null, [
+            built.sub ? el('.widget-sub', null, built.sub) : null,
+            popBtn
+          ])
         ]),
         el('.widget-body' + (built.bare ? '.bare' : ''), null, built.body)
       ]));

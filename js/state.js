@@ -1090,6 +1090,96 @@ window.App = window.App || {};
     };
   })();
 
+  /* ---------------------------------------------------------------------------
+     Session restore — where you were, per device.
+
+     The Dashboard is home: it's where every role lands on their first visit of
+     the day, because that's the "what needs me today" view. But a refresh
+     mid-task is not a new day, and being thrown back to the Dashboard from the
+     Timeline loses the filters, the zoom and every expanded row. So the whole
+     navigation position is written back on each render and restored on boot —
+     unless the saved position is from an earlier day, in which case it's a new
+     morning and the Dashboard wins.
+
+     Device-local (like App.prefs), never shared board data: where a teammate
+     is looking is their business. Only navigation lives here — nothing that
+     belongs to the board itself, and nothing transient like a half-drawn
+     "+ Create" toggle or an `editing` reference that may since have been
+     deleted by someone else.
+  --------------------------------------------------------------------------- */
+  App.session = {
+    KEY: 'postpipeline_session',
+    _t: null,
+
+    snapshot() {
+      const s = App.state;
+      return {
+        day: App.isoDate(App.today()),
+        view: s.view,
+        filters: { show: s.filters.show, dept: s.filters.dept, person: s.filters.person, q: s.filters.q },
+        zoom: s.zoom,
+        expanded: s.expanded,
+        ganttExpanded: s.ganttExpanded,
+        gantt: s.gantt || null,
+        admin: { view: s.admin.view, role: s.admin.role, q: s.admin.q },
+        planning: { view: s.planning.view, variant: s.planning.variant }
+      };
+    },
+
+    // Debounced: a drag or a keystroke can trigger many renders a second, and
+    // this only has to be right by the time the tab actually goes away.
+    save() {
+      clearTimeout(this._t);
+      this._t = setTimeout(() => {
+        try { localStorage.setItem(this.KEY, JSON.stringify(this.snapshot())); } catch (e) {}
+      }, 250);
+    },
+
+    /* Returns true if a position was restored, false to leave the caller's
+       default (the Dashboard) in place. Every field is applied defensively:
+       a stored view the role can't reach is caught by the guards at the top
+       of App.render, and anything missing or malformed is simply skipped. */
+    restore() {
+      let s = null;
+      try { s = JSON.parse(localStorage.getItem(this.KEY) || 'null'); } catch (e) { s = null; }
+      if (!s || s.day !== App.isoDate(App.today())) return false;   // new day → start at home
+      const st = App.state;
+      if (typeof s.view === 'string') st.view = s.view;
+      if (s.filters) {
+        ['show', 'dept', 'person'].forEach(k => { if (Array.isArray(s.filters[k])) st.filters[k] = s.filters[k]; });
+        if (typeof s.filters.q === 'string') st.filters.q = s.filters.q;
+      }
+      if (typeof s.zoom === 'number' && s.zoom > 0) st.zoom = s.zoom;
+      if (s.expanded && typeof s.expanded === 'object') st.expanded = s.expanded;
+      if (s.ganttExpanded && typeof s.ganttExpanded === 'object') st.ganttExpanded = s.ganttExpanded;
+      if (s.gantt && typeof s.gantt === 'object') st.gantt = s.gantt;
+      if (s.admin) Object.keys(s.admin).forEach(k => { if (s.admin[k] != null) st.admin[k] = s.admin[k]; });
+      if (s.planning) Object.keys(s.planning).forEach(k => { if (s.planning[k] != null) st.planning[k] = s.planning[k]; });
+      return true;
+    },
+
+    // a deliberate "take me home" — used when the day rolls over mid-session
+    clear() { try { localStorage.removeItem(this.KEY); } catch (e) {} }
+  };
+
+  /* ---------------------------------------------------------------------------
+     Dialog drafts — a dismissed form keeps what was typed into it.
+
+     Clicking the backdrop, pressing Escape or hitting ✕ is how people get a
+     second look at the board behind a dialog; it shouldn't cost them the form.
+     Each dialog stores its own draft under its own id, restores it on reopen,
+     and clears it the moment the thing is actually created. Device-local, and
+     kept out of the board data: an unfinished form is not a fact about the show.
+  --------------------------------------------------------------------------- */
+  App.draft = {
+    KEY: 'postpipeline_drafts',
+    _all() { try { return JSON.parse(localStorage.getItem(this.KEY) || '{}') || {}; } catch (e) { return {}; } },
+    _write(all) { try { localStorage.setItem(this.KEY, JSON.stringify(all)); } catch (e) {} },
+    get(id) { const v = this._all()[id]; return (v && typeof v === 'object') ? v : null; },
+    set(id, val) { const a = this._all(); a[id] = val; this._write(a); },
+    clear(id) { const a = this._all(); delete a[id]; this._write(a); }
+  };
+
   /* Themes — each is a named set of CSS-variable overrides living in
      style.css under :root[data-theme="…"]; switching one only swaps that
      attribute, so every surface, border and accent follows at once. Like the
