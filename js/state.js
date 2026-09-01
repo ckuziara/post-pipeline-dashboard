@@ -143,7 +143,7 @@ window.App = window.App || {};
   App.ROLES = [
     { key: 'producer',  label: 'Producer',        ico: 'clapper', approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, hint: 'Full access — all tasks, shows & admin' },
     { key: 'manager',   label: 'Manager',         ico: 'compass', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, hint: 'Oversight, approvals & admin' },
-    { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, hint: 'Review & approve cuts' },
+    { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, reviewQueue: true, hint: 'Review & approve cuts' },
     { key: 'creative',  label: 'Creative',        ico: 'pencil', dept: 'creative',  hint: 'Creative department tasks' },
     { key: 'music',     label: 'Music',           ico: 'music', dept: 'music',     hint: 'Music department tasks' },
     { key: 'animation', label: 'Animation',       ico: 'film', dept: 'animation', hint: 'Animation department tasks' },
@@ -162,6 +162,9 @@ window.App = window.App || {};
   };
   App.canApprove = (k) => App.rolePerm(k, 'approve', App.role(k).approve);
   App.isAdminRole = (k) => App.rolePerm(k, 'admin', App.role(k).admin);
+  // The Reviews tab (the ready-for-review queue). Director-only by default,
+  // which is how it was hardcoded before this became a real permission.
+  App.canSeeReviewQueue = (k) => App.rolePerm(k, 'reviewQueue', App.role(k).reviewQueue);
   App.canManageShows = (k) => App.rolePerm(k, 'manageShows', App.role(k).manageShows);
   // Which roles may assign task owners — selectable in the Admin panel and
   // persisted in data.assignPriv. Until an admin changes it, the approver
