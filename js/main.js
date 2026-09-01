@@ -341,11 +341,19 @@ window.App = window.App || {};
     App.toast(App.role(roleKey).label + (allowed ? ' can now assign owners' : ' can no longer assign owners'));
   };
 
-  // toggle any other role capability (Admin → Access Control). The Producer's
-  // permissions are locked so an admin can never lock everyone out.
+  // toggle any other role capability (Admin → Access Control). Every
+  // permission is freely editable for every role, including Producer — the
+  // one thing guarded against is turning off Admin Access on the LAST role
+  // that still holds it, since that's the specific move that locks everyone
+  // out of ever reaching this screen again to undo it. Enabling admin is
+  // never blocked, so there's always a way back in as long as one role kept
+  // it going in.
   App.setRolePerm = function (roleKey, perm, allowed, label) {
     if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change privileges', true); return; }
-    if (roleKey === 'producer' && !allowed) { App.toast('Producer permissions are locked', true); return; }
+    if (perm === 'admin' && !allowed && App.ROLES.filter(r => App.isAdminRole(r.key)).length <= 1) {
+      App.toast('At least one role has to keep Admin Access, or nobody could sign back in to turn it on again', true);
+      return;
+    }
     App.mutate(d => {
       d.rolePerms = d.rolePerms || {};
       d.rolePerms[roleKey] = d.rolePerms[roleKey] || {};
