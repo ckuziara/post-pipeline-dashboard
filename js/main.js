@@ -1215,6 +1215,7 @@ window.App = window.App || {};
       if (e.key === 'Escape') {
         App.board.closePop && App.board.closePop();
           App.prefsMenu.close();
+        App.gantt.closeBarMenu && App.gantt.closeBarMenu();
         // drop a shift-selection — the same key that backs out of everything
         // else, and the only way out that doesn't need a target to click
         if (!modalOpen() && App.ganttSelection && App.ganttSelection.resolved().length) {

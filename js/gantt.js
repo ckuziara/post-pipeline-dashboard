@@ -466,11 +466,66 @@ window.App = window.App || {};
         App.render();
       };
 
+      /* Right-click a task bar. The one action that genuinely needs a menu is
+         Batch Set Dates — it acts on a selection rather than on a bar, so
+         there's no bar to hang it off and no drag that could express it. Edit
+         Task and Clear selection come along because a menu with one item in it
+         reads like a mistake, and both are already reachable elsewhere. */
+      const handleContext = (e) => {
+        const bar = e.target.closest('.bar');
+        const row = bar && bar.closest('.g-row.sub');
+        if (!bar || !row || row.classList.contains('phase')) return;
+        const epId = bar.dataset.episodeId || row.dataset.episodeId;
+        const suKey = bar.dataset.suKey || row.dataset.suKey;
+        if (!epId || !suKey) return;
+        e.preventDefault();
+        hideTip();
+        self.openBarMenu(e, epId, suKey);
+      };
+
       if (this._clickHandler) {
         this._scrollEl.removeEventListener('click', this._clickHandler);
+        this._scrollEl.removeEventListener('contextmenu', this._ctxHandler);
       }
       this._clickHandler = handleClick;
+      this._ctxHandler = handleContext;
       this._scrollEl.addEventListener('click', handleClick);
+      this._scrollEl.addEventListener('contextmenu', handleContext);
+    },
+
+    closeBarMenu() {
+      if (this._barMenu) { this._barMenu.remove(); this._barMenu = null; }
+      if (this._barMenuOff) { document.removeEventListener('mousedown', this._barMenuOff, true); this._barMenuOff = null; }
+    },
+
+    openBarMenu(e, epId, suKey) {
+      this.closeBarMenu();
+      const sel = selResolved();
+      const menu = el('.ctx-menu');
+      const item = (label, sub, fn) => el('button.ctx-item', {
+        type: 'button',
+        onclick: () => { this.closeBarMenu(); fn(); }
+      }, [el('span.ctx-item-lbl', null, label), sub ? el('span.ctx-item-sub', null, sub) : null]);
+
+      if (sel.length > 1 && App.canEditSchedule(App.state.role)) {
+        menu.appendChild(item('Batch Set Dates…', sel.length + ' selected', () => App.batchDates.open()));
+        menu.appendChild(el('.ctx-sep'));
+      }
+      menu.appendChild(item('Edit task…', null, () => App.editTask.open(epId, suKey)));
+      if (sel.length) {
+        menu.appendChild(item('Clear selection', 'Esc', () => { selClear(); App.render(); }));
+      }
+
+      document.body.appendChild(menu);
+      // flipped up or left when it would otherwise run off the edge — the
+      // cursor can be anywhere, including the last few pixels of the window
+      const mh = menu.offsetHeight, mw = menu.offsetWidth;
+      menu.style.top = (e.clientY + mh + 6 > window.innerHeight ? Math.max(6, e.clientY - mh) : e.clientY + 2) + 'px';
+      menu.style.left = Math.min(e.clientX + 2, window.innerWidth - mw - 8) + 'px';
+      this._barMenu = menu;
+      // capture, so the press that dismisses the menu can't also land on a bar
+      this._barMenuOff = (ev) => { if (!menu.contains(ev.target)) this.closeBarMenu(); };
+      setTimeout(() => document.addEventListener('mousedown', this._barMenuOff, true), 0);
     },
 
     // ---- drag-to-reschedule a task bar ----
