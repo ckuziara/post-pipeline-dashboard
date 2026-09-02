@@ -1226,6 +1226,12 @@ body.gantt-dragging { user-select: none; }
   background: var(--surface-2); border: 1px solid var(--border);
   border-left: 3px solid var(--text-3);     /* colour set inline per group */
   border-radius: 8px; overflow: hidden;
+  /* Flex items shrink to fit by default, and with `.pr-list` scrolling that
+     shrink target is 0 rather than "leave it to the scrollbar" — squashing
+     every group down to a sliver instead of letting the list overflow.
+     `flex: none` keeps each group at its natural height so the list scrolls
+     like the rest of the dashboard's widget bodies. */
+  flex: none;
 }
 .pr-head {
   width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px 12px;
