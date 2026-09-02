@@ -78,6 +78,38 @@ window.App = window.App || {};
   const DRAG_SLOP = 3;      // px of travel that makes it a drag
   const HOLD_MS = 400;      // press longer than this reads as a grab, not a click
 
+  /* ---- Shift-selection ----
+     A group of task bars held aside so one drag can move or resize all of them.
+     Identity is (episode, task), not the DOM node: every render rebuilds the
+     bars, and in the Show and Department sorts one line carries bars from many
+     episodes, so a selection has to survive both. Kept as a flat string set for
+     cheap membership tests during a drag, which runs on every mouse move. */
+  const selKey = (epId, suKey) => epId + '|' + suKey;
+  const selList = () => (App.state.ganttSel = App.state.ganttSel || []);
+  function selHas(epId, suKey) { return selList().indexOf(selKey(epId, suKey)) !== -1; }
+  function selToggle(epId, suKey) {
+    const k = selKey(epId, suKey), list = selList(), i = list.indexOf(k);
+    if (i === -1) list.push(k); else list.splice(i, 1);
+    return i === -1;
+  }
+  function selAdd(epId, suKey) {
+    const k = selKey(epId, suKey), list = selList();
+    if (list.indexOf(k) === -1) list.push(k);
+  }
+  function selClear() { App.state.ganttSel = []; }
+  // (epId, suKey) pairs for the current selection, dropping anything the board
+  // no longer has — a teammate can delete a task while it sits selected here
+  function selResolved() {
+    return selList().map(k => {
+      const i = k.indexOf('|');
+      const epId = k.slice(0, i), suKey = k.slice(i + 1);
+      const ep = App.state.data.episodes.find(x => x.id === epId);
+      const su = ep && App.subitem(ep, suKey);
+      return su ? { epId, suKey, ep, su } : null;
+    }).filter(Boolean);
+  }
+  App.ganttSelection = { has: selHas, clear: selClear, resolved: selResolved };
+
   /* How far one Ctrl+scroll event should zoom.
 
      A fixed step per event is what made this twitchy: a mouse wheel sends one
@@ -398,6 +430,17 @@ window.App = window.App || {};
         const bar = e.target.closest('.bar');
         const label = e.target.closest('.g-label');
 
+        /* A plain click on open track drops the selection. Without it the only
+           exits are Escape or un-picking every bar by hand, and a group left
+           standing quietly owns the next drag. Row labels are left alone —
+           expanding a row to see more of what you've picked shouldn't
+           throw the picking away. */
+        if (!bar && !label && !e.shiftKey && selList().length && e.target.closest('.g-track')) {
+          selClear();
+          App.render();
+          return;
+        }
+
         if (!bar && !label) return;
         if (bar && bar.closest('.g-row.sub')) {
           e.stopPropagation();
@@ -490,6 +533,8 @@ window.App = window.App || {};
           }
           bar.classList.toggle('adjustable', ok);
         }
+        // shift held: this press adds or removes the bar, it doesn't move it
+        if (e.shiftKey) { bar.style.cursor = 'pointer'; return; }
         const resizeCursor = (this._axis && this._axis.portrait) ? 'ns-resize' : 'ew-resize';
         bar.style.cursor = this.dragZone(bar, e, this._axis) === 'move' ? 'grab' : resizeCursor;
       };
@@ -538,6 +583,21 @@ window.App = window.App || {};
         }
 
         const bar = e.target.closest('.bar');
+
+        /* Shift on empty grid → marquee. Starting the band on a bar would take
+           the shift+click-to-toggle gesture away, and dragging out from a bar
+           you've just added is the natural way to extend a selection, so the
+           band only ever starts in open space. */
+        if (e.shiftKey && !bar) {
+          const track = e.target.closest('.g-row.sub .g-track');
+          if (track && App.canEditSchedule(App.state.role)) {
+            e.preventDefault();
+            hideTip();
+            this.startMarquee(e);
+            return;
+          }
+        }
+
         if (!bar) return;
         const row = bar.closest('.g-row.sub');
         if (!row || row.classList.contains('phase')) return;
@@ -548,9 +608,34 @@ window.App = window.App || {};
         const su = ep && App.subitem(ep, suKey);
         if (!su || !App.canEditSchedule(App.state.role)) return;   // a plain click still opens the dialog, which explains the lock
 
+        /* Shift on a bar → toggle it in the selection, and nothing else. No
+           drag starts and no dialog opens: the whole point of holding shift is
+           that this press is about choosing, not about moving or inspecting. */
+        if (e.shiftKey) {
+          e.preventDefault();
+          hideTip();
+          selToggle(epId, suKey);
+          this.suppressNextClick();
+          App.render();
+          return;
+        }
+
         e.preventDefault();
         hideTip();
         const zone = this.dragZone(bar, e, this._axis);
+
+        /* Dragging a bar that's part of a selection drags the whole selection.
+           Grabbing an unselected bar drops the selection first — otherwise a
+           group would sit there invisibly owning every later drag, and the one
+           bar you actually grabbed would be the one that didn't move. */
+        if (selList().length && !selHas(epId, suKey)) selClear();
+        const group = selHas(epId, suKey) ? selResolved() : null;
+
+        if (group && group.length > 1) {
+          this.startGroupDrag(e, bar, zone, group);
+          return;
+        }
+
         const pipe = App.pipelineFor(ep);
         const task = pipe.find(t => t.key === suKey);
         const byKey = {}; App.subitems(ep).forEach(s => { byKey[s.key] = s; });
@@ -573,8 +658,78 @@ window.App = window.App || {};
       if (!this._dragBound) {
         document.addEventListener('mousemove', (e) => this.onDragMove(e));
         document.addEventListener('mouseup', (e) => this.onDragEnd(e));
+        /* Shift is a mode while it's held, so the cursor should say so before
+           the press rather than after. Keyed off the modifier on every event
+           that reports it — watching keydown/keyup alone misses the case where
+           the key goes down or up while the window isn't focused. */
+        const shiftState = (e) => {
+          document.body.classList.toggle('gantt-shift', !!e.shiftKey && !this._drag);
+        };
+        document.addEventListener('keydown', shiftState);
+        document.addEventListener('keyup', shiftState);
+        document.addEventListener('mousemove', shiftState);
+        window.addEventListener('blur', () => document.body.classList.remove('gantt-shift'));
         this._dragBound = true;
       }
+    },
+
+    /* ---- group drag ----
+       Every selected bar moves or resizes by the SAME number of days, which is
+       what makes this a bulk edit rather than an alignment tool: "everything a
+       week later", "everything two days shorter". Absolute dates would collapse
+       a staggered selection onto one span and destroy the shape the producer is
+       working with.
+
+       Each member carries its own minDays floor, so a short task stops
+       shortening while its longer neighbours keep going. The delta is not
+       clamped to the tightest member — that would let one 1-day task veto a
+       shorten the other eleven can absorb. */
+    startGroupDrag(e, bar, zone, group) {
+      const members = group.map(g => {
+        const task = App.pTask(g.ep, g.suKey);
+        return {
+          epId: g.epId, suKey: g.suKey,
+          origStart: g.su.start, origDue: g.su.due,
+          curStart: g.su.start, curDue: g.su.due,
+          minDays: (task && task.minDays) || 1,
+          // the DOM node, when it's on screen — a selected bar can be inside a
+          // collapsed row, in which case it still moves, just invisibly
+          el: this._scrollEl && this._scrollEl.querySelector(
+            '.bar[data-episode-id="' + g.epId + '"][data-su-key="' + g.suKey + '"]')
+        };
+      });
+      this._drag = {
+        kind: 'group', zone, members, bar,
+        startClientX: e.clientX, startClientY: e.clientY, startedAt: Date.now(), moved: false, colDelta: 0
+      };
+      members.forEach(m => { if (m.el) m.el.classList.add('dragging'); });
+      document.body.classList.add('gantt-dragging');
+      document.body.style.cursor = zone === 'move' ? 'grabbing'
+        : ((this._axis && this._axis.portrait) ? 'ns-resize' : 'ew-resize');
+    },
+
+    /* ---- marquee ----
+       Drawn and hit-tested in viewport coordinates, which is why the band is
+       `position: fixed`: the bars are measured with getBoundingClientRect, so
+       keeping the band in the same space means the sweep and what it catches
+       can't disagree. Content-relative was tried and is a trap — the scroll
+       container is static, so an absolute band silently resolves against a
+       different ancestor and lands somewhere its own numbers don't predict.
+
+       Hit-tested once on release rather than per mouse move: one pass over the
+       bars beats one per pixel, and the band's outline is feedback enough. */
+    startMarquee(e) {
+      const ghost = el('.g-marquee', {
+        style: { left: e.clientX + 'px', top: e.clientY + 'px', width: '0px', height: '0px' }
+      });
+      document.body.appendChild(ghost);
+      this._drag = {
+        kind: 'marquee', ghost,
+        startClientX: e.clientX, startClientY: e.clientY, startedAt: Date.now(), moved: false,
+        // shift is held, so this extends whatever was already picked
+        additive: true
+      };
+      document.body.classList.add('gantt-dragging');
     },
 
     onDragMove(e) {
@@ -598,6 +753,56 @@ window.App = window.App || {};
         tip.appendChild(el('span.tip-dot', { style: { background: dotColor } }));
         tip.appendChild(document.createTextNode(App.fmtRange(sIso, dIso)));
         tip.style.display = 'flex'; tip.style.left = e.clientX + 'px'; tip.style.top = (e.clientY - 38) + 'px';
+        return;
+      }
+
+      if (d.kind === 'marquee') {
+        if (Math.abs(e.clientX - d.startClientX) > DRAG_SLOP || Math.abs(e.clientY - d.startClientY) > DRAG_SLOP) d.moved = true;
+        d.ghost.style.left = Math.min(e.clientX, d.startClientX) + 'px';
+        d.ghost.style.top = Math.min(e.clientY, d.startClientY) + 'px';
+        d.ghost.style.width = Math.abs(e.clientX - d.startClientX) + 'px';
+        d.ghost.style.height = Math.abs(e.clientY - d.startClientY) + 'px';
+        return;
+      }
+
+      if (d.kind === 'group') {
+        const portraitG = !!(this._axis && this._axis.portrait);
+        const mainDeltaG = portraitG ? (e.clientY - d.startClientY) : (e.clientX - d.startClientX);
+        const colDeltaG = Math.round(mainDeltaG / dw);
+        if (Math.abs(mainDeltaG) > DRAG_SLOP) d.moved = true;
+        d.colDelta = colDeltaG;
+
+        let clamped = 0;
+        d.members.forEach(m => {
+          let ns = m.origStart, nd = m.origDue;
+          if (d.zone === 'move') {
+            ns = App.addVisibleDays(m.origStart, colDeltaG, hw);
+            nd = App.addVisibleDays(m.origDue, colDeltaG, hw);
+          } else if (d.zone === 'resize-left') {
+            ns = App.addVisibleDays(m.origStart, colDeltaG, hw);
+            if (App.visibleDayCount(ns, nd, hw) < m.minDays) { ns = App.addVisibleDays(nd, -(m.minDays - 1), hw); clamped++; }
+          } else {
+            nd = App.addVisibleDays(m.origDue, colDeltaG, hw);
+            if (App.visibleDayCount(ns, nd, hw) < m.minDays) { nd = App.addVisibleDays(ns, m.minDays - 1, hw); clamped++; }
+          }
+          m.curStart = ns; m.curDue = nd;
+          if (m.el) {
+            if (portraitG) { m.el.style.top = xOf(ns) + 'px'; m.el.style.height = xOf.width(ns, nd) + 'px'; }
+            else { m.el.style.left = xOf(ns) + 'px'; m.el.style.width = xOf.width(ns, nd) + 'px'; }
+          }
+        });
+
+        const verb = d.zone === 'move' ? (colDeltaG > 0 ? 'later' : 'earlier')
+                   : (d.zone === 'resize-left' ? (colDeltaG > 0 ? 'shorter' : 'longer')
+                                               : (colDeltaG > 0 ? 'longer' : 'shorter'));
+        const tipG = dragTipEl(); tipG.innerHTML = '';
+        tipG.appendChild(el('span.tip-dot', { style: { background: clamped ? '#fdab3d' : '#5fb0f0' } }));
+        tipG.appendChild(document.createTextNode(
+          d.members.length + ' tasks · ' + (colDeltaG ? Math.abs(colDeltaG) + 'd ' + verb : 'no change') +
+          (clamped ? ' · ' + clamped + ' at minimum' : '')));
+        tipG.style.display = 'flex';
+        tipG.style.left = e.clientX + 'px';
+        tipG.style.top = (e.clientY - 38) + 'px';
         return;
       }
 
@@ -684,6 +889,42 @@ window.App = window.App || {};
           App.render();
           App.createFromDrag.open({ startIso: sIso, dueIso: dIso, showId: App.singleShowFilter() });
         }
+        return;
+      }
+
+      if (d.kind === 'marquee') {
+        // read the band before removing it, then hit-test the bars against it
+        const box = d.ghost.getBoundingClientRect();
+        d.ghost.remove();
+        this.suppressNextClick();
+        if (!d.moved) return;                        // a shift-click on open grid: nothing to sweep
+        if (!d.additive) selClear();
+        let added = 0;
+        this._scrollEl.querySelectorAll('.g-row.sub:not(.phase) .bar').forEach(b => {
+          const r = b.getBoundingClientRect();
+          // touched, not enclosed — a band drawn across a long bar means it
+          if (r.right < box.left || r.left > box.right || r.bottom < box.top || r.top > box.bottom) return;
+          const row = b.closest('.g-row.sub');
+          const epId = b.dataset.episodeId || row.dataset.episodeId;
+          const suKey = b.dataset.suKey || row.dataset.suKey;
+          if (!epId || !suKey) return;
+          if (!selHas(epId, suKey)) added++;
+          selAdd(epId, suKey);
+        });
+        App.render();
+        const total = selList().length;
+        App.toast(added
+          ? added + ' task' + (added === 1 ? '' : 's') + ' added · ' + total + ' selected'
+          : 'Nothing new in that sweep · ' + total + ' selected');
+        return;
+      }
+
+      if (d.kind === 'group') {
+        d.members.forEach(m => { if (m.el) m.el.classList.remove('dragging'); });
+        this.suppressNextClick();                    // the mouseup's click isn't "open Edit Task"
+        const changed = d.members.filter(m => m.curStart !== m.origStart || m.curDue !== m.origDue);
+        if (!changed.length) { App.render(); return; }
+        App.moveTasks(changed.map(m => ({ epId: m.epId, suKey: m.suKey, start: m.curStart, due: m.curDue })));
         return;
       }
 
@@ -905,7 +1146,8 @@ window.App = window.App || {};
       const style = { background: bg, color: pickInk(bg) };
       setBarPos(style, axis, xOf, su.start, su.due);
       if (ring) style.outlineColor = st.color;
-      const sbar = el('.bar' + (done ? '.delivered' : '') + (ring ? '.st-ring' : '') + (bare ? '.bare' : ''), {
+      const sbar = el('.bar' + (done ? '.delivered' : '') + (ring ? '.st-ring' : '') + (bare ? '.bare' : '') +
+                      (selHas(ep.id, su.key) ? '.selected' : ''), {
         title: (labelText ? labelText + ' — ' : '') + su.name + ' — ' + st.label + ' · ' + App.fmtRange(su.start, su.due),
         style
       }, bare ? null : [

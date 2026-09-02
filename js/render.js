@@ -261,6 +261,27 @@ window.App = window.App || {};
         el('button.ghost', { onclick: () => App.gantt.zoomBy(1.25), title: 'Zoom in (' + App.shortcutLabel('+') + ', or Ctrl+scroll on the chart)' }, '+'),
         el('button.ghost', { onclick: () => App.gantt.centerToday(), title: 'Scroll to today' }, '⊙ Today')
       ]));
+
+      /* Shift-selection pill. Only here while something is picked — but then
+         it has to be, because the selection otherwise lives entirely in bar
+         outlines that can be scrolled off screen, and a group you've forgotten
+         about owns your next drag. Doubles as the discoverable way out. */
+      const sel = App.ganttSelection ? App.ganttSelection.resolved() : [];
+      if (sel.length) {
+        const eps = new Set(sel.map(s => s.epId)).size;
+        bar.appendChild(el('.sel-pill', {
+          title: sel.map(s => s.ep.code + ' — ' + s.su.name).slice(0, 14).join('\n') +
+                 (sel.length > 14 ? '\n+' + (sel.length - 14) + ' more' : '')
+        }, [
+          el('span.sel-dot'),
+          el('span.sel-count', null, sel.length + ' selected'),
+          el('span.sel-sub', null, 'in ' + eps + ' episode' + (eps === 1 ? '' : 's') + ' · drag to move or resize together'),
+          el('button.sel-clear', {
+            title: 'Clear the selection (Esc)',
+            onclick: () => { App.ganttSelection.clear(); App.render(); }
+          }, '✕')
+        ]));
+      }
     }
 
     /* Legend — Timeline only, where bars are colour-coded by show and there's

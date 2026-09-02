@@ -1107,6 +1107,130 @@ window.App = window.App || {};
       );
     }
   };
+
+  /* ---- Group move confirmation ----
+     The bulk sibling of impactDialog. One shift-drag can touch a dozen tasks
+     across several episodes, so the layered before/after picture doesn't
+     transfer — a chart of twelve bars answers nothing. What a producer needs
+     here is the count and the exceptions: how much is moving, which delivery
+     dates it runs past, and which orderings it breaks. So this lists rather
+     than draws, and asks the same single question at the end. */
+  App.bulkMoveDialog = {
+    open(summary, handlers) {
+      const onConfirm = (handlers && handlers.onConfirm) || function () {};
+      const onCancel = (handlers && handlers.onCancel) || function () {};
+      let decided = false;
+      const finish = (fn) => { if (decided) return; decided = true; App.modal.close(); fn(); };
+
+      const { rows, clashes, deliveries } = summary;
+      const epCount = new Set(rows.map(r => r.ep.id)).size;
+
+      // the whole group's span, before and after — what actually changed is one
+      // shift, so two ranges say more than a per-task list of dates would
+      const spanOf = (pick) => rows.reduce((acc, r) => {
+        const s = pick(r).start, d = pick(r).due;
+        return { start: !acc || s < acc.start ? s : acc.start, due: !acc || d > acc.due ? d : acc.due };
+      }, null);
+      const before = spanOf(r => r.su);
+      const after = spanOf(r => r.move);
+      const shiftDays = App.diffDays(after.start, before.start);
+      const lenBefore = App.diffDays(before.due, before.start);
+      const lenAfter = App.diffDays(after.due, after.start);
+      const stretch = lenAfter - lenBefore;
+
+      const sections = [
+        el('.ctx-box.slim', null, [
+          el('span.ctx-chip', null, rows.length + ' task' + (rows.length === 1 ? '' : 's')),
+          el('span.ctx-title', null, 'across ' + epCount + ' episode' + (epCount === 1 ? '' : 's')),
+          el('span.ctx-dept', null, 'Group move')
+        ]),
+        el('.si-headline', null, [
+          el('strong', null, App.fmtRange(before.start, before.due)),
+          el('span.si-arrow', null, '→'),
+          el('strong', null, App.fmtRange(after.start, after.due)),
+          el('span.si-shift', null, shiftDays
+            ? (shiftDays > 0 ? 'later by ' : 'earlier by ') + Math.abs(shiftDays) + 'd'
+            : stretch ? (stretch > 0 ? 'longer by ' : 'shorter by ') + Math.abs(stretch) + 'd'
+            : 'same span')
+        ])
+      ];
+
+      /* Grouped by episode: a delivery date belongs to the episode, not to the
+         task that ran past it, so listing it per task would repeat one fact
+         several times and imply several separate decisions. */
+      let shiftBox = null;
+      if (deliveries.length) {
+        const byEp = {};
+        deliveries.forEach(({ ep, su, delivery }) => {
+          const cur = byEp[ep.id];
+          if (!cur) byEp[ep.id] = { ep, delivery, tasks: [su.name] };
+          else {
+            cur.tasks.push(su.name);
+            if (delivery.suggest > cur.delivery.suggest) cur.delivery = delivery;
+          }
+        });
+        const eps = Object.values(byEp);
+        shiftBox = el('input', { type: 'checkbox', checked: true });
+        sections.push(el('.si-del', null, [
+          el('.si-del-head', null, [
+            App.icon('warn', { cls: 'si-item-ic' }),
+            el('.si-item-main', null, [
+              el('.si-item-title', null, el('span', null,
+                eps.length + ' episode' + (eps.length === 1 ? '' : 's') + ' would finish on or past the delivery date')),
+              el('.si-item-sub', null, eps.map(x =>
+                x.ep.code + ': ' + App.fmtDate(x.delivery.ms.date) + ' → ' + App.fmtDate(x.delivery.suggest)
+              ).join(' · '))
+            ])
+          ]),
+          el('label.si-del-opt', null, [
+            shiftBox,
+            el('span', null, [
+              'Move ' + (eps.length === 1 ? 'that delivery date' : 'those delivery dates') + ' to clear the work',
+              el('span.si-del-note', null, 'Live dates never move. Leave this clear to hold the dates and let the slip show.')
+            ])
+          ])
+        ]));
+      }
+
+      if (clashes.length) {
+        // capped: past a handful the count is the point, not the roll-call
+        const shown = clashes.slice(0, 6);
+        sections.push(el('.fld-hint', { style: { margin: '2px 0 8px' } },
+          clashes.length + ' dependenc' + (clashes.length === 1 ? 'y' : 'ies') +
+          ' would be out of order. Nothing outside the selection is rescheduled.'));
+        sections.push(el('.si-list', null, shown.map(({ ep, su, clash }) => el('.si-item', null, [
+          App.icon('warn', { cls: 'si-item-ic' }),
+          el('.si-item-main', null, [
+            el('.si-item-title', null, [
+              el('span', null, su.name),
+              el('span.si-dir', null, ep.code)
+            ]),
+            el('.si-item-sub', null, clash.dir === 'upstream'
+              ? clash.text
+              : '“' + clash.task.name + '” ' + clash.text)
+          ]),
+          el('span.si-overlap', { title: 'The order is out by ' + clash.earlyBy + ' day' + (clash.earlyBy === 1 ? '' : 's') },
+            clash.earlyBy + 'd early')
+        ]))));
+        if (clashes.length > shown.length) {
+          sections.push(el('.pr-more', null, '+' + (clashes.length - shown.length) + ' more'));
+        }
+      }
+
+      const footer = [
+        el('button.btn-ghost', { onclick: () => finish(onCancel) }, 'Keep as it was'),
+        el('button.btn-danger', { onclick: () => finish(() => onConfirm(shiftBox && shiftBox.checked)) },
+          [App.icon('warn'), ' Move all ' + rows.length])
+      ];
+
+      App.modal.open(
+        card('calendar', 'Move ' + rows.length + ' tasks',
+          'One change, applied together — a single undo puts it all back', sections, footer, 'wide'),
+        { onClose: () => finish(onCancel) }
+      );
+    }
+  };
+
   /* ---- Reusable pipeline editor ----
      The compact/expandable task list shared by Add Show and Admin → Workflow →
      Pipelines. Mutates the array it's given IN PLACE (push/splice/swap), so the

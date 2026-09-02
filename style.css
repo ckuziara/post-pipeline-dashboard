@@ -789,6 +789,44 @@ body.gantt-dragging { user-select: none; }
 .bar.adjustable:hover::after, .bar.dragging::after { transform: translate(50%, -50%) scaleX(1.15); }
 .drag-tip { font-weight: 700; }
 
+/* ---- Shift-selected task bars ----
+   A white ring plus a lift, not a colour change: the bar's own colour is
+   already carrying its department or show, and a selection that recoloured it
+   would cost the reading it was picked out of. The ring sits outside the bar so
+   a 3px-wide task still shows it. */
+.bar.selected {
+  outline: 2px solid #fff !important; outline-offset: 1px;
+  box-shadow: 0 0 0 4px rgba(91,108,255,.35), 0 3px 10px rgba(0,0,0,.45);
+  z-index: 4;
+}
+.bar.selected.delivered { opacity: .8; }
+/* every member of a group drag lifts together, so the group reads as one thing
+   in motion rather than one dragged bar and some followers */
+.bar.selected.dragging { box-shadow: 0 0 0 4px rgba(91,108,255,.5), 0 6px 16px rgba(0,0,0,.5); }
+/* Shift held: the open grid becomes a place to sweep, so say so on the cursor */
+body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
+/* fixed, not absolute — the band and the bars it catches are both measured in
+   viewport coordinates, so they can't drift apart (see startMarquee) */
+.g-marquee {
+  position: fixed; z-index: 900; pointer-events: none;
+  border: 1.5px dashed rgba(255,255,255,.85); border-radius: 4px;
+  background: rgba(91,108,255,.16);
+}
+/* Toolbar pill — the selection's only presence outside the chart itself */
+.sel-pill {
+  display: inline-flex; align-items: center; gap: 8px; padding: 5px 6px 5px 11px;
+  border-radius: 999px; background: rgba(91,108,255,.14);
+  border: 1px solid rgba(91,108,255,.45); white-space: nowrap;
+}
+.sel-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+.sel-count { font-size: 11.5px; font-weight: 700; }
+.sel-sub { font-size: 10.5px; color: var(--text-3); }
+.sel-clear {
+  background: none; border: 0; color: var(--text-3); cursor: pointer;
+  font-size: 11px; line-height: 1; padding: 4px 6px; border-radius: 50%;
+}
+.sel-clear:hover { background: var(--hover); color: var(--text); }
+
 /* ---- "+ Create" row (Timeline, draw to create an episode/task) ----
    Same header+track shape as the Producer Notes row just below, with its own
    accent (purple, not the notes' yellow/blue) so a create-draw never reads
