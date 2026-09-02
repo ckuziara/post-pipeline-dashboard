@@ -426,6 +426,13 @@ window.App = window.App || {};
     ]);
 
     const draw = () => {
+      // Called right after the button is (re)built, which for a reopen-on-
+      // rebuild is BEFORE the caller has appended it into the toolbar — its
+      // rect is all zeros while detached, which is what pinned the popover to
+      // the top-left corner. Defer one frame so the button is on-page first;
+      // by then it's either still the open one (draw for real) or a later
+      // rebuild has moved on (do nothing, that rebuild's own draw wins).
+      if (!btn.isConnected) { requestAnimationFrame(() => { if (App.filterMenu.openKey === key) draw(); }); return; }
       if (App.filterMenu._pop) { App.filterMenu._pop.remove(); App.filterMenu._pop = null; }
       const pop = el('.filter-pop', { onclick: e => e.stopPropagation() });
       pop.appendChild(el('.filter-pop-row' + (!selected.length ? '.active' : ''), {
