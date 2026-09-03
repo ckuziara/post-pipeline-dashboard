@@ -1107,6 +1107,340 @@ window.App = window.App || {};
       );
     }
   };
+
+  /* ---- Group move confirmation ----
+     The bulk sibling of impactDialog. One shift-drag can touch a dozen tasks
+     across several episodes, so the layered before/after picture doesn't
+     transfer — a chart of twelve bars answers nothing. What a producer needs
+     here is the count and the exceptions: how much is moving, which delivery
+     dates it runs past, and which orderings it breaks. So this lists rather
+     than draws, and asks the same single question at the end. */
+  App.bulkMoveDialog = {
+    open(summary, handlers) {
+      const onConfirm = (handlers && handlers.onConfirm) || function () {};
+      const onCancel = (handlers && handlers.onCancel) || function () {};
+      let decided = false;
+      const finish = (fn) => { if (decided) return; decided = true; App.modal.close(); fn(); };
+
+      const { rows, clashes, deliveries } = summary;
+      const epCount = new Set(rows.map(r => r.ep.id)).size;
+
+      // the whole group's span, before and after — what actually changed is one
+      // shift, so two ranges say more than a per-task list of dates would
+      const spanOf = (pick) => rows.reduce((acc, r) => {
+        const s = pick(r).start, d = pick(r).due;
+        return { start: !acc || s < acc.start ? s : acc.start, due: !acc || d > acc.due ? d : acc.due };
+      }, null);
+      const before = spanOf(r => r.su);
+      const after = spanOf(r => r.move);
+      const shiftDays = App.diffDays(after.start, before.start);
+      const lenBefore = App.diffDays(before.due, before.start);
+      const lenAfter = App.diffDays(after.due, after.start);
+      const stretch = lenAfter - lenBefore;
+
+      const sections = [
+        el('.ctx-box.slim', null, [
+          el('span.ctx-chip', null, rows.length + ' task' + (rows.length === 1 ? '' : 's')),
+          el('span.ctx-title', null, 'across ' + epCount + ' episode' + (epCount === 1 ? '' : 's')),
+          el('span.ctx-dept', null, 'Group move')
+        ]),
+        el('.si-headline', null, [
+          el('strong', null, App.fmtRange(before.start, before.due)),
+          el('span.si-arrow', null, '→'),
+          el('strong', null, App.fmtRange(after.start, after.due)),
+          el('span.si-shift', null, shiftDays
+            ? (shiftDays > 0 ? 'later by ' : 'earlier by ') + Math.abs(shiftDays) + 'd'
+            : stretch ? (stretch > 0 ? 'longer by ' : 'shorter by ') + Math.abs(stretch) + 'd'
+            : 'same span')
+        ])
+      ];
+
+      /* Grouped by episode: a delivery date belongs to the episode, not to the
+         task that ran past it, so listing it per task would repeat one fact
+         several times and imply several separate decisions. */
+      let shiftBox = null;
+      if (deliveries.length) {
+        const byEp = {};
+        deliveries.forEach(({ ep, su, delivery }) => {
+          const cur = byEp[ep.id];
+          if (!cur) byEp[ep.id] = { ep, delivery, tasks: [su.name] };
+          else {
+            cur.tasks.push(su.name);
+            if (delivery.suggest > cur.delivery.suggest) cur.delivery = delivery;
+          }
+        });
+        const eps = Object.values(byEp);
+        shiftBox = el('input', { type: 'checkbox', checked: true });
+        sections.push(el('.si-del', null, [
+          el('.si-del-head', null, [
+            App.icon('warn', { cls: 'si-item-ic' }),
+            el('.si-item-main', null, [
+              el('.si-item-title', null, el('span', null,
+                eps.length + ' episode' + (eps.length === 1 ? '' : 's') + ' would finish on or past the delivery date')),
+              el('.si-item-sub', null, eps.map(x =>
+                x.ep.code + ': ' + App.fmtDate(x.delivery.ms.date) + ' → ' + App.fmtDate(x.delivery.suggest)
+              ).join(' · '))
+            ])
+          ]),
+          el('label.si-del-opt', null, [
+            shiftBox,
+            el('span', null, [
+              'Move ' + (eps.length === 1 ? 'that delivery date' : 'those delivery dates') + ' to clear the work',
+              el('span.si-del-note', null, 'Live dates never move. Leave this clear to hold the dates and let the slip show.')
+            ])
+          ])
+        ]));
+      }
+
+      if (clashes.length) {
+        // capped: past a handful the count is the point, not the roll-call
+        const shown = clashes.slice(0, 6);
+        sections.push(el('.fld-hint', { style: { margin: '2px 0 8px' } },
+          clashes.length + ' dependenc' + (clashes.length === 1 ? 'y' : 'ies') +
+          ' would be out of order. Nothing outside the selection is rescheduled.'));
+        sections.push(el('.si-list', null, shown.map(({ ep, su, clash }) => el('.si-item', null, [
+          App.icon('warn', { cls: 'si-item-ic' }),
+          el('.si-item-main', null, [
+            el('.si-item-title', null, [
+              el('span', null, su.name),
+              el('span.si-dir', null, ep.code)
+            ]),
+            el('.si-item-sub', null, clash.dir === 'upstream'
+              ? clash.text
+              : '“' + clash.task.name + '” ' + clash.text)
+          ]),
+          el('span.si-overlap', { title: 'The order is out by ' + clash.earlyBy + ' day' + (clash.earlyBy === 1 ? '' : 's') },
+            clash.earlyBy + 'd early')
+        ]))));
+        if (clashes.length > shown.length) {
+          sections.push(el('.pr-more', null, '+' + (clashes.length - shown.length) + ' more'));
+        }
+      }
+
+      const footer = [
+        el('button.btn-ghost', { onclick: () => finish(onCancel) }, 'Keep as it was'),
+        el('button.btn-danger', { onclick: () => finish(() => onConfirm(shiftBox && shiftBox.checked)) },
+          [App.icon('warn'), ' Move all ' + rows.length])
+      ];
+
+      App.modal.open(
+        card('calendar', 'Move ' + rows.length + ' tasks',
+          'One change, applied together — a single undo puts it all back', sections, footer, 'wide'),
+        { onClose: () => finish(onCancel) }
+      );
+    }
+  };
+
+  /* ---- Batch Set Dates ----
+     Re-dating a whole shift-selection by rule instead of by hand. A group drag
+     shifts everything by one delta and keeps the shape it had; this is for when
+     the shape itself is wrong — six episodes' Core Premises that should go out
+     two a week from the 1st, whatever they say now.
+
+     Three modes, and they're the same calculation seen at three widths: every
+     task lands at `start + groupIndex × interval`, where the group is
+     `floor(position / groupSize)`. Same start is groupSize = ∞, stagger is
+     groupSize = 1, and grouping is the general case. They're presented
+     separately because that's how the job is described out loud, not because
+     they need different code.
+
+     Durations are never touched — only starts are set, and each task's own span
+     comes along. And nothing is applied from here: the moves go through
+     App.moveTasks, so the live-date refusal, the delivery-date question, the
+     single undo and the atomic write are the same ones a drag gets. */
+  const IVL = { day: 'Days', week: 'Weeks', month: 'Months' };
+
+  // calendar arithmetic, because "space by a week" means seven dates on a
+  // calendar — not seven working days. Month-ends clamp (Jan 31 + 1m = Feb 28).
+  function addInterval(iso, n, unit) {
+    if (!n) return iso;
+    if (unit === 'day') return App.shiftIso(iso, n);
+    if (unit === 'week') return App.shiftIso(iso, n * 7);
+    const d = App.parseDate(iso), day = d.getDate();
+    const t = new Date(d.getFullYear(), d.getMonth() + n, 1);
+    const last = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate();
+    t.setDate(Math.min(day, last));
+    return App.isoDate(t);
+  }
+
+  /* The order the rule is applied in, which the producer has to be able to
+     predict or the result is arbitrary. Episode number first — that IS the
+     running order of a series, and it's what "tasks 1 & 2, then 3 & 4" means
+     when six episodes each contribute one task. Show prefix keeps a mixed
+     selection from interleaving two series, and the current start breaks ties
+     within one episode so a selection of several tasks from the same episode
+     still runs in the order the schedule already has them. */
+  function batchOrder(items) {
+    const epNum = (code) => { const m = /(\d+)\s*$/.exec(code || ''); return m ? parseInt(m[1], 10) : 0; };
+    const prefix = (code) => String(code || '').replace(/\d+\s*$/, '');
+    return items.slice().sort((a, b) => {
+      const pa = prefix(a.ep.code), pb = prefix(b.ep.code);
+      if (pa !== pb) return pa < pb ? -1 : 1;
+      const na = epNum(a.ep.code), nb = epNum(b.ep.code);
+      if (na !== nb) return na - nb;
+      if (a.su.start !== b.su.start) return a.su.start < b.su.start ? -1 : 1;
+      return a.su.key < b.su.key ? -1 : a.su.key > b.su.key ? 1 : 0;
+    });
+  }
+
+  App.batchDates = {
+    open() {
+      const picked = App.ganttSelection ? App.ganttSelection.resolved() : [];
+      if (picked.length < 2) { App.toast('Select two or more tasks first', true); return; }
+      if (!App.canEditSchedule(App.state.role)) {
+        App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
+      }
+      const items = batchOrder(picked);
+      const hw = App.prefs.get('hideWeekends', true);
+      const epCount = new Set(items.map(i => i.epId)).size;
+
+      let mode = 'group';                      // the general case, and the one asked for most
+      const startInput = el('input.fld', { type: 'date', value: items[0].su.start });
+      const everyInput = el('input.fld.bd-num', { type: 'number', min: '0', max: '365', value: '1' });
+      const sizeInput = el('input.fld.bd-num', { type: 'number', min: '1', max: '99', value: '2' });
+      const unitSel = el('select.fld.bd-unit', null,
+        Object.keys(IVL).map(k => el('option', { value: k, selected: k === 'week' ? '' : null }, IVL[k])));
+      unitSel.value = 'week';
+
+      const read = () => ({
+        start: startInput.value,
+        every: Math.max(0, Math.min(365, parseInt(everyInput.value, 10) || 0)),
+        size: Math.max(1, Math.min(99, parseInt(sizeInput.value, 10) || 1)),
+        unit: unitSel.value
+      });
+
+      /* A start typed onto a hidden weekend has to roll forward.
+
+         Dragging can't produce one — with weekends hidden there is no Saturday
+         column to drop a bar on — but typing a date can, and a span measured
+         from a day the chart doesn't draw comes back one short, quietly
+         shortening the task. Rolling to the next working day keeps the
+         duration exact and puts the bar where it will actually be seen. With
+         weekends shown this does nothing at all. */
+      const onVisibleDay = (iso) => {
+        if (!hw) return iso;
+        const dow = App.parseDate(iso).getDay();
+        return dow === 6 ? App.shiftIso(iso, 2) : dow === 0 ? App.shiftIso(iso, 1) : iso;
+      };
+
+      /* One calculation for all three modes — see the note above. Duration is
+         read as a visible-day span and rebuilt the same way, which is how a
+         drag preserves it too, so a task keeps the length it looks like it has
+         rather than picking up or losing a weekend. */
+      const compute = () => {
+        const { start, every, size, unit } = read();
+        if (!start) return [];
+        return items.map((it, i) => {
+          const g = mode === 'fixed' ? 0 : Math.floor(i / (mode === 'group' ? size : 1));
+          const ns = onVisibleDay(addInterval(start, g * (mode === 'fixed' ? 0 : every), unit));
+          const span = Math.max(1, App.visibleDayCount(it.su.start, it.su.due, hw));
+          return {
+            epId: it.epId, suKey: it.suKey, ep: it.ep, su: it.su, group: g,
+            start: ns, due: App.addVisibleDays(ns, span - 1, hw)
+          };
+        });
+      };
+
+      // The preview IS the explanation — three sentences about what grouping
+      // means can't compete with seeing tasks 1 & 2 share a date.
+      const previewList = el('.bd-preview');
+      const summary = el('.bd-summary');
+      const paint = () => {
+        const rows = compute();
+        previewList.innerHTML = '';
+        summary.textContent = '';
+        if (!rows.length) { summary.textContent = 'Pick a start date.'; return; }
+        let lastGroup = -1;
+        rows.forEach(r => {
+          const newGroup = r.group !== lastGroup;
+          lastGroup = r.group;
+          previewList.appendChild(el('.bd-row' + (newGroup ? '.bd-row-lead' : ''), null, [
+            el('span.bd-code', null, r.ep.code),
+            el('span.bd-task', null, r.su.name),
+            el('span.bd-was', null, App.fmtDate(r.su.start)),
+            el('span.bd-arrow', null, '→'),
+            el('span.bd-now' + (r.start !== r.su.start ? '.changed' : ''), null, App.fmtRange(r.start, r.due))
+          ]));
+        });
+        const groups = new Set(rows.map(r => r.group)).size;
+        const moved = rows.filter(r => r.start !== r.su.start).length;
+        const rolled = rows.some(r => r.start !== addInterval(read().start,
+          r.group * (mode === 'fixed' ? 0 : read().every), read().unit));
+        summary.textContent = moved + ' of ' + rows.length + ' move · ' +
+          groups + ' start date' + (groups === 1 ? '' : 's') + ' · durations kept' +
+          (rolled ? ' · weekend starts moved to the Monday' : '');
+      };
+
+      const segs = el('.prefs-seg.bd-modes', null, [
+        ['fixed', 'Same start'], ['stagger', 'Stagger'], ['group', 'Group']
+      ].map(([v, label]) => el('button.seg' + (mode === v ? '.active' : ''), {
+        type: 'button',
+        onclick: (e) => {
+          mode = v;
+          [...segs.children].forEach(b => b.classList.toggle('active', b === e.currentTarget));
+          syncControls();
+          paint();
+        }
+      }, label)));
+
+      const everyRow = el('.bd-inline', null, [
+        el('span.bd-lbl', null, 'Space by'), everyInput, unitSel
+      ]);
+      const sizeRow = el('.bd-inline', null, [
+        el('span.bd-lbl', null, 'Tasks per batch'), sizeInput
+      ]);
+      const syncControls = () => {
+        everyRow.style.display = mode === 'fixed' ? 'none' : '';
+        sizeRow.style.display = mode === 'group' ? '' : 'none';
+      };
+      syncControls();
+
+      [startInput, everyInput, sizeInput].forEach(i => {
+        i.addEventListener('input', paint);
+        i.addEventListener('change', paint);
+      });
+      unitSel.addEventListener('change', paint);
+
+      const sections = [
+        el('.ctx-box.slim', null, [
+          el('span.ctx-chip', null, items.length + ' tasks'),
+          el('span.ctx-title', null, 'in ' + epCount + ' episode' + (epCount === 1 ? '' : 's')),
+          el('span.ctx-dept', null, 'By episode order')
+        ]),
+        segs,
+        el('.bd-controls', null, [
+          el('.bd-inline', null, [el('span.bd-lbl', null, 'Start'), startInput]),
+          everyRow,
+          sizeRow
+        ]),
+        summary,
+        previewList
+      ];
+
+      const footer = [
+        el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
+        el('button.btn-primary', {
+          onclick: () => {
+            const rows = compute();
+            if (!rows.length) { App.toast('Pick a start date', true); return; }
+            const moves = rows.filter(r => r.start !== r.su.start || r.due !== r.su.due)
+              .map(r => ({ epId: r.epId, suKey: r.suKey, start: r.start, due: r.due }));
+            if (!moves.length) { App.toast('Those dates are already set'); return; }
+            // closed first: moveTasks may need to ask about delivery dates or
+            // clashes, and that question mustn't open behind this
+            App.modal.close();
+            App.track.feature('timeline.batchDates');
+            App.moveTasks(moves);
+          }
+        }, [App.icon('calendar'), ' Set dates'])
+      ];
+
+      paint();
+      App.modal.open(card('calendar', 'Batch Set Dates',
+        'Set starts by rule — durations are kept', sections, footer, 'wide'));
+    }
+  };
+
   /* ---- Reusable pipeline editor ----
      The compact/expandable task list shared by Add Show and Admin → Workflow →
      Pipelines. Mutates the array it's given IN PLACE (push/splice/swap), so the

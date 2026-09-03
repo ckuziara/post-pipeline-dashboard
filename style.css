@@ -789,6 +789,47 @@ body.gantt-dragging { user-select: none; }
 .bar.adjustable:hover::after, .bar.dragging::after { transform: translate(50%, -50%) scaleX(1.15); }
 .drag-tip { font-weight: 700; }
 
+/* ---- Shift-selected task bars ----
+   A white ring plus a lift, not a colour change: the bar's own colour is
+   already carrying its department or show, and a selection that recoloured it
+   would cost the reading it was picked out of. The ring sits outside the bar so
+   a 3px-wide task still shows it. */
+.bar.selected {
+  outline: 2px solid #fff !important; outline-offset: 1px;
+  box-shadow: 0 0 0 4px rgba(91,108,255,.35), 0 3px 10px rgba(0,0,0,.45);
+  /* below .g-label (4) — the sticky label column is the chart's Y axis, and a
+     selected bar sliding under it must pass BEHIND the axis, not over it. 3
+     still clears the grid, the today line and unselected bars. */
+  z-index: 3;
+}
+.bar.selected.delivered { opacity: .8; }
+/* every member of a group drag lifts together, so the group reads as one thing
+   in motion rather than one dragged bar and some followers */
+.bar.selected.dragging { box-shadow: 0 0 0 4px rgba(91,108,255,.5), 0 6px 16px rgba(0,0,0,.5); }
+/* Shift held: the open grid becomes a place to sweep, so say so on the cursor */
+body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
+/* fixed, not absolute — the band and the bars it catches are both measured in
+   viewport coordinates, so they can't drift apart (see startMarquee) */
+.g-marquee {
+  position: fixed; z-index: 900; pointer-events: none;
+  border: 1.5px dashed rgba(255,255,255,.85); border-radius: 4px;
+  background: rgba(91,108,255,.16);
+}
+/* Toolbar pill — the selection's only presence outside the chart itself */
+.sel-pill {
+  display: inline-flex; align-items: center; gap: 8px; padding: 5px 6px 5px 11px;
+  border-radius: 999px; background: rgba(91,108,255,.14);
+  border: 1px solid rgba(91,108,255,.45); white-space: nowrap;
+}
+.sel-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+.sel-count { font-size: 11.5px; font-weight: 700; }
+.sel-sub { font-size: 10.5px; color: var(--text-3); }
+.sel-clear {
+  background: none; border: 0; color: var(--text-3); cursor: pointer;
+  font-size: 11px; line-height: 1; padding: 4px 6px; border-radius: 50%;
+}
+.sel-clear:hover { background: var(--hover); color: var(--text); }
+
 /* ---- "+ Create" row (Timeline, draw to create an episode/task) ----
    Same header+track shape as the Producer Notes row just below, with its own
    accent (purple, not the notes' yellow/blue) so a create-draw never reads
@@ -1226,6 +1267,12 @@ body.gantt-dragging { user-select: none; }
   background: var(--surface-2); border: 1px solid var(--border);
   border-left: 3px solid var(--text-3);     /* colour set inline per group */
   border-radius: 8px; overflow: hidden;
+  /* Flex items shrink to fit by default, and with `.pr-list` scrolling that
+     shrink target is 0 rather than "leave it to the scrollbar" — squashing
+     every group down to a sliver instead of letting the list overflow.
+     `flex: none` keeps each group at its natural height so the list scrolls
+     like the rest of the dashboard's widget bodies. */
+  flex: none;
 }
 .pr-head {
   width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px 12px;
@@ -3570,3 +3617,56 @@ select.fld { cursor: pointer; }
   border-radius: 7px; padding: 5px 12px;
 }
 .dw-holder-btn:hover { color: var(--text); border-color: var(--accent); }
+
+/* ---- Timeline bar context menu ----
+   Above the modal overlay (400) is deliberate: the menu is what opens the
+   dialog, never the reverse, so it only has to clear the chart chrome — but
+   sitting under a dialog it can't be over is a bug waiting for a refactor. */
+.ctx-menu {
+  position: fixed; z-index: 420; min-width: 190px;
+  background: var(--surface-2); border: 1px solid var(--border-2); border-radius: 10px;
+  box-shadow: var(--shadow); padding: 5px; animation: pop-in .12s ease;
+}
+.ctx-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; text-align: left; background: none; border: none; color: var(--text);
+  font-size: 12.5px; font-family: inherit; padding: 8px 10px; border-radius: 7px; cursor: pointer;
+}
+.ctx-item:hover { background: var(--hover); }
+.ctx-item-lbl { font-weight: 600; }
+.ctx-item-sub { font-size: 10.5px; color: var(--text-3); flex: none; }
+.ctx-sep { height: 1px; background: var(--border); margin: 4px 2px; }
+
+/* ---- Batch Set Dates ----
+   Controls kept on single lines so the three modes differ by one row each,
+   and the preview is what carries the explaining. */
+.bd-modes { align-self: flex-start; margin: 12px 0 4px; }
+.bd-controls {
+  display: flex; flex-direction: column; gap: 9px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px; margin-bottom: 10px;
+}
+.bd-inline { display: flex; align-items: center; gap: 9px; }
+.bd-lbl { font-size: 11.5px; font-weight: 700; color: var(--text-2); width: 118px; flex: none; }
+.bd-inline .fld { margin: 0; }
+.bd-inline input[type="date"] { width: 168px; flex: none; }
+.bd-num { width: 72px; flex: none; text-align: center; }
+.bd-unit { width: 104px; flex: none; }
+.bd-summary { font-size: 11px; color: var(--text-3); font-weight: 600; margin-bottom: 8px; }
+.bd-preview {
+  display: flex; flex-direction: column; max-height: 260px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 10px;
+}
+.bd-row {
+  display: flex; align-items: center; gap: 10px; padding: 7px 11px;
+  font-size: 11.5px; border-bottom: 1px solid var(--border);
+}
+.bd-row:last-child { border-bottom: 0; }
+/* the first task of each batch — the line that makes grouping legible */
+.bd-row-lead { background: rgba(91,108,255,.07); box-shadow: inset 2px 0 0 var(--accent); }
+.bd-code { font-weight: 700; width: 62px; flex: none; }
+.bd-task { color: var(--text-2); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bd-was { color: var(--text-3); flex: none; }
+.bd-arrow { color: var(--text-3); flex: none; }
+.bd-now { color: var(--text-3); font-weight: 600; width: 132px; flex: none; text-align: right; }
+.bd-now.changed { color: var(--text); }

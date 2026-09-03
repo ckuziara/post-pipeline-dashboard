@@ -516,12 +516,23 @@ window.App = window.App || {};
 
      Nothing cascades: only the dragged task moves, which is why every other
      task in the result keeps its current dates. Pure — safe to call while
-     dragging. */
-  App.scheduleImpact = function (ep, key, newStart, newDue) {
+     dragging.
+
+     `alsoMoving` is the exception, and only for a group drag: a map of
+     taskKey -> {start, due} for the OTHER tasks travelling in the same gesture.
+     Without it a group move reads as a wall of clashes between tasks that are
+     all moving together and so never actually collide — the ordering between
+     two selected tasks is preserved by the move, not broken by it. */
+  App.scheduleImpact = function (ep, key, newStart, newDue, alsoMoving) {
     const pipe = App.pipelineFor(ep);
     const task = pipe.find(t => t.key === key);
-    const byKey = {}; App.subitems(ep).forEach(s => { byKey[s.key] = s; });
-    const moved = byKey[key];
+    const byKey = {};
+    let moved = null;
+    App.subitems(ep).forEach(s => {
+      if (s.key === key) moved = s;              // always its dates as they stand — that's `from`
+      const to = alsoMoving && alsoMoving[s.key];
+      byKey[s.key] = (to && s.key !== key) ? Object.assign({}, s, { start: to.start, due: to.due }) : s;
+    });
     const clashes = [];
 
     /* `earlyBy` is how badly the ordering is violated — the days between the
@@ -811,6 +822,9 @@ window.App = window.App || {};
     planning: { view: 'hub', editing: null, variant: 'C', selected: [] },  // planning module sub-navigation
     expanded: {},                     // episodeId -> bool (board)
     ganttExpanded: {},                // episodeId -> bool (timeline subitem drill-down)
+    // Shift-selected task bars, as 'epId|taskKey' strings. A view-local
+    // scratch selection — never synced to teammates, and dropped on reload.
+    ganttSel: [],
     creatingOnGantt: false,           // "+ Create" toggle armed — transient, never synced to teammates
     zoom: 16,                         // px per day on the timeline
     data: null

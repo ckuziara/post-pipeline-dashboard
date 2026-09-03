@@ -265,6 +265,27 @@ window.App = window.App || {};
         el('button.ghost', { onclick: () => App.gantt.zoomBy(1.25), title: 'Zoom in (' + App.shortcutLabel('+') + ', or Ctrl+scroll on the chart)' }, '+'),
         el('button.ghost', { onclick: () => App.gantt.centerToday(), title: 'Scroll to today' }, '⊙ Today')
       ]));
+
+      /* Shift-selection pill. Only here while something is picked — but then
+         it has to be, because the selection otherwise lives entirely in bar
+         outlines that can be scrolled off screen, and a group you've forgotten
+         about owns your next drag. Doubles as the discoverable way out. */
+      const sel = App.ganttSelection ? App.ganttSelection.resolved() : [];
+      if (sel.length) {
+        const eps = new Set(sel.map(s => s.epId)).size;
+        bar.appendChild(el('.sel-pill', {
+          title: sel.map(s => s.ep.code + ' — ' + s.su.name).slice(0, 14).join('\n') +
+                 (sel.length > 14 ? '\n+' + (sel.length - 14) + ' more' : '')
+        }, [
+          el('span.sel-dot'),
+          el('span.sel-count', null, sel.length + ' selected'),
+          el('span.sel-sub', null, 'in ' + eps + ' episode' + (eps === 1 ? '' : 's') + ' · drag to move or resize together'),
+          el('button.sel-clear', {
+            title: 'Clear the selection (Esc)',
+            onclick: () => { App.ganttSelection.clear(); App.render(); }
+          }, '✕')
+        ]));
+      }
     }
 
     /* Legend — Timeline only, where bars are colour-coded by show and there's
@@ -430,6 +451,13 @@ window.App = window.App || {};
     ]);
 
     const draw = () => {
+      // Called right after the button is (re)built, which for a reopen-on-
+      // rebuild is BEFORE the caller has appended it into the toolbar — its
+      // rect is all zeros while detached, which is what pinned the popover to
+      // the top-left corner. Defer one frame so the button is on-page first;
+      // by then it's either still the open one (draw for real) or a later
+      // rebuild has moved on (do nothing, that rebuild's own draw wins).
+      if (!btn.isConnected) { requestAnimationFrame(() => { if (App.filterMenu.openKey === key) draw(); }); return; }
       if (App.filterMenu._pop) { App.filterMenu._pop.remove(); App.filterMenu._pop = null; }
       const pop = el('.filter-pop', { onclick: e => e.stopPropagation() });
       pop.appendChild(el('.filter-pop-row' + (!selected.length ? '.active' : ''), {

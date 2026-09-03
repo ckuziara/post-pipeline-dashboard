@@ -213,6 +213,121 @@ window.App = window.App || {};
     }
   };
 
+  /* Reschedule a whole shift-selected group in one go.
+
+     A group move is one decision, so it's one transaction: every task lands or
+     none of them do, under a single undo entry. That matters more here than for
+     a single bar — half-applying a bulk shift would leave a schedule nobody
+     asked for and no clean way back.
+
+     The single-task rules still hold, but they're answered once for the group
+     rather than task by task. Anything reaching its live date refuses the
+     entire move, because a group move you have to un-pick isn't worth doing.
+     Delivery-date overruns and dependency clashes are collected and put in one
+     summary dialog with one delivery-shift choice, instead of N dialogs.
+
+     `moves`: [{ epId, suKey, start, due }]. */
+  App.moveTasks = function (moves, opts) {
+    if (!App.canEditSchedule(App.state.role)) {
+      App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
+    }
+    moves = (moves || []).filter(m => m && m.epId && m.suKey);
+    if (!moves.length) return;
+    if (moves.length === 1) {                    // no group ceremony for a group of one
+      const m = moves[0];
+      App.moveTask(m.epId, m.suKey, m.start, m.due, opts);
+      return;
+    }
+
+    /* Each episode's own slice of the move, so dependency checks can see the
+       siblings that are travelling too — see `alsoMoving` in scheduleImpact. */
+    const perEp = {};
+    moves.forEach(m => { (perEp[m.epId] = perEp[m.epId] || {})[m.suKey] = { start: m.start, due: m.due }; });
+
+    const rows = [], denies = [], clashes = [], deliveries = [];
+    for (const m of moves) {
+      const ep = App.state.data.episodes.find(x => x.id === m.epId);
+      const su = ep && App.subitem(ep, m.suKey);
+      if (!ep || !su) continue;
+      const task = App.pTask(ep, m.suKey);
+      const minDays = (task && task.minDays) || 1;
+      const hideWeekends = App.prefs.get('hideWeekends', true);
+      if (App.visibleDayCount(m.start, m.due, hideWeekends) < minDays) {
+        denies.push({ ep, su, text: '“' + su.name + '” needs at least ' + minDays + ' day' + (minDays === 1 ? '' : 's') });
+        continue;
+      }
+      const impact = App.scheduleImpact(ep, m.suKey, m.start, m.due, perEp[m.epId]);
+      if (impact.deny) { denies.push({ ep, su, text: impact.deny.text }); continue; }
+      if (impact.delivery) deliveries.push({ ep, su, delivery: impact.delivery });
+      impact.clashes.forEach(c => clashes.push({ ep, su, clash: c }));
+      rows.push({ ep, su, move: m, impact });
+    }
+
+    // all or nothing — one bad task means the gesture didn't mean what it looked like
+    if (denies.length) {
+      App.toast(denies[0].text +
+        (denies.length > 1 ? ' (and ' + (denies.length - 1) + ' more)' : '') + ' — nothing moved', true);
+      App.render();
+      return;
+    }
+    if (!rows.length) return;
+
+    if ((deliveries.length || clashes.length) && !(opts && opts.confirmed) && App.bulkMoveDialog) {
+      App.bulkMoveDialog.open({ rows, clashes, deliveries }, {
+        onConfirm: (shiftDelivery) => App.moveTasks(moves, { confirmed: true, shiftDelivery }),
+        onCancel: () => App.render()
+      });
+      return;
+    }
+
+    /* One episode can hold several moved tasks, so the delivery shift has to be
+       the LATEST any of them asks for — taking each in turn would leave the
+       episode promising whichever task happened to be applied last. */
+    const shiftDelivery = !!(opts && opts.shiftDelivery && deliveries.length);
+    const epDelivery = {};
+    if (shiftDelivery) {
+      deliveries.forEach(({ ep, delivery }) => {
+        const cur = epDelivery[ep.id];
+        if (!cur || delivery.suggest > cur.suggest) epDelivery[ep.id] = delivery;
+      });
+    }
+
+    App.mutate(d => {
+      const touched = {};
+      rows.forEach(({ ep, move }) => {
+        const e = d.episodes.find(x => x.id === ep.id); if (!e) return;
+        e.dates = e.dates || {};
+        e.dates[move.suKey] = { start: move.start, due: move.due };
+        touched[e.id] = e;
+      });
+      Object.keys(epDelivery).forEach(epId => {
+        const e = touched[epId]; if (!e) return;
+        e.milestones = e.milestones || {};
+        e.milestones[epDelivery[epId].ms.key] = epDelivery[epId].suggest;
+      });
+      Object.values(touched).forEach(e => App.refreshReadiness(e));
+    }, shiftDelivery ? 'the group reschedule and delivery dates' : 'the group reschedule');
+
+    App.track.feature('timeline.groupReschedule');
+    App.track.audit('task.groupReschedule', {
+      tasks: rows.length,
+      episodes: Object.keys(perEp).length,
+      brokeDependencies: clashes.length,
+      deliveryDatesShifted: Object.keys(epDelivery).length
+    });
+
+    const n = rows.length + ' task' + (rows.length === 1 ? '' : 's');
+    const extra = [];
+    if (Object.keys(epDelivery).length) {
+      extra.push(Object.keys(epDelivery).length + ' delivery date' +
+        (Object.keys(epDelivery).length === 1 ? '' : 's') + ' shifted');
+    } else if (deliveries.length) {
+      extra.push('delivery dates left standing');
+    }
+    if (clashes.length) extra.push(clashes.length + ' dependency clash' + (clashes.length === 1 ? '' : 'es') + ' accepted');
+    App.toast(n + ' rescheduled' + (extra.length ? ' — ' + extra.join(' · ') : ''), extra.length > 0);
+  };
+
   /* Move a milestone, or hand the delivery date back to the live date.
 
      `iso` null clears a hand-picked delivery date, returning it to `lead` days
@@ -1108,6 +1223,13 @@ window.App = window.App || {};
       if (e.key === 'Escape') {
         App.board.closePop && App.board.closePop();
           App.prefsMenu.close();
+        App.gantt.closeBarMenu && App.gantt.closeBarMenu();
+        // drop a shift-selection — the same key that backs out of everything
+        // else, and the only way out that doesn't need a target to click
+        if (!modalOpen() && App.ganttSelection && App.ganttSelection.resolved().length) {
+          App.ganttSelection.clear();
+          App.render();
+        }
         return;
       }
 
