@@ -126,6 +126,32 @@ window.App = window.App || {};
         chosenFile = null;
         list.innerHTML = '';
         list.appendChild(el('.fp-loading', null, 'Opening…'));
+
+        /* Refuse rather than browse the wrong machine.
+
+           App.api.browse falls back to same-origin when no companion answers,
+           which is right for a read-only panel — you get an honest "this
+           server can't see your files". It is wrong here. This picker sets
+           storage.masterPath, which is SHARED board state, so browsing the
+           hosted container and selecting /opt/render/project would save a
+           path that means nothing on any studio machine and break folder
+           automation for the whole team. Refusing is the only safe answer,
+           and it names what's missing instead of showing a useless tree. */
+        const c = App.companion;
+        // resolve the probe first — usable() is false while still unprobed,
+        // so checking it cold would refuse even when a companion is right there
+        if (c) { try { await c.ensure(); } catch (e) { /* treated as absent */ } }
+        if (c && c.wanted() && !c.usable()) {
+          list.innerHTML = '';
+          chooseBtn.disabled = true;
+          upBtn.disabled = true;
+          crumb.textContent = '';
+          list.appendChild(el('.fp-error', null, c.unpaired()
+            ? 'A Post Pipeline is running on this computer but isn’t paired yet — open any task and enter its pairing code, then try again.'
+            : 'This picker browses the machine that has the volume mounted. Run Post Pipeline on that machine (see Companion mode in the README) and reopen this.'));
+          return;
+        }
+
         try {
           const r = await App.api.browse(p, files);
           cur = r.path;

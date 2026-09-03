@@ -1540,7 +1540,17 @@ const server = http.createServer(async (req, res) => {
         // else may browse only to pick a file to deliver — hence files=1, which
         // any signed-in user can call so they never need Finder.
         const wantFiles = url.searchParams.get('files') === '1';
-        if (!wantFiles && !config.adminEmails.map(e => e.toLowerCase()).includes(s.email)) {
+        /* A companion has no session to check and no way to evaluate one: the
+           board's roles live in the hosted deploy's database, which a
+           companion deliberately cannot read. Its own adminEmails describe
+           nobody relevant. So on a companion the PAIRING CODE is the
+           authorisation — whoever launched it chose to expose this volume to
+           that board, and a caller holding the code can already drive every
+           other file route here. Checking a list this machine can't
+           meaningfully evaluate would only break the picker. */
+        const viaCompanion = companionAuthed(req);
+        if (!viaCompanion && !wantFiles &&
+            !config.adminEmails.map(e => e.toLowerCase()).includes(s ? s.email : '')) {
           return sendJson(res, 403, { error: 'Only admins can browse the server filesystem' });
         }
         const roots = [
@@ -1738,7 +1748,7 @@ const server = http.createServer(async (req, res) => {
           }
           promoted.push(path.basename(dest));
         }
-        console.log('[promote] ' + getSession(req).email + ' ' + paths.deliverable +
+        console.log('[promote] ' + ((getSession(req) || {}).email || 'companion') + ' ' + paths.deliverable +
           ': ' + promoted.length + ' → Publish');
         return sendJson(res, 200, { ok: true, promoted: promoted.length, names: promoted, dir: pub });
       }
@@ -1809,7 +1819,7 @@ const server = http.createServer(async (req, res) => {
           } catch (e) {
             return sendJson(res, 400, { error: (moved ? 'move' : 'copy') + ' failed: ' + e.message });
           }
-          console.log('[deliver] ' + getSession(req).email + ' ' + (moved ? 'moved' : 'copied') + ' ' + src + ' → ' + dest);
+          console.log('[deliver] ' + ((getSession(req) || {}).email || 'companion') + ' ' + (moved ? 'moved' : 'copied') + ' ' + src + ' → ' + dest);
           return sendJson(res, 200, {
             ok: true, filed: path.basename(dest), dir: destAbs,
             size: st.size, dirEntry: st.isDirectory(), moved, fromLibrary: isLibrary
@@ -1838,7 +1848,7 @@ const server = http.createServer(async (req, res) => {
           try { fs.unlinkSync(dest); } catch (err) {}   // don't leave a half file behind
           return sendJson(res, 500, { error: 'write failed: ' + e.message });
         }
-        console.log('[deliver] ' + getSession(req).email + ' uploaded → ' + dest);
+        console.log('[deliver] ' + ((getSession(req) || {}).email || 'companion') + ' uploaded → ' + dest);
         return sendJson(res, 200, { ok: true, filed: path.basename(dest), size: fs.statSync(dest).size });
       }
 
