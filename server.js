@@ -44,7 +44,12 @@ const DEFAULT_CONFIG = {
      is never remotely drivable, which matters because these routes read and
      write a production volume. Set it only on a machine that has the mount,
      and only to your own board's origin. */
-  companionOrigins: []
+  companionOrigins: [],
+  /* Shared secret a companion requires on every file request. Origin alone
+     cannot be the gate: Origin is a header, and any non-browser client can
+     claim whatever it likes — curl included. Auto-generated and printed at
+     startup when companion mode is on and none was supplied. */
+  companionCode: ''
 };
 
 function loadConfig() {
@@ -66,6 +71,15 @@ function loadConfig() {
   if (ENV.COMPANION_ORIGINS) {
     cfg.companionOrigins = ENV.COMPANION_ORIGINS.split(',').map(o => o.trim().replace(/\/$/, '')).filter(Boolean);
   }
+  if (ENV.COMPANION_CODE) cfg.companionCode = String(ENV.COMPANION_CODE).trim();
+  /* A companion serves a production volume, so it listens on loopback only
+     unless someone deliberately says otherwise. The default 0.0.0.0 is right
+     for the team-server use (teammates open it over the LAN); it is wrong
+     here, where every caller is a browser on this same machine. Without this
+     a companion is reachable from the whole network, and Origin — the only
+     other gate — is a spoofable header. */
+  if (cfg.companionOrigins.length && ENV.HOST === undefined) cfg.host = '127.0.0.1';
+  if (ENV.HOST) cfg.host = ENV.HOST;
 
   // Local dev only: persist a generated secret so sessions survive a restart.
   // (In a hosted deploy SESSION_SECRET is set, so we never reach this.)
@@ -1088,6 +1102,48 @@ function applyCompanionCors(req, res) {
   return true;
 }
 
+/* The pairing code, and what it is actually for.
+
+   Origin cannot carry this on its own. A browser sets Origin honestly, but
+   nothing stops a non-browser client claiming any value it likes — the
+   traversal test for the previous change drove these very routes with plain
+   curl and a made-up Origin header. So the gate is a secret the caller has
+   to hold, not a header it can assert.
+
+   What this closes: anything that isn't the paired browser — curl on the
+   machine, another local process, another device if the listener is ever
+   widened past loopback.
+
+   What it does NOT close, stated plainly rather than left implied: the code
+   lives in the board's localStorage so its own scripts can send it, which
+   means script execution on the board's origin can still read it and drive
+   the volume. Closing that would mean not persisting the code at all, and a
+   volume the board is legitimately allowed to drive can't be fully walled
+   off from the board being compromised. */
+function timingSafeEquals(a, b) {
+  const ha = crypto.createHash('sha256').update(String(a || '')).digest();
+  const hb = crypto.createHash('sha256').update(String(b || '')).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+function companionAuthed(req) {
+  if (!companionOrigin(req)) return false;
+  if (!config.companionCode) return false;      // unpaired companions serve nothing
+  return timingSafeEquals(req.headers['x-companion-code'], config.companionCode);
+}
+
+// Readable enough to retype off a terminal: no O/0/I/1 to misread.
+function makePairingCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.randomBytes(12);
+  let out = '';
+  for (let i = 0; i < 12; i++) {
+    out += alphabet[bytes[i] % alphabet.length];
+    if (i % 4 === 3 && i < 11) out += '-';
+  }
+  return out;
+}
+
 /* -------------------------------------------------------------- server ---- */
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
@@ -1101,7 +1157,7 @@ const server = http.createServer(async (req, res) => {
        companion simply isn't running. */
     if (req.method === 'OPTIONS' && applyCompanionCors(req, res)) {
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Companion-Code');
       res.setHeader('Access-Control-Allow-Private-Network', 'true');
       res.setHeader('Access-Control-Max-Age', '600');
       res.writeHead(204); return res.end();
@@ -1121,7 +1177,16 @@ const server = http.createServer(async (req, res) => {
         const p = masterPath || (board && board.data && board.data.storage && board.data.storage.masterPath) || '';
         masterOk = !!p && path.isAbsolute(p) && fs.existsSync(p);
       } catch (e) { masterOk = false; }
-      return sendJson(res, 200, { app: 'post-pipeline', companion: true, masterOk });
+      /* Discovery must work before pairing, or there'd be no way to learn
+         that pairing is what's missing — so this one route takes no code and
+         reveals nothing but "a companion is here, and whether it can reach a
+         volume". `paired` lets the client tell "no companion" apart from
+         "companion, wrong code", which are different things to say. */
+      return sendJson(res, 200, {
+        app: 'post-pipeline', companion: true, masterOk,
+        needsCode: true,
+        paired: companionAuthed(req)
+      });
     }
 
     /* Slack, before anything else touches this request. Bolt's handleEvent
@@ -1210,7 +1275,7 @@ const server = http.createServer(async (req, res) => {
          tree, and by the fact that the person already has that volume
          mounted. A pairing token would close it; this is the version that
          needs no setup step. */
-      const companionFileRoute = !!companionOrigin(req) && (
+      const companionFileRoute = companionAuthed(req) && (
         url.pathname.startsWith('/api/task/') ||
         url.pathname === '/api/browse' ||
         url.pathname === '/api/open-url'
@@ -1977,7 +2042,24 @@ const server = http.createServer(async (req, res) => {
   // to start; App's constructor already wired the receiver.
   if (slack) console.log('  • Slack bridge:  embedded at POST /slack/events');
   if (config.companionOrigins.length) {
+    // generated here rather than at config time so it lands next to the
+    // instructions, in the window the person running this is looking at
+    if (!config.companionCode) config.companionCode = makePairingCode();
     console.log('  • Companion mode: serving file routes to ' + config.companionOrigins.join(', '));
+    console.log('    Listening on ' + config.host + (config.host === '127.0.0.1' ? ' (this machine only)' : ''));
+    if (config.host !== '127.0.0.1') {
+      console.log('    ⚠ Reachable beyond this machine. Companions serve a production volume —');
+      console.log('      leave HOST unset so it binds to 127.0.0.1 only.');
+    }
+    console.log('');
+    const label = '  Pairing code:  ' + config.companionCode + '  ';
+    const bar = '─'.repeat(label.length);
+    console.log('    ┌' + bar + '┐');
+    console.log('    │' + label + '│');
+    console.log('    └' + bar + '┘');
+    console.log('    Open the board on this machine, open any task, and paste');
+    console.log('    this into the Workspace panel when it asks. Once per browser.');
+    console.log('');
   }
 
   server.listen(PORT, config.host, () => {

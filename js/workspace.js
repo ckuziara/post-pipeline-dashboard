@@ -176,7 +176,35 @@ window.App = window.App || {};
       if (!c) return null;
 
       if (c.usable() && d.masterOk) {
-        return el('.ws-note.ws-mode', null, [App.icon('plug'), ' ' + c.describe()]);
+        return el('.ws-note.ws-mode', null, [
+          App.icon('plug'), ' ' + c.describe(),
+          /* Unpairing has to live somewhere, and here is where someone
+             actually notices they're paired to the wrong machine. */
+          el('button.ws-x', {
+            title: 'Stop using this computer\u2019s volume',
+            onclick: () => { c.forget(); this.reload(); }
+          }, '✕')
+        ]);
+      }
+
+      /* A companion is here and only wants its code. Worth a field rather
+         than a sentence: the alternative is telling someone to open a
+         console, which nobody in post is going to do. */
+      if (c.unpaired()) {
+        const fld = el('input.fld.ws-pair-in', {
+          type: 'text', placeholder: 'ABCD-EFGH-JKLM', maxlength: '20', spellcheck: 'false'
+        });
+        const pair = () => {
+          if (!fld.value.trim()) { App.toast('Paste the code from the companion window', true); return; }
+          c.setCode(fld.value);
+          this.reload();                     // re-probe, then re-render with the result
+        };
+        fld.addEventListener('keydown', e => { if (e.key === 'Enter') pair(); });
+        return el('.ws-note.ws-mode.ws-pair', null, [
+          el('div', { style: { display: 'flex', alignItems: 'center', gap: '7px' } },
+            [App.icon('plug'), ' ' + c.describe()]),
+          el('.ws-pair-row', null, [fld, el('button.ws-btn.btn-primary', { onclick: pair }, 'Pair')])
+        ]);
       }
       /* Only worth suggesting from a page that ISN'T the local server
          already — being told to "run it locally" while running locally is

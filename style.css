@@ -405,6 +405,14 @@ button { font-family: inherit; cursor: pointer; }
   border-radius: 8px; font-size: 11.5px;
 }
 .ws-mode svg { width: 13px; height: 13px; flex: none; opacity: .8; }
+.ws-mode .ws-x { margin-left: auto; }
+/* the pairing prompt stacks: explanation, then the field to act on it */
+.ws-pair { display: block; }
+.ws-pair-row { display: flex; gap: 7px; margin-top: 8px; }
+.ws-pair-in {
+  flex: 1; min-width: 0; font-family: ui-monospace, monospace;
+  letter-spacing: .06em; text-transform: uppercase;
+}
 
 .ws-list { display: flex; flex-direction: column; gap: 4px; margin-top: 9px; }
 .ws-item {

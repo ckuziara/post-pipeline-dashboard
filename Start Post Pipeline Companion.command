@@ -50,4 +50,10 @@ echo
 
 # No DATABASE_URL on purpose: a companion resolves paths from what the board
 # sends it, so running one never requires the production database credential.
+# HOST is left to the server, which binds 127.0.0.1 in companion mode — this
+# machine only. A companion serves a production volume; it has no business
+# being reachable from the rest of the network.
+#
+# The pairing code is printed below once this starts. Paste it into the board's
+# Workspace panel when it asks — once per browser, not once per session.
 COMPANION_ORIGINS="$BOARD" MASTER_PATH="$MOUNT" PORT="$PORT" exec node server.js

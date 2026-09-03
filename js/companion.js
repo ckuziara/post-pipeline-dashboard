@@ -29,7 +29,7 @@ window.App = window.App || {};
   const PROBE_TIMEOUT_MS = 1500;
 
   App.companion = {
-    _state: 'unprobed',        // unprobed | probing | present | absent
+    _state: 'unprobed',        // unprobed | probing | present | unpaired | absent
     _base: null,
     _masterOk: false,
     _probe: null,              // the in-flight promise, so parallel callers share one request
@@ -41,6 +41,20 @@ window.App = window.App || {};
     port() { return Number(App.prefs.get('companionPort', DEFAULT_PORT)) || DEFAULT_PORT; },
     setPort(p) { App.prefs.set('companionPort', Number(p) || DEFAULT_PORT); this.reset(); },
 
+    /* The pairing code, per device. Kept in prefs (localStorage) rather than
+       board state for the obvious reason — it authorises access to ONE
+       machine's volume, so it has no business syncing to anyone else's
+       browser. Normalised on the way in so a code retyped in lower case, or
+       pasted with stray spaces, still matches. */
+    code() { return App.prefs.get('companionCode', '') || ''; },
+    setCode(c) {
+      const clean = String(c || '').trim().toUpperCase().replace(/\s+/g, '');
+      App.prefs.set('companionCode', clean);
+      this.reset();
+      return clean;
+    },
+    forget() { App.prefs.set('companionCode', ''); this.reset(); },
+
     /* Only meaningful when the page itself ISN'T the local server. Served
        from localhost already? Then this IS the machine with the mount (or
        isn't, and a companion wouldn't help) — the normal same-origin routes
@@ -51,7 +65,9 @@ window.App = window.App || {};
       return !(h === 'localhost' || h === '127.0.0.1' || h === '[::1]');
     },
 
-    available() { return this._state === 'present'; },
+    available() { return this._state === 'present' || this._state === 'unpaired'; },
+    // there's a companion, it just hasn't been given the code yet
+    unpaired() { return this._state === 'unpaired'; },
     // present AND actually able to reach a volume — the only state where
     // handing file work over is an improvement on staying local
     usable() { return this._state === 'present' && this._masterOk; },
@@ -70,8 +86,10 @@ window.App = window.App || {};
       this._state = 'probing';
       this._probe = (async () => {
         try {
+          const code = this.code();
           const r = await fetch(base + '/api/companion/ping', {
             method: 'GET',
+            headers: code ? { 'X-Companion-Code': code } : undefined,
             credentials: 'include',        // the companion has its own session
             cache: 'no-store',
             signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
@@ -83,7 +101,12 @@ window.App = window.App || {};
           if (body.app !== 'post-pipeline' || !body.companion) throw new Error('not a companion');
           this._base = base;
           this._masterOk = !!body.masterOk;
-          this._state = 'present';
+          /* A companion that needs a code and hasn't got a matching one is a
+             different situation from no companion at all: there IS a machine
+             here that could serve files, and the only thing missing is a
+             code the person can read off its window. Worth saying so rather
+             than falling back to silence. */
+          this._state = (body.needsCode && !body.paired) ? 'unpaired' : 'present';
         } catch (e) {
           // absent, blocked by Private Network Access, wrong port, not signed
           // in there — all the same outcome from here: carry on without it
@@ -102,6 +125,7 @@ window.App = window.App || {};
       if (!this.wanted()) return null;
       if (this._state === 'present' && this._masterOk) return 'Files are served by the Post Pipeline running on this computer.';
       if (this._state === 'present') return 'A local Post Pipeline is running, but it can’t reach the volume either.';
+      if (this._state === 'unpaired') return 'A Post Pipeline is running on this computer. Enter its pairing code to use the volume.';
       return null;
     }
   };

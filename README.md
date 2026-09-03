@@ -255,10 +255,12 @@ nothing):
    - macOS — `Start Post Pipeline Companion.command`, then double-click it
    - Windows — `Start Post Pipeline.bat`, with `COMPANION_ORIGINS` and
      `MASTER_PATH` set the same way
-4. Leave the window open and open the hosted board on that machine. Project,
-   Assets and Deliver come fully alive — including "open in app", which only
-   ever works where the volume and a desktop both are. The panel says which
-   machine is serving files, so there's no guessing.
+4. Leave the window open. It prints a **pairing code** — open the hosted
+   board on that machine, open any task, and paste the code into the
+   Workspace panel when it asks. Once per browser, not once per session.
+5. Project, Assets and Deliver come fully alive — including "open in app",
+   which only ever works where the volume and a desktop both are. The panel
+   says which machine is serving files, with an ✕ to unpair.
 
 **A companion holds no database credential.** It can't look an episode up,
 so the client sends the handful of fields that become folder names (episode
@@ -270,24 +272,32 @@ on the production database, bypassing every permission the app has — roles,
 Stored state still wins for same-origin requests, so hosted and plain-local
 behaviour is unchanged.
 
-**Companion file routes authenticate by origin, not by session.** There's no
-session to check: the hosted board's cookie is scoped to the hosted domain,
-so a browser never sends it to `localhost`. What stands in for it is that
-someone launched the companion deliberately and named the one origin allowed
-to reach it, and the only thing it can touch is a volume they already have
-mounted. The tradeoff, stated plainly: script execution on that one origin
-could drive the volume, so an XSS on the board would escalate to volume
-access on machines running a companion — bounded by the path sanitisers to
-folders inside the production tree. A pairing code would close that; this is
-the version that needs no setup step.
+**Companion file routes are gated by a pairing code.** The companion prints
+one at startup; paste it into the Workspace panel once per browser and it's
+remembered on that device. Origin alone can't be the gate — `Origin` is a
+header, and any non-browser client can claim whatever it likes, `curl`
+included. The code is a secret the caller has to actually hold.
 
-**`COMPANION_ORIGINS` is empty by default, and that matters.** These routes
-list, read, write and delete on a production volume. With no allowlist, a
-local install is not reachable cross-origin at all; set it only on a machine
-that has the mount, and only to your own board's origin. Never `*` — that
-would let any page the user happens to visit drive their storage. The session
-check on each route still applies underneath; CORS governs who may read the
-response, not who may act.
+A companion also **binds to `127.0.0.1` only** in companion mode, so it isn't
+reachable from the rest of the network. (The default `0.0.0.0` is right for
+the team-server use, where teammates open it over the LAN; it's wrong for a
+companion, where every legitimate caller is a browser on the same machine.)
+Set `HOST` explicitly to override, but there's rarely a reason to.
+
+`COMPANION_CODE` can be set explicitly if you'd rather pin it; otherwise a
+fresh one is generated each start, which means a restart re-pairs. Pin it if
+that becomes annoying.
+
+> **What the code does and doesn't cover.** It stops anything that isn't the
+> paired browser — `curl` on the machine, another local process, anything on
+> the network if the listener is ever widened. It does *not* stop script
+> execution on the board's own origin: the code lives in that origin's
+> `localStorage` so its scripts can send it, so an XSS on the board could
+> still read it and drive the volume. Not persisting it would close that and
+> mean retyping the code constantly; a volume the board is legitimately
+> allowed to drive can't be fully walled off from the board being
+> compromised. Path sanitising bounds the damage to folders inside the
+> production tree either way.
 
 > **Only the machine with the mount benefits, and that's correct.**
 > `localhost` means "the machine this browser is running on", so a teammate's

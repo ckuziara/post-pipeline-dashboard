@@ -156,8 +156,11 @@ window.App = window.App || {};
         try { await App.companion.ensure(); base = App.companion.base(); }
         catch (e) { base = null; }
       }
-      const r = await fetch((base || '') + '/api/browse' + (q.length ? '?' + q.join('&') : ''),
-        { cache: 'no-store', credentials: base ? 'include' : 'same-origin' });
+      const r = await fetch((base || '') + '/api/browse' + (q.length ? '?' + q.join('&') : ''), {
+        cache: 'no-store',
+        headers: base ? { 'X-Companion-Code': App.companion.code() } : undefined,
+        credentials: base ? 'include' : 'same-origin'
+      });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || 'could not open that folder');
       return body;
@@ -310,9 +313,13 @@ window.App = window.App || {};
          keeps using stored state, so hosted and plain-local behaviour is
          untouched. */
       const payload = base ? Object.assign({}, body, { context: this._pathContext(body) }) : body;
+      const headers = { 'Content-Type': 'application/json' };
+      // the companion's gate: Origin is a header anyone can claim, so the
+      // code is what actually authorises this
+      if (base) headers['X-Companion-Code'] = App.companion.code();
       const r = await fetch((base || '') + path, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: headers,
         body: JSON.stringify(payload),
         credentials: base ? 'include' : 'same-origin'
       });
