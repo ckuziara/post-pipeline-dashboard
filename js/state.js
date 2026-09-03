@@ -849,6 +849,12 @@ window.App = window.App || {};
      version. Everything else about the board is left exactly as found. */
   App.migrate = function (data) {
     if (!data) return data;
+    /* data.lucid.mode chose between a simulated LucidLink adapter and the
+       real API. The mock is gone — a 10% synthetic failure rate is useful
+       while building and misleading afterwards — so the field selects
+       nothing. Dropped wherever a board enters, same as the live_date task
+       below: idempotent, and cheaper than tracking a schema version. */
+    if (data.lucid && 'mode' in data.lucid) delete data.lucid.mode;
     const drop = (pipe) => Array.isArray(pipe) ? pipe.filter(t => !App.isMilestoneKey(t.key)).map(t => {
       if (t.deps && t.deps.some(App.isMilestoneKey)) t.deps = t.deps.filter(d => !App.isMilestoneKey(d));
       return t;

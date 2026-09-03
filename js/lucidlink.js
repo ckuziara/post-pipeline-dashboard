@@ -1,7 +1,11 @@
 /* LucidLink Version Control connector (PostLab-style branch-and-promote).
    Implements the technical brief's architecture:
-     • Adapter facade — MockLucidAdapter (Phase 1) and RealLucidAdapter (Phase 2).
-       The active adapter is chosen by data.lucid.mode ('mock' | 'live').
+     • One adapter, talking to a real LucidLink REST API. There used to be a
+       simulated one alongside it for Phase 1, chosen by data.lucid.mode —
+       it's gone. A mock with a deliberate 10% failure rate is useful while
+       building and actively misleading afterwards: it made a feature with no
+       backend look like a working one, and "checkout succeeded" meant
+       nothing. Unconfigured now says so instead of inventing an answer.
      • Branch-and-Promote lifecycle — checkout clones the master into a working
        copy, check-in verifies the upload queue has drained then promotes a new
        version, force-unlock releases a stuck lock without promoting.
@@ -18,65 +22,20 @@ window.App = window.App || {};
 
   /* ======================================================================
      Adapter facade — every LucidLink interaction routes through here so the
-     UI never knows whether it's talking to the mock or the live service.
+     UI never talks to LucidLink directly.
   ====================================================================== */
   App.lucid = {
-    MOCK_ERROR_RATE: 0.1,          // 10% simulated failures, per the brief
-    UPLOAD_MBPS: 50,               // simulated local upload speed
-
-    cfg() { return App.state.data.lucid || { mode: 'mock', apiUrl: '' }; },
-    mode() { return this.cfg().mode || 'mock'; },
-    isLive() { return this.mode() === 'live'; },
-    adapter() { return this.isLive() ? this.real : this.mock; },
-    adapterLabel() { return this.isLive() ? 'LucidLink API (live)' : 'Mock adapter'; },
+    cfg() { return App.state.data.lucid || { apiUrl: '' }; },
+    /* Connected means "an API URL and a key are both present". The key lives
+       in memory only, so this goes false again on reload until someone
+       re-enters it — deliberate: a Service Account key has no business
+       sitting in shared board state. */
+    connected() { const c = this.cfg(); return !!(c.apiUrl && this._key); },
+    adapter() { return this.real; },
+    adapterLabel() { return 'LucidLink API'; },
     _key: '',                      // live Service Account key — in memory only, never persisted to the shared board
 
     // ---- MockLucidAdapter (Phase 1) ----
-    mock: {
-      _latency() { return 300 + Math.random() * 500; },
-      _maybeFail(op) { if (Math.random() < App.lucid.MOCK_ERROR_RATE) throw new Error('LucidLink ' + op + ' failed (simulated network error) — try again'); },
-
-      // clone the master → an isolated working copy (e.g. LA-101_Animatic-V1_v14_EA.prproj)
-      branch({ fileBase, version, editor }) {
-        return new Promise((resolve, reject) => setTimeout(() => {
-          try { this._maybeFail('checkout'); } catch (e) { return reject(e); }
-          const initials = (editor || 'Editor').replace(/[^A-Za-z ]/g, '').split(/\s+/).filter(Boolean).map(w => w[0].toUpperCase()).join('') || 'ED';
-          resolve({ workingFile: fileBase + '_v' + version + '_' + initials + '.prproj' });
-        }, this._latency()));
-      },
-
-      // simulate the local daemon draining its upload queue at UPLOAD_MBPS.
-      // onTick(pct, mbRemaining, mbTotal) drives the "Syncing… do not close" UI.
-      verifySync(onTick) {
-        const totalMB = Math.round(120 + Math.random() * 220);
-        let remaining = totalMB;
-        return new Promise((resolve) => {
-          const stepMB = App.lucid.UPLOAD_MBPS * 0.25;   // 50 MB/s, ticking 4×/s
-          onTick(0, totalMB, totalMB);
-          const timer = setInterval(() => {
-            remaining = Math.max(0, remaining - stepMB);
-            onTick(Math.round(100 * (1 - remaining / totalMB)), Math.round(remaining), totalMB);
-            if (remaining <= 0) { clearInterval(timer); resolve(); }
-          }, 250);
-        });
-      },
-
-      // register the synced working copy as the new master version
-      promote({ fileBase, version }) {
-        return new Promise((resolve, reject) => setTimeout(() => {
-          try { this._maybeFail('promote'); } catch (e) { return reject(e); }
-          resolve({ versionNumber: version, fileName: fileBase + '_v' + version + '.prproj' });
-        }, this._latency()));
-      },
-
-      // downgrade a stuck editor's copy to read-only so a late sync can't overwrite
-      quarantine() { return new Promise((resolve) => setTimeout(resolve, this._latency())); }
-    },
-
-    // ---- RealLucidAdapter (Phase 2 — LucidLink Service Account) ----
-    // Wired to the same interface; swaps in the moment a live connection is
-    // configured. Authenticates with a Bearer Service-Account token against the
-    // self-hosted LucidLink REST API and (server-side) runs `lucid status`.
     real: {
       _ready() { const c = App.lucid.cfg(); return !!(c.apiUrl && App.lucid._key); },
       _guard() { if (!this._ready()) throw new Error('LucidLink live API isn’t connected — add the API URL and Service Account key in Connector settings.'); },
@@ -230,7 +189,8 @@ window.App = window.App || {};
       box.appendChild(el('.vc-inline-head', null, [
         App.icon('lock', { cls: 'vc-inline-ic' }),
         el('span.vc-inline-title', null, 'LucidLink Version Control'),
-        el('span.vc-source-mini' + (App.lucid.isLive() ? '.live' : ''), null, App.lucid.isLive() ? 'Live API' : 'Mock')
+        el('span.vc-source-mini' + (App.lucid.connected() ? '.live' : ''), null,
+          App.lucid.connected() ? 'LucidLink' : 'Not connected')
       ]));
 
       if (!proj) return;   // not version-controlled (the dialog only mounts this for vc tasks)
@@ -307,7 +267,7 @@ window.App = window.App || {};
       const singleShow = App.singleShowFilter();
       const n = App.state.filters.show.length;
       const showName = singleShow ? App.show(singleShow).name : n > 1 ? n + ' shows' : 'All shows';
-      const live = App.lucid.isLive();
+      const live = App.lucid.connected();
       const items = this.tracked();
 
       card.appendChild(el('.modal-head', null, [
@@ -318,7 +278,11 @@ window.App = window.App || {};
             el('.modal-subtitle', null, showName + ' · ' + items.length + ' version-controlled subtask' + (items.length === 1 ? '' : 's'))
           ])
         ]),
-        el('.vc-source' + (live ? '.live' : ''), { title: live ? 'Connected to the live LucidLink API' : 'Running on simulated mock data' }, live ? '● Live API' : '● Mock data'),
+        el('.vc-source' + (live ? '.live' : ''), {
+          title: live
+            ? 'Connected to the LucidLink API'
+            : 'No LucidLink API configured — checkout and check-in are unavailable. Add the API URL and Service Account key in Admin → Connectors.'
+        }, live ? '● LucidLink' : '● Not connected'),
         el('button.modal-x', { onclick: () => { if (!this._syncing) this.close(); }, title: this._syncing ? 'Finish syncing first' : 'Close', disabled: !!this._syncing }, '✕')
       ]));
 
@@ -418,6 +382,9 @@ window.App = window.App || {};
     if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change connector settings', true); return; }
     if ('key' in patch) { App.lucid._key = patch.key; delete patch.key; }
     if (!Object.keys(patch).length) { App.render(); return; }
-    App.mutate(d => { d.lucid = Object.assign({ mode: 'mock', apiUrl: '' }, d.lucid, patch); });
+    App.mutate(d => {
+      d.lucid = Object.assign({ apiUrl: '' }, d.lucid, patch);
+      delete d.lucid.mode;          // vestigial since the mock was dropped
+    });
   };
 })();
