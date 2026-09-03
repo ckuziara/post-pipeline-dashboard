@@ -951,9 +951,32 @@ function openNatively(target) {
    explicitly opts in via `allowMissingMaster` gets a context back instead
    of an error when the mount isn't there. */
 async function resolveTaskContext(body, opts) {
-  const { data } = await storage.get();
-  if (!data) return { error: 'no board state yet' };
-  const masterPath = ENV.MASTER_PATH || (data.storage && data.storage.masterPath) || '';
+  /* Companion requests carry their own identity instead of looking it up.
+
+     A companion serves file work for a board it does not host: the episodes
+     and shows live in the hosted deploy's database, not here. Reading them
+     would mean handing every machine that runs a companion the production
+     DATABASE_URL — a credential that bypasses every permission the app has,
+     since psql doesn't care about roles or adminEmails. So it doesn't read
+     them: the client already holds the identity and sends it, and this
+     server only ever touches the volume the person running it already has
+     mounted.
+
+     Stored state still wins for every same-origin request, so hosted and
+     plain-local behaviour is unchanged. Only a cross-origin companion call
+     takes this path — see companionOrigin(). Every value below becomes a
+     path segment through folders.js's safe()/safeCode(), which strip
+     everything outside [A-Za-z0-9-]: "../" cannot survive, so the worst a
+     bad payload can do is misname a folder inside a show the caller already
+     reaches. That's the same bound the pipeline payload already carries. */
+  const companionReq = !!(opts && opts.companion);
+  let data = null;
+  if (!companionReq) {
+    const board = await storage.get();
+    data = board && board.data;
+    if (!data) return { error: 'no board state yet' };
+  }
+  const masterPath = ENV.MASTER_PATH || (data && data.storage && data.storage.masterPath) || '';
   let masterOk = true, masterError = null;
   if (!masterPath) {
     masterOk = false;
@@ -973,12 +996,27 @@ async function resolveTaskContext(body, opts) {
   }
   if (!masterOk && !(opts && opts.allowMissingMaster)) return { error: masterError };
 
-  const ep = (data.episodes || []).find(e => e.id === body.epId);
-  if (!ep) return { error: 'unknown episode' };
-  const show = (data.shows || []).find(s => s.id === ep.showId);
-  if (!show) return { error: 'unknown show' };
+  let ep, show, rawPipeline;
+  if (companionReq) {
+    const c = body.context || {};
+    // Only the two fields folders.js actually turns into path segments are
+    // required; a missing title or prefix degrades the folder name, it
+    // doesn't make the path wrong.
+    if (!c.epCode || !c.showName) {
+      return { error: 'a companion request needs epCode and showName in context' };
+    }
+    ep = { id: body.epId, code: c.epCode, title: c.epTitle || '' };
+    show = { id: c.showId || '', prefix: c.showPrefix || '', name: c.showName };
+    rawPipeline = body.pipeline;
+  } else {
+    ep = (data.episodes || []).find(e => e.id === body.epId);
+    if (!ep) return { error: 'unknown episode' };
+    show = (data.shows || []).find(s => s.id === ep.showId);
+    if (!show) return { error: 'unknown show' };
+    rawPipeline = show.pipeline || body.pipeline;
+  }
   let pipeline;
-  try { pipeline = folders.normalisePipeline(show.pipeline || body.pipeline); }
+  try { pipeline = folders.normalisePipeline(rawPipeline); }
   catch (e) { return { error: e.message }; }
   const paths = folders.taskPaths(ep, pipeline, body.taskKey);
   if (!paths) return { error: 'that task is not in this show’s pipeline' };
@@ -1152,7 +1190,32 @@ const server = http.createServer(async (req, res) => {
 
     /* ---- shared state (auth required) ---- */
     if (url.pathname.startsWith('/api/')) {
-      if (!getSession(req)) return sendJson(res, 401, { error: 'not signed in' });
+      /* Companion file routes authenticate by origin, not by session.
+
+         There is no session to check: the hosted board's cookie is scoped to
+         the hosted domain, so a browser never sends it to localhost, and the
+         companion doesn't share the hosted SESSION_SECRET either. Requiring
+         one would 401 every file route and make companion mode useless.
+
+         What stands in for it: the person running this launched it
+         deliberately and named the single origin allowed to reach it, and
+         the only thing it can touch is a volume already mounted on their own
+         machine. The board's own permissions still decide who can open the
+         task that issues the request.
+
+         The tradeoff, stated plainly: script execution on that one named
+         origin could drive this volume. That means an XSS on the board
+         escalates to volume access on machines running a companion —
+         bounded by folders.js's sanitisers to paths inside the production
+         tree, and by the fact that the person already has that volume
+         mounted. A pairing token would close it; this is the version that
+         needs no setup step. */
+      const companionFileRoute = !!companionOrigin(req) && (
+        url.pathname.startsWith('/api/task/') ||
+        url.pathname === '/api/browse' ||
+        url.pathname === '/api/open-url'
+      );
+      if (!companionFileRoute && !getSession(req)) return sendJson(res, 401, { error: 'not signed in' });
 
       if (route === 'GET /api/state') return sendJson(res, 200, await storage.get());
       if (route === 'GET /api/version') return sendJson(res, 200, { version: await storage.version() });
@@ -1468,7 +1531,7 @@ const server = http.createServer(async (req, res) => {
         // the one caller that keeps going without a mounted master directory,
         // rather than failing the whole request the way every other
         // task-workspace route still does.
-        const ctx = await resolveTaskContext(body, { allowMissingMaster: true });
+        const ctx = await resolveTaskContext(body, { allowMissingMaster: true, companion: !!companionOrigin(req) });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { data, masterPath, masterOk, masterError, show, ep, pipeline, paths } = ctx;
         const task = pipeline.find(t => t.key === body.taskKey);
@@ -1536,7 +1599,7 @@ const server = http.createServer(async (req, res) => {
          copies it in under a versioned name. Never overwrites. */
       if (route === 'POST /api/task/project') {
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body);
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show, ep, paths } = ctx;
         const workAbs = folders.resolveIn(masterPath, show, paths.work);
@@ -1567,7 +1630,7 @@ const server = http.createServer(async (req, res) => {
          machine (their normal setup); otherwise returns the path to copy. */
       if (route === 'POST /api/task/open') {
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body);
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show, paths } = ctx;
         const which = body.which === 'publish' ? paths.publish
@@ -1587,7 +1650,7 @@ const server = http.createServer(async (req, res) => {
          still sitting in Mezzanine and reports honestly. */
       if (route === 'POST /api/task/promote') {
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body);
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show, paths } = ctx;
         const mezz = folders.resolveIn(masterPath, show, paths.mezzanine);
@@ -1637,7 +1700,7 @@ const server = http.createServer(async (req, res) => {
          volume", which relocates a file already on the mount. */
       if (route === 'POST /api/task/deliver/prepare') {
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body);
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show, paths } = ctx;
         // Deliveries go to Mezzanine, NOT Publish — they only become assets for

@@ -244,19 +244,42 @@ actually is.
 Set up on the **studio machine** (not on Render — the hosted service needs
 nothing):
 
-1. Run the app locally as usual (`npm start`, or the `Start Post Pipeline`
-   launcher), with the LucidLink volume mounted.
-2. Point it at the same board the hosted app uses, so paths resolve against
-   the same episodes and shows — set the same `DATABASE_URL`. Without this it
-   has its own board and would compute paths from different data.
-3. Allow your hosted board's origin to reach it:
-   ```
-   COMPANION_ORIGINS=https://your-app.onrender.com
-   ```
-4. Open the hosted board from that machine. It probes `localhost:8771`, finds
-   the companion, and Project / Assets / Deliver come fully alive — including
-   "open in app", which only ever works on a machine that has both the volume
-   and a desktop to launch things on.
+1. **Install Node.js** if it isn't there — the LTS build from
+   <https://nodejs.org>. macOS and Windows don't ship it.
+2. Copy this folder to that machine. **No `npm install` needed** for a
+   companion: `pg` and `@slack/bolt` are both lazy-required, so a companion
+   that hosts no board and runs no Slack bridge needs no dependencies at all.
+3. Open the launcher for that platform and set the two values at the top —
+   `BOARD` (your hosted board's address) and `MOUNT` (the production folder
+   as it appears on *that* machine):
+   - macOS — `Start Post Pipeline Companion.command`, then double-click it
+   - Windows — `Start Post Pipeline.bat`, with `COMPANION_ORIGINS` and
+     `MASTER_PATH` set the same way
+4. Leave the window open and open the hosted board on that machine. Project,
+   Assets and Deliver come fully alive — including "open in app", which only
+   ever works where the volume and a desktop both are. The panel says which
+   machine is serving files, so there's no guessing.
+
+**A companion holds no database credential.** It can't look an episode up,
+so the client sends the handful of fields that become folder names (episode
+code and title, show name and prefix) with each request, and the companion
+only ever touches the volume already mounted on that machine. That's
+deliberate: sharing `DATABASE_URL` would hand every machine full read/write
+on the production database, bypassing every permission the app has — roles,
+`adminEmails`, all of it — since `psql` doesn't care about any of them.
+Stored state still wins for same-origin requests, so hosted and plain-local
+behaviour is unchanged.
+
+**Companion file routes authenticate by origin, not by session.** There's no
+session to check: the hosted board's cookie is scoped to the hosted domain,
+so a browser never sends it to `localhost`. What stands in for it is that
+someone launched the companion deliberately and named the one origin allowed
+to reach it, and the only thing it can touch is a volume they already have
+mounted. The tradeoff, stated plainly: script execution on that one origin
+could drive the volume, so an XSS on the board would escalate to volume
+access on machines running a companion — bounded by the path sanitisers to
+folders inside the production tree. A pairing code would close that; this is
+the version that needs no setup step.
 
 **`COMPANION_ORIGINS` is empty by default, and that matters.** These routes
 list, read, write and delete on a production volume. With no allowlist, a
