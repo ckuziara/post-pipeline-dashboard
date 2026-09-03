@@ -37,7 +37,14 @@ const DEFAULT_CONFIG = {
   allowedDomain: 'moonbug.com',          // only this Workspace domain may sign in ('' = any)
   adminEmails: ['chris.kuziara@moonbug.com'],  // always treated as Producer (bootstrap)
   databaseUrl: '',                       // Postgres connection string (Neon) → hosted mode
-  accessCode: ''                         // shared team code required by the email sign-in
+  accessCode: '',                        // shared team code required by the email sign-in
+  /* Companion mode. Origins allowed to drive THIS server's file routes from
+     another origin — i.e. the hosted board calling a studio machine that has
+     the volume mounted. Empty (the default) means off: a plain local install
+     is never remotely drivable, which matters because these routes read and
+     write a production volume. Set it only on a machine that has the mount,
+     and only to your own board's origin. */
+  companionOrigins: []
 };
 
 function loadConfig() {
@@ -56,6 +63,9 @@ function loadConfig() {
   if (ENV.DEV_LOGIN !== undefined) cfg.devLogin = ENV.DEV_LOGIN === 'true';
   if (ENV.DATABASE_URL) cfg.databaseUrl = ENV.DATABASE_URL;
   if (ENV.ACCESS_CODE) cfg.accessCode = ENV.ACCESS_CODE;
+  if (ENV.COMPANION_ORIGINS) {
+    cfg.companionOrigins = ENV.COMPANION_ORIGINS.split(',').map(o => o.trim().replace(/\/$/, '')).filter(Boolean);
+  }
 
   // Local dev only: persist a generated secret so sessions survive a restart.
   // (In a hosted deploy SESSION_SECRET is set, so we never reach this.)
@@ -941,9 +951,32 @@ function openNatively(target) {
    explicitly opts in via `allowMissingMaster` gets a context back instead
    of an error when the mount isn't there. */
 async function resolveTaskContext(body, opts) {
-  const { data } = await storage.get();
-  if (!data) return { error: 'no board state yet' };
-  const masterPath = ENV.MASTER_PATH || (data.storage && data.storage.masterPath) || '';
+  /* Companion requests carry their own identity instead of looking it up.
+
+     A companion serves file work for a board it does not host: the episodes
+     and shows live in the hosted deploy's database, not here. Reading them
+     would mean handing every machine that runs a companion the production
+     DATABASE_URL — a credential that bypasses every permission the app has,
+     since psql doesn't care about roles or adminEmails. So it doesn't read
+     them: the client already holds the identity and sends it, and this
+     server only ever touches the volume the person running it already has
+     mounted.
+
+     Stored state still wins for every same-origin request, so hosted and
+     plain-local behaviour is unchanged. Only a cross-origin companion call
+     takes this path — see companionOrigin(). Every value below becomes a
+     path segment through folders.js's safe()/safeCode(), which strip
+     everything outside [A-Za-z0-9-]: "../" cannot survive, so the worst a
+     bad payload can do is misname a folder inside a show the caller already
+     reaches. That's the same bound the pipeline payload already carries. */
+  const companionReq = !!(opts && opts.companion);
+  let data = null;
+  if (!companionReq) {
+    const board = await storage.get();
+    data = board && board.data;
+    if (!data) return { error: 'no board state yet' };
+  }
+  const masterPath = ENV.MASTER_PATH || (data && data.storage && data.storage.masterPath) || '';
   let masterOk = true, masterError = null;
   if (!masterPath) {
     masterOk = false;
@@ -963,12 +996,27 @@ async function resolveTaskContext(body, opts) {
   }
   if (!masterOk && !(opts && opts.allowMissingMaster)) return { error: masterError };
 
-  const ep = (data.episodes || []).find(e => e.id === body.epId);
-  if (!ep) return { error: 'unknown episode' };
-  const show = (data.shows || []).find(s => s.id === ep.showId);
-  if (!show) return { error: 'unknown show' };
+  let ep, show, rawPipeline;
+  if (companionReq) {
+    const c = body.context || {};
+    // Only the two fields folders.js actually turns into path segments are
+    // required; a missing title or prefix degrades the folder name, it
+    // doesn't make the path wrong.
+    if (!c.epCode || !c.showName) {
+      return { error: 'a companion request needs epCode and showName in context' };
+    }
+    ep = { id: body.epId, code: c.epCode, title: c.epTitle || '' };
+    show = { id: c.showId || '', prefix: c.showPrefix || '', name: c.showName };
+    rawPipeline = body.pipeline;
+  } else {
+    ep = (data.episodes || []).find(e => e.id === body.epId);
+    if (!ep) return { error: 'unknown episode' };
+    show = (data.shows || []).find(s => s.id === ep.showId);
+    if (!show) return { error: 'unknown show' };
+    rawPipeline = show.pipeline || body.pipeline;
+  }
   let pipeline;
-  try { pipeline = folders.normalisePipeline(show.pipeline || body.pipeline); }
+  try { pipeline = folders.normalisePipeline(rawPipeline); }
   catch (e) { return { error: e.message }; }
   const paths = folders.taskPaths(ep, pipeline, body.taskKey);
   if (!paths) return { error: 'that task is not in this show’s pipeline' };
@@ -1010,12 +1058,72 @@ function serveStatic(req, res, url) {
   });
 }
 
+/* ------------------------------------------------------ companion mode ----
+   The hosted board has no LucidLink mount and never can — a datacenter
+   container cannot see a volume mounted on someone's Mac. But a studio
+   machine running this same server CAN, so the hosted page is allowed to
+   hand its file work to one: the board stays on the host, the filesystem
+   work happens where the filesystem actually is.
+
+   Only the machine with the mount opts in, via COMPANION_ORIGINS, and only
+   to a named origin. Never '*': these routes list, read, write and delete on
+   a production volume, so an open CORS policy here would let any page the
+   user happens to visit drive their storage. The session check on each route
+   still applies underneath — CORS governs who may read the response, not who
+   may act. */
+function companionOrigin(req) {
+  const origin = (req.headers.origin || '').replace(/\/$/, '');
+  if (!origin || !config.companionOrigins.length) return null;
+  return config.companionOrigins.includes(origin) ? origin : null;
+}
+
+function applyCompanionCors(req, res) {
+  const origin = companionOrigin(req);
+  if (!origin) return false;
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  // the allowlist keys off Origin, so caches must not serve one origin's
+  // response to another
+  res.setHeader('Vary', 'Origin');
+  return true;
+}
+
 /* -------------------------------------------------------------- server ---- */
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
   const route = req.method + ' ' + url.pathname;
 
   try {
+    /* Companion preflight. Chrome's Private Network Access rules add a
+       preflight for a public page reaching a local address, and it needs
+       Access-Control-Allow-Private-Network on the response or the real
+       request is never sent — a failure that otherwise looks like the
+       companion simply isn't running. */
+    if (req.method === 'OPTIONS' && applyCompanionCors(req, res)) {
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Private-Network', 'true');
+      res.setHeader('Access-Control-Max-Age', '600');
+      res.writeHead(204); return res.end();
+    }
+    applyCompanionCors(req, res);
+
+    /* How a page finds out whether a usable companion is listening here.
+       Deliberately thin: enough to tell "this is Post Pipeline, and it can
+       reach a volume" apart from "something else is on this port", and
+       nothing more. No path, no board data, no identity — a probe runs
+       before anyone has signed in. */
+    if (route === 'GET /api/companion/ping') {
+      const masterPath = ENV.MASTER_PATH || '';
+      let masterOk = false;
+      try {
+        const board = await storage.get();
+        const p = masterPath || (board && board.data && board.data.storage && board.data.storage.masterPath) || '';
+        masterOk = !!p && path.isAbsolute(p) && fs.existsSync(p);
+      } catch (e) { masterOk = false; }
+      return sendJson(res, 200, { app: 'post-pipeline', companion: true, masterOk });
+    }
+
     /* Slack, before anything else touches this request. Bolt's handleEvent
        reads the raw body itself to verify X-Slack-Signature — readBody()
        (used everywhere below) would consume that stream first and break
@@ -1082,7 +1190,32 @@ const server = http.createServer(async (req, res) => {
 
     /* ---- shared state (auth required) ---- */
     if (url.pathname.startsWith('/api/')) {
-      if (!getSession(req)) return sendJson(res, 401, { error: 'not signed in' });
+      /* Companion file routes authenticate by origin, not by session.
+
+         There is no session to check: the hosted board's cookie is scoped to
+         the hosted domain, so a browser never sends it to localhost, and the
+         companion doesn't share the hosted SESSION_SECRET either. Requiring
+         one would 401 every file route and make companion mode useless.
+
+         What stands in for it: the person running this launched it
+         deliberately and named the single origin allowed to reach it, and
+         the only thing it can touch is a volume already mounted on their own
+         machine. The board's own permissions still decide who can open the
+         task that issues the request.
+
+         The tradeoff, stated plainly: script execution on that one named
+         origin could drive this volume. That means an XSS on the board
+         escalates to volume access on machines running a companion —
+         bounded by folders.js's sanitisers to paths inside the production
+         tree, and by the fact that the person already has that volume
+         mounted. A pairing token would close it; this is the version that
+         needs no setup step. */
+      const companionFileRoute = !!companionOrigin(req) && (
+        url.pathname.startsWith('/api/task/') ||
+        url.pathname === '/api/browse' ||
+        url.pathname === '/api/open-url'
+      );
+      if (!companionFileRoute && !getSession(req)) return sendJson(res, 401, { error: 'not signed in' });
 
       if (route === 'GET /api/state') return sendJson(res, 200, await storage.get());
       if (route === 'GET /api/version') return sendJson(res, 200, { version: await storage.version() });
@@ -1398,7 +1531,7 @@ const server = http.createServer(async (req, res) => {
         // the one caller that keeps going without a mounted master directory,
         // rather than failing the whole request the way every other
         // task-workspace route still does.
-        const ctx = await resolveTaskContext(body, { allowMissingMaster: true });
+        const ctx = await resolveTaskContext(body, { allowMissingMaster: true, companion: !!companionOrigin(req) });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { data, masterPath, masterOk, masterError, show, ep, pipeline, paths } = ctx;
         const task = pipeline.find(t => t.key === body.taskKey);
@@ -1466,7 +1599,7 @@ const server = http.createServer(async (req, res) => {
          copies it in under a versioned name. Never overwrites. */
       if (route === 'POST /api/task/project') {
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body);
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show, ep, paths } = ctx;
         const workAbs = folders.resolveIn(masterPath, show, paths.work);
@@ -1497,7 +1630,7 @@ const server = http.createServer(async (req, res) => {
          machine (their normal setup); otherwise returns the path to copy. */
       if (route === 'POST /api/task/open') {
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body);
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show, paths } = ctx;
         const which = body.which === 'publish' ? paths.publish
@@ -1517,7 +1650,7 @@ const server = http.createServer(async (req, res) => {
          still sitting in Mezzanine and reports honestly. */
       if (route === 'POST /api/task/promote') {
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body);
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show, paths } = ctx;
         const mezz = folders.resolveIn(masterPath, show, paths.mezzanine);
@@ -1567,7 +1700,7 @@ const server = http.createServer(async (req, res) => {
          volume", which relocates a file already on the mount. */
       if (route === 'POST /api/task/deliver/prepare') {
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body);
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show, paths } = ctx;
         // Deliveries go to Mezzanine, NOT Publish — they only become assets for
@@ -1843,6 +1976,9 @@ const server = http.createServer(async (req, res) => {
   // Slack is embedded in the dispatcher above (POST /slack/events) — nothing
   // to start; App's constructor already wired the receiver.
   if (slack) console.log('  • Slack bridge:  embedded at POST /slack/events');
+  if (config.companionOrigins.length) {
+    console.log('  • Companion mode: serving file routes to ' + config.companionOrigins.join(', '));
+  }
 
   server.listen(PORT, config.host, () => {
     const nets = os.networkInterfaces();

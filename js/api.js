@@ -149,7 +149,15 @@ window.App = window.App || {};
       const q = [];
       if (dirPath) q.push('path=' + encodeURIComponent(dirPath));
       if (withFiles) q.push('files=1');
-      const r = await fetch('/api/browse' + (q.length ? '?' + q.join('&') : ''), { cache: 'no-store' });
+      // same companion routing as _post — the picker is walking a filesystem,
+      // so it has to ask whichever machine actually has one
+      let base = null;
+      if (App.companion) {
+        try { await App.companion.ensure(); base = App.companion.base(); }
+        catch (e) { base = null; }
+      }
+      const r = await fetch((base || '') + '/api/browse' + (q.length ? '?' + q.join('&') : ''),
+        { cache: 'no-store', credentials: base ? 'include' : 'same-origin' });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || 'could not open that folder');
       return body;
@@ -264,11 +272,49 @@ window.App = window.App || {};
     /* ---- per-subtask workspace (Project / Assets / Deliver) ----
        All of these POST because the server needs the pipeline to resolve a task's
        folder, and seed shows don't carry one in stored state. */
+    /* Just the fields folders.js turns into folder names — show root and
+       episode folder — and nothing else. Not the whole episode: a companion
+       has no business receiving statuses, assignees or dates to do file work
+       with, and sending them would only widen what a compromised companion
+       could read. */
+    _pathContext(body) {
+      const ep = App.state.data.episodes.find(e => e.id === body.epId);
+      if (!ep) return null;
+      const show = App.state.data.shows.find(s => s.id === ep.showId);
+      return {
+        epCode: ep.code, epTitle: ep.title || '',
+        showId: show ? show.id : '', showPrefix: show ? (show.prefix || '') : '',
+        showName: show ? show.name : ''
+      };
+    },
+
+    /* File routes only. When a companion is reachable (a local server on a
+       machine that actually has the volume mounted) these go there instead of
+       to the host, which has no filesystem to act on. Everything else — board
+       state, chat, auth, Slack, backups — stays on the host, which remains
+       the single source of truth; only the filesystem work relocates.
+
+       credentials: 'include' because the companion is a different origin with
+       its own session cookie. If it isn't reachable, base is null and this is
+       byte-for-byte the same same-origin request it has always been. */
     async _post(path, body) {
-      const r = await fetch(path, {
+      let base = null;
+      if (App.companion) {
+        try { await App.companion.ensure(); base = App.companion.base(); }
+        catch (e) { base = null; }      // a probe failure must never fail the call
+      }
+      /* A companion hosts no board — deliberately, so nobody running one
+         needs the production database credential. It can't look an episode
+         up, so the identity folders.js turns into path segments travels with
+         the request. Same-origin calls send nothing extra and the server
+         keeps using stored state, so hosted and plain-local behaviour is
+         untouched. */
+      const payload = base ? Object.assign({}, body, { context: this._pathContext(body) }) : body;
+      const r = await fetch((base || '') + path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify(payload),
+        credentials: base ? 'include' : 'same-origin'
       });
       const out = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(out.error || 'request failed');
