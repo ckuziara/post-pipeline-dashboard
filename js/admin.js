@@ -434,8 +434,8 @@ window.App = window.App || {};
     });
     wrap.appendChild(card);
     if (App.connectorEnabled('lucidlink')) wrap.appendChild(lucidConnectionCard());
-    // channel mapping is Slack-specific config, same relationship LucidLink's
-    // connection card has to its own toggle above — and the same admin gate
+    // channel mapping is Slack-specific config, the same relationship
+    // LucidLink's connection card has to its own connector — and the same admin gate
     // the server itself enforces on /api/slack/channels, not just the role
     // check that gets you onto this page at all.
     if (App.connectorEnabled('slack') && App.api && App.api.online && App.api.me && App.api.me.admin) {
@@ -444,40 +444,45 @@ window.App = window.App || {};
     return wrap;
   }
 
-  // LucidLink connection: choose the data source (mock vs live API) and hold
-  // the live endpoint / Service Account key. Switching to Live disables the mock.
+  /* LucidLink connection: the endpoint and Service Account key the Version
+     Control feature calls. There used to be a Mock / Live API switch here;
+     the mock is gone, so there's nothing to switch — either an API is
+     configured or the feature says it isn't available.
+
+     The fields are always editable now. They used to be greyed out unless
+     the mode was already Live, which with the mock removed would have left
+     no way in at all: entering them IS how you connect. */
   function lucidConnectionCard() {
     const cfg = App.lucid.cfg();
-    const live = App.lucid.isLive();
+    const connected = App.lucid.connected();
     const card = el('.adm-permcard', { style: { marginTop: '16px' } });
     card.appendChild(el('.adm-permcard-head', null, [
       el('.adm-permcard-title', null, 'LucidLink connection'),
-      el('.adm-permcard-desc', null, 'Phase 1 runs on simulated mock data. Switch to Live once a self-hosted LucidLink REST API + Service Account is available.')
+      el('.adm-permcard-desc', null, 'Version Control (checkout / check-in / file locking) calls a self-hosted ' +
+        'LucidLink REST API. Without one the panel says so rather than pretending — there is no simulated mode.')
     ]));
 
-    // data source segmented control
     card.appendChild(el('.adm-permrow', { style: { cursor: 'default' } }, [
       el('div', null, [
-        el('.adm-perm-title', null, 'Data source'),
-        el('.adm-perm-desc', null, live ? 'Live — calls the LucidLink API for every checkout / check-in.' : 'Mock — simulated latency, 10% error rate and a 50 MB/s upload queue.')
+        el('.adm-perm-title', null, 'Status'),
+        el('.adm-perm-desc', null, connected
+          ? 'Connected — checkout and check-in call the API.'
+          : !cfg.apiUrl
+            ? 'No API URL set. Checkout and check-in are unavailable.'
+            : 'URL set, but no Service Account key this session — the key is held in memory only, so it needs re-entering after a reload.')
       ]),
-      el('.prefs-seg', null, [['mock', 'Mock'], ['live', 'Live API']].map(([v, lbl]) =>
-        el('button.seg' + (cfg.mode === v || (!cfg.mode && v === 'mock') ? '.active' : ''), {
-          onclick: () => App.setLucidConfig({ mode: v })
-        }, lbl)))
+      el('span.vc-source' + (connected ? '.live' : ''), null, connected ? '● Connected' : '● Not connected')
     ]));
 
-    // live connection fields
     const urlIn = el('input.fld', { type: 'text', value: cfg.apiUrl || '', placeholder: 'https://lucidlink.internal/api', style: { width: '100%' } });
     urlIn.addEventListener('change', () => App.setLucidConfig({ apiUrl: urlIn.value.trim() }));
     const keyIn = el('input.fld', { type: 'password', value: App.lucid._key || '', placeholder: 'Service Account key (kept in memory only)', style: { width: '100%' } });
     keyIn.addEventListener('change', () => App.setLucidConfig({ key: keyIn.value }));
-    const conn = el('.wf-add', { style: { flexDirection: 'column', alignItems: 'stretch', gap: '8px', opacity: live ? '1' : '.5', pointerEvents: live ? 'auto' : 'none' } }, [
+    card.appendChild(el('.wf-add', { style: { flexDirection: 'column', alignItems: 'stretch', gap: '8px' } }, [
       el('label.fld-label', null, 'API base URL'), urlIn,
       el('label.fld-label', { style: { marginTop: '4px' } }, 'Service Account key'), keyIn,
-      el('.fld-hint', null, live && !App.lucid.real._ready() ? 'Enter the URL and key to activate live calls — until then actions will error.' : 'The key is never written to the shared board; the backend holds the real Service Account.')
-    ]);
-    card.appendChild(conn);
+      el('.fld-hint', null, 'The key is never written to the shared board — it stays in this tab\u2019s memory, so a reload clears it.')
+    ]));
     return card;
   }
 
