@@ -100,7 +100,7 @@ window.App = window.App || {};
        wording stays consistent wherever it surfaces. */
     describe() {
       if (!this.wanted()) return null;
-      if (this._state === 'present' && this._masterOk) return 'Using the volume on this machine.';
+      if (this._state === 'present' && this._masterOk) return 'Files are served by the Post Pipeline running on this computer.';
       if (this._state === 'present') return 'A local Post Pipeline is running, but it can’t reach the volume either.';
       return null;
     }

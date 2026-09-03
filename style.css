@@ -395,6 +395,16 @@ button { font-family: inherit; cursor: pointer; }
 .ws-btn { padding: 8px 13px; font-size: 12px; }
 .ws-note { font-size: 12px; color: var(--text-3); line-height: 1.5; padding: 6px 2px; }
 .ws-note.tight { padding: 2px 2px 0; font-size: 11.5px; }
+/* Which machine's filesystem the panel is talking to — sits above the three
+   blocks, so it reads as a property of the whole panel rather than of any one
+   section. Quiet on purpose: it explains, it doesn't warn. */
+.ws-mode {
+  display: flex; align-items: center; gap: 7px;
+  margin-bottom: 4px; padding: 7px 10px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 8px; font-size: 11.5px;
+}
+.ws-mode svg { width: 13px; height: 13px; flex: none; opacity: .8; }
 
 .ws-list { display: flex; flex-direction: column; gap: 4px; margin-top: 9px; }
 .ws-item {

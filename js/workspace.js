@@ -155,9 +155,40 @@ window.App = window.App || {};
          Deliver's own upload actions are what's actually being asked for
          below — this just also removes the one section that has no
          read-only mode to fall back to. */
+      const mode = this._modeNote(m.data);
+      if (mode) box.appendChild(mode);
+
       if (!App.isPhone()) box.appendChild(this._project(ep, su, m.data));
       box.appendChild(this._assets(ep, su, m.data));
       box.appendChild(this._deliver(ep, su, m.data));
+    },
+
+    /* Which machine's filesystem this panel is actually talking to.
+
+       Without this the companion is invisible in both directions: when one
+       answers, the panel silently works and nobody knows why it does here
+       but not on their laptop; when none does, three blocks each explain
+       they can't reach anything, and none of them mentions that running the
+       app locally is what closes the gap. Said once, at the top, rather than
+       repeated in every block. */
+    _modeNote(d) {
+      const c = App.companion;
+      if (!c) return null;
+
+      if (c.usable() && d.masterOk) {
+        return el('.ws-note.ws-mode', null, [App.icon('plug'), ' ' + c.describe()]);
+      }
+      /* Only worth suggesting from a page that ISN'T the local server
+         already — being told to "run it locally" while running locally is
+         just confusing, and there the missing piece is the volume itself,
+         which masterError already names in each block. */
+      if (!d.masterOk && c.wanted()) {
+        return el('.ws-note.ws-mode', null, [
+          App.icon('plug'),
+          ' Running Post Pipeline on the machine that has the volume mounted lets this page use it for files.'
+        ]);
+      }
+      return null;
     },
 
     /* ---------------------------------------------------------- project ---- */
