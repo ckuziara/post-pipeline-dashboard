@@ -37,7 +37,14 @@ const DEFAULT_CONFIG = {
   allowedDomain: 'moonbug.com',          // only this Workspace domain may sign in ('' = any)
   adminEmails: ['chris.kuziara@moonbug.com'],  // always treated as Producer (bootstrap)
   databaseUrl: '',                       // Postgres connection string (Neon) → hosted mode
-  accessCode: ''                         // shared team code required by the email sign-in
+  accessCode: '',                        // shared team code required by the email sign-in
+  /* Companion mode. Origins allowed to drive THIS server's file routes from
+     another origin — i.e. the hosted board calling a studio machine that has
+     the volume mounted. Empty (the default) means off: a plain local install
+     is never remotely drivable, which matters because these routes read and
+     write a production volume. Set it only on a machine that has the mount,
+     and only to your own board's origin. */
+  companionOrigins: []
 };
 
 function loadConfig() {
@@ -56,6 +63,9 @@ function loadConfig() {
   if (ENV.DEV_LOGIN !== undefined) cfg.devLogin = ENV.DEV_LOGIN === 'true';
   if (ENV.DATABASE_URL) cfg.databaseUrl = ENV.DATABASE_URL;
   if (ENV.ACCESS_CODE) cfg.accessCode = ENV.ACCESS_CODE;
+  if (ENV.COMPANION_ORIGINS) {
+    cfg.companionOrigins = ENV.COMPANION_ORIGINS.split(',').map(o => o.trim().replace(/\/$/, '')).filter(Boolean);
+  }
 
   // Local dev only: persist a generated secret so sessions survive a restart.
   // (In a hosted deploy SESSION_SECRET is set, so we never reach this.)
@@ -1010,12 +1020,72 @@ function serveStatic(req, res, url) {
   });
 }
 
+/* ------------------------------------------------------ companion mode ----
+   The hosted board has no LucidLink mount and never can — a datacenter
+   container cannot see a volume mounted on someone's Mac. But a studio
+   machine running this same server CAN, so the hosted page is allowed to
+   hand its file work to one: the board stays on the host, the filesystem
+   work happens where the filesystem actually is.
+
+   Only the machine with the mount opts in, via COMPANION_ORIGINS, and only
+   to a named origin. Never '*': these routes list, read, write and delete on
+   a production volume, so an open CORS policy here would let any page the
+   user happens to visit drive their storage. The session check on each route
+   still applies underneath — CORS governs who may read the response, not who
+   may act. */
+function companionOrigin(req) {
+  const origin = (req.headers.origin || '').replace(/\/$/, '');
+  if (!origin || !config.companionOrigins.length) return null;
+  return config.companionOrigins.includes(origin) ? origin : null;
+}
+
+function applyCompanionCors(req, res) {
+  const origin = companionOrigin(req);
+  if (!origin) return false;
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  // the allowlist keys off Origin, so caches must not serve one origin's
+  // response to another
+  res.setHeader('Vary', 'Origin');
+  return true;
+}
+
 /* -------------------------------------------------------------- server ---- */
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
   const route = req.method + ' ' + url.pathname;
 
   try {
+    /* Companion preflight. Chrome's Private Network Access rules add a
+       preflight for a public page reaching a local address, and it needs
+       Access-Control-Allow-Private-Network on the response or the real
+       request is never sent — a failure that otherwise looks like the
+       companion simply isn't running. */
+    if (req.method === 'OPTIONS' && applyCompanionCors(req, res)) {
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Private-Network', 'true');
+      res.setHeader('Access-Control-Max-Age', '600');
+      res.writeHead(204); return res.end();
+    }
+    applyCompanionCors(req, res);
+
+    /* How a page finds out whether a usable companion is listening here.
+       Deliberately thin: enough to tell "this is Post Pipeline, and it can
+       reach a volume" apart from "something else is on this port", and
+       nothing more. No path, no board data, no identity — a probe runs
+       before anyone has signed in. */
+    if (route === 'GET /api/companion/ping') {
+      const masterPath = ENV.MASTER_PATH || '';
+      let masterOk = false;
+      try {
+        const board = await storage.get();
+        const p = masterPath || (board && board.data && board.data.storage && board.data.storage.masterPath) || '';
+        masterOk = !!p && path.isAbsolute(p) && fs.existsSync(p);
+      } catch (e) { masterOk = false; }
+      return sendJson(res, 200, { app: 'post-pipeline', companion: true, masterOk });
+    }
+
     /* Slack, before anything else touches this request. Bolt's handleEvent
        reads the raw body itself to verify X-Slack-Signature — readBody()
        (used everywhere below) would consume that stream first and break
@@ -1843,6 +1913,9 @@ const server = http.createServer(async (req, res) => {
   // Slack is embedded in the dispatcher above (POST /slack/events) — nothing
   // to start; App's constructor already wired the receiver.
   if (slack) console.log('  • Slack bridge:  embedded at POST /slack/events');
+  if (config.companionOrigins.length) {
+    console.log('  • Companion mode: serving file routes to ' + config.companionOrigins.join(', '));
+  }
 
   server.listen(PORT, config.host, () => {
     const nets = os.networkInterfaces();

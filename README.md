@@ -228,6 +228,52 @@ unaffected, same as BYOK's `503` above.
 > one public port, so nothing could ever reach a second listener from the
 > internet no matter how correctly it was configured.
 
+### Companion mode (file features from the hosted board)
+
+The hosted board has no LucidLink mount and never can — a container in a
+datacenter cannot see a volume mounted on someone's Mac, and there's no way
+to mount a laptop's directory into a remote server. Without a mount, Project
+and Deliver degrade to a read-only note (see the panel behaviour above).
+
+Companion mode closes that gap from the other direction: a studio machine
+running this same server **does** have the mount, so the hosted page hands
+its file work to that machine. The board stays on the host — one shared
+source of truth — and only the filesystem work moves to where the filesystem
+actually is.
+
+Set up on the **studio machine** (not on Render — the hosted service needs
+nothing):
+
+1. Run the app locally as usual (`npm start`, or the `Start Post Pipeline`
+   launcher), with the LucidLink volume mounted.
+2. Point it at the same board the hosted app uses, so paths resolve against
+   the same episodes and shows — set the same `DATABASE_URL`. Without this it
+   has its own board and would compute paths from different data.
+3. Allow your hosted board's origin to reach it:
+   ```
+   COMPANION_ORIGINS=https://your-app.onrender.com
+   ```
+4. Open the hosted board from that machine. It probes `localhost:8771`, finds
+   the companion, and Project / Assets / Deliver come fully alive — including
+   "open in app", which only ever works on a machine that has both the volume
+   and a desktop to launch things on.
+
+**`COMPANION_ORIGINS` is empty by default, and that matters.** These routes
+list, read, write and delete on a production volume. With no allowlist, a
+local install is not reachable cross-origin at all; set it only on a machine
+that has the mount, and only to your own board's origin. Never `*` — that
+would let any page the user happens to visit drive their storage. The session
+check on each route still applies underneath; CORS governs who may read the
+response, not who may act.
+
+> **Only the machine with the mount benefits, and that's correct.**
+> `localhost` means "the machine this browser is running on", so a teammate's
+> browser probes their own machine, never yours. LucidLink *is* the filesystem
+> here — someone without the volume mounted has no files to open and nowhere
+> to create a project, so "file features need the mount" is a fact about the
+> work rather than a software restriction. Everyone still gets the board,
+> timeline, dashboard, chat, Slack and admin regardless.
+
 ## Files
 ```
 index.html          shell + script/style includes

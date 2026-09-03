@@ -48,6 +48,10 @@ services:
       - key: APP_URL               # this service's own public URL — without it,
         sync: false                # Slack Task Card "Open in Post Pipeline" links
                                     # post with no URL at all
+      # NOTE: COMPANION_ORIGINS is deliberately NOT set here either. It's
+      # configured on the STUDIO MACHINE that has the LucidLink mount (the
+      # companion), naming this service's origin — not on this service, which
+      # has nothing to serve files from. See "Companion mode" in the README.
       # NOTE: MASTER_PATH is deliberately NOT set here. The production-folder
       # automation (/api/folders, /api/task/*) and "open in app" actions need a
       # mounted LucidLink volume and a local desktop to spawn apps on, so they

@@ -149,7 +149,15 @@ window.App = window.App || {};
       const q = [];
       if (dirPath) q.push('path=' + encodeURIComponent(dirPath));
       if (withFiles) q.push('files=1');
-      const r = await fetch('/api/browse' + (q.length ? '?' + q.join('&') : ''), { cache: 'no-store' });
+      // same companion routing as _post — the picker is walking a filesystem,
+      // so it has to ask whichever machine actually has one
+      let base = null;
+      if (App.companion) {
+        try { await App.companion.ensure(); base = App.companion.base(); }
+        catch (e) { base = null; }
+      }
+      const r = await fetch((base || '') + '/api/browse' + (q.length ? '?' + q.join('&') : ''),
+        { cache: 'no-store', credentials: base ? 'include' : 'same-origin' });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || 'could not open that folder');
       return body;
@@ -264,11 +272,26 @@ window.App = window.App || {};
     /* ---- per-subtask workspace (Project / Assets / Deliver) ----
        All of these POST because the server needs the pipeline to resolve a task's
        folder, and seed shows don't carry one in stored state. */
+    /* File routes only. When a companion is reachable (a local server on a
+       machine that actually has the volume mounted) these go there instead of
+       to the host, which has no filesystem to act on. Everything else — board
+       state, chat, auth, Slack, backups — stays on the host, which remains
+       the single source of truth; only the filesystem work relocates.
+
+       credentials: 'include' because the companion is a different origin with
+       its own session cookie. If it isn't reachable, base is null and this is
+       byte-for-byte the same same-origin request it has always been. */
     async _post(path, body) {
-      const r = await fetch(path, {
+      let base = null;
+      if (App.companion) {
+        try { await App.companion.ensure(); base = App.companion.base(); }
+        catch (e) { base = null; }      // a probe failure must never fail the call
+      }
+      const r = await fetch((base || '') + path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        credentials: base ? 'include' : 'same-origin'
       });
       const out = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(out.error || 'request failed');
