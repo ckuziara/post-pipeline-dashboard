@@ -331,6 +331,8 @@ window.App = window.App || {};
     taskWorkspace(b) { return this._post('/api/task/workspace', b); },
     taskProject(b)   { return this._post('/api/task/project', b); },
     taskOpen(b)      { return this._post('/api/task/open', b); },
+    // copies a file already on the mount into a template library (admin-only)
+    templateAdd(b)   { return this._post('/api/task/template/add', b); },
     deliverPrepare(b) { return this._post('/api/task/deliver/prepare', b); },
     // moves a task's delivered files from Mezzanine to Publish, on approval
     taskPromote(b) { return this._post('/api/task/promote', b); },

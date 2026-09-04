@@ -1852,6 +1852,63 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, filed: path.basename(dest), size: fs.statSync(dest).size });
       }
 
+      /* Add a project template to a library, so growing the template list is
+         a job for the app rather than for Finder. The source is a path already
+         on the mount (picked with the in-app browser), and it is COPIED, not
+         moved: a template is reference material, and a studio library that
+         empties itself as people use it would be data loss.
+
+         Admin-only — a template lands in front of every show (or, for
+         source:'show', every episode of one), which is a studio-wide edit in
+         the same class as the pipelines and folder root next door. */
+      if (route === 'POST /api/task/template/add') {
+        const s = getSession(req);
+        if (!s || !config.adminEmails.map(e => e.toLowerCase()).includes(s.email)) {
+          return sendJson(res, 403, { error: 'Only admins can add templates' });
+        }
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { masterPath, show } = ctx;
+
+        const src = path.resolve(String(body.src || ''));
+        if (!body.src || !fs.existsSync(src)) return sendJson(res, 400, { error: 'source not found' });
+        // Confine the source to the master directory: the picker only browses
+        // there, so anything else is a hand-made request, not a real pick.
+        const base = path.resolve(masterPath);
+        if (src !== base && !src.startsWith(base + path.sep)) {
+          return sendJson(res, 400, { error: 'that file is outside the master directory' });
+        }
+        const st = fs.statSync(src);
+        const name = path.basename(src);
+        /* A .logicx is a package (a directory with an extension) and is a
+           perfectly good template; a plain folder is not — copying someone's
+           "Old versions" into the library would put a row in front of every
+           show that no app can open. */
+        if (st.isDirectory() && !path.extname(name)) {
+          return sendJson(res, 400, { error: name + ' is a plain folder, not a project file' });
+        }
+
+        const libRel = body.source === 'show' ? folders.SHOW_TEMPLATES : folders.MASTER_TEMPLATES;
+        const libAbs = body.source === 'show'
+          ? folders.resolveIn(masterPath, show, libRel)
+          : folders.resolveMaster(masterPath, libRel);
+        fs.mkdirSync(libAbs, { recursive: true });
+        if (path.dirname(src) === libAbs) {
+          return sendJson(res, 400, { error: name + ' is already in that library' });
+        }
+        const dest = folders.uniquePath(libAbs, folders.safeFile(name));
+        try {
+          fs.cpSync(src, dest, { recursive: st.isDirectory() });
+        } catch (e) {
+          return sendJson(res, 400, { error: 'copy failed: ' + e.message });
+        }
+        console.log('[template] ' + s.email + ' added ' + src + ' → ' + dest);
+        return sendJson(res, 200, {
+          ok: true, added: path.basename(dest), source: body.source === 'show' ? 'show' : 'master', dir: libAbs
+        });
+      }
+
       /* Production folders on the LucidLink master directory. Admin-only, and
          the show/episode NAMES come from stored state rather than the request,
          so a client can only ever address content it can already see. */

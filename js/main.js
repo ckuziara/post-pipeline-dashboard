@@ -487,6 +487,102 @@ window.App = window.App || {};
     App.toast((c ? c.label : key) + (enabled ? ' enabled' : ' disabled'));
   };
 
+  /* Add or remove an application from a department's Create Project list
+     (Admin → Workflow → Apps, or the "add an application" step inside Create
+     Project itself). Writes the department's whole list, so it stops tracking
+     the built-in defaults from that point on — see App.deptAppKeys. */
+  App.setDeptApp = function (dept, appKey, on) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change department apps', true); return false; }
+    const sw = App.software(appKey); if (!sw) return false;
+    const cur = App.deptAppKeys(dept);
+    if (on === cur.includes(appKey)) return true;              // already how they want it
+    App._writeDeptSoftware(dept, on ? cur.concat([appKey]) : cur.filter(k => k !== appKey));
+    App.track.audit('dept.apps', { department: App.dept(dept).label, app: sw.label, allowed: on });
+    App.toast(sw.label + (on ? ' added to ' : ' removed from ') + App.dept(dept).label);
+    return true;
+  };
+
+  /* Set a department's whole list at once — what the multi-select picker
+     commits when it closes, so ticking four applications is one board edit
+     (and one undo) rather than four. */
+  App.setDeptSoftware = function (dept, keys) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change department software', true); return false; }
+    const before = App.deptAppKeys(dept);
+    const next = (keys || []).filter(k => !!App.software(k));
+    const added = next.filter(k => !before.includes(k));
+    const gone = before.filter(k => !next.includes(k));
+    if (!added.length && !gone.length) return true;
+    App._writeDeptSoftware(dept, next);
+    const name = (k) => App.software(k).label;
+    const parts = [];
+    if (added.length) parts.push('added ' + added.map(name).join(', '));
+    if (gone.length) parts.push('removed ' + gone.map(name).join(', '));
+    App.track.audit('dept.apps', { department: App.dept(dept).label, added: added.map(name), removed: gone.map(name) });
+    App.toast(App.dept(dept).label + ': ' + parts.join(' · '));
+    return true;
+  };
+
+  /* Keep catalogue order rather than click order, so a department's list reads
+     the same for everyone however it was assembled. */
+  App._writeDeptSoftware = function (dept, keys) {
+    const order = App.softwareCatalog().map(s => s.key);
+    const next = order.filter(k => keys.includes(k));
+    App.mutate(d => {
+      d.deptApps = Object.assign({}, d.deptApps);
+      d.deptApps[dept] = next;
+    });
+  };
+
+  /* Add software the catalogue doesn't ship with. `ext` is what makes it
+     usable rather than decorative: Create Project matches templates to an
+     application by extension, so an entry with none can only ever say "no
+     templates yet". Optional all the same — a tool used for a stage that has
+     no project file (a transcode watch folder, a review site) is a real
+     answer, and naming it still puts it in front of the right department. */
+  App.addSoftware = function (opts) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can add software', true); return null; }
+    const label = String((opts && opts.label) || '').trim();
+    if (!label) { App.toast('Give the software a name', true); return null; }
+    const cat = App.softwareCatalog();
+    if (cat.some(s => s.label.toLowerCase() === label.toLowerCase())) {
+      App.toast(label + ' is already in the list', true); return null;
+    }
+    const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'app';
+    let key = 'sw_' + slug, n = 1;
+    while (App.software(key)) { n++; key = 'sw_' + slug + n; }
+    const ext = String((opts && opts.ext) || '').toLowerCase().split(/[^a-z0-9]+/)
+      .filter(Boolean).filter((x, i, a) => a.indexOf(x) === i);
+    const icon = (opts && opts.icon && App.ICONS[opts.icon]) ? opts.icon : 'package';
+    App.mutate(d => {
+      d.software = Object.assign({}, d.software);
+      d.software[key] = { label, icon, kind: 'desktop', ext };
+    });
+    App.track.audit('software.add', { name: label, extensions: ext });
+    App.toast(label + ' added to the software list');
+    return key;
+  };
+
+  /* Remove studio-added software. Built-ins can't be removed — they're part of
+     the app — but they can be switched off for every department. Any
+     department still holding it drops the entry (deptAppKeys filters on the
+     catalogue), so nothing has to be un-assigned first. */
+  App.removeSoftware = function (key) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can remove software', true); return false; }
+    const sw = App.software(key);
+    if (!sw || !sw.custom) { App.toast('That one is built in — remove it from each department instead', true); return false; }
+    App.mutate(d => {
+      d.software = Object.assign({}, d.software);
+      delete d.software[key];
+      if (d.deptApps) {
+        d.deptApps = Object.assign({}, d.deptApps);
+        Object.keys(d.deptApps).forEach(dk => { d.deptApps[dk] = d.deptApps[dk].filter(k => k !== key); });
+      }
+    });
+    App.track.audit('software.remove', { name: sw.label });
+    App.toast(sw.label + ' removed');
+    return true;
+  };
+
   // ---- Workflow & Status Settings (Admin) ----
   // All persist as overrides in data.workflow; App.applyWorkflow folds them
   // into the live DEPARTMENTS/STATUSES on the next render.
