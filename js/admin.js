@@ -322,7 +322,7 @@ window.App = window.App || {};
     const layout = el('.adm-split');
     const side = el('.adm-side');
     side.appendChild(el('.adm-side-label', null, 'Workflow'));
-    [['statuses', 'palette', 'Task statuses'], ['departments', 'tag', 'Departments'], ['pipelines', 'pipeline', 'Pipelines'], ['shows', 'book', 'Shows'], ['storage', 'folderOpen', 'Storage'], ['connectors', 'plug', 'Connectors']].forEach(([k, ic, lbl]) => {
+    [['statuses', 'palette', 'Task statuses'], ['departments', 'tag', 'Departments'], ['software', 'mixer', 'Software'], ['pipelines', 'pipeline', 'Pipelines'], ['shows', 'book', 'Shows'], ['storage', 'folderOpen', 'Storage'], ['connectors', 'plug', 'Connectors']].forEach(([k, ic, lbl]) => {
       side.appendChild(el('button.adm-role' + (tab === k ? '.active' : ''), {
         onclick: () => { App.state.admin.wfTab = k; App.render(); }
       }, [App.icon(ic, { cls: 'adm-role-ic' }), lbl]));
@@ -334,6 +334,7 @@ window.App = window.App || {};
     const panel = el('.adm-perms' + (tab === 'pipelines' ? '.wide' : ''));
     panel.appendChild(
       tab === 'departments' ? departmentsCard()
+      : tab === 'software' ? deptSoftwareCard()
       : tab === 'pipelines' ? pipelinesPanel()
       : tab === 'shows' ? showsPanel()
       : tab === 'storage' ? storageCard()
@@ -344,6 +345,216 @@ window.App = window.App || {};
     layout.appendChild(panel);
     box.appendChild(layout);
     return box;
+  }
+
+  /* Department Software: what Create Project offers a task, by the department
+     that task belongs to.
+
+     Only what each department actually HAS is listed — the full catalogue
+     behind a (+) rather than in front of everyone, because the interesting
+     fact is the short "uses these" list, and rendering every application for
+     every department turned a seven-line answer into seventy chips. */
+  function deptSoftwareCard() {
+    const wrap = el('div');
+    const card = el('.adm-permcard');
+    card.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'Department software'),
+      el('.adm-permcard-desc', null, 'What Create Project offers a task, by the department that task belongs to. Desktop apps list the matching templates from the studio library; Google apps open their own template gallery in the browser. A department with none still gets its working folder made.')
+    ]));
+
+    Object.keys(App.DEPARTMENTS).forEach(dk => {
+      const on = App.deptAppKeys(dk);
+      const row = el('.adm-swrow');
+      row.appendChild(el('.adm-swdept', null, [
+        el('span.adm-swdot', { style: { background: App.dept(dk).color } }),
+        el('span.adm-swdept-name', null, App.dept(dk).label)
+      ]));
+
+      const chips = el('.adm-swchips');
+      if (!on.length) chips.appendChild(el('span.adm-swnone', null, 'No software yet'));
+      on.forEach(k => {
+        const sw = App.software(k);
+        chips.appendChild(el('span.adm-swchip', null, [
+          App.icon(sw.icon, { cls: 'adm-swchip-ic' }),
+          el('span', null, sw.label),
+          el('button.adm-swchip-x', {
+            title: 'Remove ' + sw.label + ' from ' + App.dept(dk).label,
+            onclick: () => App.setDeptApp(dk, k, false)
+          }, '✕')
+        ]));
+      });
+      const add = el('button.adm-swadd', { title: 'Add software to ' + App.dept(dk).label }, '＋');
+      add.onclick = (e) => { e.stopPropagation(); openSoftwareMenu(add, dk); };
+      chips.appendChild(add);
+      row.appendChild(chips);
+      card.appendChild(row);
+    });
+    wrap.appendChild(card);
+    return wrap;
+  }
+
+  /* The (+) menu: search, tick as many as you like, and it commits once when
+     it closes — four applications is one board edit and one undo, rather than
+     four of each. Ticks are held locally for exactly that reason; the board
+     isn't touched until the menu goes away. */
+  let swMenu = null, swMenuCommit = null;
+  function closeSoftwareMenu() {
+    const commit = swMenuCommit;
+    if (swMenu) { swMenu.remove(); swMenu = null; }
+    swMenuCommit = null;
+    document.removeEventListener('click', closeSoftwareMenu);
+    if (commit) commit();
+  }
+
+  function openSoftwareMenu(btn, dept) {
+    closeSoftwareMenu();
+    const picked = new Set(App.deptAppKeys(dept));
+    const menu = el('.sw-menu', { onclick: (e) => e.stopPropagation() });
+    swMenu = menu;
+    swMenuCommit = () => App.setDeptSoftware(dept, [...picked]);
+
+    const search = el('input.sw-menu-search', {
+      type: 'text', placeholder: 'Search software…', spellcheck: 'false'
+    });
+    const list = el('.sw-menu-list');
+
+    const draw = () => {
+      const q = search.value.trim().toLowerCase();
+      list.innerHTML = '';
+      const hits = App.softwareCatalog().filter(sw => !q || sw.label.toLowerCase().includes(q));
+      if (!hits.length) {
+        list.appendChild(el('.sw-menu-empty', null, 'Nothing matches “' + search.value.trim() + '”'));
+      }
+      hits.forEach(sw => {
+        const has = picked.has(sw.key);
+        const item = el('button.sw-menu-item' + (has ? '.on' : ''), { type: 'button' }, [
+          el('span.sw-tick'),
+          App.icon(sw.icon, { cls: 'sw-menu-ic' }),
+          el('span.sw-menu-name', null, sw.label),
+          el('span.sw-menu-meta', null, sw.kind === 'online' ? 'in the browser'
+            : (sw.ext || []).length ? (sw.ext || []).map(x => '.' + x).join(' ') : 'no templates'),
+          /* Studio-added entries can be deleted; a built-in can only be
+             un-ticked, since it's part of the app itself. */
+          sw.custom ? el('span.sw-menu-del', {
+            title: 'Delete ' + sw.label + ' from the software list',
+            onclick: (e) => {
+              e.stopPropagation();
+              if (!confirm('Delete ' + sw.label + ' from the software list? Every department loses it.')) return;
+              /* Commit the ticks first: this removal re-renders the page under
+                 us, and the menu goes with it. */
+              const keep = [...picked].filter(k => k !== sw.key);
+              picked.clear();
+              swMenuCommit = null;
+              App.setDeptSoftware(dept, keep);
+              App.removeSoftware(sw.key);
+              closeSoftwareMenu();
+            }
+          }, '🗑') : null
+        ]);
+        item.onclick = () => {
+          picked.has(sw.key) ? picked.delete(sw.key) : picked.add(sw.key);
+          draw();
+        };
+        list.appendChild(item);
+      });
+    };
+    search.addEventListener('input', draw);
+    search.addEventListener('keydown', e => { if (e.key === 'Escape') closeSoftwareMenu(); });
+    draw();
+
+    menu.appendChild(el('.sw-menu-head', null, [search]));
+    menu.appendChild(list);
+    menu.appendChild(el('.sw-menu-foot', null, [
+      el('button.sw-menu-new', {
+        type: 'button',
+        onclick: () => {
+          /* The ticks so far are still worth keeping — someone typing a name
+             that isn't there has usually ticked the ones that were. */
+          const keep = [...picked];
+          swMenuCommit = null;
+          closeSoftwareMenu();
+          newSoftwareDialog(dept, keep, search.value.trim());
+        }
+      }, '＋ Add new software'),
+      el('button.sw-menu-done', { type: 'button', onclick: () => closeSoftwareMenu() }, 'Done')
+    ]));
+
+    document.body.appendChild(menu);
+    const r = btn.getBoundingClientRect();
+    requestAnimationFrame(() => {
+      const mh = menu.offsetHeight, mw = menu.offsetWidth;
+      menu.style.top = (r.bottom + mh + 6 > window.innerHeight ? Math.max(8, r.top - mh - 4) : r.bottom + 4) + 'px';
+      menu.style.left = Math.min(r.left, window.innerWidth - mw - 8) + 'px';
+    });
+    /* Focus after the opening click has finished being handled — focusing
+       inside the same frame loses it to the button that was clicked, and the
+       first thing typed then goes nowhere. */
+    setTimeout(() => { document.addEventListener('click', closeSoftwareMenu); search.focus(); }, 0);
+  }
+
+  /* Icons worth offering for a piece of software: the shapes that read as a
+     tool or a file type. Not the whole icon set — a padlock or a calendar
+     beside "Cinema 4D" is noise. */
+  const SW_ICONS = ['package', 'clapper', 'film', 'camera', 'image', 'palette', 'pencil', 'sparkle',
+    'puzzle', 'grid', 'tools', 'sliders', 'piano', 'music', 'headphones', 'note', 'chart',
+    'file', 'folder', 'plug', 'bolt', 'gear', 'target', 'compass', 'search', 'book'];
+
+  /* Add new software. A name and an icon are what the user was promised; the
+     extensions field is what makes the entry do anything, so it's here too —
+     optional, and explained rather than demanded. */
+  function newSoftwareDialog(dept, keepKeys, seedName) {
+    const name = el('input.fld', { type: 'text', value: seedName || '', spellcheck: 'false',
+      placeholder: 'Cinema 4D' });
+    const ext = el('input.fld', { type: 'text', spellcheck: 'false', placeholder: 'c4d, c4dtpl',
+      style: { fontFamily: 'ui-monospace, monospace' } });
+    let icon = 'package';
+
+    const grid = el('.sw-icongrid');
+    const paint = () => [...grid.children].forEach(b =>
+      b.classList.toggle('on', b.getAttribute('data-ic') === icon));
+    SW_ICONS.forEach(ic => {
+      const b = el('button.sw-iconbtn', { type: 'button', 'data-ic': ic, title: ic,
+        onclick: () => { icon = ic; paint(); } }, App.icon(ic));
+      grid.appendChild(b);
+    });
+    paint();
+
+    const save = () => {
+      const key = App.addSoftware({ label: name.value, icon, ext: ext.value });
+      if (!key) { name.focus(); return; }          // addSoftware said why
+      // straight into the department they were adding for
+      App.setDeptSoftware(dept, (keepKeys || []).concat([key]));
+      App.modal.close();
+    };
+    name.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+    ext.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+
+    App.modal.open(el('.modal-card.confirm-card', { onclick: e => e.stopPropagation() }, [
+      el('.modal-head', null, [
+        el('.modal-head-main', null, [
+          App.icon('plus', { cls: 'modal-ic' }),
+          el('div', null, [
+            el('.modal-title', null, 'Add new software'),
+            el('.modal-subtitle', null, 'Added to ' + App.dept(dept).label + ', and available to every department')
+          ])
+        ]),
+        el('button.modal-x', { onclick: () => App.modal.close(), title: 'Close' }, '✕')
+      ]),
+      el('.modal-body', null, [
+        el('.sw-fld', null, [el('label.fld-label', null, 'Name'), name]),
+        el('.sw-fld', null, [
+          el('label.fld-label', null, 'Project file extensions'),
+          ext,
+          el('.fld-hint', null, 'Comma-separated, no dots — this is how Create Project finds its templates in the studio library. Leave it empty for a tool with no project file; it still appears in the list, with nothing to copy.')
+        ]),
+        el('.sw-fld', null, [el('label.fld-label', null, 'Icon'), grid])
+      ]),
+      el('.modal-foot', null, [
+        el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
+        el('button.btn-primary', { onclick: save }, 'Add software')
+      ])
+    ]));
+    requestAnimationFrame(() => name.focus());
   }
 
   /* Storage: the LucidLink master directory new shows are built under. Held in
@@ -914,6 +1125,8 @@ window.App = window.App || {};
     'workflow.status': 'Status style changed', 'workflow.department': 'Department style changed',
     'workflow.deptAdd': 'Department added', 'workflow.deptRemove': 'Department removed',
     'workflow.reset': 'Workflow reset',
+    'dept.apps': 'Department software changed',
+    'software.add': 'Software added', 'software.remove': 'Software removed',
     'note.add': 'Producer note added', 'note.remove': 'Producer note removed',
     'view.timeline': 'Timeline view', 'view.board': 'Board view', 'view.dashboard': 'Dashboard view',
     'view.admin': 'Admin view', 'view.review': 'Review queue',
