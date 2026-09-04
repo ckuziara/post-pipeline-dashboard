@@ -568,8 +568,25 @@ window.App = window.App || {};
         }));
         drop.addEventListener('drop', e => {
           drop.classList.remove('over');
-          const files = e.dataTransfer && e.dataTransfer.files;
-          if (files && files.length) this._upload([...files], status);
+          const dt = e.dataTransfer; if (!dt) return;
+          /* A dropped folder arrives as a bogus zero-byte "file" that would fail
+             mid-upload, and pushing a folder's contents through the browser is
+             the very thing "Pick from the volume" exists to avoid — so name the
+             better route instead of failing. */
+          let dirs = 0;
+          if (dt.items && dt.items.length && dt.items[0].webkitGetAsEntry) {
+            for (const it of dt.items) {
+              const en = it.webkitGetAsEntry && it.webkitGetAsEntry();
+              if (en && en.isDirectory) dirs++;
+            }
+          }
+          const files = [...(dt.files || [])].filter(f => f.size > 0 || f.type);
+          if (dirs) {
+            App.toast(dirs === 1 && !files.length
+              ? 'Folders can’t be dropped in — use “Pick from the volume” to deliver a folder whole'
+              : 'Skipped ' + dirs + ' folder' + (dirs === 1 ? '' : 's') + ' — use “Pick from the volume” for those', true);
+          }
+          if (files.length) this._upload(files, status);
         });
         /* Clicking opens OUR file browser, never <input type="file">. A native file
            dialog crashes the embedded webview the app runs in — the same reason
@@ -702,27 +719,62 @@ window.App = window.App || {};
       // rather than the show root, mirroring Project → Open folder.
       const start = (m.data && m.data.absolute && m.data.absolute.work) || (m.data && m.data.root);
       App.folderPicker.open(start, (chosen) => {
-        if (!chosen) return this._back();
-        App.toast('Moving ' + chosen.replace(/^.*\//, '') + ' into place…');
+        // multi mode hands back an array; tolerate a bare path either way
+        const items = Array.isArray(chosen) ? chosen : (chosen ? [chosen] : []);
+        if (!items.length) return this._back();
         // the picker replaced the Edit Task dialog — put it back so the delivery
         // shows up where the user started, then refresh it with the result
         App.editTask.open(epId, taskKey);
-        App.api.deliverPrepare({ epId, taskKey, pipeline: App.pipelineFor(ep), src: chosen })
-          .then(r => {
-            App.toast(r.moved
-              ? 'Delivered ' + r.filed + ' — moved out of ' + (m.data ? m.data.deliverable : 'the working folder')
-              : 'Delivered ' + r.filed + (r.fromLibrary ? ' — copied, so the library keeps its original' : ''));
-            this.reload();
-          })
-          .catch(e => App.toast(e.message, true));
+        this._deliverFromMount(epId, taskKey, ep, items);
       }, {
         pickFiles: true,
-        title: 'Deliver a file',
-        subtitle: 'Starts in this task’s working folder. The file is moved into ' +
+        multiple: true,
+        title: 'Deliver from the volume',
+        subtitle: 'Starts in this task’s working folder. Tick any number of files — or tick a ' +
+          'folder to deliver it whole. Everything moves into ' +
           (m.data ? '!!_Publish/' + m.data.deliverable : 'the delivery folder') + '.',
         confirmLabel: 'Move & deliver',
         onCancel: () => this._back()
       });
+    },
+
+    /* One prepare call per picked item — the endpoint moves a file or a whole
+       directory, so a ticked folder arrives intact rather than flattened. Run
+       in sequence: these are renames on the same volume, and a 40GB master
+       shouldn't race three others. */
+    async _deliverFromMount(epId, taskKey, ep, items) {
+      const m = this._mounted;
+      const label = (p) => p.replace(/\/+$/, '').replace(/^.*\//, '');
+      App.toast(items.length === 1
+        ? 'Moving ' + label(items[0]) + ' into place…'
+        : 'Delivering ' + items.length + ' items…');
+
+      App.track.flowStart('LucidLink delivery', { files: items.length, source: 'volume' });
+      const failed = [];
+      let done = 0, lastFiled = '', moved = false, fromLibrary = false;
+      for (const src of items) {
+        try {
+          const r = await App.api.deliverPrepare({ epId, taskKey, pipeline: App.pipelineFor(ep), src });
+          done++; lastFiled = r.filed; moved = r.moved; fromLibrary = r.fromLibrary;
+        } catch (e) {
+          App.track.error('lucidlink.deliverFailed', { flow: 'LucidLink delivery', file: label(src), message: e.message });
+          failed.push(label(src) + ': ' + e.message);
+        }
+      }
+      App.track.flowDone('LucidLink delivery', !failed.length, { files: done, failed: failed.length });
+
+      if (done === 1 && !failed.length) {
+        App.toast(moved
+          ? 'Delivered ' + lastFiled + ' — moved out of ' + (m && m.data ? m.data.deliverable : 'the working folder')
+          : 'Delivered ' + lastFiled + (fromLibrary ? ' — copied, so the library keeps its original' : ''));
+      } else if (done && !failed.length) {
+        App.toast('Delivered ' + done + ' items');
+      } else if (done) {
+        App.toast('Delivered ' + done + ', ' + failed.length + ' failed — ' + failed[0], true);
+      } else {
+        App.toast(failed[0] || 'Nothing was delivered', true);
+      }
+      this.reload();
     },
 
     _addLink() {

@@ -102,13 +102,36 @@ window.App = window.App || {};
     open(startPath, onPick, opts) {
       opts = opts || {};
       const files = !!opts.pickFiles;
+      /* opts.multiple — file mode only: tick any number of files AND/OR folders
+         in the current directory and get an ARRAY of absolute paths back. Used
+         by Deliver, where a delivery is often an image sequence folder or a
+         batch of masters rather than one file. */
+      const multi = files && !!opts.multiple;
       let cur = startPath || '', chosenFile = null;
+      const picked = new Map();          // absolute path -> { name, dir }
       const crumb = el('.fp-path');
       const list = el('.fp-list');
       const upBtn = el('button.btn-ghost.fp-up', { title: 'Up one level' }, '↑ Up');
       const roots = el('.fp-roots');
-      const chooseBtn = el('button.btn-primary', { disabled: true },
-        opts.confirmLabel || (files ? 'Deliver this file' : 'Select this folder'));
+      const selInfo = el('.fp-selinfo');
+      const baseLabel = opts.confirmLabel || (files ? 'Deliver this file' : 'Select this folder');
+      const chooseBtn = el('button.btn-primary', { disabled: true }, baseLabel);
+
+      // keep the footer honest about how much is ticked
+      const syncChoose = () => {
+        if (!multi) return;
+        const n = picked.size;
+        chooseBtn.disabled = !n;
+        chooseBtn.textContent = n ? baseLabel + ' (' + n + ')' : baseLabel;
+        const dirs = [...picked.values()].filter(v => v.dir).length;
+        selInfo.textContent = !n ? ''
+          : n + ' selected' + (dirs ? ' · ' + dirs + ' folder' + (dirs === 1 ? '' : 's') : '');
+      };
+      const toggle = (full, name, dir, row) => {
+        if (picked.has(full)) picked.delete(full); else picked.set(full, { name, dir });
+        row.classList.toggle('sel', picked.has(full));
+        syncChoose();
+      };
 
       let settled = false;
       const cancel = () => { if (settled) return; settled = true; App.modal.close(); if (opts.onCancel) opts.onCancel(); };
@@ -124,6 +147,9 @@ window.App = window.App || {};
 
       const go = async (p) => {
         chosenFile = null;
+        // selection is scoped to the folder on screen — carrying ticks across
+        // directories would hide them behind navigation
+        picked.clear(); syncChoose();
         list.innerHTML = '';
         list.appendChild(el('.fp-loading', null, 'Opening…'));
 
@@ -156,8 +182,9 @@ window.App = window.App || {};
           const r = await App.api.browse(p, files);
           cur = r.path;
           crumb.textContent = r.path;
-          // in file mode nothing is chosen until a file is clicked
+          // in file mode nothing is chosen until something is ticked/clicked
           chooseBtn.disabled = files;
+          syncChoose();
           upBtn.disabled = !r.parent;
           upBtn.onclick = () => r.parent && go(r.parent);
 
@@ -168,16 +195,33 @@ window.App = window.App || {};
           list.innerHTML = '';
           // the server redirected us out of an unreadable path — say so
           if (r.notice) list.appendChild(el('.fp-notice', null, 'ⓘ ' + r.notice));
-          r.dirs.forEach(name => list.appendChild(
-            el('button.fp-item', { onclick: () => go(r.path.replace(/\/$/, '') + '/' + name) },
-              [App.icon('folder', { cls: 'fp-ic' }), el('span.fp-name', null, name), el('span.fp-arrow', null, '›')])));
-          (r.files || []).forEach(f => list.appendChild(
-            el('button.fp-item', { 'data-file': f.name, onclick: () => select(f.name, f.size) },
+          const abs = (name) => r.path.replace(/\/$/, '') + '/' + name;
+          r.dirs.forEach(name => {
+            const full = abs(name);
+            const row = el('button.fp-item', { onclick: () => go(full) },
+              [App.icon('folder', { cls: 'fp-ic' }), el('span.fp-name', null, name), el('span.fp-arrow', null, '›')]);
+            // the row still navigates in; the tick delivers the folder whole
+            if (multi) row.insertBefore(el('span.fp-check', {
+              title: 'Deliver this folder as-is',
+              onclick: (e) => { e.stopPropagation(); toggle(full, name, true, row); }
+            }), row.firstChild);
+            list.appendChild(row);
+          });
+          (r.files || []).forEach(f => {
+            const full = abs(f.name);
+            const row = el('button.fp-item', { 'data-file': f.name,
+              onclick: () => multi ? toggle(full, f.name, false, row) : select(f.name, f.size) },
               [App.icon('file', { cls: 'fp-ic' }), el('span.fp-name', null, f.name),
-               el('span.fp-size', null, f.size ? fmtBytes(f.size) : '')])));
+               el('span.fp-size', null, f.size ? fmtBytes(f.size) : '')]);
+            if (multi) row.insertBefore(el('span.fp-check', {
+              onclick: (e) => { e.stopPropagation(); toggle(full, f.name, false, row); }
+            }), row.firstChild);
+            list.appendChild(row);
+          });
           if (!r.dirs.length && !(r.files || []).length) {
             list.appendChild(el('.fp-empty', null, files
-              ? 'Nothing here — go up and pick another folder.'
+              ? (multi ? 'Nothing here — go up and tick a folder, or open another one.'
+                       : 'Nothing here — go up and pick another folder.')
               : 'No subfolders here — you can still select this folder.'));
           }
         } catch (e) {
@@ -202,13 +246,14 @@ window.App = window.App || {};
         ]),
         el('.modal-body', null, [roots, el('.fp-bar', null, [upBtn, crumb]), list]),
         el('.modal-foot', null, [
+          multi ? selInfo : null,
           el('button.btn-ghost', { onclick: cancel }, 'Cancel'),
           chooseBtn
         ])
       ]));
       chooseBtn.onclick = () => {
         settled = true; App.modal.close();
-        onPick(files ? chosenFile : cur);
+        onPick(multi ? [...picked.keys()] : (files ? chosenFile : cur));
       };
       // Esc / backdrop close through App.modal, so mirror them into cancel
       if (opts.onCancel) {
