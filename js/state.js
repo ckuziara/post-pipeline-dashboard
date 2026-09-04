@@ -653,6 +653,60 @@ window.App = window.App || {};
   App.show = (id) => App.state.data.shows.find(s => s.id === id) || { name: '—', color: '#888' };
   App.person = (id) => App.state.data.people.find(p => p.id === id) || null;
 
+  /* ---------------------------------------------------------------------------
+     Production team (a show's staffing, by department)
+
+     A show's pipeline says what work exists; its team says who does it.
+     `show.team` maps a department key to the staff assigned to it on this show
+     plus which of them leads it:
+
+       show.team = { audio: { ids: ['chris', 'noah'], lead: 'chris' } }
+
+     Only departments the show's own pipeline actually uses are ever staffed —
+     a show with no music tasks has no music team to fill in. Reads go through
+     App.deptTeam so a person deleted in Admin drops out of every show that had
+     them, rather than leaving an id nothing resolves to.
+  --------------------------------------------------------------------------- */
+  App.pipelineDepts = function (pipeline) {
+    const out = [];
+    (pipeline || []).forEach(t => { if (t.dept && !out.includes(t.dept)) out.push(t.dept); });
+    // department order follows the workflow's own, not first-task-wins, so the
+    // team page reads in the same order as every other department list
+    const order = Object.keys(App.DEPARTMENTS);
+    return out.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  };
+  App.showDepts = (show) => App.pipelineDepts((show && show.pipeline) || App.TEMPLATE);
+
+  // Who may be staffed to a department: the same pool the task Owner picker
+  // offers, so a lead can always actually own that department's tasks.
+  App.deptStaff = (dept) => (App.state.data.people || []).filter(p => App.roleDept(p.role) === dept);
+
+  App.deptTeam = function (show, dept) {
+    const t = ((show && show.team) || {})[dept] || {};
+    const ids = (t.ids || []).filter(id => App.person(id));
+    // one person on a department leads it whether or not anyone starred them
+    const lead = ids.includes(t.lead) ? t.lead : (ids.length === 1 ? ids[0] : null);
+    return { ids, lead };
+  };
+  App.deptLead = (show, dept) => App.deptTeam(show, dept).lead;
+
+  /* The staff a task should fall to, best first: this show's team for that
+     department (its lead ahead of the rest), or — for a show with no team on
+     that department — every staff member who could do the work. */
+  App.deptPool = function (show, dept) {
+    const { ids, lead } = App.deptTeam(show, dept);
+    if (ids.length) return lead ? [lead].concat(ids.filter(id => id !== lead)) : ids;
+    return App.deptStaff(dept).map(p => p.id);
+  };
+
+  // headcount across the whole show — one person can lead two departments and
+  // is still one person on the production
+  App.showTeamSize = function (show) {
+    const seen = {};
+    App.showDepts(show).forEach(dk => App.deptTeam(show, dk).ids.forEach(id => { seen[id] = 1; }));
+    return Object.keys(seen).length;
+  };
+
   // Archival (Admin → Workflow → Shows): archived shows/episodes keep all
   // their data but vanish from every view until restored. An episode is
   // archived either directly or by its whole show being archived.

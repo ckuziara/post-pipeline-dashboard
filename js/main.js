@@ -729,6 +729,25 @@ window.App = window.App || {};
   // ---- Shows & episodes archive (Admin → Workflow → Shows) ----
   // Archiving hides content from every view but keeps all of its data;
   // only archived content can be permanently deleted.
+  /* Re-staff a show that already exists (Admin → Shows → Edit team).
+     Only the show's roster changes: episodes already underway keep the owners
+     they have, because a task half-finished by someone shouldn't silently
+     become someone else's. New episodes pick the new team up automatically,
+     since App.addEpisode staffs from it. */
+  App.setShowTeam = function (showId, team) {
+    if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change a show’s team', true); return; }
+    const s = App.state.data.shows.find(x => x.id === showId); if (!s) return;
+    App.mutate(d => {
+      const t = d.shows.find(x => x.id === showId);
+      if (team && Object.keys(team).length) t.team = team; else delete t.team;
+    }, 'the production team');
+    const size = App.showTeamSize(App.state.data.shows.find(x => x.id === showId));
+    App.track.audit('show.team', { show: s.name, departmentsStaffed: team ? Object.keys(team).length : 0, people: size });
+    App.toast(size
+      ? 'Team updated — ' + size + ' ' + (size === 1 ? 'person' : 'people') + ' on “' + s.name + '”'
+      : 'Cleared the team on “' + s.name + '”');
+  };
+
   App.setShowArchived = function (showId, archived) {
     if (!guardAdmin()) return;
     const s = App.state.data.shows.find(x => x.id === showId); if (!s) return;
@@ -909,7 +928,11 @@ window.App = window.App || {};
      Without it, episodes fall on an even `cadence` from startIso as before.
      `epLives` carries the live dates themselves, stamped onto each episode so
      they stand as commitments from the moment the show exists. */
-  App.createShow = function ({ name, code, type, epNames, pipeline, startIso, cadence, scale, epStarts, epLives }) {
+  /* `team` staffs the show department by department (see App.deptTeam). It is
+     stored on the show and also decides who each episode's tasks open against:
+     a department with a team draws from it — the lead first — instead of from
+     every staff member in the studio who happens to hold that role. */
+  App.createShow = function ({ name, code, type, epNames, pipeline, startIso, cadence, scale, epStarts, epLives, team }) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
     type = type || 'animation';
     pipeline = pipeline || App.defaultPipelineFor(type);
@@ -918,9 +941,13 @@ window.App = window.App || {};
     let newShowId = null;
     App.mutate(d => {
       const showId = newShowId = code.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + App.uid().slice(0, 3);
-      d.shows.push({ id: showId, name, prefix: code, type, color: SHOW_PALETTE[d.shows.length % SHOW_PALETTE.length], pipeline });
+      const show = { id: showId, name, prefix: code, type, color: SHOW_PALETTE[d.shows.length % SHOW_PALETTE.length], pipeline };
+      if (team && Object.keys(team).length) show.team = team;
+      d.shows.push(show);
+      // one pool per department, resolved once: the show's own team where it
+      // has one, else anyone who could do the work
       const byDept = {};
-      d.people.forEach(p => { const dep = App.roleDept(p.role); if (dep) (byDept[dep] = byDept[dep] || []).push(p.id); });
+      App.pipelineDepts(pipeline).forEach(dk => { byDept[dk] = App.deptPool(show, dk); });
       epNames.forEach((title, i) => {
         const epStart = (epStarts && epStarts[i]) || App.shiftIso(startIso, i * cadence);
         const sch = App.schedulePipeline(pipeline, epStart, scale);
@@ -935,7 +962,8 @@ window.App = window.App || {};
         d.episodes.push(ep);
       });
     });
-    App.track.audit('show.create', { show: name, code, type, episodes: epNames.length, tasks: pipeline.length });
+    App.track.audit('show.create', { show: name, code, type, episodes: epNames.length, tasks: pipeline.length,
+      departmentsStaffed: team ? Object.keys(team).length : 0 });
     App.toast('Created “' + name + '” with ' + epNames.length + ' episode' + (epNames.length === 1 ? '' : 's'));
     // Build the whole production structure up front — shared folders plus every
     // episode's department tree. The server reads the show and its episodes from
@@ -981,10 +1009,10 @@ window.App = window.App || {};
 
     let newEpId = null;
     App.mutate(d => {
-      const byDept = {};
-      d.people.forEach(p => { const dep = App.roleDept(p.role); if (dep) (byDept[dep] = byDept[dep] || []).push(p.id); });
+      // this show's production team first, exactly as createShow staffs its
+      // own episodes — a new episode joins the same crew as the rest
       const assignees = {};
-      pipeline.forEach(t => { const pool = byDept[t.dept] || []; if (pool.length) assignees[t.key] = pool[0]; });
+      pipeline.forEach(t => { const pool = App.deptPool(show, t.dept); if (pool.length) assignees[t.key] = pool[0]; });
       const ep = {
         id: newEpId = App.uid(), showId, code, title, index: d.episodes.length,
         shiftDays: 0, dates: sch.dates,

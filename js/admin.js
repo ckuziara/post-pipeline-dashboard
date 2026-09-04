@@ -1014,6 +1014,7 @@ window.App = window.App || {};
     activeShows.forEach(s => {
       const sEps = eps.filter(e => e.showId === s.id && !e.archived);
       const isOpen = !!open[s.id];
+      const teamSize = App.showTeamSize(s);
       actList.appendChild(el('.show-arch-row.expandable', {
         onclick: () => { open[s.id] = !isOpen; App.render(); }
       }, [
@@ -1021,7 +1022,8 @@ window.App = window.App || {};
         el('span.show-arch-dot', { style: { background: s.color } }),
         el('div', { style: { minWidth: 0 } }, [
           el('.adm-name', null, s.name),
-          el('.adm-name-sub', null, (s.prefix || '—') + ' · ' + sEps.length + ' active episode' + (sEps.length === 1 ? '' : 's'))
+          el('.adm-name-sub', null, (s.prefix || '—') + ' · ' + sEps.length + ' active episode' + (sEps.length === 1 ? '' : 's') +
+            ' · ' + (teamSize ? teamSize + ' on the team' : 'unstaffed'))
         ]),
         el('.arch-actions', null, [
           // restore anything missing from this show's tree on the master directory
@@ -1038,6 +1040,40 @@ window.App = window.App || {};
           el('button.btn-mini', { onclick: (e) => { e.stopPropagation(); App.setShowArchived(s.id, true); } }, [App.icon('archive'), ' Archive show'])
         ])
       ]));
+      /* The team reads at a glance where the show is expanded: one line per
+         department the pipeline uses, its lead first with a star. Editing is
+         the same dialog the Team button opens — this is the view. */
+      if (isOpen) {
+        const depts = App.showDepts(s);
+        const teamWrap = el('.show-team-view');
+        teamWrap.appendChild(el('.show-team-view-head', null, [
+          el('span', null, [App.icon('users'), ' Production team']),
+          el('button.btn-mini', { onclick: () => App.showTeamDialog.open(s.id) }, 'Edit team')
+        ]));
+        depts.forEach(dk => {
+          const d = App.dept(dk);
+          const { ids, lead } = App.deptTeam(s, dk);
+          const ordered = lead ? [lead].concat(ids.filter(id => id !== lead)) : ids;
+          teamWrap.appendChild(el('.show-team-line', null, [
+            el('span.team-dept-dot', { style: { background: d.color } }),
+            el('span.show-team-dept', null, d.label),
+            el('.show-team-people', null,
+              ordered.length
+                ? ordered.map(id => {
+                    const p = App.person(id);
+                    return el('span.team-chip.static' + (id === lead ? '.lead' : ''), {
+                      title: p.name + (id === lead ? ' — ' + d.label + ' lead' : '')
+                    }, [
+                      el('span.avatar', { style: { background: p.color } }, App.initials(p.name)),
+                      el('span.team-chip-name', null, p.name),
+                      id === lead ? el('span.team-star.on.static', null, '★') : null
+                    ]);
+                  })
+                : el('span.show-team-none', null, 'Unstaffed'))
+          ]));
+        });
+        actList.appendChild(teamWrap);
+      }
       if (isOpen) sEps.forEach(ep => {
         actList.appendChild(el('.ep-arch-row', null, [
           el('span.ep-arch-code', { style: { background: s.color, color: App.pickInkFor(s.color) } }, ep.code),
