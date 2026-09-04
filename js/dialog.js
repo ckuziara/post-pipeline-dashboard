@@ -2012,76 +2012,111 @@ window.App = window.App || {};
       changed();
     }
 
-    function memberChip(dk, id, showStar) {
-      const p = App.person(id); if (!p) return null;
-      const isLead = App.deptTeam({ team: team }, dk).lead === id;
-      return el('.team-chip' + (isLead ? '.lead' : ''), null, [
-        el('span.avatar', { style: { background: p.color } }, App.initials(p.name)),
+    /* Everyone who could do the department's work is on screen at once, as a
+       chip that toggles: click to put someone on the show, click again to take
+       them off. A dropdown made staffing seven departments seven separate
+       open-read-pick trips for what is nearly always a choice between two or
+       three people — and hid, behind a closed menu, the one thing worth seeing
+       at a glance: who is available and who is already on. */
+    function personChip(dk, p, ids, lead) {
+      const on = ids.includes(p.id);
+      const isLead = lead === p.id;
+      // the star is only a decision once a department has two people on it;
+      // with one, they lead it by simply being the only one there
+      const showStar = on && ids.length > 1;
+      const chip = el('.team-chip' + (on ? '.on' : '') + (isLead ? '.lead' : ''), {
+        tabindex: '0', role: 'button', 'aria-pressed': on ? 'true' : 'false',
+        title: on
+          ? (isLead ? p.name + ' leads ' + App.dept(dk).label + ' — click to take them off the show'
+                    : 'Click to take ' + p.name + ' off this department')
+          : 'Click to put ' + p.name + ' on this department',
+        onclick: () => (on ? unassign(dk, p.id) : assign(dk, p.id)),
+        onkeydown: (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); on ? unassign(dk, p.id) : assign(dk, p.id); }
+        }
+      }, [
+        el('span.avatar', { style: { background: on ? p.color : 'transparent', color: on ? '#fff' : 'inherit' } }, App.initials(p.name)),
         el('span.team-chip-name', null, p.name),
-        // with one person on a department there's nothing to choose between,
-        // so the star only appears once it's a real decision
         (showStar
           ? el('button.team-star' + (isLead ? '.on' : ''), {
               type: 'button',
-              title: isLead ? p.name + ' leads this department — click to unset' : 'Make ' + p.name + ' department lead',
-              onclick: (e) => { e.stopPropagation(); setLead(dk, id); }
+              title: isLead ? p.name + ' leads this department — click to unset' : 'Make ' + p.name + ' the lead',
+              onclick: (e) => { e.stopPropagation(); setLead(dk, p.id); }
             }, isLead ? '★' : '☆')
-          : null),
-        el('button.team-chip-x', {
-          type: 'button', title: 'Remove ' + p.name + ' from this department',
-          onclick: (e) => { e.stopPropagation(); unassign(dk, id); }
-        }, '✕')
+          : null)
       ]);
+      return chip;
     }
 
     function deptBlock(dk) {
       const d = App.dept(dk);
       const { ids, lead } = App.deptTeam({ team: team }, dk);
       const taskCount = pipe.filter(t => t.dept === dk).length;
-      const pool = App.deptStaff(dk).filter(p => !ids.includes(p.id));
+      const staff = App.deptStaff(dk);
 
-      // add-a-person picker: assigns on pick and resets, so it stays an
-      // "add another" control rather than a value that has to be managed
-      const addSel = el('select.fld.team-add', {
-        disabled: !pool.length,
-        onchange: (e) => { const id = e.target.value; e.target.value = ''; if (id) assign(dk, id); }
-      });
-      const ph = document.createElement('option');
-      ph.value = ''; ph.textContent = pool.length ? '＋ Assign staff…' : (App.deptStaff(dk).length ? 'Everyone assigned' : 'No ' + d.label + ' staff');
-      addSel.appendChild(ph);
-      pool.forEach(p => {
-        const o = document.createElement('option'); o.value = p.id; o.textContent = p.name;
-        addSel.appendChild(o);
-      });
+      const status = ids.length
+        ? el('span.team-dept-count', null, [
+            // the star only means something where a lead was actually chosen —
+            // on a one-person department it would just restate the obvious
+            (lead && ids.length > 1 ? el('span.team-lead-mark', null, '★') : null),
+            ids.length + ' of ' + staff.length
+          ])
+        : el('span.team-dept-count.none', null, staff.length ? 'Unstaffed' : 'No staff');
 
-      return el('.team-dept', null, [
+      return el('.team-dept' + (ids.length ? '.staffed' : ''), {
+        // the department's own colour as a left edge: seven cards of identical
+        // shape are much easier to tell apart by colour than by reading each label
+        style: { boxShadow: 'inset 3px 0 0 ' + d.color }
+      }, [
         el('.team-dept-head', null, [
-          el('span.team-dept-dot', { style: { background: d.color } }),
           el('span.team-dept-lbl', null, d.label),
           el('span.team-dept-tasks', null, taskCount + ' task' + (taskCount === 1 ? '' : 's')),
-          (ids.length
-            ? el('span.team-dept-count' + (lead ? '.led' : ''), null,
-                ids.length + ' assigned' + (lead ? ' · ' + App.initials(App.person(lead).name) + ' leads' : ''))
-            : el('span.team-dept-count.none', null, 'Unstaffed')),
-          addSel
+          status
         ]),
-        el('.team-members', null,
-          ids.length
-            ? ids.map(id => memberChip(dk, id, ids.length > 1))
-            : el('.team-empty', null,
-                App.deptStaff(dk).length
-                  ? 'Nobody assigned yet — tasks will fall to whoever is free'
-                  : 'No ' + d.label + ' staff exist yet — add them in Admin → Team')
-        )
+        el('.team-pool', null,
+          staff.length
+            ? staff.map(p => personChip(dk, p, ids, lead))
+            : el('.team-none', null, 'Nobody covers ' + d.label + ' yet — add them under Admin → Team'))
       ]);
     }
 
-    function render() {
-      list.innerHTML = '';
+    /* Progress across the whole show, not per department: the question this
+       page answers is "is this production staffed", and the bar makes an
+       answer of "not yet, and that's allowed" legible without counting cards. */
+    const summaryTxt = el('.team-summary-txt');
+    const summaryBar = el('.team-bar-fill');
+    const summary = el('.team-summary', null, [summaryTxt, el('.team-bar', null, summaryBar)]);
+
+    function paintSummary() {
       const depts = App.pipelineDepts(pipe);
-      if (!depts.length) { list.appendChild(el('.adm-empty', null, 'This pipeline has no departments to staff.')); return; }
-      depts.forEach(dk => list.appendChild(deptBlock(dk)));
+      const staffed = depts.filter(dk => App.deptTeam({ team: team }, dk).ids.length).length;
+      const size = App.showTeamSize({ team: team, pipeline: pipe });
+      const leads = depts.filter(dk => App.deptTeam({ team: team }, dk).lead).length;
+      summary.classList.toggle('done', !!depts.length && staffed === depts.length);
+      summary.classList.toggle('empty', !staffed);
+      summaryTxt.innerHTML = '';
+      summaryTxt.appendChild(el('span.team-summary-lead', null,
+        staffed + ' of ' + depts.length + ' department' + (depts.length === 1 ? '' : 's') + ' staffed'));
+      summaryTxt.appendChild(el('span.team-summary-sub', null,
+        staffed
+          ? size + ' ' + (size === 1 ? 'person' : 'people') + ' · ' + leads + ' lead' + (leads === 1 ? '' : 's')
+          : 'Optional — anything you leave goes to whoever covers it'));
+      summaryBar.style.width = (depts.length ? Math.round((staffed / depts.length) * 100) : 0) + '%';
     }
+
+    const grid = el('.team-grid');
+    function render() {
+      grid.innerHTML = '';
+      const depts = App.pipelineDepts(pipe);
+      if (!depts.length) {
+        grid.appendChild(el('.adm-empty', null, 'This pipeline has no departments to staff.'));
+      } else {
+        depts.forEach(dk => grid.appendChild(deptBlock(dk)));
+      }
+      paintSummary();
+    }
+    list.appendChild(summary);
+    list.appendChild(grid);
     render();
 
     return {
@@ -2098,8 +2133,7 @@ window.App = window.App || {};
       },
       // the wizard's pipeline can still change behind this page (step 1 is
       // still editable), so the department list is re-derived on the way in
-      setPipeline(p) { pipe = p || []; render(); },
-      staffedCount: () => App.pipelineDepts(pipe).filter(dk => App.deptTeam({ team: team }, dk).ids.length).length
+      setPipeline(p) { pipe = p || []; render(); }
     };
   };
 
@@ -2132,7 +2166,7 @@ window.App = window.App || {};
       const editor = App.pipelineEditor(pipe, { onChange: () => updateSchedule(), tooltips: false });
       // step 2 — who works on it. Built here so a dismissed dialog's draft can
       // carry the staffing back in alongside the schedule.
-      const team = App.teamEditor(pipe, d0.team, { onChange: () => paintTeamFoot() });
+      const team = App.teamEditor(pipe, d0.team);
 
       // ---------- show details ----------
       const nameInput = el('input.fld', { type: 'text', placeholder: 'e.g. Little Angel', value: d0.name || '' });
@@ -2595,13 +2629,11 @@ window.App = window.App || {};
          the pipeline chosen on page 1. So Add Show is a wizard rather than one
          longer form, and the pipeline is re-read on the way in so a task moved
          to another department is reflected before anyone is assigned. */
-      const teamFoot = el('.team-foot-note');
       const step1 = el('div', null, sections);
       const step2 = el('div', { style: { display: 'none' } }, [
-        el('.fld-hint', { style: { margin: '2px 0 12px' } },
-          'Assign staff to each department this show’s pipeline uses. Where more than one person covers a department, star the lead — their name is the one work falls to first. Anything left unstaffed still schedules; its tasks just go to whoever covers that department.'),
-        team.list,
-        teamFoot
+        el('.fld-hint.team-intro', null,
+          'Click a name to put them on this show. Where a department has more than one person, star the lead — theirs is the name work falls to first.'),
+        team.list
       ]);
 
       const cancelBtn = el('button.btn-ghost', { onclick: () => { editor.closeMenus(); App.modal.close(); } }, 'Cancel');
@@ -2609,25 +2641,12 @@ window.App = window.App || {};
       const nextBtn = el('button.btn-primary', { onclick: () => { if (validateStep1()) goStep(2); } }, 'Next: Production Team →');
       const createBtn = el('button.btn-primary', { style: { display: 'none' } }, '＋ Create Show');
 
-      // step 2's footer says what's staffed, so "Create Show" is never a blind
-      // commitment to a production nobody is on
-      function paintTeamFoot() {
-        const depts = App.pipelineDepts(pipe);
-        const staffed = team.staffedCount();
-        const size = App.showTeamSize({ team: team.read(), pipeline: pipe });
-        teamFoot.className = 'team-foot-note' + (staffed ? '' : ' none');
-        teamFoot.textContent = staffed
-          ? size + ' ' + (size === 1 ? 'person' : 'people') + ' across ' + staffed + ' of ' + depts.length + ' department' + (depts.length === 1 ? '' : 's')
-          : 'No one assigned yet — you can staff this show later in Admin → Shows';
-      }
-
       let step = 1;
       function goStep(n) {
         step = n;
         if (n === 2) {
           editor.closeMenus();                 // a dep menu would hang over page 2
           team.setPipeline(pipe);              // page 1 may have re-departmented a task
-          paintTeamFoot();
         }
         const one = n === 1;
         step1.style.display = one ? '' : 'none';
@@ -2707,27 +2726,16 @@ window.App = window.App || {};
       App.track.feature('show.teamDialog');
 
       const pipeline = show.pipeline || App.defaultPipelineFor(show.type);
-      const team = App.teamEditor(pipeline, show.team, { onChange: () => paintFoot() });
-      const foot = el('.team-foot-note');
-      function paintFoot() {
-        const staffed = team.staffedCount(), depts = App.pipelineDepts(pipeline).length;
-        const size = App.showTeamSize({ team: team.read(), pipeline: pipeline });
-        foot.className = 'team-foot-note' + (staffed ? '' : ' none');
-        foot.textContent = staffed
-          ? size + ' ' + (size === 1 ? 'person' : 'people') + ' across ' + staffed + ' of ' + depts + ' department' + (depts === 1 ? '' : 's')
-          : 'Nobody assigned — this show’s tasks fall to whoever covers each department';
-      }
-      paintFoot();
+      const team = App.teamEditor(pipeline, show.team);
 
       const sections = [
         el('.ctx-box.slim', null, [
           el('span.ctx-chip', { style: { background: show.color, color: App.pickInkFor(show.color) } }, show.prefix || '—'),
           el('span.ctx-title', null, show.name)
         ]),
-        el('.fld-hint', { style: { margin: '10px 0 12px' } },
-          'Changing the team sets who new work opens against — episodes already running keep the owners they have. Star the lead where a department has more than one person.'),
-        team.list,
-        foot
+        el('.fld-hint.team-intro', null,
+          'Click a name to put them on or take them off. Changing the team sets who new work opens against — episodes already running keep the owners they have.'),
+        team.list
       ];
 
       const footer = [

@@ -1061,12 +1061,14 @@ window.App = window.App || {};
               ordered.length
                 ? ordered.map(id => {
                     const p = App.person(id);
-                    return el('span.team-chip.static' + (id === lead ? '.lead' : ''), {
+                    return el('span.team-chip.on.static' + (id === lead ? '.lead' : ''), {
                       title: p.name + (id === lead ? ' — ' + d.label + ' lead' : '')
                     }, [
                       el('span.avatar', { style: { background: p.color } }, App.initials(p.name)),
                       el('span.team-chip-name', null, p.name),
-                      id === lead ? el('span.team-star.on.static', null, '★') : null
+                      // starred only where the lead was a real choice, matching
+                      // where the editor offers the star in the first place
+                      (id === lead && ordered.length > 1 ? el('span.team-star.on.static', null, '★') : null)
                     ]);
                   })
                 : el('span.show-team-none', null, 'Unstaffed'))
