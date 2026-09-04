@@ -1061,11 +1061,14 @@ window.App = window.App || {};
               ordered.length
                 ? ordered.map(id => {
                     const p = App.person(id);
-                    return el('span.team-chip.on.static' + (id === lead ? '.lead' : ''), {
-                      title: p.name + (id === lead ? ' — ' + d.label + ' lead' : '')
-                    }, [
+                    const load = App.personLoad(id);
+                    return el('span.team-chip.static' + (id === lead ? '.lead' : ''), null, [
                       el('span.avatar', { style: { background: p.color } }, App.initials(p.name)),
-                      el('span.team-chip-name', null, p.name),
+                      // same hover as the editor: how spread thin they are, and across what
+                      el('span.team-chip-name', { title: App.personLoadTip(p) }, p.name),
+                      el('span.team-pct' + (load.pct <= 50 ? '.thin' : ''), {
+                        title: load.pct + '% of ' + p.name + ' for this show'
+                      }, load.pct + '%'),
                       // starred only where the lead was a real choice, matching
                       // where the editor offers the star in the first place
                       (id === lead && ordered.length > 1 ? el('span.team-star.on.static', null, '★') : null)

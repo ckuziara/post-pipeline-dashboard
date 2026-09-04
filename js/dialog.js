@@ -1977,6 +1977,14 @@ window.App = window.App || {};
 
        opts.onChange — fires after any assignment change (used to keep a
                        wizard's footer summary honest)  */
+  // one staff picker at a time, held here rather than per-editor so a second
+  // (+) click closes the first menu instead of stacking another over it
+  let staffMenu = null;
+  function closeStaffMenu() {
+    if (staffMenu) { staffMenu.remove(); staffMenu = null; }
+    document.removeEventListener('click', closeStaffMenu);
+  }
+
   App.teamEditor = function (pipeline, team0, opts) {
     opts = opts || {};
     const list = el('.team-list');
@@ -2012,72 +2020,149 @@ window.App = window.App || {};
       changed();
     }
 
-    /* Everyone who could do the department's work is on screen at once, as a
-       chip that toggles: click to put someone on the show, click again to take
-       them off. A dropdown made staffing seven departments seven separate
-       open-read-pick trips for what is nearly always a choice between two or
-       three people — and hid, behind a closed menu, the one thing worth seeing
-       at a glance: who is available and who is already on. */
-    function personChip(dk, p, ids, lead) {
-      const on = ids.includes(p.id);
-      const isLead = lead === p.id;
-      // the star is only a decision once a department has two people on it;
-      // with one, they lead it by simply being the only one there
-      const showStar = on && ids.length > 1;
-      const chip = el('.team-chip' + (on ? '.on' : '') + (isLead ? '.lead' : ''), {
-        tabindex: '0', role: 'button', 'aria-pressed': on ? 'true' : 'false',
-        title: on
-          ? (isLead ? p.name + ' leads ' + App.dept(dk).label + ' — click to take them off the show'
-                    : 'Click to take ' + p.name + ' off this department')
-          : 'Click to put ' + p.name + ' on this department',
-        onclick: () => (on ? unassign(dk, p.id) : assign(dk, p.id)),
-        onkeydown: (e) => {
-          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); on ? unassign(dk, p.id) : assign(dk, p.id); }
-        }
-      }, [
-        el('span.avatar', { style: { background: on ? p.color : 'transparent', color: on ? '#fff' : 'inherit' } }, App.initials(p.name)),
-        el('span.team-chip-name', null, p.name),
-        (showStar
+    /* How much of a person this show can expect to get. Counted live: the
+       shows they're already on, plus this one if they've just been put on it —
+       so the number moves as you staff, which is the whole point of showing it
+       while choosing rather than afterwards. `opts.showId` keeps the show being
+       edited from counting itself twice. */
+    function loadOf(personId) {
+      const others = App.personShows(personId).filter(s => s.id !== opts.showId);
+      const here = App.pipelineDepts(pipe).some(dk => (team[dk] || { ids: [] }).ids.indexOf(personId) >= 0);
+      const count = others.length + (here ? 1 : 0);
+      return { others: others, here: here, count: count, pct: App.availabilityPct(count) };
+    }
+
+    // The hover answer to "can I actually have them?" — the percentage with
+    // the shows it's divided between, named.
+    function loadTip(p) {
+      const l = loadOf(p.id);
+      if (!l.count) return p.name + ' isn’t on any show — fully available';
+      const head = p.name + ' is on ' + l.count + ' show' + (l.count === 1 ? '' : 's') +
+        ' · ' + l.pct + '% of their time each';
+      return [head].concat(l.others.map(s => '• ' + s.name), l.here ? ['• this show'] : []).join('\n');
+    }
+
+    function personChip(dk, id, ids, lead) {
+      const p = App.person(id); if (!p) return null;
+      const isLead = lead === id;
+      const l = loadOf(id);
+      return el('span.team-chip' + (isLead ? '.lead' : ''), null, [
+        el('span.avatar', { style: { background: p.color } }, App.initials(p.name)),
+        // the name carries the hover, so the detail is on the thing you'd point at
+        el('span.team-chip-name', { title: loadTip(p) }, p.name),
+        el('span.team-pct' + (l.pct <= 50 ? '.thin' : ''), {
+          title: l.pct + '% of ' + p.name + ' for this show — they’re on ' + l.count +
+            ' show' + (l.count === 1 ? '' : 's')
+        }, l.pct + '%'),
+        // the star is only a decision once a department has two people on it;
+        // with one, they lead it by simply being the only one there
+        (ids.length > 1
           ? el('button.team-star' + (isLead ? '.on' : ''), {
               type: 'button',
               title: isLead ? p.name + ' leads this department — click to unset' : 'Make ' + p.name + ' the lead',
-              onclick: (e) => { e.stopPropagation(); setLead(dk, p.id); }
+              onclick: (e) => { e.stopPropagation(); setLead(dk, id); }
             }, isLead ? '★' : '☆')
-          : null)
+          : null),
+        el('button.team-chip-x', {
+          type: 'button', title: 'Take ' + p.name + ' off ' + App.dept(dk).label,
+          onclick: (e) => { e.stopPropagation(); unassign(dk, id); }
+        }, '✕')
       ]);
-      return chip;
     }
 
-    function deptBlock(dk) {
+    function deptRow(dk) {
       const d = App.dept(dk);
       const { ids, lead } = App.deptTeam({ team: team }, dk);
       const taskCount = pipe.filter(t => t.dept === dk).length;
       const staff = App.deptStaff(dk);
 
-      const status = ids.length
-        ? el('span.team-dept-count', null, [
-            // the star only means something where a lead was actually chosen —
-            // on a one-person department it would just restate the obvious
-            (lead && ids.length > 1 ? el('span.team-lead-mark', null, '★') : null),
-            ids.length + ' of ' + staff.length
-          ])
-        : el('span.team-dept-count.none', null, staff.length ? 'Unstaffed' : 'No staff');
+      const chips = el('.team-chips');
+      if (!ids.length) {
+        chips.appendChild(el('span.team-none', null,
+          staff.length ? 'Unstaffed' : 'No ' + d.label + ' staff yet'));
+      }
+      ids.forEach(id => chips.appendChild(personChip(dk, id, ids, lead)));
 
-      return el('.team-dept' + (ids.length ? '.staffed' : ''), {
-        // the department's own colour as a left edge: seven cards of identical
-        // shape are much easier to tell apart by colour than by reading each label
-        style: { boxShadow: 'inset 3px 0 0 ' + d.color }
-      }, [
-        el('.team-dept-head', null, [
+      // no (+) where there is nobody left to add — the button would open an
+      // empty menu and say nothing about why
+      const spare = staff.filter(p => !ids.includes(p.id));
+      if (spare.length) {
+        const add = el('button.team-add', {
+          type: 'button',
+          title: 'Add staff to ' + d.label,
+          onclick: (e) => { e.stopPropagation(); openStaffMenu(add, dk); }
+        }, '＋');
+        chips.appendChild(add);
+      }
+
+      return el('.team-row', null, [
+        el('.team-rowdept', null, [
+          el('span.team-dept-dot', { style: { background: d.color } }),
           el('span.team-dept-lbl', null, d.label),
-          el('span.team-dept-tasks', null, taskCount + ' task' + (taskCount === 1 ? '' : 's')),
-          status
+          el('span.team-dept-tasks', null, taskCount + ' task' + (taskCount === 1 ? '' : 's'))
         ]),
-        el('.team-pool', null,
-          staff.length
-            ? staff.map(p => personChip(dk, p, ids, lead))
-            : el('.team-none', null, 'Nobody covers ' + d.label + ' yet — add them under Admin → Team'))
+        chips
       ]);
+    }
+
+    /* The (+) picker. Ticks apply straight to the working copy — nothing here
+       touches the board until the dialog is saved, so there's no reason to
+       batch them, and the row behind the menu updates as you go. */
+    function openStaffMenu(btn, dk) {
+      closeStaffMenu();
+      const menu = el('.sw-menu.staff-menu', { onclick: (e) => e.stopPropagation() });
+      staffMenu = menu;
+      const search = el('input.sw-menu-search', {
+        type: 'text', placeholder: 'Search ' + App.dept(dk).label + ' staff…', spellcheck: 'false'
+      });
+      const list = el('.sw-menu-list');
+
+      const draw = () => {
+        const q = search.value.trim().toLowerCase();
+        const on = App.deptTeam({ team: team }, dk).ids;
+        list.innerHTML = '';
+        const hits = App.deptStaff(dk).filter(p => !q || p.name.toLowerCase().includes(q));
+        if (!hits.length) {
+          list.appendChild(el('.sw-menu-empty', null, search.value.trim()
+            ? 'Nobody matches “' + search.value.trim() + '”'
+            : 'No ' + App.dept(dk).label + ' staff yet — add them under Admin → Team'));
+        }
+        // freest first: the useful default when picking someone for new work
+        hits.slice().sort((a, b) => loadOf(a.id).count - loadOf(b.id).count).forEach(p => {
+          const has = on.includes(p.id);
+          const l = loadOf(p.id);
+          const item = el('button.sw-menu-item' + (has ? '.on' : ''), {
+            type: 'button',
+            title: loadTip(p),
+            onclick: () => { has ? unassign(dk, p.id) : assign(dk, p.id); draw(); }
+          }, [
+            el('span.sw-tick'),
+            el('span.avatar.staff-menu-av', { style: { background: p.color } }, App.initials(p.name)),
+            el('span.sw-menu-name', null, p.name),
+            el('span.sw-menu-meta' + (l.pct <= 50 ? '.thin' : ''), null, l.pct + '%')
+          ]);
+          list.appendChild(item);
+        });
+      };
+      search.addEventListener('input', draw);
+      search.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeStaffMenu(); } });
+      draw();
+
+      menu.appendChild(el('.sw-menu-head', null, [search]));
+      menu.appendChild(list);
+      menu.appendChild(el('.sw-menu-foot', null,
+        el('button.sw-menu-done', { type: 'button', onclick: () => closeStaffMenu() }, 'Done')));
+
+      document.body.appendChild(menu);
+      const r = btn.getBoundingClientRect();
+      requestAnimationFrame(() => {
+        const mh = menu.offsetHeight, mw = menu.offsetWidth;
+        menu.style.top = (r.bottom + mh + 6 > window.innerHeight ? Math.max(8, r.top - mh - 4) : r.bottom + 4) + 'px';
+        menu.style.left = Math.min(r.left, window.innerWidth - mw - 8) + 'px';
+      });
+      // deferred for the same reason the software menu defers it: focusing in
+      // the click's own frame loses the focus back to the button
+      setTimeout(() => { document.addEventListener('click', closeStaffMenu); search.focus(); }, 0);
     }
 
     /* Progress across the whole show, not per department: the question this
@@ -2104,19 +2189,19 @@ window.App = window.App || {};
       summaryBar.style.width = (depts.length ? Math.round((staffed / depts.length) * 100) : 0) + '%';
     }
 
-    const grid = el('.team-grid');
+    const rows = el('.team-rows');
     function render() {
-      grid.innerHTML = '';
+      rows.innerHTML = '';
       const depts = App.pipelineDepts(pipe);
       if (!depts.length) {
-        grid.appendChild(el('.adm-empty', null, 'This pipeline has no departments to staff.'));
+        rows.appendChild(el('.adm-empty', null, 'This pipeline has no departments to staff.'));
       } else {
-        depts.forEach(dk => grid.appendChild(deptBlock(dk)));
+        depts.forEach(dk => rows.appendChild(deptRow(dk)));
       }
       paintSummary();
     }
     list.appendChild(summary);
-    list.appendChild(grid);
+    list.appendChild(rows);
     render();
 
     return {
@@ -2133,7 +2218,10 @@ window.App = window.App || {};
       },
       // the wizard's pipeline can still change behind this page (step 1 is
       // still editable), so the department list is re-derived on the way in
-      setPipeline(p) { pipe = p || []; render(); }
+      setPipeline(p) { pipe = p || []; render(); },
+      // an open picker is fixed to the viewport, so it would outlive the
+      // dialog it was opened from unless the dialog takes it with it
+      closeMenus: closeStaffMenu
     };
   };
 
@@ -2632,11 +2720,11 @@ window.App = window.App || {};
       const step1 = el('div', null, sections);
       const step2 = el('div', { style: { display: 'none' } }, [
         el('.fld-hint.team-intro', null,
-          'Click a name to put them on this show. Where a department has more than one person, star the lead — theirs is the name work falls to first.'),
+          'Add staff to a department with ＋. The percentage is how much of that person this show can expect — hover a name to see what else they’re on. Where a department has more than one person, star the lead.'),
         team.list
       ]);
 
-      const cancelBtn = el('button.btn-ghost', { onclick: () => { editor.closeMenus(); App.modal.close(); } }, 'Cancel');
+      const cancelBtn = el('button.btn-ghost', { onclick: () => { editor.closeMenus(); team.closeMenus(); App.modal.close(); } }, 'Cancel');
       const backBtn = el('button.btn-ghost', { style: { display: 'none' }, onclick: () => goStep(1) }, '← Back');
       const nextBtn = el('button.btn-primary', { onclick: () => { if (validateStep1()) goStep(2); } }, 'Next: Production Team →');
       const createBtn = el('button.btn-primary', { style: { display: 'none' } }, '＋ Create Show');
@@ -2709,7 +2797,7 @@ window.App = window.App || {};
         [step1, step2], footer, 'wide');
       const titleEl = theCard.querySelector('.modal-title');
       const subEl = theCard.querySelector('.modal-subtitle');
-      App.modal.open(theCard, { onClose: keepDraft });
+      App.modal.open(theCard, { onClose: () => { team.closeMenus(); keepDraft(); } });
       App.track.flowStart('Create show');   // after open() for the same reason
     }
   };
@@ -2726,7 +2814,7 @@ window.App = window.App || {};
       App.track.feature('show.teamDialog');
 
       const pipeline = show.pipeline || App.defaultPipelineFor(show.type);
-      const team = App.teamEditor(pipeline, show.team);
+      const team = App.teamEditor(pipeline, show.team, { showId: showId });
 
       const sections = [
         el('.ctx-box.slim', null, [
@@ -2734,18 +2822,19 @@ window.App = window.App || {};
           el('span.ctx-title', null, show.name)
         ]),
         el('.fld-hint.team-intro', null,
-          'Click a name to put them on or take them off. Changing the team sets who new work opens against — episodes already running keep the owners they have.'),
+          'Add or remove staff by department. Changing the team sets who new work opens against — episodes already running keep the owners they have.'),
         team.list
       ];
 
       const footer = [
-        el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
+        el('button.btn-ghost', { onclick: () => { team.closeMenus(); App.modal.close(); } }, 'Cancel'),
         el('button.btn-primary', {
-          onclick: () => { App.setShowTeam(showId, team.read()); App.modal.close(); }
+          onclick: () => { team.closeMenus(); App.setShowTeam(showId, team.read()); App.modal.close(); }
         }, 'Save Team')
       ];
 
-      App.modal.open(card('users', 'Production Team', 'Who works on this show, department by department', sections, footer, 'wide'));
+      App.modal.open(card('users', 'Production Team', 'Who works on this show, department by department', sections, footer, 'wide'),
+        { onClose: () => team.closeMenus() });
     }
   };
 })();

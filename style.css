@@ -2381,54 +2381,48 @@ select.fld { cursor: pointer; }
 .team-summary.done .team-summary-lead { color: #9fe8c4; }
 .team-summary.empty .team-summary-lead { color: var(--text-2); }
 
-/* Two columns on the wide modal: seven departments then fit without the page
-   becoming a scroll, which is what made staffing feel like a long form. */
-.team-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; align-items: start; }
-@media (max-width: 720px) { .team-grid { grid-template-columns: 1fr; } }
-
-.team-dept {
+/* One row per department, laid out like Admin → Software: the department on
+   the left, who's on it as chips, and a (+) to add. Only assigned people are
+   listed, so a row is a short answer rather than the whole directory. */
+.team-rows {
   border: 1px solid var(--border); border-radius: 10px;
-  background: var(--surface-2); padding: 9px 11px 10px 13px;
-  transition: border-color .15s, background .15s;
+  background: var(--surface-2); overflow: hidden;
 }
-.team-dept.staffed { border-color: var(--border-2); background: var(--surface-3); }
-.team-dept-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
-.team-dept-lbl { font-size: 12px; font-weight: 700; }
+.team-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 9px 13px; border-top: 1px solid var(--border);
+}
+.team-row:first-child { border-top: 0; }
+/* wider than Software's 150px because this column carries the task count as
+   well as the name — at 150 "Post Operations" wrapped onto two lines */
+.team-rowdept { flex: none; width: 178px; display: flex; align-items: center; gap: 8px; }
+.team-dept-lbl { font-size: 12.5px; font-weight: 700; white-space: nowrap; }
 .team-dept-tasks { font-size: 10px; color: var(--text-3); flex: none; }
-.team-dept-count {
-  font-size: 10.5px; font-weight: 700; color: var(--text-2);
-  margin-left: auto; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px;
-}
-.team-dept-count.none { color: var(--text-3); font-weight: 500; }
-.team-lead-mark { color: #fdab3d; font-size: 9px; }
-.team-pool { display: flex; flex-wrap: wrap; gap: 6px; }
-.team-none { font-size: 10.5px; color: var(--text-3); line-height: 1.5; }
+.team-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.team-none { font-size: 11.5px; color: var(--text-3); font-style: italic; }
 
-/* The whole chip is the switch. Off is an outline holding a hollow avatar —
-   present but not chosen; on fills in, with the person's own colour arriving
-   in the avatar as the confirmation that they're on the show. */
+/* A person on the show: their own colour in the avatar, the share of their
+   time this show gets, the star where the department has a choice of lead. */
 .team-chip {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 9px 3px 3px; border-radius: 999px; cursor: pointer;
-  background: transparent; border: 1px dashed var(--border-2); color: var(--text-3);
-  transition: background .13s, border-color .13s, color .13s;
+  padding: 3px 7px 3px 3px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-2));
+  color: var(--text);
 }
-.team-chip:hover { border-color: var(--text-3); color: var(--text-2); background: var(--hover); }
-.team-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.team-chip.on {
-  border-style: solid; border-color: var(--border-2);
-  background: var(--surface); color: var(--text);
+.team-chip.lead { border-color: rgba(253,171,61,.55); background: rgba(253,171,61,.13); }
+.team-chip .avatar { width: 20px; height: 20px; font-size: 8px; }
+.team-chip-name { font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: help; }
+
+/* Availability: a quiet annotation until it drops to half or less, which is
+   the point at which "could someone else do this" is worth asking. */
+.team-pct {
+  flex: none; font-size: 10px; font-weight: 700; cursor: help;
+  padding: 1px 5px; border-radius: 999px;
+  background: rgba(255,255,255,.07); color: var(--text-3);
 }
-.team-chip.on:hover { border-color: var(--text-3); }
-.team-chip.lead {
-  border-color: rgba(253,171,61,.55); background: rgba(253,171,61,.12); color: #ffe0b2;
-}
-.team-chip .avatar {
-  width: 20px; height: 20px; font-size: 8px;
-  box-shadow: inset 0 0 0 1px var(--border-2);
-}
-.team-chip.on .avatar { box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); }
-.team-chip-name { font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.team-pct.thin { background: rgba(253,171,61,.16); color: #ffce8e; }
+
 .team-star {
   flex: none; background: none; border: 0; padding: 0 0 0 1px; cursor: pointer;
   color: var(--text-3); font-size: 11px; line-height: 1;
@@ -2436,10 +2430,27 @@ select.fld { cursor: pointer; }
 .team-star:hover { color: #ffd479; }
 .team-star.on { color: #fdab3d; }
 .team-star:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.team-chip-x {
+  flex: none; border: none; background: none; padding: 0 2px; color: var(--text-3);
+  font: inherit; font-size: 10px; cursor: pointer; line-height: 1;
+}
+.team-chip-x:hover { color: var(--danger); }
+
+.team-add {
+  flex: none; width: 26px; height: 26px; border-radius: 50%;
+  border: 1px dashed var(--border-2); background: none; color: var(--text-2);
+  font: inherit; font-size: 12px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.team-add:hover { border-style: solid; border-color: var(--accent); color: var(--text); }
+.team-add:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* the staff picker is the software picker with a face on each row */
+.staff-menu-av { width: 20px; height: 20px; font-size: 8px; flex: none; }
+.sw-menu-meta.thin { color: #ffce8e; }
+
 /* the read-only roster in Admin is the same chip with nothing to click */
-.team-chip.static { cursor: default; padding-right: 9px; }
-.team-chip.static:hover { border-color: var(--border-2); color: var(--text); background: var(--surface); }
-.team-chip.static.lead:hover { border-color: rgba(253,171,61,.55); background: rgba(253,171,61,.12); color: #ffe0b2; }
+.team-chip.static .team-chip-name { cursor: default; }
 .team-star.static { cursor: default; padding: 0; }
 
 /* team roster shown under an expanded show row in Admin → Shows */

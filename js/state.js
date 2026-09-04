@@ -699,6 +699,34 @@ window.App = window.App || {};
     return App.deptStaff(dept).map(p => p.id);
   };
 
+  /* ---- how spread thin someone already is ----
+     Which active shows a person is on. Counted per show, not per department:
+     someone covering both Audio and Music on one production is on one show,
+     not two. Archived shows release their crew, so they don't count. */
+  App.personShows = function (personId) {
+    return App.activeShows().filter(s =>
+      App.showDepts(s).some(dk => App.deptTeam(s, dk).ids.includes(personId)));
+  };
+
+  /* Availability as the share of themselves each show gets: one show has all
+     of someone, two shows have half of them each. Someone on nothing reads as
+     100% rather than as a share of no work — they're free, not idle-at-zero. */
+  App.availabilityPct = (showCount) => Math.round(100 / Math.max(1, showCount));
+
+  App.personLoad = function (personId) {
+    const shows = App.personShows(personId);
+    return { shows: shows, count: shows.length, pct: App.availabilityPct(shows.length) };
+  };
+
+  // the hover answer to "can I actually have them?" — the share, and the
+  // shows it's divided between, named
+  App.personLoadTip = function (p) {
+    const l = App.personLoad(p.id);
+    if (!l.count) return p.name + ' isn’t on any show — fully available';
+    return [p.name + ' is on ' + l.count + ' show' + (l.count === 1 ? '' : 's') +
+      ' · ' + l.pct + '% of their time each'].concat(l.shows.map(s => '• ' + s.name)).join('\n');
+  };
+
   // headcount across the whole show — one person can lead two departments and
   // is still one person on the production
   App.showTeamSize = function (show) {
