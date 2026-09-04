@@ -403,11 +403,30 @@ window.App = window.App || {};
           ])
         ]),
         el('button.ghost', { style: { borderColor: 'rgba(0,200,117,.5)', color: '#6ee0aa' }, onclick: () => App.setStatus(x.ep.id, x.su.key, 'approved') }, '✓ Approve'),
-        el('button.ghost', { style: { borderColor: 'rgba(253,171,61,.5)', color: '#ffce8e' }, onclick: () => App.setStatus(x.ep.id, x.su.key, 'in_progress') }, '↩ Send back')
+        revisionButton(x.ep, x.su)
       ]));
     });
     wrap.appendChild(list);
     return wrap;
+  }
+
+  /* Reviews tab's "Send back", replaced: a Director spends one of the task's
+     budgeted revisions rather than bouncing it for an open-ended redo. The
+     count on the button is the whole point — it's what tells a Director this
+     is the last one before they need another way to fix things. Disabled at
+     zero rather than hidden, so a task with no revisions left still shows
+     why the option isn't there. */
+  function revisionButton(ep, su) {
+    const { max, used, left } = App.taskRevisions(ep, su.key);
+    const label = max ? '↺ Request Revision (' + left + ' left)' : '↺ No revisions budgeted';
+    return el('button.ghost', {
+      disabled: left <= 0,
+      style: { borderColor: 'rgba(253,171,61,.5)', color: '#ffce8e' },
+      title: max
+        ? (left ? 'Revision ' + (used + 1) + ' of ' + max : 'All ' + max + ' revision' + (max === 1 ? '' : 's') + ' already used')
+        : 'This task has no revisions configured in its pipeline',
+      onclick: () => { if (left > 0) App.requestRevision(ep.id, su.key); }
+    }, label);
   }
 
   // ---- helpers ----

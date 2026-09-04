@@ -505,6 +505,38 @@ window.App = window.App || {};
     return (st === 'in_progress' || st === 'review') && App.isBlocked(ep, key);
   };
 
+  /* ---------------------------------------------------------------------------
+     Revisions — a task's budget for being sent back.
+
+     A pipeline task optionally carries `maxRev` (how many times it can be
+     bounced) and `revDays` (one duration per revision, since a first pass
+     tends to need longer than a polish). Neither is squeezable or part of the
+     nominal schedule — a revision is contingency, not planned work, so it
+     only ever costs real time when a Director actually spends it (see
+     App.requestRevision in main.js). What's budgeted but never spent is left
+     visible rather than silently forgotten — see revisionGhostDays below.
+  --------------------------------------------------------------------------- */
+  // how many of a task's budgeted revisions this episode has actually spent
+  App.revisionsUsed = function (ep, key) { return (ep.revisions && ep.revisions[key]) || 0; };
+  App.taskRevisions = function (ep, key) {
+    const t = App.pTask(ep, key);
+    const max = Math.max(0, (t && t.maxRev) || 0);
+    const days = (t && t.revDays) || [];
+    const used = App.revisionsUsed(ep, key);
+    return { max, days, used, left: Math.max(0, max - used) };
+  };
+  /* Revision time that was budgeted and never spent, still on the books after
+     the task closed out — the "it never needed the worst case" slack a
+     producer might want to see at a glance, and later reclaim. Nothing to
+     show for a task still open (it might yet use them) or once the producer
+     has explicitly cleared it (see App.clearRevisionGhost). */
+  App.revisionGhostDays = function (ep, su) {
+    if (su.status !== 'approved') return 0;
+    if (ep.revisionsCleared && ep.revisionsCleared[su.key]) return 0;
+    const { days, used } = App.taskRevisions(ep, su.key);
+    return days.slice(used).reduce((a, n) => a + (n || 0), 0);
+  };
+
   /* What a proposed reschedule of one task would break.
 
      Dependencies are an ordering promise: a task may not start until everything

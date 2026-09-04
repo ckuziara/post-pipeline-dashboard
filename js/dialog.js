@@ -1619,7 +1619,6 @@ window.App = window.App || {};
     }));
 
     // whole weeks read better than "28d" for the long waits a lag is used for
-    const lagLabel = (n) => (n % 7 === 0 ? (n / 7) + 'w' : n + 'd');
 
     /* Row number that becomes an insert button on hover, so a task can be added
        anywhere in the order rather than only appended. Same 20px footprint
@@ -1749,7 +1748,8 @@ window.App = window.App || {};
         el('span.pipe-name-ro', null, t.name || '—'),
         (t.vc ? App.icon('lock', { cls: 'pipe-vc-tag', title: 'LucidLink version control enabled' }) : null),
         el('span.pipe-deps-sum', { title: tip(depNames.join(', ')) }, depNames.length ? '◷ ' + depNames.join(', ') : ''),
-        (t.lag ? el('span.pipe-lag', { title: tip('Waits ' + t.lag + ' days after ' + (depNames.join(', ') || 'its dependency') + ' finishes') }, '+' + lagLabel(t.lag)) : null),
+        (t.maxRev ? el('span.pipe-rev', { title: tip(t.maxRev + ' revision' + (t.maxRev === 1 ? '' : 's') + ' budgeted — ' +
+          (t.revDays || []).map((d, ri) => '#' + (ri + 1) + ': ' + d + 'd').join(', ')) }, '↺' + t.maxRev) : null),
         el('span.pipe-dur', { title: tip('Nominal ' + t.days + ' days · minimum ' + t.minDays) }, t.days + 'd'),
         dragGrip(i, t, '.hov')
       ]);
@@ -1786,6 +1786,44 @@ window.App = window.App || {};
         onclick: (e) => { e.stopPropagation(); t.vc = !t.vc; renderPipe(); onChange(); }
       }, App.icon('lock')) : null;
 
+      /* Revisions: how many times this task can be sent back once it reaches
+         Review, and how many days each one is worth — a first pass usually
+         needs longer than a polish, so each revision gets its own count
+         rather than sharing one number. Raising Max Revisions grows the list
+         with a 1-day default; lowering it truncates from the end, so an
+         existing revision's day count is never disturbed by a change to the
+         ones after it. */
+      const revDaysRow = el('.pipe-rev-days');
+      const paintRevDays = () => {
+        revDaysRow.innerHTML = '';
+        (t.revDays || []).forEach((days, ri) => {
+          const sel = el('select.fld.pipe-rev-sel', {
+            title: tip('Days needed for revision ' + (ri + 1)),
+            onchange: (e) => { t.revDays[ri] = parseInt(e.target.value, 10) || 1; onChange(); }
+          });
+          for (let d = 1; d <= 14; d++) {
+            const o = document.createElement('option'); o.value = String(d); o.textContent = d + 'd';
+            if (d === days) o.selected = true; sel.appendChild(o);
+          }
+          revDaysRow.appendChild(el('.pipe-rev-day', null, [el('span.pipe-rev-day-lbl', null, '#' + (ri + 1)), sel]));
+        });
+      };
+      paintRevDays();
+      const maxRevFld = selectOnFocus(el('input.fld.fld-num', {
+        type: 'number', value: String(t.maxRev || 0), min: '0', max: '9',
+        onchange: (e) => {
+          const n = Math.max(0, Math.min(9, parseInt(e.target.value, 10) || 0));
+          t.maxRev = n;
+          t.revDays = t.revDays || [];
+          while (t.revDays.length < n) t.revDays.push(1);
+          t.revDays.length = n;
+          // the row itself gains or loses the whole revisions block, not just
+          // a value inside it — a full repaint, same as add/remove dependency
+          renderPipe();
+          onChange();
+        }
+      }));
+
       return el('.pipe-row.editing', null, [
         leadCell(i),
         dragGrip(i, t),
@@ -1795,10 +1833,14 @@ window.App = window.App || {};
         deptSel,
         el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'days'), numFld(t, 'days', 1)]),
         el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'min'), numFld(t, 'minDays', 1)]),
-        // days to wait after the dependencies finish before this task starts
-        el('.pipe-days', { title: tip('Days to wait after this task’s dependencies finish before it starts — 0 = start the next day') },
-          [el('span.pipe-days-lbl', null, 'wait'), numFld(t, 'lag', 0)]),
+        // how many times this task may be sent back from Review, and for how long
+        el('.pipe-days', { title: tip('Maximum revisions this task can be sent back for from the Reviews tab') },
+          [el('span.pipe-days-lbl', null, 'max rev'), maxRevFld]),
         depsBox,
+        (t.maxRev ? el('.pipe-rev-block', { style: { gridColumn: '1 / -1' } }, [
+          el('span.pipe-rev-block-lbl', null, 'Days per revision'),
+          revDaysRow
+        ]) : null),
         el('.pipe-actions', null, [
           vcToggle,
           el('button.btn-done', {
@@ -2245,12 +2287,12 @@ window.App = window.App || {};
          invite saving a copy of the standard pipeline under a new name.
 
          Compared through a normaliser, not raw JSON: the editor stamps
-         optional fields (vc, lag) onto tasks it touches, and a task carrying
-         `vc: false` is not an adjustment. */
+         optional fields (vc, lag, revisions) onto tasks it touches, and a
+         task carrying `vc: false` is not an adjustment. */
       const normPipe = (p) => JSON.stringify((p || []).map(t => ({
         key: t.key, name: (t.name || '').trim(), dept: t.dept,
         days: t.days, minDays: t.minDays, deps: t.deps.slice().sort(),
-        lag: t.lag || 0, vc: !!t.vc
+        lag: t.lag || 0, vc: !!t.vc, maxRev: t.maxRev || 0, revDays: (t.revDays || []).slice()
       })));
       const baselinePipe = () => {
         const preset = presetSel.value && (App.state.data.pipelinePresets || []).find(p => p.id === presetSel.value);
@@ -2426,11 +2468,13 @@ window.App = window.App || {};
             const plan = episodePlan();
             const epStarts = plan.map(p => p.start), epLives = plan.map(p => p.live);
             // keep the optional flags the editor can set — dropping them here
-            // silently discarded a task's lag and its version-control toggle
+            // silently discarded a task's lag, its version-control toggle and
+            // its revision budget
             const pipeline = pipe.map(t => {
               const o = { key: t.key, name: t.name.trim() || t.key, dept: t.dept, days: t.days, minDays: t.minDays, deps: t.deps.slice() };
               if (t.lag) o.lag = t.lag;
               if (t.vc) o.vc = true;
+              if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); }
               return o;
             });
             App.createShow({ name, code, type: typeSel.value, epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives });

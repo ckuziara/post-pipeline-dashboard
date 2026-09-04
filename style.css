@@ -548,6 +548,8 @@ button.ghost {
 button.ghost:hover { background: var(--hover); color: var(--text); }
 button.ghost.active { background: rgba(155,91,255,.16); border-color: #9b5bff; color: #cbb2ff; }
 button.ghost.active:hover { background: rgba(155,91,255,.24); }
+button.ghost:disabled { opacity: .45; cursor: default; filter: grayscale(.4); }
+button.ghost:disabled:hover { background: transparent; }
 
 /* ----------------------------------------------------------------- toolbar */
 #toolbar {
@@ -749,6 +751,26 @@ button.ghost.active:hover { background: rgba(155,91,255,.24); }
 /* Quarters and wider: the bar is a shape, not a label. No padding to reserve
    for text that isn't there, and a floor so a short task stays visible. */
 .bar.bare { padding: 0; min-width: 2px; }
+/* Unused revision budget, left as a grey tail after an approved bar rather
+   than quietly dropped — see App.revisionGhostDays. Not a real scheduled
+   span (nothing else is drawn or clamped against it), so it's styled to
+   read as slack, not as work: hatched, dashed, no fill. The ✕ only shows on
+   hover, same as the rest of the app's dismiss controls. */
+.rev-ghost {
+  position: absolute; top: 50%; transform: translateY(-50%); height: 17px;
+  border-radius: 4px; z-index: 1; cursor: default;
+  background: repeating-linear-gradient(45deg, rgba(255,255,255,.08) 0, rgba(255,255,255,.08) 4px, rgba(255,255,255,.03) 4px, rgba(255,255,255,.03) 8px);
+  border: 1px dashed rgba(255,255,255,.22);
+  display: flex; align-items: center; justify-content: flex-end; padding: 0 3px;
+}
+.g-row.sub .rev-ghost { height: 12px; border-radius: 3px; }
+.rev-ghost:hover { border-color: rgba(255,255,255,.4); }
+.rev-ghost-x {
+  font-size: 8px; color: var(--text-3); opacity: 0; transition: opacity .12s;
+  cursor: pointer; line-height: 1; padding: 1px 2px; border-radius: 3px;
+}
+.rev-ghost:hover .rev-ghost-x { opacity: 1; }
+.rev-ghost-x:hover { background: rgba(255,255,255,.15); color: var(--text); }
 /* End-of-episode milestones (Delivery Date, Live Date). Each claims its own
    day column so it reads as a dated event on the calendar — red D for the
    delivery, blue LD for going live — rather than a marker floating beside the
@@ -2312,6 +2334,25 @@ select.fld { cursor: pointer; }
   background: rgba(253,171,61,.14); border: 1px solid rgba(253,171,61,.3);
   border-radius: 12px; padding: 2px 8px;
 }
+/* a task's revision budget, read the same way as the old wait tag it replaced */
+.pipe-rev {
+  flex: none; font-size: 10.5px; font-weight: 700; color: #cbb2ff;
+  background: rgba(155,91,255,.14); border: 1px solid rgba(155,91,255,.32);
+  border-radius: 12px; padding: 2px 8px;
+}
+/* Per-revision day pickers — dropped onto their own full-width row (see
+   `gridColumn: '1 / -1'` in editRow) rather than squeezed into the row's own
+   fixed grid columns, since the number of dropdowns varies with Max Revisions
+   and a fixed column has no give. */
+.pipe-rev-block {
+  display: flex; flex-direction: column; gap: 5px; margin-top: 2px;
+  padding-top: 8px; border-top: 1px dashed var(--border-2);
+}
+.pipe-rev-block-lbl { font-size: 9px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .3px; }
+.pipe-rev-days { display: flex; flex-wrap: wrap; gap: 8px; }
+.pipe-rev-day { display: flex; align-items: center; gap: 5px; }
+.pipe-rev-day-lbl { font-size: 10.5px; font-weight: 700; color: var(--text-3); }
+.pipe-rev-sel { width: 56px; padding: 4px 6px; font-size: 11px; }
 /* mandatory end-of-episode milestones — listed, but nothing to interact with */
 /* ---- drag to reorder (pipeline editor) ----
    The grip is the only grab point, so a click anywhere else on the row still

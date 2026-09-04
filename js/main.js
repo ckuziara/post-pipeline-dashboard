@@ -328,6 +328,73 @@ window.App = window.App || {};
     App.toast(n + ' rescheduled' + (extra.length ? ' — ' + extra.join(' · ') : ''), extra.length > 0);
   };
 
+  /* "Request Revision" — the Reviews tab's replacement for Send Back. A task
+     sent back for rework is charged against its own budget of revisions (see
+     App.taskRevisions in state.js): the department gets back exactly the days
+     that revision was configured for, not however long the drag happens to
+     be, and once the budget is spent the button simply stops offering more.
+
+     The date change goes through the same clash/live-date/delivery-date
+     rules a drag gets (App.scheduleImpact) — sending a task back is still a
+     stretch of its due date, and the schedule doesn't get to find out about
+     a broken promise any later just because a button did it instead of a
+     mouse. */
+  App.requestRevision = function (epId, key, opts) {
+    const g = guardEdit(epId, key); if (!g) return;
+    const { max, days, used, left } = App.taskRevisions(g.ep, key);
+    if (left <= 0) {
+      App.toast(max ? 'No revisions left for “' + g.su.name + '”' : '“' + g.su.name + '” has no revisions budgeted', true);
+      return;
+    }
+
+    const revDays = days[used] || 1;
+    const newDue = App.shiftIso(g.su.due, revDays);
+    const impact = App.scheduleImpact(g.ep, key, g.su.start, newDue);
+    if (impact.deny) { App.toast(impact.deny.text + ' — nothing changed', true); return; }
+    if ((impact.clashes.length || impact.delivery) && !(opts && opts.confirmed) && App.impactDialog) {
+      App.impactDialog.open(g.ep, key, impact, {
+        onConfirm: (shiftDelivery) => App.requestRevision(epId, key, { confirmed: true, shiftDelivery }),
+        onCancel: () => App.render()
+      });
+      return;
+    }
+
+    const shiftDelivery = !!(opts && opts.shiftDelivery && impact.delivery);
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.dates = e.dates || {};
+      e.dates[key] = { start: g.su.start, due: newDue };
+      e.statuses[key] = 'in_progress';
+      e.revisions = e.revisions || {};
+      e.revisions[key] = used + 1;
+      if (shiftDelivery) {
+        e.milestones = e.milestones || {};
+        e.milestones[impact.delivery.ms.key] = impact.delivery.suggest;
+      }
+      App.refreshReadiness(e);
+    }, 'the revision');
+
+    App.track.audit('task.revision', {
+      episode: g.ep.code, task: g.su.name, revision: used + 1, of: max,
+      days: revDays, due: g.su.due + '→' + newDue
+    });
+    const leftNow = left - 1;
+    App.toast('Revision ' + (used + 1) + ' of ' + max + ' requested for “' + g.su.name + '” — due ' + App.fmtDate(newDue) +
+      (leftNow > 0 ? ' · ' + leftNow + ' left' : ' · none left'));
+  };
+
+  /* Dismiss the grey "unused revisions" mark a task leaves on the timeline
+     when it's approved without spending its whole budget. Purely cosmetic —
+     it never touched the schedule, so clearing it doesn't either. */
+  App.clearRevisionGhost = function (epId, key) {
+    const ep = App.state.data.episodes.find(x => x.id === epId); if (!ep) return;
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.revisionsCleared = e.revisionsCleared || {};
+      e.revisionsCleared[key] = true;
+    }, 'clearing unused revisions');
+  };
+
   /* Move a milestone, or hand the delivery date back to the live date.
 
      `iso` null clears a hand-picked delivery date, returning it to `lead` days
@@ -732,12 +799,14 @@ window.App = window.App || {};
         name,
         type: preset.type === 'live_action' ? 'live_action' : 'animation',
         // carry the optional flags the editor can set — dropping them here
-        // silently discarded a task's lag and its version-control toggle
+        // silently discarded a task's lag, its version-control toggle and
+        // its revision budget
         pipeline: preset.pipeline.map(t => {
           const o = { key: t.key, name: (t.name || '').trim() || t.key, dept: t.dept,
                       days: t.days, minDays: t.minDays, deps: t.deps.slice() };
           if (t.lag) o.lag = t.lag;
           if (t.vc) o.vc = true;
+          if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); }
           return o;
         })
       };
