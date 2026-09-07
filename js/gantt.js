@@ -427,6 +427,20 @@ window.App = window.App || {};
           return;
         }
 
+        // the ✕ on a "leftover revisions" ghost — dismiss, not open anything
+        const ghostX = e.target.closest('.rev-ghost-x');
+        if (ghostX) {
+          e.stopPropagation();
+          const g = ghostX.closest('.rev-ghost');
+          if (g && g.dataset.episodeId && g.dataset.suKey && App.clearRevisionGhost) {
+            App.clearRevisionGhost(g.dataset.episodeId, g.dataset.suKey);
+          }
+          return;
+        }
+        // the ghost's own body — not interactive otherwise, just don't fall
+        // through to a click on the track underneath it
+        if (e.target.closest('.rev-ghost')) { e.stopPropagation(); return; }
+
         const bar = e.target.closest('.bar');
         const label = e.target.closest('.g-label');
 
@@ -1213,6 +1227,30 @@ window.App = window.App || {};
       sbar.dataset.suKey = su.key;
       attachBar(sbar, { color: st.color, label: st.label }, false);
       track.appendChild(sbar);
+
+      /* Unused revision budget, left visible rather than forgotten: a task
+         approved without spending every revision it was allowed banked real
+         slack, and this is where that shows up — a grey tail right after the
+         bar, sized to the days it never needed. Cosmetic only: it's not part
+         of `su.due` or the schedule, so drawing or dismissing it never moves
+         anything else. Skipped at coarse zoom for the same reason the
+         milestone marks are — a sliver of grey says nothing at that scale. */
+      if (!bare) {
+        const ghostDays = App.revisionGhostDays(ep, su);
+        if (ghostDays > 0) {
+          const gStart = App.shiftIso(su.due, 1), gEnd = App.shiftIso(su.due, ghostDays);
+          const gStyle = {};
+          setBarPos(gStyle, axis, xOf, gStart, gEnd);
+          const ghost = el('.rev-ghost', {
+            title: ghostDays + ' unused revision day' + (ghostDays === 1 ? '' : 's') + ' — approved without needing ' +
+                   'every revision it was budgeted',
+            style: gStyle
+          }, el('span.rev-ghost-x', { title: 'Remove from the timeline' }, '✕'));
+          ghost.dataset.episodeId = ep.id;
+          ghost.dataset.suKey = su.key;
+          track.appendChild(ghost);
+        }
+      }
       return sbar;
     },
 

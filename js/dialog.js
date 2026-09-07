@@ -1619,7 +1619,6 @@ window.App = window.App || {};
     }));
 
     // whole weeks read better than "28d" for the long waits a lag is used for
-    const lagLabel = (n) => (n % 7 === 0 ? (n / 7) + 'w' : n + 'd');
 
     /* Row number that becomes an insert button on hover, so a task can be added
        anywhere in the order rather than only appended. Same 20px footprint
@@ -1749,7 +1748,8 @@ window.App = window.App || {};
         el('span.pipe-name-ro', null, t.name || '—'),
         (t.vc ? App.icon('lock', { cls: 'pipe-vc-tag', title: 'LucidLink version control enabled' }) : null),
         el('span.pipe-deps-sum', { title: tip(depNames.join(', ')) }, depNames.length ? '◷ ' + depNames.join(', ') : ''),
-        (t.lag ? el('span.pipe-lag', { title: tip('Waits ' + t.lag + ' days after ' + (depNames.join(', ') || 'its dependency') + ' finishes') }, '+' + lagLabel(t.lag)) : null),
+        (t.maxRev ? el('span.pipe-rev', { title: tip(t.maxRev + ' revision' + (t.maxRev === 1 ? '' : 's') + ' budgeted — ' +
+          (t.revDays || []).map((d, ri) => '#' + (ri + 1) + ': ' + d + 'd').join(', ')) }, '↺' + t.maxRev) : null),
         el('span.pipe-dur', { title: tip('Nominal ' + t.days + ' days · minimum ' + t.minDays) }, t.days + 'd'),
         dragGrip(i, t, '.hov')
       ]);
@@ -1786,6 +1786,41 @@ window.App = window.App || {};
         onclick: (e) => { e.stopPropagation(); t.vc = !t.vc; renderPipe(); onChange(); }
       }, App.icon('lock')) : null;
 
+      /* Revisions: how many times this task can be sent back once it reaches
+         Review, and how many days each one is worth — a first pass usually
+         needs longer than a polish, so each revision gets its own count
+         rather than sharing one number. Raising Max Revisions grows the list
+         with a 1-day default; lowering it truncates from the end, so an
+         existing revision's day count is never disturbed by a change to the
+         ones after it. */
+      const revDaysRow = el('.pipe-rev-days');
+      const paintRevDays = () => {
+        revDaysRow.innerHTML = '';
+        (t.revDays || []).forEach((days, ri) => {
+          const inp = selectOnFocus(el('input.fld.fld-num.pipe-rev-sel', {
+            type: 'number', value: String(days), min: '1', max: '365',
+            title: tip('Days needed for revision ' + (ri + 1)),
+            onchange: (e) => { t.revDays[ri] = Math.max(1, parseInt(e.target.value, 10) || 1); onChange(); }
+          }));
+          revDaysRow.appendChild(el('.pipe-rev-day', null, [el('span.pipe-rev-day-lbl', null, '#' + (ri + 1)), inp]));
+        });
+      };
+      paintRevDays();
+      const maxRevFld = selectOnFocus(el('input.fld.fld-num', {
+        type: 'number', value: String(t.maxRev || 0), min: '0', max: '9',
+        onchange: (e) => {
+          const n = Math.max(0, Math.min(9, parseInt(e.target.value, 10) || 0));
+          t.maxRev = n;
+          t.revDays = t.revDays || [];
+          while (t.revDays.length < n) t.revDays.push(1);
+          t.revDays.length = n;
+          // the row itself gains or loses the whole revisions block, not just
+          // a value inside it — a full repaint, same as add/remove dependency
+          renderPipe();
+          onChange();
+        }
+      }));
+
       return el('.pipe-row.editing', null, [
         leadCell(i),
         dragGrip(i, t),
@@ -1795,10 +1830,14 @@ window.App = window.App || {};
         deptSel,
         el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'days'), numFld(t, 'days', 1)]),
         el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'min'), numFld(t, 'minDays', 1)]),
-        // days to wait after the dependencies finish before this task starts
-        el('.pipe-days', { title: tip('Days to wait after this task’s dependencies finish before it starts — 0 = start the next day') },
-          [el('span.pipe-days-lbl', null, 'wait'), numFld(t, 'lag', 0)]),
+        // how many times this task may be sent back from Review, and for how long
+        el('.pipe-days', { title: tip('Maximum revisions this task can be sent back for from the Reviews tab') },
+          [el('span.pipe-days-lbl', null, 'max rev'), maxRevFld]),
         depsBox,
+        (t.maxRev ? el('.pipe-rev-block', { style: { gridColumn: '1 / -1' } }, [
+          el('span.pipe-rev-block-lbl', null, 'Days per revision'),
+          revDaysRow
+        ]) : null),
         el('.pipe-actions', null, [
           vcToggle,
           el('button.btn-done', {
@@ -1926,6 +1965,266 @@ window.App = window.App || {};
     return api;
   };
 
+  /* ---- production team editor (shared component) ----
+     Staffs a show department by department. Driven by the show's own pipeline,
+     so only departments with work to do are listed, and each is offered the
+     same staff the task Owner picker would — a lead who can't own that
+     department's tasks would be a lead in name only.
+
+     Used twice: as step 2 of Add Show (before the show exists) and by Admin →
+     Shows to re-staff a running production. Both hold the same working copy
+     shape, so the two can never drift apart.
+
+       opts.onChange — fires after any assignment change (used to keep a
+                       wizard's footer summary honest)  */
+  // one staff picker at a time, held here rather than per-editor so a second
+  // (+) click closes the first menu instead of stacking another over it
+  let staffMenu = null;
+  function closeStaffMenu() {
+    if (staffMenu) { staffMenu.remove(); staffMenu = null; }
+    document.removeEventListener('click', closeStaffMenu);
+  }
+
+  App.teamEditor = function (pipeline, team0, opts) {
+    opts = opts || {};
+    const list = el('.team-list');
+    // working copy: nothing is written to the show until the caller saves
+    const team = {};
+    Object.keys(team0 || {}).forEach(dk => {
+      const t = team0[dk] || {};
+      team[dk] = { ids: (t.ids || []).slice(), lead: t.lead || null };
+    });
+    let pipe = pipeline || [];
+
+    const slot = (dk) => (team[dk] = team[dk] || { ids: [], lead: null });
+    const changed = () => { render(); if (opts.onChange) opts.onChange(); };
+
+    function assign(dk, id) {
+      const s = slot(dk);
+      if (s.ids.includes(id)) return;
+      s.ids.push(id);
+      // the first person on a department leads it — so the star is already
+      // somewhere sensible by the time a second person makes it a choice
+      if (!s.lead) s.lead = id;
+      changed();
+    }
+    function unassign(dk, id) {
+      const s = slot(dk);
+      s.ids = s.ids.filter(x => x !== id);
+      if (s.lead === id) s.lead = s.ids.length === 1 ? s.ids[0] : null;
+      changed();
+    }
+    function setLead(dk, id) {
+      const s = slot(dk);
+      s.lead = s.lead === id ? null : id;   // starring the lead again clears it
+      changed();
+    }
+
+    /* How much of a person this show can expect to get. Counted live: the
+       shows they're already on, plus this one if they've just been put on it —
+       so the number moves as you staff, which is the whole point of showing it
+       while choosing rather than afterwards. `opts.showId` keeps the show being
+       edited from counting itself twice. */
+    function loadOf(personId) {
+      const others = App.personShows(personId).filter(s => s.id !== opts.showId);
+      const here = App.pipelineDepts(pipe).some(dk => (team[dk] || { ids: [] }).ids.indexOf(personId) >= 0);
+      const count = others.length + (here ? 1 : 0);
+      return { others: others, here: here, count: count, pct: App.availabilityPct(count) };
+    }
+
+    // The hover answer to "can I actually have them?" — the percentage with
+    // the shows it's divided between, named.
+    function loadTip(p) {
+      const l = loadOf(p.id);
+      if (!l.count) return p.name + ' isn’t on any show — fully available';
+      const head = p.name + ' is on ' + l.count + ' show' + (l.count === 1 ? '' : 's') +
+        ' · ' + l.pct + '% of their time each';
+      return [head].concat(l.others.map(s => '• ' + s.name), l.here ? ['• this show'] : []).join('\n');
+    }
+
+    function personChip(dk, id, ids, lead) {
+      const p = App.person(id); if (!p) return null;
+      const isLead = lead === id;
+      const l = loadOf(id);
+      return el('span.team-chip' + (isLead ? '.lead' : ''), null, [
+        el('span.avatar', { style: { background: p.color } }, App.initials(p.name)),
+        // the name carries the hover, so the detail is on the thing you'd point at
+        el('span.team-chip-name', { title: loadTip(p) }, p.name),
+        el('span.team-pct' + (l.pct <= 50 ? '.thin' : ''), {
+          title: l.pct + '% of ' + p.name + ' for this show — they’re on ' + l.count +
+            ' show' + (l.count === 1 ? '' : 's')
+        }, l.pct + '%'),
+        // the star is only a decision once a department has two people on it;
+        // with one, they lead it by simply being the only one there
+        (ids.length > 1
+          ? el('button.team-star' + (isLead ? '.on' : ''), {
+              type: 'button',
+              title: isLead ? p.name + ' leads this department — click to unset' : 'Make ' + p.name + ' the lead',
+              onclick: (e) => { e.stopPropagation(); setLead(dk, id); }
+            }, isLead ? '★' : '☆')
+          : null),
+        el('button.team-chip-x', {
+          type: 'button', title: 'Take ' + p.name + ' off ' + App.dept(dk).label,
+          onclick: (e) => { e.stopPropagation(); unassign(dk, id); }
+        }, '✕')
+      ]);
+    }
+
+    function deptRow(dk) {
+      const d = App.dept(dk);
+      const { ids, lead } = App.deptTeam({ team: team }, dk);
+      const taskCount = pipe.filter(t => t.dept === dk).length;
+      const staff = App.deptStaff(dk);
+
+      const chips = el('.team-chips');
+      if (!ids.length) {
+        chips.appendChild(el('span.team-none', null,
+          staff.length ? 'Unstaffed' : 'No ' + d.label + ' staff yet'));
+      }
+      ids.forEach(id => chips.appendChild(personChip(dk, id, ids, lead)));
+
+      // no (+) where there is nobody left to add — the button would open an
+      // empty menu and say nothing about why
+      const spare = staff.filter(p => !ids.includes(p.id));
+      if (spare.length) {
+        const add = el('button.team-add', {
+          type: 'button',
+          title: 'Add staff to ' + d.label,
+          onclick: (e) => { e.stopPropagation(); openStaffMenu(add, dk); }
+        }, '＋');
+        chips.appendChild(add);
+      }
+
+      return el('.team-row', null, [
+        el('.team-rowdept', null, [
+          el('span.team-dept-dot', { style: { background: d.color } }),
+          el('span.team-dept-lbl', null, d.label),
+          el('span.team-dept-tasks', null, taskCount + ' task' + (taskCount === 1 ? '' : 's'))
+        ]),
+        chips
+      ]);
+    }
+
+    /* The (+) picker. Ticks apply straight to the working copy — nothing here
+       touches the board until the dialog is saved, so there's no reason to
+       batch them, and the row behind the menu updates as you go. */
+    function openStaffMenu(btn, dk) {
+      closeStaffMenu();
+      const menu = el('.sw-menu.staff-menu', { onclick: (e) => e.stopPropagation() });
+      staffMenu = menu;
+      const search = el('input.sw-menu-search', {
+        type: 'text', placeholder: 'Search ' + App.dept(dk).label + ' staff…', spellcheck: 'false'
+      });
+      const list = el('.sw-menu-list');
+
+      const draw = () => {
+        const q = search.value.trim().toLowerCase();
+        const on = App.deptTeam({ team: team }, dk).ids;
+        list.innerHTML = '';
+        const hits = App.deptStaff(dk).filter(p => !q || p.name.toLowerCase().includes(q));
+        if (!hits.length) {
+          list.appendChild(el('.sw-menu-empty', null, search.value.trim()
+            ? 'Nobody matches “' + search.value.trim() + '”'
+            : 'No ' + App.dept(dk).label + ' staff yet — add them under Admin → Team'));
+        }
+        // freest first: the useful default when picking someone for new work
+        hits.slice().sort((a, b) => loadOf(a.id).count - loadOf(b.id).count).forEach(p => {
+          const has = on.includes(p.id);
+          const l = loadOf(p.id);
+          const item = el('button.sw-menu-item' + (has ? '.on' : ''), {
+            type: 'button',
+            title: loadTip(p),
+            onclick: () => { has ? unassign(dk, p.id) : assign(dk, p.id); draw(); }
+          }, [
+            el('span.sw-tick'),
+            el('span.avatar.staff-menu-av', { style: { background: p.color } }, App.initials(p.name)),
+            el('span.sw-menu-name', null, p.name),
+            el('span.sw-menu-meta' + (l.pct <= 50 ? '.thin' : ''), null, l.pct + '%')
+          ]);
+          list.appendChild(item);
+        });
+      };
+      search.addEventListener('input', draw);
+      search.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeStaffMenu(); } });
+      draw();
+
+      menu.appendChild(el('.sw-menu-head', null, [search]));
+      menu.appendChild(list);
+      menu.appendChild(el('.sw-menu-foot', null,
+        el('button.sw-menu-done', { type: 'button', onclick: () => closeStaffMenu() }, 'Done')));
+
+      document.body.appendChild(menu);
+      const r = btn.getBoundingClientRect();
+      requestAnimationFrame(() => {
+        const mh = menu.offsetHeight, mw = menu.offsetWidth;
+        menu.style.top = (r.bottom + mh + 6 > window.innerHeight ? Math.max(8, r.top - mh - 4) : r.bottom + 4) + 'px';
+        menu.style.left = Math.min(r.left, window.innerWidth - mw - 8) + 'px';
+      });
+      // deferred for the same reason the software menu defers it: focusing in
+      // the click's own frame loses the focus back to the button
+      setTimeout(() => { document.addEventListener('click', closeStaffMenu); search.focus(); }, 0);
+    }
+
+    /* Progress across the whole show, not per department: the question this
+       page answers is "is this production staffed", and the bar makes an
+       answer of "not yet, and that's allowed" legible without counting cards. */
+    const summaryTxt = el('.team-summary-txt');
+    const summaryBar = el('.team-bar-fill');
+    const summary = el('.team-summary', null, [summaryTxt, el('.team-bar', null, summaryBar)]);
+
+    function paintSummary() {
+      const depts = App.pipelineDepts(pipe);
+      const staffed = depts.filter(dk => App.deptTeam({ team: team }, dk).ids.length).length;
+      const size = App.showTeamSize({ team: team, pipeline: pipe });
+      const leads = depts.filter(dk => App.deptTeam({ team: team }, dk).lead).length;
+      summary.classList.toggle('done', !!depts.length && staffed === depts.length);
+      summary.classList.toggle('empty', !staffed);
+      summaryTxt.innerHTML = '';
+      summaryTxt.appendChild(el('span.team-summary-lead', null,
+        staffed + ' of ' + depts.length + ' department' + (depts.length === 1 ? '' : 's') + ' staffed'));
+      summaryTxt.appendChild(el('span.team-summary-sub', null,
+        staffed
+          ? size + ' ' + (size === 1 ? 'person' : 'people') + ' · ' + leads + ' lead' + (leads === 1 ? '' : 's')
+          : 'Optional — anything you leave goes to whoever covers it'));
+      summaryBar.style.width = (depts.length ? Math.round((staffed / depts.length) * 100) : 0) + '%';
+    }
+
+    const rows = el('.team-rows');
+    function render() {
+      rows.innerHTML = '';
+      const depts = App.pipelineDepts(pipe);
+      if (!depts.length) {
+        rows.appendChild(el('.adm-empty', null, 'This pipeline has no departments to staff.'));
+      } else {
+        depts.forEach(dk => rows.appendChild(deptRow(dk)));
+      }
+      paintSummary();
+    }
+    list.appendChild(summary);
+    list.appendChild(rows);
+    render();
+
+    return {
+      list: list,
+      // only departments that actually hold someone are stored, so a show
+      // nobody has staffed carries no team at all rather than empty shells
+      read() {
+        const out = {};
+        App.pipelineDepts(pipe).forEach(dk => {
+          const { ids, lead } = App.deptTeam({ team: team }, dk);
+          if (ids.length) out[dk] = lead ? { ids: ids, lead: lead } : { ids: ids };
+        });
+        return out;
+      },
+      // the wizard's pipeline can still change behind this page (step 1 is
+      // still editable), so the department list is re-derived on the way in
+      setPipeline(p) { pipe = p || []; render(); },
+      // an open picker is fixed to the viewport, so it would outlive the
+      // dialog it was opened from unless the dialog takes it with it
+      closeMenus: closeStaffMenu
+    };
+  };
+
   // ---- Add Show ----
   // Schedule planner + per-show pipeline editor. The producer supplies a start
   // date; a dependency-aware forward pass (App.schedulePipeline) computes the
@@ -1953,6 +2252,9 @@ window.App = window.App || {};
         : App.defaultPipelineFor(d0.type || 'animation');
       let targetTouched = !!d0.targetTouched;       // has the user hand-picked an end date?
       const editor = App.pipelineEditor(pipe, { onChange: () => updateSchedule(), tooltips: false });
+      // step 2 — who works on it. Built here so a dismissed dialog's draft can
+      // carry the staffing back in alongside the schedule.
+      const team = App.teamEditor(pipe, d0.team);
 
       // ---------- show details ----------
       const nameInput = el('input.fld', { type: 'text', placeholder: 'e.g. Little Angel', value: d0.name || '' });
@@ -2245,12 +2547,12 @@ window.App = window.App || {};
          invite saving a copy of the standard pipeline under a new name.
 
          Compared through a normaliser, not raw JSON: the editor stamps
-         optional fields (vc, lag) onto tasks it touches, and a task carrying
-         `vc: false` is not an adjustment. */
+         optional fields (vc, lag, revisions) onto tasks it touches, and a
+         task carrying `vc: false` is not an adjustment. */
       const normPipe = (p) => JSON.stringify((p || []).map(t => ({
         key: t.key, name: (t.name || '').trim(), dept: t.dept,
         days: t.days, minDays: t.minDays, deps: t.deps.slice().sort(),
-        lag: t.lag || 0, vc: !!t.vc
+        lag: t.lag || 0, vc: !!t.vc, maxRev: t.maxRev || 0, revDays: (t.revDays || []).slice()
       })));
       const baselinePipe = () => {
         const preset = presetSel.value && (App.state.data.pipelinePresets || []).find(p => p.id === presetSel.value);
@@ -2350,7 +2652,8 @@ window.App = window.App || {};
         end: endInput.value, targetTouched: targetTouched,
         epNames: [...epList.querySelectorAll('.ep-name-fld')].map(i => i.value),
         epLive: epLive.slice(),
-        pipe: pipe
+        pipe: pipe,
+        team: team.read()
       });
       /* Only keep a draft that's worth keeping: opening the dialog and closing
          it again shouldn't leave one behind, or the next Add Show would restore
@@ -2359,6 +2662,7 @@ window.App = window.App || {};
         const s = snapshot();
         if (s.name.trim() || s.code.trim() || s.targetTouched) return true;
         if (s.epLive.some(Boolean)) return true;
+        if (Object.keys(s.team).length) return true;      // staffing is real work too
         if (normPipe(s.pipe) !== normPipe(App.defaultPipelineFor(s.type))) return true;
         return s.epNames.some((n, i) => n.trim() && n.trim() !== 'Episode ' + (i + 1));
       };
@@ -2407,14 +2711,57 @@ window.App = window.App || {};
         pipePanel.body
       ];
 
-      const footer = [
-        el('button.btn-ghost', { onclick: () => { editor.closeMenus(); App.modal.close(); } }, 'Cancel'),
-        el('button.btn-primary', {
-          onclick: () => {
+      /* ---------- the two pages ----------
+         Creating a show is two decisions — what the work is, then who does it —
+         and the second one needs the first: the departments to staff come from
+         the pipeline chosen on page 1. So Add Show is a wizard rather than one
+         longer form, and the pipeline is re-read on the way in so a task moved
+         to another department is reflected before anyone is assigned. */
+      const step1 = el('div', null, sections);
+      const step2 = el('div', { style: { display: 'none' } }, [
+        el('.fld-hint.team-intro', null,
+          'Add staff to a department with ＋. The percentage is how much of that person this show can expect — hover a name to see what else they’re on. Where a department has more than one person, star the lead.'),
+        team.list
+      ]);
+
+      const cancelBtn = el('button.btn-ghost', { onclick: () => { editor.closeMenus(); team.closeMenus(); App.modal.close(); } }, 'Cancel');
+      const backBtn = el('button.btn-ghost', { style: { display: 'none' }, onclick: () => goStep(1) }, '← Back');
+      const nextBtn = el('button.btn-primary', { onclick: () => { if (validateStep1()) goStep(2); } }, 'Next: Production Team →');
+      const createBtn = el('button.btn-primary', { style: { display: 'none' } }, '＋ Create Show');
+
+      let step = 1;
+      function goStep(n) {
+        step = n;
+        if (n === 2) {
+          editor.closeMenus();                 // a dep menu would hang over page 2
+          team.setPipeline(pipe);              // page 1 may have re-departmented a task
+        }
+        const one = n === 1;
+        step1.style.display = one ? '' : 'none';
+        step2.style.display = one ? 'none' : '';
+        backBtn.style.display = one ? 'none' : '';
+        nextBtn.style.display = one ? '' : 'none';
+        createBtn.style.display = one ? 'none' : '';
+        if (titleEl) titleEl.textContent = one ? 'Add New Show' : 'Production Team';
+        if (subEl) subEl.textContent = one
+          ? 'Step 1 of 2 · Plan the schedule and customize the pipeline'
+          : 'Step 2 of 2 · Staff each department, and star who leads it';
+        const body = step1.parentNode; if (body) body.scrollTop = 0;
+      }
+
+      function validateStep1() {
+        const name = nameInput.value.trim(), code = codeInput.value.trim().toUpperCase();
+        if (!name || !code) { App.toast('Show name and code are required', true); return false; }
+        if (!pipe.length) { App.toast('The pipeline needs at least one task', true); return false; }
+        if (!App.topoSort(pipe)) { App.toast('The pipeline has a dependency cycle', true); return false; }
+        return true;
+      }
+
+      const footer = [cancelBtn, backBtn, nextBtn, createBtn];
+      createBtn.addEventListener('click', () => {
+          {
+            if (!validateStep1()) { goStep(1); return; }
             const name = nameInput.value.trim(), code = codeInput.value.trim().toUpperCase();
-            if (!name || !code) { App.toast('Show name and code are required', true); return; }
-            if (!pipe.length) { App.toast('The pipeline needs at least one task', true); return; }
-            if (!App.topoSort(pipe)) { App.toast('The pipeline has a dependency cycle', true); return; }
             const { start, cadence, epCount } = readPlan();
             const epNames = [...epList.querySelectorAll('.ep-name-fld')].map((inp, idx) => inp.value.trim() || ('Episode ' + (idx + 1))).slice(0, epCount);
             const rec = App.scheduleShow(pipe, start, epCount, cadence, 1);
@@ -2426,27 +2773,68 @@ window.App = window.App || {};
             const plan = episodePlan();
             const epStarts = plan.map(p => p.start), epLives = plan.map(p => p.live);
             // keep the optional flags the editor can set — dropping them here
-            // silently discarded a task's lag and its version-control toggle
+            // silently discarded a task's lag, its version-control toggle and
+            // its revision budget
             const pipeline = pipe.map(t => {
               const o = { key: t.key, name: t.name.trim() || t.key, dept: t.dept, days: t.days, minDays: t.minDays, deps: t.deps.slice() };
               if (t.lag) o.lag = t.lag;
               if (t.vc) o.vc = true;
+              if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); }
               return o;
             });
-            App.createShow({ name, code, type: typeSel.value, epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives });
-            App.track.flowDone('Create show', true, { episodes: epNames.length });
+            const teamOut = team.read();
+            App.createShow({ name, code, type: typeSel.value, epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives, team: teamOut });
+            App.track.flowDone('Create show', true, { episodes: epNames.length, departmentsStaffed: Object.keys(teamOut).length });
             created = true;                       // the draft has served its purpose
             editor.closeMenus();
             App.modal.close();
           }
-        }, '＋ Create Show')
-      ];
+      });
 
       // onClose fires for ✕, the backdrop, Escape and Cancel alike, which is
       // exactly the set of ways someone leaves without meaning to lose the form
-      App.modal.open(card('clapper', 'Add New Show', 'Plan the schedule and customize the pipeline', sections, footer, 'wide'),
-        { onClose: keepDraft });
+      const theCard = card('clapper', 'Add New Show', 'Step 1 of 2 · Plan the schedule and customize the pipeline',
+        [step1, step2], footer, 'wide');
+      const titleEl = theCard.querySelector('.modal-title');
+      const subEl = theCard.querySelector('.modal-subtitle');
+      App.modal.open(theCard, { onClose: () => { team.closeMenus(); keepDraft(); } });
       App.track.flowStart('Create show');   // after open() for the same reason
+    }
+  };
+
+  /* ---- Show Team (Admin → Shows → Team) ----
+     The same editor Add Show's step 2 uses, pointed at a show that already
+     exists. Re-staffing changes who new work opens against; episodes already
+     running keep their owners (see App.setShowTeam). */
+  App.showTeamDialog = {
+    open(showId) {
+      const show = App.state.data.shows.find(s => s.id === showId);
+      if (!show) return;
+      if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change a show’s team', true); return; }
+      App.track.feature('show.teamDialog');
+
+      const pipeline = show.pipeline || App.defaultPipelineFor(show.type);
+      const team = App.teamEditor(pipeline, show.team, { showId: showId });
+
+      const sections = [
+        el('.ctx-box.slim', null, [
+          el('span.ctx-chip', { style: { background: show.color, color: App.pickInkFor(show.color) } }, show.prefix || '—'),
+          el('span.ctx-title', null, show.name)
+        ]),
+        el('.fld-hint.team-intro', null,
+          'Add or remove staff by department. Changing the team sets who new work opens against — episodes already running keep the owners they have.'),
+        team.list
+      ];
+
+      const footer = [
+        el('button.btn-ghost', { onclick: () => { team.closeMenus(); App.modal.close(); } }, 'Cancel'),
+        el('button.btn-primary', {
+          onclick: () => { team.closeMenus(); App.setShowTeam(showId, team.read()); App.modal.close(); }
+        }, 'Save Team')
+      ];
+
+      App.modal.open(card('users', 'Production Team', 'Who works on this show, department by department', sections, footer, 'wide'),
+        { onClose: () => team.closeMenus() });
     }
   };
 })();

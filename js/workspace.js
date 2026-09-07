@@ -60,7 +60,43 @@ window.App = window.App || {};
     qc:        ['premiere', 'gsheets']
   };
   App.SOFTWARE = SOFTWARE;
-  App.deptSoftware = (dept) => (DEPT_SOFTWARE[dept] || []).map(k => Object.assign({ key: k }, SOFTWARE[k]));
+  App.DEPT_SOFTWARE = DEPT_SOFTWARE;
+
+  /* Software a studio added itself (Admin → Workflow → Department Software →
+     Add new software). Same shape as the built-ins, plus custom:true so the UI
+     can offer to rename or remove it — a built-in can only be switched off.
+     Held in shared board state, since a tool the studio uses is a fact about
+     the studio, not about one person's laptop. */
+  App.customSoftware = () => (App.state && App.state.data && App.state.data.software) || {};
+
+  /* Every application available, built-ins in catalogue order then anything
+     the studio added, alphabetically. What the department lists offer, and
+     what Create Project's "add an application" step draws from. */
+  App.softwareCatalog = function () {
+    const custom = App.customSoftware();
+    return Object.keys(SOFTWARE).map(k => Object.assign({ key: k }, SOFTWARE[k]))
+      .concat(Object.keys(custom)
+        .map(k => Object.assign({ key: k, kind: 'desktop', icon: 'package' }, custom[k], { custom: true }))
+        .sort((a, b) => String(a.label).localeCompare(String(b.label), undefined, { sensitivity: 'base' })));
+  };
+  App.software = function (k) {
+    if (SOFTWARE[k]) return Object.assign({ key: k }, SOFTWARE[k]);
+    const c = App.customSoftware()[k];
+    return c ? Object.assign({ key: k, kind: 'desktop', icon: 'package' }, c, { custom: true }) : null;
+  };
+
+  /* Which apps a department uses. The lists above are the defaults; once an
+     admin edits a department (in Admin, or by adding an app from inside Create
+     Project) the whole list for that department is stored in shared board
+     state, so everyone sees the same options. Stored per department rather
+     than as a diff: "Video Post uses these four" survives a change to the
+     defaults, where a remembered "minus nuke" would silently reinterpret it. */
+  App.deptAppKeys = function (dept) {
+    const ov = App.state && App.state.data && App.state.data.deptApps;
+    const list = (ov && ov[dept]) || DEPT_SOFTWARE[dept] || [];
+    return list.filter(k => !!App.software(k));   // a removed entry just drops out
+  };
+  App.deptSoftware = (dept) => App.deptAppKeys(dept).map(k => App.software(k));
 
   const extOf = (name) => String(name).split('.').pop().toLowerCase();
   const templatesFor = (all, sw) => (all || []).filter(t => sw.ext && sw.ext.includes(extOf(t.name)));
@@ -321,12 +357,15 @@ window.App = window.App || {};
       const deptLabel = App.dept(su.dept).label;
 
       if (!apps.length) {
-        // Animation is N/A — no templated software, so just prepare the folder
-        return this._step('mixer', 'Create project', deptLabel + ' has no templated software configured.',
-          el('.ws-note', null, deptLabel + ' work isn’t template-driven, so there’s nothing to copy. ' +
+        // Animation is N/A out of the box — no templated software, so just
+        // prepare the folder. An admin can still add an app to the department
+        // from here, which is how that changes without a trip to Admin.
+        return this._step('mixer', 'Create project', deptLabel + ' has no applications configured.',
+          el('.ws-note', null, deptLabel + ' work isn’t template-driven by default, so there’s nothing to copy. ' +
             'Post Pipeline can still create and open the working folder for you.'),
           [
             el('button.btn-ghost', { onclick: () => this._back() }, 'Cancel'),
+            this._canAdmin() ? el('button.btn-ghost', { onclick: () => this._addAppPicker(d) }, '＋ Add an application') : null,
             el('button.btn-primary', { onclick: () => this._makeProject(null) }, 'Make & open the folder')
           ]);
       }
@@ -346,10 +385,128 @@ window.App = window.App || {};
         ]));
       });
 
+      /* Growing the list is part of the same job as choosing from it: the
+         moment someone finds their app missing is right here, not later in
+         Admin. Admin-only, because the department's app list is shared by
+         every show. */
+      if (this._canAdmin()) {
+        list.appendChild(el('button.ws-item.ws-add', {
+          onclick: () => this._addAppPicker(d)
+        }, [
+          App.icon('plus', { cls: 'ws-ic' }),
+          el('span.ws-name', null, 'Add an application…'),
+          el('span.ws-meta', null, 'for all ' + deptLabel + ' tasks'),
+          el('span.ws-go', null, '›')
+        ]));
+      }
+
       this._step('mixer', 'Create project', 'Which application? — ' + deptLabel + ' · ' + d.deliverable, list, [
         el('button.btn-ghost', { onclick: () => this._back() }, 'Cancel'),
         el('button.btn-ghost', { onclick: () => this._makeProject(null) }, 'Just make the folder')
       ]);
+    },
+
+    /* Only a producer/admin can change what every show sees — the department's
+       app list and the studio template library are both shared. Read-only users
+       simply don't get the add rows, rather than getting a row that scolds. */
+    _canAdmin() { return !!(App.isAdminRole && App.isAdminRole(App.state.role)); },
+
+    /* Step 1b — every app in the catalogue this department doesn't have yet.
+       Adding one puts it in front of every task in that department (the same
+       edit as Admin → Workflow → Apps) and then steps straight into its
+       templates, since choosing an app is what they came here to do. */
+    _addAppPicker(d) {
+      const m = this._mounted;
+      const ep = App.state.data.episodes.find(e => e.id === m.epId);
+      const su = App.subitem(ep, m.taskKey);
+      const dept = su.dept, deptLabel = App.dept(dept).label;
+      const have = App.deptAppKeys(dept);
+      const rest = App.softwareCatalog().filter(sw => !have.includes(sw.key));
+
+      const list = el('.ws-list');
+      if (!rest.length) {
+        list.appendChild(el('.ws-note', null,
+          deptLabel + ' already has every application in the catalogue.'));
+        list.appendChild(el('.ws-note.tight', null,
+          'The catalogue itself is part of the app — each entry knows its template ' +
+          'extensions, or its online template gallery. Ask for a new one to be added if ' +
+          'something you use is missing.'));
+      } else {
+        rest.forEach(sw => {
+          list.appendChild(el('button.ws-item', {
+            onclick: () => {
+              if (!App.setDeptApp(dept, sw.key, true)) return;
+              App.editTask.open(m.epId, m.taskKey);       // the step dialogs replaced it
+              sw.kind === 'online' ? this._onlinePicker(d, sw) : this._templatePicker(d, sw);
+            }
+          }, [
+            App.icon(sw.icon, { cls: 'ws-ic' }),
+            el('span.ws-name', null, sw.label),
+            el('span.ws-meta', null, sw.kind === 'online'
+              ? 'opens in the browser'
+              : 'templates: ' + (sw.ext || []).map(x => '.' + x).join(', ')),
+            el('span.ws-go', null, '＋')
+          ]));
+        });
+        list.appendChild(el('.ws-note.tight', null,
+          'Adding an application shows it to every ' + deptLabel + ' task, on every show — ' +
+          'the same list as Admin → Workflow → Apps.'));
+      }
+
+      this._step('plus', 'Add an application', 'To ' + deptLabel + '’s Create Project list', list, [
+        el('button.btn-ghost', { onclick: () => this._createProject(d) }, '‹ Back')
+      ]);
+    },
+
+    /* Add a template to a library, from a file already on the volume. Copied,
+       never moved — a template is reference material, and a library that
+       empties itself as people use it is data loss. */
+    _addTemplate(d, sw, source) {
+      const m = this._mounted;
+      const ep = App.state.data.episodes.find(e => e.id === m.epId);
+      const st = App.state.data.storage || {};
+      // Start where templates live if we can, so the common case is one click.
+      const start = st.masterPath || (m.data && m.data.root) || undefined;
+      const exts = (sw.ext || []).map(x => x.toLowerCase());
+      const where = source === 'show' ? 'this show' : 'the studio library';
+
+      App.folderPicker.open(start, (src) => {
+        if (!src) return this._templatePicker(d, sw);
+        const name = String(src).replace(/\/+$/, '').replace(/^.*\//, '');
+        const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+        /* Refuse a mismatch rather than copying it: templatesFor() filters the
+           library by extension, so a .nk added under Premiere wouldn't appear
+           anywhere — it would just look like the add silently failed. */
+        if (exts.length && !exts.includes(ext)) {
+          App.editTask.open(m.epId, m.taskKey);
+          App.toast(name + ' isn’t ' + sw.label + ' — that needs ' +
+            exts.map(x => '.' + x).join(' or '), true);
+          return this._templatePicker(d, sw);
+        }
+        App.toast('Adding ' + name + ' to ' + where + '…');
+        App.editTask.open(m.epId, m.taskKey);
+        App.api.templateAdd({
+          epId: m.epId, taskKey: m.taskKey, pipeline: App.pipelineFor(ep), src, source
+        }).then(async (r) => {
+          App.toast(r.added + ' added to ' + where);
+          App.editTask.open(m.epId, m.taskKey);
+          await this.reload();                    // pick the new file up in d.templates
+          const mm = this._mounted;
+          if (mm && mm.data) this._templatePicker(mm.data, sw);
+        }).catch(e => {
+          App.toast(e.message, true);
+          App.editTask.open(m.epId, m.taskKey);
+          this._templatePicker(d, sw);
+        });
+      }, {
+        pickFiles: true,
+        title: 'Add a ' + sw.label + ' template',
+        subtitle: 'Pick the project file to copy into ' + where + '. It stays where it is — ' +
+          'templates are copied, not moved. Expects ' +
+          (exts.length ? exts.map(x => '.' + x).join(' or ') : 'a project file') + '.',
+        confirmLabel: 'Add this template',
+        onCancel: () => { App.editTask.open(m.epId, m.taskKey); this._templatePicker(d, sw); }
+      });
     },
 
     /* Step 2a — desktop app: its own templates, copied into the task folder. */
@@ -380,6 +537,30 @@ window.App = window.App || {};
           'An admin can add one by saving ' + article + ' ' + sw.label + ' template as ' +
           (sw.ext || []).map(x => '.' + x).join(' or ') + ' into !!_Templates ' +
           'on the master directory — it then appears here for every show.'));
+      }
+
+      /* Same reasoning as the app list: the moment the right template is
+         missing is the moment you're looking for it. Two destinations, offered
+         as separate rows rather than a follow-up question — the choice is
+         "everyone" or "just this show", and it reads better as a label than as
+         a dialog. */
+      if (this._canAdmin()) {
+        list.appendChild(el('button.ws-item.ws-add', {
+          onclick: () => this._addTemplate(d, sw, 'master')
+        }, [
+          App.icon('plus', { cls: 'ws-ic' }),
+          el('span.ws-name', null, 'Add a ' + sw.label + ' template…'),
+          el('span.ws-meta', null, 'studio library · every show'),
+          el('span.ws-go', null, '›')
+        ]));
+        list.appendChild(el('button.ws-item.ws-add', {
+          onclick: () => this._addTemplate(d, sw, 'show')
+        }, [
+          App.icon('plus', { cls: 'ws-ic' }),
+          el('span.ws-name', null, 'Add one for this show only…'),
+          el('span.ws-meta', null, 'overrides the studio version'),
+          el('span.ws-go', null, '›')
+        ]));
       }
 
       this._step(sw.icon, sw.label, 'Copies the template into ' + d.deliverable + '/ and opens it', list, [

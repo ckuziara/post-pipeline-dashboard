@@ -328,6 +328,73 @@ window.App = window.App || {};
     App.toast(n + ' rescheduled' + (extra.length ? ' — ' + extra.join(' · ') : ''), extra.length > 0);
   };
 
+  /* "Request Revision" — the Reviews tab's replacement for Send Back. A task
+     sent back for rework is charged against its own budget of revisions (see
+     App.taskRevisions in state.js): the department gets back exactly the days
+     that revision was configured for, not however long the drag happens to
+     be, and once the budget is spent the button simply stops offering more.
+
+     The date change goes through the same clash/live-date/delivery-date
+     rules a drag gets (App.scheduleImpact) — sending a task back is still a
+     stretch of its due date, and the schedule doesn't get to find out about
+     a broken promise any later just because a button did it instead of a
+     mouse. */
+  App.requestRevision = function (epId, key, opts) {
+    const g = guardEdit(epId, key); if (!g) return;
+    const { max, days, used, left } = App.taskRevisions(g.ep, key);
+    if (left <= 0) {
+      App.toast(max ? 'No revisions left for “' + g.su.name + '”' : '“' + g.su.name + '” has no revisions budgeted', true);
+      return;
+    }
+
+    const revDays = days[used] || 1;
+    const newDue = App.shiftIso(g.su.due, revDays);
+    const impact = App.scheduleImpact(g.ep, key, g.su.start, newDue);
+    if (impact.deny) { App.toast(impact.deny.text + ' — nothing changed', true); return; }
+    if ((impact.clashes.length || impact.delivery) && !(opts && opts.confirmed) && App.impactDialog) {
+      App.impactDialog.open(g.ep, key, impact, {
+        onConfirm: (shiftDelivery) => App.requestRevision(epId, key, { confirmed: true, shiftDelivery }),
+        onCancel: () => App.render()
+      });
+      return;
+    }
+
+    const shiftDelivery = !!(opts && opts.shiftDelivery && impact.delivery);
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.dates = e.dates || {};
+      e.dates[key] = { start: g.su.start, due: newDue };
+      e.statuses[key] = 'in_progress';
+      e.revisions = e.revisions || {};
+      e.revisions[key] = used + 1;
+      if (shiftDelivery) {
+        e.milestones = e.milestones || {};
+        e.milestones[impact.delivery.ms.key] = impact.delivery.suggest;
+      }
+      App.refreshReadiness(e);
+    }, 'the revision');
+
+    App.track.audit('task.revision', {
+      episode: g.ep.code, task: g.su.name, revision: used + 1, of: max,
+      days: revDays, due: g.su.due + '→' + newDue
+    });
+    const leftNow = left - 1;
+    App.toast('Revision ' + (used + 1) + ' of ' + max + ' requested for “' + g.su.name + '” — due ' + App.fmtDate(newDue) +
+      (leftNow > 0 ? ' · ' + leftNow + ' left' : ' · none left'));
+  };
+
+  /* Dismiss the grey "unused revisions" mark a task leaves on the timeline
+     when it's approved without spending its whole budget. Purely cosmetic —
+     it never touched the schedule, so clearing it doesn't either. */
+  App.clearRevisionGhost = function (epId, key) {
+    const ep = App.state.data.episodes.find(x => x.id === epId); if (!ep) return;
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.revisionsCleared = e.revisionsCleared || {};
+      e.revisionsCleared[key] = true;
+    }, 'clearing unused revisions');
+  };
+
   /* Move a milestone, or hand the delivery date back to the live date.
 
      `iso` null clears a hand-picked delivery date, returning it to `lead` days
@@ -487,6 +554,102 @@ window.App = window.App || {};
     App.toast((c ? c.label : key) + (enabled ? ' enabled' : ' disabled'));
   };
 
+  /* Add or remove an application from a department's Create Project list
+     (Admin → Workflow → Apps, or the "add an application" step inside Create
+     Project itself). Writes the department's whole list, so it stops tracking
+     the built-in defaults from that point on — see App.deptAppKeys. */
+  App.setDeptApp = function (dept, appKey, on) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change department apps', true); return false; }
+    const sw = App.software(appKey); if (!sw) return false;
+    const cur = App.deptAppKeys(dept);
+    if (on === cur.includes(appKey)) return true;              // already how they want it
+    App._writeDeptSoftware(dept, on ? cur.concat([appKey]) : cur.filter(k => k !== appKey));
+    App.track.audit('dept.apps', { department: App.dept(dept).label, app: sw.label, allowed: on });
+    App.toast(sw.label + (on ? ' added to ' : ' removed from ') + App.dept(dept).label);
+    return true;
+  };
+
+  /* Set a department's whole list at once — what the multi-select picker
+     commits when it closes, so ticking four applications is one board edit
+     (and one undo) rather than four. */
+  App.setDeptSoftware = function (dept, keys) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change department software', true); return false; }
+    const before = App.deptAppKeys(dept);
+    const next = (keys || []).filter(k => !!App.software(k));
+    const added = next.filter(k => !before.includes(k));
+    const gone = before.filter(k => !next.includes(k));
+    if (!added.length && !gone.length) return true;
+    App._writeDeptSoftware(dept, next);
+    const name = (k) => App.software(k).label;
+    const parts = [];
+    if (added.length) parts.push('added ' + added.map(name).join(', '));
+    if (gone.length) parts.push('removed ' + gone.map(name).join(', '));
+    App.track.audit('dept.apps', { department: App.dept(dept).label, added: added.map(name), removed: gone.map(name) });
+    App.toast(App.dept(dept).label + ': ' + parts.join(' · '));
+    return true;
+  };
+
+  /* Keep catalogue order rather than click order, so a department's list reads
+     the same for everyone however it was assembled. */
+  App._writeDeptSoftware = function (dept, keys) {
+    const order = App.softwareCatalog().map(s => s.key);
+    const next = order.filter(k => keys.includes(k));
+    App.mutate(d => {
+      d.deptApps = Object.assign({}, d.deptApps);
+      d.deptApps[dept] = next;
+    });
+  };
+
+  /* Add software the catalogue doesn't ship with. `ext` is what makes it
+     usable rather than decorative: Create Project matches templates to an
+     application by extension, so an entry with none can only ever say "no
+     templates yet". Optional all the same — a tool used for a stage that has
+     no project file (a transcode watch folder, a review site) is a real
+     answer, and naming it still puts it in front of the right department. */
+  App.addSoftware = function (opts) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can add software', true); return null; }
+    const label = String((opts && opts.label) || '').trim();
+    if (!label) { App.toast('Give the software a name', true); return null; }
+    const cat = App.softwareCatalog();
+    if (cat.some(s => s.label.toLowerCase() === label.toLowerCase())) {
+      App.toast(label + ' is already in the list', true); return null;
+    }
+    const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'app';
+    let key = 'sw_' + slug, n = 1;
+    while (App.software(key)) { n++; key = 'sw_' + slug + n; }
+    const ext = String((opts && opts.ext) || '').toLowerCase().split(/[^a-z0-9]+/)
+      .filter(Boolean).filter((x, i, a) => a.indexOf(x) === i);
+    const icon = (opts && opts.icon && App.ICONS[opts.icon]) ? opts.icon : 'package';
+    App.mutate(d => {
+      d.software = Object.assign({}, d.software);
+      d.software[key] = { label, icon, kind: 'desktop', ext };
+    });
+    App.track.audit('software.add', { name: label, extensions: ext });
+    App.toast(label + ' added to the software list');
+    return key;
+  };
+
+  /* Remove studio-added software. Built-ins can't be removed — they're part of
+     the app — but they can be switched off for every department. Any
+     department still holding it drops the entry (deptAppKeys filters on the
+     catalogue), so nothing has to be un-assigned first. */
+  App.removeSoftware = function (key) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can remove software', true); return false; }
+    const sw = App.software(key);
+    if (!sw || !sw.custom) { App.toast('That one is built in — remove it from each department instead', true); return false; }
+    App.mutate(d => {
+      d.software = Object.assign({}, d.software);
+      delete d.software[key];
+      if (d.deptApps) {
+        d.deptApps = Object.assign({}, d.deptApps);
+        Object.keys(d.deptApps).forEach(dk => { d.deptApps[dk] = d.deptApps[dk].filter(k => k !== key); });
+      }
+    });
+    App.track.audit('software.remove', { name: sw.label });
+    App.toast(sw.label + ' removed');
+    return true;
+  };
+
   // ---- Workflow & Status Settings (Admin) ----
   // All persist as overrides in data.workflow; App.applyWorkflow folds them
   // into the live DEPARTMENTS/STATUSES on the next render.
@@ -566,6 +729,25 @@ window.App = window.App || {};
   // ---- Shows & episodes archive (Admin → Workflow → Shows) ----
   // Archiving hides content from every view but keeps all of its data;
   // only archived content can be permanently deleted.
+  /* Re-staff a show that already exists (Admin → Shows → Edit team).
+     Only the show's roster changes: episodes already underway keep the owners
+     they have, because a task half-finished by someone shouldn't silently
+     become someone else's. New episodes pick the new team up automatically,
+     since App.addEpisode staffs from it. */
+  App.setShowTeam = function (showId, team) {
+    if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change a show’s team', true); return; }
+    const s = App.state.data.shows.find(x => x.id === showId); if (!s) return;
+    App.mutate(d => {
+      const t = d.shows.find(x => x.id === showId);
+      if (team && Object.keys(team).length) t.team = team; else delete t.team;
+    }, 'the production team');
+    const size = App.showTeamSize(App.state.data.shows.find(x => x.id === showId));
+    App.track.audit('show.team', { show: s.name, departmentsStaffed: team ? Object.keys(team).length : 0, people: size });
+    App.toast(size
+      ? 'Team updated — ' + size + ' ' + (size === 1 ? 'person' : 'people') + ' on “' + s.name + '”'
+      : 'Cleared the team on “' + s.name + '”');
+  };
+
   App.setShowArchived = function (showId, archived) {
     if (!guardAdmin()) return;
     const s = App.state.data.shows.find(x => x.id === showId); if (!s) return;
@@ -636,12 +818,14 @@ window.App = window.App || {};
         name,
         type: preset.type === 'live_action' ? 'live_action' : 'animation',
         // carry the optional flags the editor can set — dropping them here
-        // silently discarded a task's lag and its version-control toggle
+        // silently discarded a task's lag, its version-control toggle and
+        // its revision budget
         pipeline: preset.pipeline.map(t => {
           const o = { key: t.key, name: (t.name || '').trim() || t.key, dept: t.dept,
                       days: t.days, minDays: t.minDays, deps: t.deps.slice() };
           if (t.lag) o.lag = t.lag;
           if (t.vc) o.vc = true;
+          if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); }
           return o;
         })
       };
@@ -744,7 +928,11 @@ window.App = window.App || {};
      Without it, episodes fall on an even `cadence` from startIso as before.
      `epLives` carries the live dates themselves, stamped onto each episode so
      they stand as commitments from the moment the show exists. */
-  App.createShow = function ({ name, code, type, epNames, pipeline, startIso, cadence, scale, epStarts, epLives }) {
+  /* `team` staffs the show department by department (see App.deptTeam). It is
+     stored on the show and also decides who each episode's tasks open against:
+     a department with a team draws from it — the lead first — instead of from
+     every staff member in the studio who happens to hold that role. */
+  App.createShow = function ({ name, code, type, epNames, pipeline, startIso, cadence, scale, epStarts, epLives, team }) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
     type = type || 'animation';
     pipeline = pipeline || App.defaultPipelineFor(type);
@@ -753,9 +941,13 @@ window.App = window.App || {};
     let newShowId = null;
     App.mutate(d => {
       const showId = newShowId = code.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + App.uid().slice(0, 3);
-      d.shows.push({ id: showId, name, prefix: code, type, color: SHOW_PALETTE[d.shows.length % SHOW_PALETTE.length], pipeline });
+      const show = { id: showId, name, prefix: code, type, color: SHOW_PALETTE[d.shows.length % SHOW_PALETTE.length], pipeline };
+      if (team && Object.keys(team).length) show.team = team;
+      d.shows.push(show);
+      // one pool per department, resolved once: the show's own team where it
+      // has one, else anyone who could do the work
       const byDept = {};
-      d.people.forEach(p => { const dep = App.roleDept(p.role); if (dep) (byDept[dep] = byDept[dep] || []).push(p.id); });
+      App.pipelineDepts(pipeline).forEach(dk => { byDept[dk] = App.deptPool(show, dk); });
       epNames.forEach((title, i) => {
         const epStart = (epStarts && epStarts[i]) || App.shiftIso(startIso, i * cadence);
         const sch = App.schedulePipeline(pipeline, epStart, scale);
@@ -770,7 +962,8 @@ window.App = window.App || {};
         d.episodes.push(ep);
       });
     });
-    App.track.audit('show.create', { show: name, code, type, episodes: epNames.length, tasks: pipeline.length });
+    App.track.audit('show.create', { show: name, code, type, episodes: epNames.length, tasks: pipeline.length,
+      departmentsStaffed: team ? Object.keys(team).length : 0 });
     App.toast('Created “' + name + '” with ' + epNames.length + ' episode' + (epNames.length === 1 ? '' : 's'));
     // Build the whole production structure up front — shared folders plus every
     // episode's department tree. The server reads the show and its episodes from
@@ -816,10 +1009,10 @@ window.App = window.App || {};
 
     let newEpId = null;
     App.mutate(d => {
-      const byDept = {};
-      d.people.forEach(p => { const dep = App.roleDept(p.role); if (dep) (byDept[dep] = byDept[dep] || []).push(p.id); });
+      // this show's production team first, exactly as createShow staffs its
+      // own episodes — a new episode joins the same crew as the rest
       const assignees = {};
-      pipeline.forEach(t => { const pool = byDept[t.dept] || []; if (pool.length) assignees[t.key] = pool[0]; });
+      pipeline.forEach(t => { const pool = App.deptPool(show, t.dept); if (pool.length) assignees[t.key] = pool[0]; });
       const ep = {
         id: newEpId = App.uid(), showId, code, title, index: d.episodes.length,
         shiftDays: 0, dates: sch.dates,

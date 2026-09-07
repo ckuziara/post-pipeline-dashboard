@@ -505,6 +505,38 @@ window.App = window.App || {};
     return (st === 'in_progress' || st === 'review') && App.isBlocked(ep, key);
   };
 
+  /* ---------------------------------------------------------------------------
+     Revisions — a task's budget for being sent back.
+
+     A pipeline task optionally carries `maxRev` (how many times it can be
+     bounced) and `revDays` (one duration per revision, since a first pass
+     tends to need longer than a polish). Neither is squeezable or part of the
+     nominal schedule — a revision is contingency, not planned work, so it
+     only ever costs real time when a Director actually spends it (see
+     App.requestRevision in main.js). What's budgeted but never spent is left
+     visible rather than silently forgotten — see revisionGhostDays below.
+  --------------------------------------------------------------------------- */
+  // how many of a task's budgeted revisions this episode has actually spent
+  App.revisionsUsed = function (ep, key) { return (ep.revisions && ep.revisions[key]) || 0; };
+  App.taskRevisions = function (ep, key) {
+    const t = App.pTask(ep, key);
+    const max = Math.max(0, (t && t.maxRev) || 0);
+    const days = (t && t.revDays) || [];
+    const used = App.revisionsUsed(ep, key);
+    return { max, days, used, left: Math.max(0, max - used) };
+  };
+  /* Revision time that was budgeted and never spent, still on the books after
+     the task closed out — the "it never needed the worst case" slack a
+     producer might want to see at a glance, and later reclaim. Nothing to
+     show for a task still open (it might yet use them) or once the producer
+     has explicitly cleared it (see App.clearRevisionGhost). */
+  App.revisionGhostDays = function (ep, su) {
+    if (su.status !== 'approved') return 0;
+    if (ep.revisionsCleared && ep.revisionsCleared[su.key]) return 0;
+    const { days, used } = App.taskRevisions(ep, su.key);
+    return days.slice(used).reduce((a, n) => a + (n || 0), 0);
+  };
+
   /* What a proposed reschedule of one task would break.
 
      Dependencies are an ordering promise: a task may not start until everything
@@ -620,6 +652,88 @@ window.App = window.App || {};
   --------------------------------------------------------------------------- */
   App.show = (id) => App.state.data.shows.find(s => s.id === id) || { name: '—', color: '#888' };
   App.person = (id) => App.state.data.people.find(p => p.id === id) || null;
+
+  /* ---------------------------------------------------------------------------
+     Production team (a show's staffing, by department)
+
+     A show's pipeline says what work exists; its team says who does it.
+     `show.team` maps a department key to the staff assigned to it on this show
+     plus which of them leads it:
+
+       show.team = { audio: { ids: ['chris', 'noah'], lead: 'chris' } }
+
+     Only departments the show's own pipeline actually uses are ever staffed —
+     a show with no music tasks has no music team to fill in. Reads go through
+     App.deptTeam so a person deleted in Admin drops out of every show that had
+     them, rather than leaving an id nothing resolves to.
+  --------------------------------------------------------------------------- */
+  App.pipelineDepts = function (pipeline) {
+    const out = [];
+    (pipeline || []).forEach(t => { if (t.dept && !out.includes(t.dept)) out.push(t.dept); });
+    // department order follows the workflow's own, not first-task-wins, so the
+    // team page reads in the same order as every other department list
+    const order = Object.keys(App.DEPARTMENTS);
+    return out.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  };
+  App.showDepts = (show) => App.pipelineDepts((show && show.pipeline) || App.TEMPLATE);
+
+  // Who may be staffed to a department: the same pool the task Owner picker
+  // offers, so a lead can always actually own that department's tasks.
+  App.deptStaff = (dept) => (App.state.data.people || []).filter(p => App.roleDept(p.role) === dept);
+
+  App.deptTeam = function (show, dept) {
+    const t = ((show && show.team) || {})[dept] || {};
+    const ids = (t.ids || []).filter(id => App.person(id));
+    // one person on a department leads it whether or not anyone starred them
+    const lead = ids.includes(t.lead) ? t.lead : (ids.length === 1 ? ids[0] : null);
+    return { ids, lead };
+  };
+  App.deptLead = (show, dept) => App.deptTeam(show, dept).lead;
+
+  /* The staff a task should fall to, best first: this show's team for that
+     department (its lead ahead of the rest), or — for a show with no team on
+     that department — every staff member who could do the work. */
+  App.deptPool = function (show, dept) {
+    const { ids, lead } = App.deptTeam(show, dept);
+    if (ids.length) return lead ? [lead].concat(ids.filter(id => id !== lead)) : ids;
+    return App.deptStaff(dept).map(p => p.id);
+  };
+
+  /* ---- how spread thin someone already is ----
+     Which active shows a person is on. Counted per show, not per department:
+     someone covering both Audio and Music on one production is on one show,
+     not two. Archived shows release their crew, so they don't count. */
+  App.personShows = function (personId) {
+    return App.activeShows().filter(s =>
+      App.showDepts(s).some(dk => App.deptTeam(s, dk).ids.includes(personId)));
+  };
+
+  /* Availability as the share of themselves each show gets: one show has all
+     of someone, two shows have half of them each. Someone on nothing reads as
+     100% rather than as a share of no work — they're free, not idle-at-zero. */
+  App.availabilityPct = (showCount) => Math.round(100 / Math.max(1, showCount));
+
+  App.personLoad = function (personId) {
+    const shows = App.personShows(personId);
+    return { shows: shows, count: shows.length, pct: App.availabilityPct(shows.length) };
+  };
+
+  // the hover answer to "can I actually have them?" — the share, and the
+  // shows it's divided between, named
+  App.personLoadTip = function (p) {
+    const l = App.personLoad(p.id);
+    if (!l.count) return p.name + ' isn’t on any show — fully available';
+    return [p.name + ' is on ' + l.count + ' show' + (l.count === 1 ? '' : 's') +
+      ' · ' + l.pct + '% of their time each'].concat(l.shows.map(s => '• ' + s.name)).join('\n');
+  };
+
+  // headcount across the whole show — one person can lead two departments and
+  // is still one person on the production
+  App.showTeamSize = function (show) {
+    const seen = {};
+    App.showDepts(show).forEach(dk => App.deptTeam(show, dk).ids.forEach(id => { seen[id] = 1; }));
+    return Object.keys(seen).length;
+  };
 
   // Archival (Admin → Workflow → Shows): archived shows/episodes keep all
   // their data but vanish from every view until restored. An episode is
