@@ -15,7 +15,7 @@
 # MOUNT  the production folder on your machine — the same path Admin →
 #        Workflow → Storage shows, as it looks HERE.
 BOARD="https://post-pipeline-dashboard-3mfj.onrender.com"
-MOUNT="/Volumes/LucidLink/Productions"
+MOUNT="/Volumes/LucidDrive/0001_StudioProjects/0002_Productions/0006_Other/CJ_Music/Claude-Projects"
 PORT=8771
 # ──────────────────────────────────────────────────────────────────────────
 
