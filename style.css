@@ -1404,6 +1404,11 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
   font-size: 14.5px; color: var(--text); word-break: break-word;
 }
 .jr-block[data-ph]:empty::before { content: attr(data-ph); color: var(--text-3); font-style: italic; pointer-events: none; }
+/* Notes written in from elsewhere carry anchors (js/reviews.js files a review
+   note with links back to the task and the cut) — default link blue is close
+   to unreadable on the ruled paper. */
+.jr-block a { color: #9fb4ff; text-decoration: underline; text-underline-offset: 2px; }
+.jr-block a:hover { color: #c3cfff; }
 .jr-row.t-h1 .jr-block { font-size: 20px; font-weight: 700; color: #fff; }
 .jr-row.done .jr-block { color: var(--text-3); text-decoration: line-through; opacity: .7; }
 .jr-check {
@@ -3994,3 +3999,93 @@ select.fld { cursor: pointer; }
    but dashed and quieter, so it reads as an action rather than a choice. */
 .ws-item.ws-add { border-style: dashed; color: var(--text-2); }
 .ws-item.ws-add:hover { border-style: solid; color: var(--text); }
+
+/* ---- Reviews tab (js/reviews.js) -------------------------------------- */
+/* Series → Episode → one row per review. The row is a grid rather than a flex
+   line so the stage pill, the dates and the buttons stay in columns down the
+   whole page — a director scanning "what's late" reads a column, not rows. */
+.rvq-series { margin-bottom: 18px; }
+.rvq-series-head { display: flex; align-items: center; gap: 8px; padding: 0 2px 8px; }
+.rvq-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.rvq-series-name { font-size: 13px; font-weight: 700; }
+.rvq-series-n { font-size: 10.5px; color: var(--text-3); }
+
+.rvq-ep { border: 1px solid var(--border); border-radius: var(--r-card, 10px); background: var(--surface); margin-bottom: 10px; overflow: hidden; }
+.rvq-ep-head { display: flex; align-items: center; gap: 9px; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+.rvq-ep-title { font-size: 12px; font-weight: 600; color: var(--text-2); }
+
+.rvq-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.5fr) minmax(150px, 1.1fr) 132px 96px auto;
+  align-items: center; gap: 12px;
+  padding: 9px 12px; border-top: 1px solid var(--border);
+}
+.rvq-ep .rvq-row:first-of-type { border-top: 0; }
+.rvq-row:hover { background: var(--hover); }
+.rvq-row.done { opacity: .62; }
+.rvq-cell { min-width: 0; }
+
+.rvq-task-name { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rvq-task-sub { display: flex; align-items: center; gap: 7px; margin-top: 3px; }
+.rvq-task-sub .dept-chip { padding: 1px 7px; font-size: 10px; }
+.rvq-who { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.rvq-lbl { font-size: 9.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-3); }
+.rvq-val { font-size: 11.5px; color: var(--text-2); margin-top: 2px; }
+.rvq-none { color: var(--text-3); font-style: italic; }
+.rvq-uploaded { font-size: 10.5px; color: var(--text-3); }
+.rvq-due.late .rvq-val { color: var(--danger); font-weight: 700; }
+
+.rvq-pill { display: inline-block; font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+
+.rvq-linkbtn {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
+  font-size: 11.5px; font-weight: 600; color: #9fb4ff; text-decoration: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rvq-linkbtn:hover { text-decoration: underline; }
+.rvq-linkbtn svg { flex: none; }
+.rvq-link { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+
+.rvq-acts { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.rvq-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; flex: none;
+  background: var(--surface-2); color: var(--text-3);
+  border: 1px solid var(--border); border-radius: var(--r-ctl, 8px); cursor: pointer;
+}
+.rvq-icon:hover { background: var(--surface-3); color: var(--text); }
+.rvq-mini {
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+  background: var(--surface-2); color: var(--text-2);
+  border: 1px solid var(--border-2); border-radius: var(--r-ctl, 8px);
+  padding: 5px 9px; cursor: pointer; font-family: var(--font);
+}
+.rvq-mini:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.rvq-mini:disabled { opacity: .45; cursor: default; }
+.rvq-mini.go { border-color: rgba(91,108,255,.55); color: #b3bcff; }
+.rvq-mini.ok { border-color: rgba(0,200,117,.5); color: #6ee0aa; }
+.rvq-mini.warn { border-color: rgba(253,171,61,.5); color: #ffce8e; }
+
+/* the note composer — anchored to its own button, like the toolbar popovers */
+.rvq-note-pop {
+  position: fixed; z-index: 60; width: 300px;
+  background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: var(--r-card, 10px); box-shadow: var(--shadow); padding: 10px;
+}
+.rvq-note-head { font-size: 11px; font-weight: 700; color: var(--text-2); margin-bottom: 7px; }
+.rvq-note-in {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  background: var(--bg-2); color: var(--text);
+  border: 1px solid var(--border-2); border-radius: var(--r-ctl, 8px);
+  padding: 7px 8px; font-size: 12px; font-family: var(--font);
+}
+.rvq-note-in:focus { outline: none; border-color: var(--accent); }
+.rvq-note-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.rvq-note-hint { font-size: 10px; color: var(--text-3); }
+
+/* narrow windows: the columns stop being columns and the row stacks */
+@media (max-width: 900px) {
+  .rvq-row { grid-template-columns: 1fr 1fr; }
+  .rvq-acts { grid-column: 1 / -1; justify-content: flex-start; }
+}

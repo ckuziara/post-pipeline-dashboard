@@ -396,8 +396,15 @@ window.App = window.App || {};
     return { scale: lo, end: App.scheduleShow(pipeline, startIso, epCount, cadence, lo).end, clamped: false };
   };
 
-  // Status derivation for freshly scheduled episodes (same rules as
-  // deriveStatuses below, but driven by concrete per-task dates).
+  /* Status derivation for freshly scheduled episodes (same rules as
+     deriveStatuses below, but driven by concrete per-task dates).
+
+     A passed due date lands on In Progress rather than Ready for Review: a
+     date can say work should be FINISHED, but only an upload can say there's
+     something to watch (see App.review.denyReady in js/reviewflow.js). A new
+     episode has nothing uploaded by definition, so deriving Ready for Review
+     here would manufacture exactly the state that gate exists to prevent —
+     and put a review on Post Operations' desk with no cut behind it. */
   App.deriveStatusesFromDates = function (pipeline, dates, assignees) {
     const today = App.today();
     const status = {};
@@ -406,7 +413,6 @@ window.App = window.App || {};
       if (!d) { status[t.key] = 'not_started'; return; }
       const start = App.parseDate(d.start), due = App.parseDate(d.due);
       if (due < App.addDays(today, -3)) status[t.key] = 'approved';
-      else if (due <= today) status[t.key] = 'review';
       else if (start <= today) status[t.key] = 'in_progress';
       else status[t.key] = 'not_started';
     });
@@ -998,8 +1004,8 @@ window.App = window.App || {};
     const status = {};
     App.TEMPLATE.forEach(t => {
       const start = at(t.start), due = at(t.due);
+      // no date-derived Ready for Review — see deriveStatusesFromDates above
       if (due < App.addDays(today, -3)) status[t.key] = 'approved';
-      else if (due <= today) status[t.key] = 'review';
       else if (start <= today) status[t.key] = 'in_progress';
       else status[t.key] = 'not_started';
     });
