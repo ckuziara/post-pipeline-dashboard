@@ -47,6 +47,7 @@ window.App = window.App || {};
     App.uploads && App.uploads._refresh && App.uploads._refresh();   // live-refresh the attachments section
     App.workspace && App.workspace.syncOpen && App.workspace.syncOpen();   // reflect a teammate's delivery
     App.chat && App.chat.syncOpen && App.chat.syncOpen();                  // and a teammate's message
+    App.reviews && App.reviews.closeNote && App.reviews.closeNote();       // its row is about to be rebuilt
     if (App.tooltip) App.tooltip.reset();   // a redraw strips hovered nodes without firing mouseleave
 
     // guard: only admins may sit on the Admin or Planning views
@@ -102,7 +103,7 @@ window.App = window.App || {};
 
     if (App.state.view === 'admin') { view.appendChild(App.admin.render()); }
     else if (App.state.view === 'planning') { view.appendChild(App.planning.render()); }
-    else if (App.state.view === 'review') { view.appendChild(reviewQueue(episodes)); }
+    else if (App.state.view === 'review') { view.appendChild(App.reviews.render(episodes)); }
     else if (App.state.view === 'board') view.appendChild(App.board.render(episodes));
     else if (App.state.view === 'dashboard') view.appendChild(App.dashboard.render(episodes));
     else { view.appendChild(App.gantt.render(episodes)); App.gantt.afterMount(); }
@@ -372,61 +373,6 @@ window.App = window.App || {};
       actions.appendChild(el('button.btn-addshow', { onclick: () => App.addShow.open() }, '＋ Add show'));
     }
     if (actions.children.length) box.appendChild(actions);
-  }
-
-  // ---- Director: ready-for-review queue ----
-  function reviewQueue(episodes) {
-    const wrap = el('div');
-    wrap.appendChild(el('.section-title', null, [App.icon('target'), ' Ready for Review — director queue']));
-    const items = [];
-    episodes.forEach(ep => App.subsView(ep).forEach(su => { if (su.status === 'review') items.push({ ep, su }); }));
-    if (!items.length) return wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' Nothing is waiting for review right now.'])), wrap;
-
-    const list = el('.risk-list');
-    // sort order comes from the Reviews tab's own preferences popover
-    const byDue = (a, b) => a.su.due < b.su.due ? -1 : a.su.due > b.su.due ? 1 : 0;
-    const sorters = {
-      due: byDue,
-      show: (a, b) => App.show(a.ep.showId).name.localeCompare(App.show(b.ep.showId).name) || byDue(a, b),
-      dept: (a, b) => App.dept(a.su.dept).label.localeCompare(App.dept(b.su.dept).label) || byDue(a, b)
-    };
-    items.sort(sorters[App.prefs.get('reviewSort', 'due')] || byDue).forEach(x => {
-      const show = App.show(x.ep.showId), dep = App.dept(x.su.dept);
-      const person = x.su.assignee ? App.person(x.su.assignee) : null;
-      list.appendChild(el('.risk-item', { style: { padding: '12px 14px' } }, [
-        el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color), fontSize: '10px', padding: '2px 7px' } }, x.ep.code),
-        el('.ri-main', null, [
-          el('.ri-title', { style: { fontSize: '13px' } }, x.su.name + '  ·  ' + x.ep.title),
-          el('.ri-sub', null, [
-            el('span.dept-chip', { style: { padding: '1px 7px', fontSize: '10px', marginRight: '8px' } }, [el('span.dot', { style: { background: dep.color } }), dep.label]),
-            (person ? person.name + ' · ' : '') + 'due ' + App.fmtDate(x.su.due)
-          ])
-        ]),
-        el('button.ghost', { style: { borderColor: 'rgba(0,200,117,.5)', color: '#6ee0aa' }, onclick: () => App.setStatus(x.ep.id, x.su.key, 'approved') }, '✓ Approve'),
-        revisionButton(x.ep, x.su)
-      ]));
-    });
-    wrap.appendChild(list);
-    return wrap;
-  }
-
-  /* Reviews tab's "Send back", replaced: a Director spends one of the task's
-     budgeted revisions rather than bouncing it for an open-ended redo. The
-     count on the button is the whole point — it's what tells a Director this
-     is the last one before they need another way to fix things. Disabled at
-     zero rather than hidden, so a task with no revisions left still shows
-     why the option isn't there. */
-  function revisionButton(ep, su) {
-    const { max, used, left } = App.taskRevisions(ep, su.key);
-    const label = max ? '↺ Request Revision (' + left + ' left)' : '↺ No revisions budgeted';
-    return el('button.ghost', {
-      disabled: left <= 0,
-      style: { borderColor: 'rgba(253,171,61,.5)', color: '#ffce8e' },
-      title: max
-        ? (left ? 'Revision ' + (used + 1) + ' of ' + max : 'All ' + max + ' revision' + (max === 1 ? '' : 's') + ' already used')
-        : 'This task has no revisions configured in its pipeline',
-      onclick: () => { if (left > 0) App.requestRevision(ep.id, su.key); }
-    }, label);
   }
 
   // ---- helpers ----

@@ -56,7 +56,8 @@ window.App = window.App || {};
     pipeline:  { minW: 3, maxW: 12, minH: 140, maxH: 400 },
     deptLoad:  { minW: 3, maxW: 12, minH: 90,  maxH: 500, itemPx: 27, headPx: 45 },
     upcoming:  { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
-    teamLoad:  { minW: 3, maxW: 12, minH: 100, maxH: 700, itemPx: 36, headPx: 45 }
+    teamLoad:  { minW: 3, maxW: 12, minH: 100, maxH: 700, itemPx: 36, headPx: 45 },
+    reviewUploads: { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 }
   };
   // how many data rows this widget shows at this height — grows continuously
   // rather than at three breakpoints; widgets without itemPx aren't scaled
@@ -118,15 +119,27 @@ window.App = window.App || {};
     dept: [
       { id: 'priority',  col: 0, row: 0,   w: 6, h: 250 },
       { id: 'journal',   col: 6, row: 0,   w: 6, h: 420 },
-      { id: 'delivered', col: 0, row: 262, w: 4, h: 150 }
+      { id: 'reviewUploads', col: 0, row: 262, w: 6, h: 300 },
+      { id: 'delivered', col: 0, row: 574, w: 4, h: 150 }
     ]
   };
+
+  /* Most widgets belong to a layout. Review Uploads belongs to a JOB: it's the
+     Post Operations coordinator's desk — the queue of cuts waiting to be sent
+     to the Director (js/reviewflow.js) — so it's dealt to that one department
+     rather than to every department lead, and not to oversight either. Nobody
+     else is doing this job, and a queue on someone's dashboard that isn't
+     theirs to clear is just noise. */
+  const WIDGET_WHEN = {
+    reviewUploads: () => App.roleDept(App.state.role) === 'ops'
+  };
+  const widgetFor = (list) => list.filter(t => !WIDGET_WHEN[t.id] || WIDGET_WHEN[t.id]());
   // the placeholder a popped-out widget leaves behind names it without having
   // to build the widget itself
   const WIDGET_TITLE = {
     priority: 'Priority', atRisk: 'At Risk', journal: 'Journal', delivered: 'Delivered Episodes',
     pipeline: 'Pipeline Status', deptLoad: 'Department Workload', upcoming: 'Upcoming Deliveries',
-    teamLoad: 'Team Workload'
+    teamLoad: 'Team Workload', reviewUploads: 'Review Uploads'
   };
 
   function layoutKind(role) {
@@ -398,7 +411,7 @@ window.App = window.App || {};
        the point of a phone dashboard is a glance, and a tap into the row
        (every list item already opens App.editTask) is the way to the rest. */
     renderPhone(m) {
-      const ids = LAYOUTS[layoutKind(App.state.role)].map(t => t.id);
+      const ids = widgetFor(LAYOUTS[layoutKind(App.state.role)]).map(t => t.id);
       const stack = el('.dash-phone');
       ids.forEach(id => {
         const built = this[id](m, { w: 4, h: phoneRows(id) });
@@ -425,7 +438,7 @@ window.App = window.App || {};
        (newly added since) drops in below everything else rather than being
        left out. */
     getLayout() {
-      const dflt = LAYOUTS[layoutKind(App.state.role)];
+      const dflt = widgetFor(LAYOUTS[layoutKind(App.state.role)]);
       const saved = App.prefs.get(this.layoutKey(), null);
       if (!saved) return compact(dflt.map(d => clampTile(Object.assign({}, d))));
 
@@ -811,6 +824,18 @@ window.App = window.App || {};
         box.appendChild(rows);
       }
       return box;
+    },
+
+    /* Post Operations' send-for-review queue. Thin on purpose: the queue, the
+       dialog and the state all belong to js/reviewflow.js, which owns the
+       whole hand-off; this is just the tile it sits in. */
+    reviewUploads(m, t) {
+      const items = App.reviewFlow.pending(m);
+      return {
+        title: 'Review Uploads',
+        sub: items.length ? items.length + ' to send for review' : 'all sent',
+        body: App.reviewFlow.widget(m, t, capOf('reviewUploads', t.h))
+      };
     },
 
     journal() {

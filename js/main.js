@@ -21,6 +21,21 @@ window.App = window.App || {};
       // no-dependency tasks are ready from day one — provided someone owns them
       if (cur === 'not_started' && depsOK && (deps.length || hasOwner)) ep.statuses[t.key] = 'ready';
       else if (cur === 'ready' && !depsOK) ep.statuses[t.key] = 'not_started';
+      /* The same gate App.setStatus applies at the moment someone picks Ready
+         for Review, applied continuously to statuses that got there some other
+         way — a date-derived status on an older episode, an import, a status
+         written before this rule existed. Without it the rule is only half
+         true: refused at the front door, already inside by the back.
+
+         Demoted to In Progress rather than cleared: the work is real and its
+         dates have started, it just has nothing to review yet. It does NOT
+         promote itself back when a file appears — whoever uploads says when
+         it's ready, which is the whole point. Never touches a review already
+         sent to the Director, whose uploads may since have been tidied up. */
+      else if (cur === 'review' && App.review && !App.review.sent(ep.id, t.key)
+               && App.review.denyReady(ep, { key: t.key, name: (ep.names && ep.names[t.key]) || t.name })) {
+        ep.statuses[t.key] = 'in_progress';
+      }
     });
   };
 
@@ -52,12 +67,25 @@ window.App = window.App || {};
     return g;
   }
 
+  /* "Ready for Review" is a claim that there's something to review, so it's
+     refused when nothing has been put up (js/reviewflow.js owns the rule and
+     the wording). Checked here AND in applyTaskEdit — the status is reachable
+     from the board's own cell menu as well as from the dialog. */
+  function guardReady(g, status) {
+    if (status !== 'review' || g.su.status === 'review') return true;
+    const deny = App.review && App.review.denyReady(g.ep, g.su);
+    if (!deny) return true;
+    App.toast(deny, true);
+    return false;
+  }
+
   App.setStatus = function (epId, key, status) {
     App.board.closePop && App.board.closePop();
     const g = guardEdit(epId, key); if (!g) return;
     if (status === 'approved' && !App.canApprove(App.state.role)) {
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
+    if (!guardReady(g, status)) return;
     const wasApproved = g.su.status === 'approved';
     App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = status; App.refreshReadiness(e); }, 'the status change');
     App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: g.su.status, to: status });
@@ -81,6 +109,7 @@ window.App = window.App || {};
     if (canTouch && status === 'approved' && g.su.status !== 'approved' && !App.canApprove(role)) {
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
+    if (canTouch && !guardReady(g, status)) return;
     /* Typing the dates is the same act as dragging them, so it meets the same
        edge: nothing may reach the live date, and reaching the delivery date is
        asked about rather than assumed. The rest of the edit waits for the
@@ -1373,8 +1402,9 @@ window.App = window.App || {};
           ])
         ],
         review: () => [
-          segRow('Sort reviews by', 'reviewSort', 'due',
-            [{ v: 'due', label: 'Due date' }, { v: 'show', label: 'Show' }, { v: 'dept', label: 'Dept' }])
+          segRow('Order tasks by', 'reviewSort', 'due',
+            [{ v: 'due', label: 'Review due' }, { v: 'dept', label: 'Dept' }]),
+          prefRow('Show completed reviews', 'reviewShowDone', true, () => App.render())
         ]
       };
 
@@ -1440,6 +1470,7 @@ window.App = window.App || {};
       App.board.closePop && App.board.closePop();
       App.prefsMenu.close();
       App.filterMenu && App.filterMenu.close();
+      App.reviews && App.reviews.closeNote && App.reviews.closeNote();
     });
     /* ---- keyboard shortcuts ----
        Every one of these is scoped to what's actually on screen: a shortcut
