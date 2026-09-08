@@ -1866,6 +1866,47 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, opened: true, path: target });
       }
 
+      /* Open the folder an arbitrary file on the volume sits in — "show me
+         where this lives", for someone who wants at it with their own tools.
+         Post Operations uses it from Send for Review to get to the cut a
+         department put up (js/reviewflow.js).
+
+         Unlike /api/task/open above, the path comes from the caller rather
+         than from a task's own folders, so it is CONFINED to the master
+         directory and refused otherwise. Listing arbitrary paths is already
+         open to any signed-in user (/api/browse exists so nobody needs
+         Finder), but handing a path to the OS to open is a different risk
+         class: a directory listing can't run anything, and `open` on an
+         executable or a system file can. Inside the volume is the same bound
+         every other file route here already has.
+
+         A file is answered with its containing folder, which is what the
+         caller wants — the point is to land next to the file, not to launch
+         a 40GB master in whatever app claims .mxf. */
+      if (route === 'POST /api/task/reveal') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        let masterPath = ENV.MASTER_PATH || '';
+        if (!masterPath && !companionOrigin(req)) {
+          const board = await storage.get();
+          masterPath = (board && board.data && board.data.storage && board.data.storage.masterPath) || '';
+        }
+        if (!masterPath || !path.isAbsolute(masterPath) || !fs.existsSync(masterPath)) {
+          return sendJson(res, 400, { error: 'This machine has no master directory to look in' });
+        }
+        const base = path.resolve(masterPath);
+        const asked = path.resolve(String(body.path || ''));
+        if (asked !== base && !asked.startsWith(base + path.sep)) {
+          return sendJson(res, 403, { error: 'That path is outside the master directory' });
+        }
+        let target = asked, st = null;
+        try { st = fs.statSync(target); } catch (e) {}
+        if (!st) return sendJson(res, 404, { error: 'Not on the volume any more: ' + path.basename(asked) });
+        if (st.isFile()) target = path.dirname(target);
+        if (!isLocalRequest(req)) return sendJson(res, 200, { ok: true, opened: false, path: target });
+        openNatively(target);
+        return sendJson(res, 200, { ok: true, opened: true, path: target });
+      }
+
       /* Promote a task's delivered files from Mezzanine to Publish. Called when a
          task reaches Approved, which is the moment its output becomes a usable
          asset for everything downstream. Idempotent: re-running moves whatever is

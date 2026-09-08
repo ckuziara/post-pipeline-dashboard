@@ -193,6 +193,8 @@ window.App = window.App || {};
          read-only mode to fall back to. */
       const mode = this._modeNote(m.data);
       if (mode) box.appendChild(mode);
+      const wrongRoot = this._rootWarning(m.data);
+      if (wrongRoot) box.appendChild(wrongRoot);
 
       if (!App.isPhone()) box.appendChild(this._project(ep, su, m.data));
       box.appendChild(this._assets(ep, su, m.data));
@@ -258,6 +260,43 @@ window.App = window.App || {};
         ]);
       }
       return null;
+    },
+
+    /* A companion pointed one level off is the failure this catches.
+
+       MASTER_PATH on a companion OVERRIDES whatever the board has configured,
+       so a companion launched against the folder CONTAINING the production
+       root builds every show tree beside it instead of inside it — silently,
+       because each path still resolves inside its own declared master
+       directory, so every guard in folders.js is satisfied. Nothing is wrong
+       from the server's point of view. It's only wrong compared to what the
+       board thinks its production root is, and the browser is the one place
+       that knows both.
+
+       Compared by FOLDER NAME, not by full path, deliberately: a companion is
+       expected to have the volume somewhere else on its own machine — that's
+       what MOUNT "as it looks HERE" means — so /Volumes/LucidLink/PRODUCTIONS
+       and /Users/sam/LucidLink/PRODUCTIONS agree, while .../Claude-Projects
+       and .../PRODUCTIONS do not. Comparing full paths would cry wolf at every
+       legitimate companion. */
+    _rootWarning(d) {
+      const c = App.companion;
+      if (!c || !c.usable() || !d || !d.masterOk || !d.root) return null;
+      const boardMaster = ((App.state.data.storage || {}).masterPath || '').replace(/\/+$/, '');
+      if (!boardMaster) return null;
+      const leaf = (p) => p.split('/').filter(Boolean).pop() || '';
+      // d.root is <master>/<showRoot>, so its parent is the master root
+      const servedMaster = d.root.replace(/\/+$/, '').split('/').slice(0, -1).join('/');
+      if (!servedMaster || leaf(servedMaster) === leaf(boardMaster)) return null;
+      return el('.ws-note.ws-wrongroot', null, [
+        App.icon('warn'),
+        ' This computer is serving files from ',
+        el('code', null, leaf(servedMaster) + '/'),
+        ' but the board’s production folder is ',
+        el('code', null, leaf(boardMaster) + '/'),
+        '. Show folders are being built in the wrong place — fix MOUNT in ' +
+        '“Start Post Pipeline Companion.command” and restart it.'
+      ]);
     },
 
     /* ---------------------------------------------------------- project ---- */

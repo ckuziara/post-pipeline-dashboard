@@ -311,6 +311,24 @@ window.App = window.App || {};
       setTimeout(() => input.focus(), 40);
     },
 
+    /* `path` null means the task's own folder, which is the only sensible
+       target for a dropped file: the browser handed us a name and a size and
+       nothing about where it came from. A server that isn't on this machine
+       can't open anything, so it hands back the path instead of failing
+       silently — same contract as workspace.js's _open. */
+    _revealPath(ep, su, absPath) {
+      /* reveal takes only the path — it resolves against the master directory
+         rather than against a task's folders, so it needs no episode, task or
+         pipeline. taskOpen does, because "the work folder" is a question about
+         this task. */
+      const call = absPath
+        ? App.api.taskReveal({ path: absPath })
+        : App.api.taskOpen({ epId: ep.id, taskKey: su.key, pipeline: App.pipelineFor(ep), which: 'work' });
+      call
+        .then(r => { if (!r.opened) App.toast('The server isn’t on this machine — path: ' + r.path); })
+        .catch(e => App.toast(e.message, true));
+    },
+
     /* ------------------------------------- Post Operations' dashboard widget */
     /* Everything at Ready for Review that hasn't been passed on yet. This is a
        queue of work for the coordinator, so it empties as they clear it —
@@ -362,16 +380,39 @@ window.App = window.App || {};
       const items = App.reviewUploads.list(ep.id, su.key);
       const show = App.show(ep.showId);
 
+      /* Making the Frame.io review means getting at the actual file, which
+         means a folder open in Finder. Doing that by hand — from a path
+         printed in a tooltip — is the one step this whole panel exists to
+         avoid, so each row that points at something real on the volume opens
+         the folder it sits in, and the section header opens the task's own
+         folder for everything else (a dropped file, or nothing uploaded at
+         all: the browser only ever gave us a name, and the task folder is
+         the honest answer to "where would it be"). */
       const assets = el('.ws-list');
       if (items.length) {
-        items.forEach(a => assets.appendChild(el('.ws-item.static', null, [
-          App.icon(a.kind === 'link' ? 'link' : 'clapper', { cls: 'ws-ic' }),
-          a.kind === 'link'
-            ? el('a.ws-name', { href: a.url, target: '_blank', rel: 'noopener noreferrer' }, a.name)
-            : el('span.ws-name', a.path ? { title: a.path } : null, a.name),
-          el('span.ws-meta', null, [a.sizeLabel, a.byName].filter(Boolean).join(' · '))
-        ])));
+        items.forEach(a => {
+          const row = a.path
+            ? el('button.ws-item', {
+                title: 'Open the folder this sits in — ' + a.path,
+                onclick: () => this._revealPath(ep, su, a.path)
+              })
+            : el('.ws-item.static');
+          [
+            App.icon(a.kind === 'link' ? 'link' : 'clapper', { cls: 'ws-ic' }),
+            a.kind === 'link'
+              ? el('a.ws-name', { href: a.url, target: '_blank', rel: 'noopener noreferrer' }, a.name)
+              : el('span.ws-name', null, a.name),
+            el('span.ws-meta', null, [a.sizeLabel, a.byName].filter(Boolean).join(' · ')),
+            a.path ? el('span.ws-go', null, '↗') : null
+          ].forEach(n => { if (n) row.appendChild(n); });
+          assets.appendChild(row);
+        });
       }
+
+      const folderBtn = el('button.ws-btn.btn-ghost', {
+        title: 'Open this task’s folder on the volume',
+        onclick: () => this._revealPath(ep, su, null)
+      }, [App.icon('folderOpen'), ' Open folder']);
 
       const input = el('input.fld', { type: 'text', placeholder: 'https://frame.io/…', style: { width: '100%' } });
       const send = () => {
@@ -393,7 +434,10 @@ window.App = window.App || {};
           el('button.modal-x', { onclick: () => App.modal.close(), title: 'Close' }, '✕')
         ]),
         el('.modal-body', null, [
-          el('.modal-section-title', null, [App.icon('clapper'), ' Uploaded for review']),
+          el('.ws-head', null, [
+            el('.modal-section-title', { style: { margin: '0' } }, [App.icon('clapper'), ' Uploaded for review']),
+            folderBtn
+          ]),
           items.length ? assets : el('.ws-note', null,
             'Nothing was uploaded for this task — its status came from its dates rather than from someone putting a cut up. Chase the department, or send a link you have anyway.'),
           el('.modal-section-title', { style: { marginTop: '16px' } }, [App.icon('link'), ' Frame.io Link']),
