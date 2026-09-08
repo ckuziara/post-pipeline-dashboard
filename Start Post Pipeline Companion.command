@@ -15,7 +15,7 @@
 # MOUNT  the production folder on your machine — the same path Admin →
 #        Workflow → Storage shows, as it looks HERE.
 BOARD="https://post-pipeline-dashboard-3mfj.onrender.com"
-MOUNT="/Volumes/LucidDrive/0001_StudioProjects/0002_Productions/0006_Other/CJ_Music/Claude-Projects"
+MOUNT="/Volumes/LucidDrive/0001_StudioProjects/0002_Productions/0006_Other/CJ_Music/Claude-Projects/PRODUCTIONS"
 PORT=8771
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -38,6 +38,29 @@ if [ ! -d "$MOUNT" ]; then
   echo
   read -r -p "Press return to close." _
   exit 1
+fi
+
+# MOUNT one level off is the mistake worth catching here rather than later:
+# MASTER_PATH overrides whatever the board has configured, so a companion
+# pointed at the PARENT of the production root happily builds every show tree
+# beside it instead of inside it, and nothing says so. "Does it exist" can't
+# catch that — the parent exists. "Does it look like the production root" can:
+# a real one holds !!_Templates, or a CODE_Name show folder (uppercase code,
+# which is what tells a show root from an ordinary folder like My_Notes).
+#
+# Only a first wrong run is reliably caught: once a wrong path HAS built a
+# show folder, that folder is itself the thing this looks for. Which is fine
+# for what this is — a net under the setup step, not a correctness proof. The
+# app warns about a mismatch with the board's own setting separately.
+if [ ! -d "$MOUNT/!!_Templates" ] && [ -z "$(find "$MOUNT" -maxdepth 1 -type d -name '[A-Z0-9][A-Z0-9-]*_*' -print -quit 2>/dev/null)" ]; then
+  echo "That doesn't look like the production folder:"
+  echo "  $MOUNT"
+  echo
+  echo "Expected to find !!_Templates or the show folders inside it. If you"
+  echo "pointed MOUNT at the folder CONTAINING your production folder, shows"
+  echo "will be built in the wrong place — add the last part of the path."
+  echo
+  read -r -p "Continue anyway? Press return to carry on, or close this window. " _
 fi
 
 echo "Post Pipeline companion"
