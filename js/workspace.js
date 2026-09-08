@@ -196,6 +196,11 @@ window.App = window.App || {};
 
       if (!App.isPhone()) box.appendChild(this._project(ep, su, m.data));
       box.appendChild(this._assets(ep, su, m.data));
+      /* Review Uploads sits between the two on purpose: it's what happens
+         to the work BEFORE it's signed off, where Deliver is what happens
+         after. Owned by js/reviewflow.js, which also owns the Post
+         Operations end of the same hand-off. */
+      if (App.reviewFlow) box.appendChild(App.reviewFlow.inlineSection(ep, su, m.data));
       box.appendChild(this._deliver(ep, su, m.data));
     },
 

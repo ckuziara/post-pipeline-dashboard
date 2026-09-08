@@ -68,6 +68,31 @@ window.App = window.App || {};
       wireToolbar(card);
       setTimeout(updateFooter, 0);
       return card;
+    },
+
+    /* Append a block to today's page from somewhere else in the app — the
+       Reviews tab writes its review notes here. `html` is block content, so a
+       caller can include anchors (see js/reviews.js); it is the caller's job
+       to have escaped anything typed by a person.
+
+       Goes through App.mutate rather than the editor's own persist(): this is
+       a discrete edit worth an undo step, and unlike typing it SHOULD redraw,
+       so a journal already on screen shows the new line. That redraw is also
+       what keeps `cur` honest — render() reloads it from the board, so the
+       next keystroke can't persist a working copy that predates the note. */
+    addNote(html) {
+      const dk = dkFor(0);
+      App.mutate(d => {
+        d.journal = d.journal || {};
+        d.journal[userKey()] = d.journal[userKey()] || {};
+        // an untouched day is a single empty text block; replace it rather
+        // than leaving a blank line above the note
+        const day = (d.journal[userKey()][dk] || [])
+          .filter(b => !(b.type === 'text' && !String(b.content || '').trim()));
+        day.push({ id: uid(), type: 'text', content: html, checked: false });
+        d.journal[userKey()][dk] = day;
+      }, 'Journal note');
+      return dk;
     }
   };
 
@@ -103,8 +128,23 @@ window.App = window.App || {};
     if (block.type === 'text' && !block.content) ed.setAttribute('data-ph', 'Start writing…');
     ed.addEventListener('input', () => onInput(block, row, ed));
     ed.addEventListener('keydown', (e) => onKeyDown(e, block, row, ed));
+    ed.addEventListener('click', (e) => followLink(e));
     row.appendChild(ed);
     return row;
+  }
+
+  /* A block is contenteditable, and a browser doesn't follow links inside one
+     — a click just drops the caret. Notes filed from elsewhere carry real
+     anchors (js/reviews.js writes one to the task and one to the cut), so
+     without this they'd read as links and do nothing. In-app "#task=" links go
+     through the hash so main.js's deep-link handler opens the dialog. */
+  function followLink(e) {
+    const a = e.target && e.target.closest && e.target.closest('a');
+    const href = a && a.getAttribute('href');
+    if (!href) return;
+    e.preventDefault();
+    if (href.charAt(0) === '#') location.hash = href;
+    else window.open(href, '_blank', 'noopener');
   }
 
   function onInput(block, row, ed) {
