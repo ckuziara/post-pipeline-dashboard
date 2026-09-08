@@ -2033,6 +2033,11 @@ window.App = window.App || {};
       team[dk] = { ids: (t.ids || []).slice(), lead: t.lead || null };
     });
     let pipe = pipeline || [];
+    /* Roles added by hand this session. A role with nobody in it has no entry
+       in `team` yet — this is what keeps its row on screen between being added
+       and being staffed, without writing an empty slot onto the show. */
+    const extraRoles = [];
+    let roleAddBtn = null;
 
     const slot = (dk) => (team[dk] = team[dk] || { ids: [], lead: null });
     const changed = () => { render(); if (opts.onChange) opts.onChange(); };
@@ -2058,6 +2063,15 @@ window.App = window.App || {};
       changed();
     }
 
+    // the role rows on screen: those the show already carries, plus any added
+    // in this dialog and not yet staffed
+    function roleSlotsNow() {
+      const shown = App.showRoleSlots({ team: team }).slice();
+      extraRoles.forEach(r => { if (shown.indexOf(r) < 0) shown.push(r); });
+      return App.ROLES.map(r => r.key).filter(k => shown.indexOf(k) >= 0).map(App.roleSlot);
+    }
+    const slotsNow = () => roleSlotsNow().concat(App.pipelineDepts(pipe));
+
     /* How much of a person this show can expect to get. Counted live: the
        shows they're already on, plus this one if they've just been put on it —
        so the number moves as you staff, which is the whole point of showing it
@@ -2065,7 +2079,7 @@ window.App = window.App || {};
        edited from counting itself twice. */
     function loadOf(personId) {
       const others = App.personShows(personId).filter(s => s.id !== opts.showId);
-      const here = App.pipelineDepts(pipe).some(dk => (team[dk] || { ids: [] }).ids.indexOf(personId) >= 0);
+      const here = slotsNow().some(sl => (team[sl] || { ids: [] }).ids.indexOf(personId) >= 0);
       const count = others.length + (here ? 1 : 0);
       return { others: others, here: here, count: count, pct: App.availabilityPct(count) };
     }
@@ -2088,6 +2102,11 @@ window.App = window.App || {};
         el('span.avatar', { style: { background: p.color } }, App.initials(p.name)),
         // the name carries the hover, so the detail is on the thing you'd point at
         el('span.team-chip-name', { title: loadTip(p) }, p.name),
+        /* Managers are shown where they already are rather than on a row of
+           their own — this is the whole point of Manager being a sub-role. */
+        (App.isManager(p)
+          ? el('span.team-mgr', { title: p.name + ' is a Manager as well as ' + App.role(p.role).label }, 'MGR')
+          : null),
         el('span.team-pct' + (l.pct <= 50 ? '.thin' : ''), {
           title: l.pct + '% of ' + p.name + ' for this show — they’re on ' + l.count +
             ' show' + (l.count === 1 ? '' : 's')
@@ -2102,24 +2121,29 @@ window.App = window.App || {};
             }, isLead ? '★' : '☆')
           : null),
         el('button.team-chip-x', {
-          type: 'button', title: 'Take ' + p.name + ' off ' + App.dept(dk).label,
+          type: 'button', title: 'Take ' + p.name + ' off ' + App.slotLabel(dk),
           onclick: (e) => { e.stopPropagation(); unassign(dk, id); }
         }, '✕')
       ]);
     }
 
-    function deptRow(dk) {
-      const d = App.dept(dk);
-      const { ids, lead } = App.deptTeam({ team: team }, dk);
-      const taskCount = pipe.filter(t => t.dept === dk).length;
-      const staff = App.deptStaff(dk);
+    /* One row serves both kinds of slot. A department is identified by its
+       colour and how much work it holds; an oversight role has neither — no
+       colour and no tasks of its own — so it is identified by its role icon
+       instead, which is what makes the two sections legible as different
+       kinds of thing rather than one long list. */
+    function slotRow(slot) {
+      const isRole = App.isRoleSlot(slot);
+      const label = App.slotLabel(slot);
+      const { ids, lead } = App.deptTeam({ team: team }, slot);
+      const staff = App.slotStaff(slot);
 
       const chips = el('.team-chips');
       if (!ids.length) {
         chips.appendChild(el('span.team-none', null,
-          staff.length ? 'Unstaffed' : 'No ' + d.label + ' staff yet'));
+          staff.length ? 'Unstaffed' : 'No ' + label + ' staff yet'));
       }
-      ids.forEach(id => chips.appendChild(personChip(dk, id, ids, lead)));
+      ids.forEach(id => chips.appendChild(personChip(slot, id, ids, lead)));
 
       // no (+) where there is nobody left to add — the button would open an
       // empty menu and say nothing about why
@@ -2127,20 +2151,82 @@ window.App = window.App || {};
       if (spare.length) {
         const add = el('button.team-add', {
           type: 'button',
-          title: 'Add staff to ' + d.label,
-          onclick: (e) => { e.stopPropagation(); openStaffMenu(add, dk); }
+          title: 'Add staff to ' + label,
+          onclick: (e) => { e.stopPropagation(); openStaffMenu(add, slot); }
         }, '＋');
         chips.appendChild(add);
       }
 
-      return el('.team-row', null, [
+      const meta = isRole
+        ? el('span.team-dept-tasks', null, 'oversight')
+        : (() => {
+            const n = pipe.filter(t => t.dept === slot).length;
+            return el('span.team-dept-tasks', null, n + ' task' + (n === 1 ? '' : 's'));
+          })();
+
+      return el('.team-row' + (isRole ? '.role' : ''), null, [
         el('.team-rowdept', null, [
-          el('span.team-dept-dot', { style: { background: d.color } }),
-          el('span.team-dept-lbl', null, d.label),
-          el('span.team-dept-tasks', null, taskCount + ' task' + (taskCount === 1 ? '' : 's'))
+          (isRole
+            ? App.icon(App.role(App.slotRoleKey(slot)).ico, { cls: 'team-role-ic' })
+            : el('span.team-dept-dot', { style: { background: App.dept(slot).color } })),
+          el('span.team-dept-lbl', null, label),
+          meta
         ]),
         chips
       ]);
+    }
+
+    /* Adding a role that isn't on the page. Every role in App.ROLES is
+       representable exactly once: a department role whose department the
+       pipeline uses is already a department row, so it is not offered here —
+       what is left is the oversight roles (Manager, and whichever of
+       Producer/Director were removed) plus any department role this
+       particular pipeline has no work for. */
+    function missingRoles() {
+      // roleSlotsNow(), not the stored team: a role added in this dialog and
+      // not yet staffed has no team entry, and would otherwise be offered a
+      // second time while its own empty row sat on screen
+      const shown = roleSlotsNow().map(App.slotRoleKey);
+      const depts = App.pipelineDepts(pipe);
+      return App.ROLES.filter(r =>
+        !App.isSubRole(r.key) &&                 // Manager rides a base role
+        shown.indexOf(r.key) < 0 && depts.indexOf(r.key) < 0);
+    }
+
+    function openRoleMenu(btn) {
+      closeStaffMenu();
+      const menu = el('.sw-menu.staff-menu', { onclick: (e) => e.stopPropagation() });
+      staffMenu = menu;
+      const list = el('.sw-menu-list');
+      missingRoles().forEach(r => {
+        const n = App.roleStaff(r.key).length;
+        list.appendChild(el('button.sw-menu-item', {
+          type: 'button',
+          title: r.hint,
+          onclick: () => {
+            // an empty slot is enough to make the row appear; read() drops it
+            // again if nobody is ever put in it
+            extraRoles.push(r.key);
+            closeStaffMenu();
+            changed();
+          }
+        }, [
+          App.icon(r.ico, { cls: 'sw-menu-ic' }),
+          el('span.sw-menu-name', null, r.label),
+          el('span.sw-menu-meta', null, n ? n + ' available' : 'nobody yet')
+        ]));
+      });
+      menu.appendChild(el('.sw-menu-head', null,
+        el('.sw-menu-headline', null, 'Add a role to this show')));
+      menu.appendChild(list);
+      document.body.appendChild(menu);
+      const rct = btn.getBoundingClientRect();
+      requestAnimationFrame(() => {
+        const mh = menu.offsetHeight, mw = menu.offsetWidth;
+        menu.style.top = (rct.bottom + mh + 6 > window.innerHeight ? Math.max(8, rct.top - mh - 4) : rct.bottom + 4) + 'px';
+        menu.style.left = Math.min(rct.left, window.innerWidth - mw - 8) + 'px';
+      });
+      setTimeout(() => document.addEventListener('click', closeStaffMenu), 0);
     }
 
     /* The (+) picker. Ticks apply straight to the working copy — nothing here
@@ -2151,7 +2237,7 @@ window.App = window.App || {};
       const menu = el('.sw-menu.staff-menu', { onclick: (e) => e.stopPropagation() });
       staffMenu = menu;
       const search = el('input.sw-menu-search', {
-        type: 'text', placeholder: 'Search ' + App.dept(dk).label + ' staff…', spellcheck: 'false'
+        type: 'text', placeholder: 'Search ' + App.slotLabel(dk) + ' staff…', spellcheck: 'false'
       });
       const list = el('.sw-menu-list');
 
@@ -2159,11 +2245,11 @@ window.App = window.App || {};
         const q = search.value.trim().toLowerCase();
         const on = App.deptTeam({ team: team }, dk).ids;
         list.innerHTML = '';
-        const hits = App.deptStaff(dk).filter(p => !q || p.name.toLowerCase().includes(q));
+        const hits = App.slotStaff(dk).filter(p => !q || p.name.toLowerCase().includes(q));
         if (!hits.length) {
           list.appendChild(el('.sw-menu-empty', null, search.value.trim()
             ? 'Nobody matches “' + search.value.trim() + '”'
-            : 'No ' + App.dept(dk).label + ' staff yet — add them under Admin → Team'));
+            : 'No ' + App.slotLabel(dk) + ' staff yet — add them under Admin → Team'));
         }
         // freest first: the useful default when picking someone for new work
         hits.slice().sort((a, b) => loadOf(a.id).count - loadOf(b.id).count).forEach(p => {
@@ -2220,37 +2306,65 @@ window.App = window.App || {};
       summaryTxt.innerHTML = '';
       summaryTxt.appendChild(el('span.team-summary-lead', null,
         staffed + ' of ' + depts.length + ' department' + (depts.length === 1 ? '' : 's') + ' staffed'));
+      // roles count toward the headcount but not the bar: the bar tracks
+      // pipeline coverage, which is what decides where tasks actually land
+      const roleIds = {};
+      roleSlotsNow().forEach(sl => App.deptTeam({ team: team }, sl).ids.forEach(id => { roleIds[id] = 1; }));
+      const nRoles = Object.keys(roleIds).length;
       summaryTxt.appendChild(el('span.team-summary-sub', null,
-        staffed
-          ? size + ' ' + (size === 1 ? 'person' : 'people') + ' · ' + leads + ' lead' + (leads === 1 ? '' : 's')
+        (staffed || nRoles)
+          ? size + ' ' + (size === 1 ? 'person' : 'people') + ' · ' + leads + ' lead' + (leads === 1 ? '' : 's') +
+            (nRoles ? ' · ' + nRoles + ' in oversight' : '')
           : 'Optional — anything you leave goes to whoever covers it'));
       summaryBar.style.width = (depts.length ? Math.round((staffed / depts.length) * 100) : 0) + '%';
     }
 
-    const rows = el('.team-rows');
+    /* Two sections, because they answer different questions: who is
+       accountable for the show, and who does each stage of the work. Roles
+       come first — that's the order the question tends to get asked in. */
+    const roleRows = el('.team-rows');
+    const deptRows = el('.team-rows');
+    roleAddBtn = el('button.team-addrole', {
+      type: 'button', title: 'Add another role to this show',
+      onclick: (e) => { e.stopPropagation(); openRoleMenu(roleAddBtn); }
+    }, '＋ Add role');
+    const roleHead = el('.team-sect', null, [
+      el('span.team-sect-lbl', null, 'Key roles'), roleAddBtn
+    ]);
+    const deptHead = el('.team-sect', null, el('span.team-sect-lbl', null, 'Departments'));
+
     function render() {
-      rows.innerHTML = '';
+      roleRows.innerHTML = '';
+      roleSlotsNow().forEach(sl => roleRows.appendChild(slotRow(sl)));
+      // hidden once every role is on the page — an empty picker explains nothing
+      roleAddBtn.style.display = missingRoles().length ? '' : 'none';
+
+      deptRows.innerHTML = '';
       const depts = App.pipelineDepts(pipe);
       if (!depts.length) {
-        rows.appendChild(el('.adm-empty', null, 'This pipeline has no departments to staff.'));
+        deptRows.appendChild(el('.adm-empty', null, 'This pipeline has no departments to staff.'));
       } else {
-        depts.forEach(dk => rows.appendChild(deptRow(dk)));
+        depts.forEach(dk => deptRows.appendChild(slotRow(dk)));
       }
       paintSummary();
     }
     list.appendChild(summary);
-    list.appendChild(rows);
+    list.appendChild(roleHead);
+    list.appendChild(roleRows);
+    list.appendChild(deptHead);
+    list.appendChild(deptRows);
     render();
 
     return {
       list: list,
-      // only departments that actually hold someone are stored, so a show
-      // nobody has staffed carries no team at all rather than empty shells
+      /* Only slots that actually hold someone are stored, so a show nobody
+         has staffed carries no team at all rather than empty shells — which
+         is also what makes adding a role you then leave empty cost nothing. */
       read() {
         const out = {};
-        App.pipelineDepts(pipe).forEach(dk => {
-          const { ids, lead } = App.deptTeam({ team: team }, dk);
-          if (ids.length) out[dk] = lead ? { ids: ids, lead: lead } : { ids: ids };
+        slotsNow().forEach(sl => {
+          const { ids, lead } = App.deptTeam({ team: team }, sl);
+          if (ids.length) out[sl] = lead ? { ids: ids, lead: lead } : { ids: ids };
         });
         return out;
       },

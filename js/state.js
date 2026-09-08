@@ -155,10 +155,38 @@ window.App = window.App || {};
   App.role = (k) => App.ROLES.find(r => r.key === k) || App.ROLES[0];
   // Role capabilities are data-driven (Admin → Access Control) with the ROLES
   // flags above as the defaults until an admin overrides them.
-  App.rolePerm = function (k, perm, builtin) {
+  /* ---- sub-roles ----
+     Manager is not a job of its own but something layered on top of one: an
+     Audio Post lead who also manages is "Audio Post and Manager", not a person
+     who stopped being Audio Post. So it lives on the person as a flag rather
+     than in `p.role`, which stays their base role — that keeps their
+     department identity intact for "my department" filters and task
+     ownership, both of which read App.roleDept(p.role).
+
+     Capabilities are then the union of the base role and the sub-role. Manager
+     carries editAll, which subsumes a department role's department scoping, so
+     in practice a departmental manager can touch everything a Manager can
+     while still belonging to their department.
+
+     `App.rolePermOf` is the pure per-role answer — what a ROLE may do,
+     regardless of who is asking. Admin → Access Control renders from it, so
+     its matrix keeps showing each role's own settings. `App.rolePerm` is the
+     "may I" answer, and elevates through the sub-roles the signed-in person
+     carries. Every App.canX helper goes through the latter and is only ever
+     asked about the current user. */
+  App.rolePermOf = function (k, perm, builtin) {
     const t = App.state && App.state.data && App.state.data.rolePerms;
     if (t && t[k] && perm in t[k]) return !!t[k][perm];
     return !!builtin;
+  };
+  App.SUB_ROLES = ['manager'];
+  App.isManager = (person) => !!(person && person.manager);
+  // sub-roles held by the signed-in user; a sub-role elevates the person who
+  // carries it, never the role itself
+  App.mySubRoles = () => (App.state && App.state.subRoles) || [];
+  App.rolePerm = function (k, perm, builtin) {
+    if (App.rolePermOf(k, perm, builtin)) return true;
+    return App.mySubRoles().some(sk => App.rolePermOf(sk, perm, !!App.role(sk)[perm]));
   };
   App.canApprove = (k) => App.rolePerm(k, 'approve', App.role(k).approve);
   App.isAdminRole = (k) => App.rolePerm(k, 'admin', App.role(k).admin);
@@ -170,14 +198,24 @@ window.App = window.App || {};
   // persisted in data.assignPriv. Until an admin changes it, the approver
   // (oversight) roles hold the privilege.
   App.defaultAssignPriv = () => App.ROLES.filter(r => r.approve).map(r => r.key);
-  App.canAssignOwners = function (k) {
+  // the pure per-role answer, for Admin → Access Control's matrix; no sub-role
+  // elevation, because the matrix is about roles rather than about the viewer
+  App.assignPrivOf = function (k) {
     const priv = App.state && App.state.data && App.state.data.assignPriv;
     return priv ? priv.includes(k) : !!App.role(k).approve;
   };
+  App.canAssignOwners = function (k) {
+    const priv = App.state && App.state.data && App.state.data.assignPriv;
+    const holds = (key) => priv ? priv.includes(key) : !!App.role(key).approve;
+    return holds(k) || App.mySubRoles().some(holds);
+  };
   App.roleDept = (k) => App.role(k).dept || null;
   App.canEditTask = function (k, task) {
+    // editAll from either the base role or a sub-role opens every task; a
+    // department role on its own stays scoped to its own department
+    const keys = [k].concat(App.mySubRoles());
+    if (keys.some(key => App.role(key).editAll)) return true;
     const r = App.role(k);
-    if (r.editAll) return true;
     if (r.dept && task) return task.dept === r.dept;
     return false;
   };
@@ -699,13 +737,71 @@ window.App = window.App || {};
     return App.deptStaff(dept).map(p => p.id);
   };
 
+  /* ---- team slots: departments AND oversight roles ----
+     A show is not only staffed by department. Someone produces it and someone
+     directs it, and those roles carry no department at all — App.roleDept is
+     null for them — so they could never be staffed by the department rows
+     alone.
+
+     `show.team` therefore keys two kinds of slot:
+
+       'audio'          a department, from the show's own pipeline
+       'role:producer'  an oversight role, from App.ROLES
+
+     Role keys are prefixed because they would otherwise collide: the
+     department roles share their department's key, and a studio can add a
+     custom department under any name it likes (see applyWorkflow). Reads of a
+     single slot go through App.deptTeam either way — it indexes show.team by
+     whatever key it is handed, so it needs no change to serve both. */
+  App.ROLE_SLOT = 'role:';
+  App.isRoleSlot = (slot) => String(slot).indexOf(App.ROLE_SLOT) === 0;
+  App.roleSlot = (roleKey) => App.ROLE_SLOT + roleKey;
+  App.slotRoleKey = (slot) => String(slot).slice(App.ROLE_SLOT.length);
+
+  /* Producer and Director are the two every production has, and the only
+     oversight roles that are jobs in their own right. Manager is excluded
+     deliberately: it is a sub-role layered on a base role (see App.rolePerm),
+     so a show's managers are already on their own department's row, marked
+     there — a separate Manager row would list the same people twice and imply
+     managing is instead of a department rather than as well as one. */
+  App.DEFAULT_ROLE_SLOTS = ['producer', 'director'];
+  App.isSubRole = (roleKey) => App.SUB_ROLES.indexOf(roleKey) >= 0;
+
+  App.roleStaff = (roleKey) => (App.state.data.people || []).filter(p => p.role === roleKey);
+
+  /* Which role rows a show shows: the two defaults, plus any other role
+     already staffed on it — so a Manager added by hand comes back next time
+     rather than vanishing because it isn't one of the defaults. */
+  App.showRoleSlots = function (show) {
+    const stored = Object.keys((show && show.team) || {})
+      .filter(App.isRoleSlot).map(App.slotRoleKey);
+    const keys = App.DEFAULT_ROLE_SLOTS.concat(
+      stored.filter(r => App.DEFAULT_ROLE_SLOTS.indexOf(r) < 0));
+    // real roles only, in App.ROLES' own order, so the list can't be reordered
+    // by the order someone happened to staff them in
+    return App.ROLES.map(r => r.key).filter(k => keys.indexOf(k) >= 0);
+  };
+
+  // every slot on a show, roles before departments — the order the team page
+  // and Admin's roster both read in
+  App.teamSlots = function (show) {
+    return App.showRoleSlots(show).map(App.roleSlot).concat(App.showDepts(show));
+  };
+
+  App.slotStaff = (slot) => App.isRoleSlot(slot)
+    ? App.roleStaff(App.slotRoleKey(slot))
+    : App.deptStaff(slot);
+  App.slotLabel = (slot) => App.isRoleSlot(slot)
+    ? App.role(App.slotRoleKey(slot)).label
+    : App.dept(slot).label;
+
   /* ---- how spread thin someone already is ----
-     Which active shows a person is on. Counted per show, not per department:
-     someone covering both Audio and Music on one production is on one show,
-     not two. Archived shows release their crew, so they don't count. */
+     Which active shows a person is on. Counted per show, not per slot:
+     someone producing a show and covering its Audio is on one show, not two.
+     Archived shows release their crew, so they don't count. */
   App.personShows = function (personId) {
     return App.activeShows().filter(s =>
-      App.showDepts(s).some(dk => App.deptTeam(s, dk).ids.includes(personId)));
+      App.teamSlots(s).some(slot => App.deptTeam(s, slot).ids.includes(personId)));
   };
 
   /* Availability as the share of themselves each show gets: one show has all
@@ -731,7 +827,7 @@ window.App = window.App || {};
   // is still one person on the production
   App.showTeamSize = function (show) {
     const seen = {};
-    App.showDepts(show).forEach(dk => App.deptTeam(show, dk).ids.forEach(id => { seen[id] = 1; }));
+    App.teamSlots(show).forEach(slot => App.deptTeam(show, slot).ids.forEach(id => { seen[id] = 1; }));
     return Object.keys(seen).length;
   };
 
