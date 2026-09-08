@@ -331,6 +331,9 @@ window.App = window.App || {};
     taskWorkspace(b) { return this._post('/api/task/workspace', b); },
     taskProject(b)   { return this._post('/api/task/project', b); },
     taskOpen(b)      { return this._post('/api/task/open', b); },
+    // open the folder a path on the volume sits in — confined server-side to
+    // the master directory (see /api/task/reveal)
+    taskReveal(b)    { return this._post('/api/task/reveal', b); },
     // copies a file already on the mount into a template library (admin-only)
     templateAdd(b)   { return this._post('/api/task/template/add', b); },
     deliverPrepare(b) { return this._post('/api/task/deliver/prepare', b); },
