@@ -532,7 +532,10 @@ window.App = window.App || {};
   // it going in.
   App.setRolePerm = function (roleKey, perm, allowed, label) {
     if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change privileges', true); return; }
-    if (perm === 'admin' && !allowed && App.ROLES.filter(r => App.isAdminRole(r.key)).length <= 1) {
+    // counts ROLES, not the viewer, so it reads the pure table — otherwise a
+    // manager asking the question would see every role as an admin role
+    if (perm === 'admin' && !allowed &&
+        App.ROLES.filter(r => App.rolePermOf(r.key, 'admin', App.role(r.key).admin)).length <= 1) {
       App.toast('At least one role has to keep Admin Access, or nobody could sign back in to turn it on again', true);
       return;
     }
@@ -1114,6 +1117,28 @@ window.App = window.App || {};
     App.track.audit('person.role', { person: was ? was.name : id, from: was ? was.role : null, to: role });
     App.toast('Role updated');
   };
+  /* The Manager sub-role. Kept off `p.role` deliberately — see App.rolePerm:
+     someone is "Audio Post and Manager", and losing the Audio Post half would
+     cost them their department, their task ownership and their place on a
+     show's Audio Post row. */
+  App.setPersonManager = function (id, on) {
+    if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change privileges', true); return; }
+    const was = App.person(id); if (!was) return;
+    App.mutate(d => {
+      const p = d.people.find(x => x.id === id);
+      if (!p) return;
+      if (on) p.manager = true; else delete p.manager;
+    });
+    App.track.audit('person.manager', { person: was.name, allowed: !!on });
+    App.toast(was.name + (on ? ' is now a Manager as well as ' + App.role(was.role).label
+                             : ' is no longer a Manager'));
+    // the change lands on the signed-in user's own powers immediately
+    if (App.state.user && App.state.user.personId === id) {
+      App.state.subRoles = on ? ['manager'] : [];
+      App.render();
+    }
+  };
+
   App.renamePerson = function (id, name) {
     if (!name.trim()) { App.toast('Name can’t be empty', true); return; }
     App.mutate(d => { const p = d.people.find(x => x.id === id); if (p) p.name = name.trim(); });
@@ -1181,6 +1206,10 @@ window.App = window.App || {};
     if (me.admin) App.state.role = 'producer';
     else if (person) App.state.role = person.role;
     else return false;                                      // signed in but not in the directory
+    /* Sub-roles ride alongside the base role rather than replacing it, so a
+       departmental manager keeps their department (and its task ownership)
+       while gaining a Manager's reach. See App.rolePerm. */
+    App.state.subRoles = App.isManager(person) ? ['manager'] : [];
     App.state.baseRole = App.state.role;
     const r = App.role(App.state.role);
     App.state.view = 'dashboard';

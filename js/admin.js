@@ -191,11 +191,29 @@ window.App = window.App || {};
               el('.adm-name-sub', null, p.email || App.role(p.role).hint)
             ])
       ]),
+      /* Role, plus the Manager sub-role as a toggle beside it rather than a
+         choice within it: Manager is layered on the base role, so offering it
+         inside the same dropdown would make picking it mean giving up the
+         department the person still belongs to. */
       el('.cell', null, editing
-        ? (() => { const s = roleSelect(p.role, v => App.setPersonRole(p.id, v)); s.addEventListener('click', e => e.stopPropagation()); return s; })()
-        : dept
-          ? el('span.dept-chip', null, [el('span.dot', { style: { background: App.dept(dept).color } }), App.dept(dept).label])
-          : el('span.adm-role-chip', null, App.role(p.role).label + ' · oversight')),
+        ? el('.adm-rolecell', null, [
+            (() => { const s = roleSelect(p.role, v => App.setPersonRole(p.id, v)); s.addEventListener('click', e => e.stopPropagation()); return s; })(),
+            (() => {
+              const on = App.isManager(p);
+              return el('button.adm-subrole' + (on ? '.on' : ''), {
+                type: 'button',
+                title: on ? 'Also a Manager — click to remove the sub-role'
+                          : 'Also make ' + p.name + ' a Manager, on top of ' + App.role(p.role).label,
+                onclick: (e) => { e.stopPropagation(); App.setPersonManager(p.id, !on); }
+              }, (on ? '✓ ' : '+ ') + 'Manager');
+            })()
+          ])
+        : el('.adm-rolecell', null, [
+            (dept
+              ? el('span.dept-chip', null, [el('span.dot', { style: { background: App.dept(dept).color } }), App.dept(dept).label])
+              : el('span.adm-role-chip', null, App.role(p.role).label + ' · oversight')),
+            (App.isManager(p) ? el('span.adm-mgr-chip', { title: 'Manager, on top of ' + App.role(p.role).label }, 'Manager') : null)
+          ])),
       (App.memberConnectors().length ? el('.cell', null, integrationsCell(p, editing)) : null),
       el('.cell', null, el('.adm-load', { title: load.total ? load.active + ' active of ' + load.total + ' assigned task' + (load.total === 1 ? '' : 's') : 'No assigned tasks' }, [
         el('span.adm-load-num', null, load.active + '/' + load.total),
@@ -216,25 +234,25 @@ window.App = window.App || {};
   const PERMS = [
     { title: 'Task Management', desc: 'How this role interacts with tasks and assignments.', items: [
       { title: 'Assign Task Owners', desc: 'Can set or change a task’s owner from the Edit Task dialog.',
-        get: k => App.canAssignOwners(k), set: (k, v) => App.setAssignPriv(k, v) },
+        get: k => App.assignPrivOf(k), set: (k, v) => App.setAssignPriv(k, v) },
       { title: 'Approve Tasks', desc: 'Can move tasks to Approved, and change tasks that are already approved.',
-        get: k => App.canApprove(k), set: (k, v) => App.setRolePerm(k, 'approve', v, 'Approve Tasks') },
+        get: k => App.rolePermOf(k, 'approve', App.role(k).approve), set: (k, v) => App.setRolePerm(k, 'approve', v, 'Approve Tasks') },
       { title: 'Rename Tasks', desc: 'Can change a task’s name from the Edit Task dialog.',
-        get: k => App.canEditTaskName(k), set: (k, v) => App.setRolePerm(k, 'editName', v, 'Rename Tasks') },
+        get: k => App.rolePermOf(k, 'editName', App.role(k).editName), set: (k, v) => App.setRolePerm(k, 'editName', v, 'Rename Tasks') },
       { title: 'Remove Tasks', danger: true, desc: 'Can drop a task from an episode’s pipeline.',
-        get: k => App.canRemoveTask(k), set: (k, v) => App.setRolePerm(k, 'removeTask', v, 'Remove Tasks') }
+        get: k => App.rolePermOf(k, 'removeTask', App.role(k).removeTask), set: (k, v) => App.setRolePerm(k, 'removeTask', v, 'Remove Tasks') }
     ]},
     { title: 'Pipeline Oversight', desc: 'High-level access to shows and scheduling.', items: [
       { title: 'Reviews Tab', desc: 'Can open the Reviews tab — the queue of every task waiting for review, across all shows in view.',
-        get: k => App.canSeeReviewQueue(k), set: (k, v) => App.setRolePerm(k, 'reviewQueue', v, 'Reviews Tab') },
+        get: k => App.rolePermOf(k, 'reviewQueue', App.role(k).reviewQueue), set: (k, v) => App.setRolePerm(k, 'reviewQueue', v, 'Reviews Tab') },
       { title: 'Change the Schedule', desc: 'Can move task dates — in the Edit Task dialog and by dragging bars on the Timeline — for every department, not just their own.',
-        get: k => App.canEditSchedule(k), set: (k, v) => App.setRolePerm(k, 'editSchedule', v, 'Change the Schedule') },
+        get: k => App.rolePermOf(k, 'editSchedule', App.role(k).editSchedule), set: (k, v) => App.setRolePerm(k, 'editSchedule', v, 'Change the Schedule') },
       { title: 'Manage Shows', danger: true, desc: 'Can create new shows — and permanently remove a show together with all of its episodes.',
-        get: k => App.canManageShows(k), set: (k, v) => App.setRolePerm(k, 'manageShows', v, 'Manage Shows') }
+        get: k => App.rolePermOf(k, 'manageShows', App.role(k).manageShows), set: (k, v) => App.setRolePerm(k, 'manageShows', v, 'Manage Shows') }
     ]},
     { title: 'System Administration', desc: 'Access to this admin area and the team roster.', items: [
       { title: 'Admin Access', desc: 'Can open the Admin page: manage users, privileges and system settings.',
-        get: k => App.isAdminRole(k), set: (k, v) => App.setRolePerm(k, 'admin', v, 'Admin Access') }
+        get: k => App.rolePermOf(k, 'admin', App.role(k).admin), set: (k, v) => App.setRolePerm(k, 'admin', v, 'Admin Access') }
     ]}
   ];
 
@@ -1045,19 +1063,23 @@ window.App = window.App || {};
          department the pipeline uses, its lead first with a star. Editing is
          the same dialog the Team button opens — this is the view. */
       if (isOpen) {
-        const depts = App.showDepts(s);
+        // roles as well as departments, in App.teamSlots' order — otherwise
+        // the show's producer and director are invisible here
+        const depts = App.teamSlots(s);
         const teamWrap = el('.show-team-view');
         teamWrap.appendChild(el('.show-team-view-head', null, [
           el('span', null, [App.icon('users'), ' Production team']),
           el('button.btn-mini', { onclick: () => App.showTeamDialog.open(s.id) }, 'Edit team')
         ]));
         depts.forEach(dk => {
-          const d = App.dept(dk);
+          const isRole = App.isRoleSlot(dk);
           const { ids, lead } = App.deptTeam(s, dk);
           const ordered = lead ? [lead].concat(ids.filter(id => id !== lead)) : ids;
-          teamWrap.appendChild(el('.show-team-line', null, [
-            el('span.team-dept-dot', { style: { background: d.color } }),
-            el('span.show-team-dept', null, d.label),
+          teamWrap.appendChild(el('.show-team-line' + (isRole ? '.role' : ''), null, [
+            (isRole
+              ? App.icon(App.role(App.slotRoleKey(dk)).ico, { cls: 'team-role-ic' })
+              : el('span.team-dept-dot', { style: { background: App.dept(dk).color } })),
+            el('span.show-team-dept', null, App.slotLabel(dk)),
             el('.show-team-people', null,
               ordered.length
                 ? ordered.map(id => {

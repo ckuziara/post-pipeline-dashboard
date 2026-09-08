@@ -2393,6 +2393,38 @@ select.fld { cursor: pointer; }
   border: 1px solid var(--border); border-radius: 10px;
   background: var(--surface-2); overflow: hidden;
 }
+
+/* Section headers. "Key roles" carries the add-a-role control, so the label
+   and the button share the line rather than the button sitting loose above
+   the rows it adds to. */
+.team-sect {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin: 14px 2px 6px;
+}
+.team-sect:first-of-type { margin-top: 4px; }
+.team-sect-lbl {
+  font-size: 9.5px; font-weight: 700; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: .5px;
+}
+.team-addrole {
+  flex: none; background: none; border: 1px dashed var(--border-2);
+  color: var(--text-2); font: inherit; font-size: 11px; font-weight: 600;
+  padding: 3px 10px; border-radius: 999px; cursor: pointer; white-space: nowrap;
+}
+.team-addrole:hover { border-style: solid; border-color: var(--accent); color: var(--text); }
+.team-addrole:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* An oversight role has no department colour to carry, so its icon does the
+   identifying instead — and reads as a different kind of row for it. */
+.team-row.role .team-rowdept { color: var(--text); }
+.team-role-ic { flex: none; font-size: 13px; color: var(--text-3); width: 13px; }
+.team-row.role .team-dept-tasks { font-style: italic; opacity: .8; }
+
+/* the add-a-role picker reuses .sw-menu, which expects a search box in its head */
+.sw-menu-headline {
+  font-size: 10px; font-weight: 700; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: .4px; padding: 2px 2px 1px;
+}
 .team-row {
   display: flex; align-items: center; gap: 14px;
   padding: 9px 13px; border-top: 1px solid var(--border);
@@ -2427,6 +2459,32 @@ select.fld { cursor: pointer; }
   background: rgba(255,255,255,.07); color: var(--text-3);
 }
 .team-pct.thin { background: rgba(253,171,61,.16); color: #ffce8e; }
+
+/* Manager, shown on whichever row the person already occupies — a sub-role
+   marking a person, not a slot of its own. */
+.team-mgr {
+  flex: none; font-size: 8.5px; font-weight: 800; letter-spacing: .4px;
+  padding: 1px 4px; border-radius: 4px; cursor: help;
+  background: rgba(91,108,255,.22); color: #b9c2ff;
+}
+
+/* Admin directory: role and its sub-role toggle share the cell */
+.adm-rolecell { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0; }
+.adm-subrole {
+  flex: none; background: none; border: 1px dashed var(--border-2);
+  color: var(--text-3); font: inherit; font-size: 10px; font-weight: 700;
+  padding: 2px 8px; border-radius: 999px; cursor: pointer; white-space: nowrap;
+}
+.adm-subrole:hover { border-style: solid; border-color: var(--accent); color: var(--text); }
+.adm-subrole.on {
+  border-style: solid; border-color: rgba(91,108,255,.5);
+  background: rgba(91,108,255,.16); color: #b9c2ff;
+}
+.adm-mgr-chip {
+  flex: none; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+  background: rgba(91,108,255,.16); color: #b9c2ff; border: 1px solid rgba(91,108,255,.35);
+  white-space: nowrap;
+}
 
 .team-star {
   flex: none; background: none; border: 0; padding: 0 0 0 1px; cursor: pointer;
