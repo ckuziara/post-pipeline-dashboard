@@ -2411,6 +2411,10 @@ window.App = window.App || {};
       // ---------- show details ----------
       const nameInput = el('input.fld', { type: 'text', placeholder: 'e.g. Little Angel', value: d0.name || '' });
       const codeInput = el('input.fld', { type: 'text', placeholder: 'e.g. LA', maxlength: '6', value: d0.code || '' });
+      // brand and season are what the Shows browser groups and filters on, so a
+      // new show gets asked for them here rather than only in the editor
+      const brandInput = el('input.fld', { type: 'text', placeholder: 'e.g. Moonbug', value: d0.brand || '' });
+      const seriesInput = el('input.fld', { type: 'text', placeholder: 'e.g. Season 1', value: d0.series || '' });
       const typeSel = el('select.fld', {
         onchange: () => { rebuildPresetOptions(); loadPipeline(); }
       });
@@ -2798,6 +2802,7 @@ window.App = window.App || {};
          per keystroke, so it can never drift from what's on screen. */
       const snapshot = () => ({
         name: nameInput.value, code: codeInput.value,
+        brand: brandInput.value, series: seriesInput.value,
         type: typeSel.value, preset: presetSel.value,
         start: startInput.value, epCount: countInput.value,
         rateN: rateNum.value, rateUnit: rateUnitVal,
@@ -2812,7 +2817,7 @@ window.App = window.App || {};
          a form nobody filled in. */
       const worthKeeping = () => {
         const s = snapshot();
-        if (s.name.trim() || s.code.trim() || s.targetTouched) return true;
+        if (s.name.trim() || s.code.trim() || s.brand.trim() || s.series.trim() || s.targetTouched) return true;
         if (s.epLive.some(Boolean)) return true;
         if (Object.keys(s.team).length) return true;      // staffing is real work too
         if (normPipe(s.pipe) !== normPipe(App.defaultPipelineFor(s.type))) return true;
@@ -2835,8 +2840,10 @@ window.App = window.App || {};
         el('.modal-section-title', null, 'Show Details'),
         el('.plan-grid', null, [
           field('Show Name', nameInput, 'The full title of the series'),
-          field('Show Code', codeInput, 'Prefix for episode codes (LA → LA-1)'),
+          field('Content Code', codeInput, 'Prefix for episode codes (LA → LA-1)'),
           field('Show Type', typeSel, 'Sets the default pipeline for this show'),
+          field('Brand', brandInput, 'Optional — groups shows in the Shows browser'),
+          field('Series / Season', seriesInput, 'Optional — which run of the show this is'),
           field('Pipeline', presetSel, 'The standard pipeline, or a preset saved in Admin → Workflow')
         ]),
         el('.modal-section-title', null, 'Schedule'),
@@ -2935,7 +2942,8 @@ window.App = window.App || {};
               return o;
             });
             const teamOut = team.read();
-            App.createShow({ name, code, type: typeSel.value, epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives, team: teamOut });
+            App.createShow({ name, code, type: typeSel.value, brand: brandInput.value, series: seriesInput.value,
+              epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives, team: teamOut });
             App.track.flowDone('Create show', true, { episodes: epNames.length, departmentsStaffed: Object.keys(teamOut).length });
             created = true;                       // the draft has served its purpose
             editor.closeMenus();
@@ -2959,11 +2967,19 @@ window.App = window.App || {};
      exists. Re-staffing changes who new work opens against; episodes already
      running keep their owners (see App.setShowTeam). */
   App.showTeamDialog = {
-    open(showId) {
+    /* opts.back — the dialog this one was opened from, reopened however this
+       one is left: saved, cancelled, ✕, Escape or backdrop. Opened from Admin
+       there's nothing to go back to, so it closes as before. */
+    open(showId, opts) {
       const show = App.state.data.shows.find(s => s.id === showId);
       if (!show) return;
       if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change a show’s team', true); return; }
       App.track.feature('show.teamDialog');
+      const back = (opts && opts.back) || null;
+      // set while handing off to another dialog on purpose, so the teardown
+      // that hand-off triggers doesn't ALSO fire the go-back
+      let nav = false;
+      const goBack = () => { if (!back) { App.modal.close(); return; } nav = true; back(); };
 
       const pipeline = show.pipeline || App.defaultPipelineFor(show.type);
       const team = App.teamEditor(pipeline, show.team, { showId: showId });
@@ -2979,14 +2995,323 @@ window.App = window.App || {};
       ];
 
       const footer = [
-        el('button.btn-ghost', { onclick: () => { team.closeMenus(); App.modal.close(); } }, 'Cancel'),
+        el('button.btn-ghost', { onclick: () => { team.closeMenus(); goBack(); } }, back ? 'Back' : 'Cancel'),
         el('button.btn-primary', {
-          onclick: () => { team.closeMenus(); App.setShowTeam(showId, team.read()); App.modal.close(); }
+          onclick: () => { team.closeMenus(); App.setShowTeam(showId, team.read()); goBack(); }
         }, 'Save Team')
       ];
 
       App.modal.open(card('users', 'Production Team', 'Who works on this show, department by department', sections, footer, 'wide'),
-        { onClose: () => team.closeMenus() });
+        { onClose: () => { team.closeMenus(); if (!nav && back) back(); } });
+    }
+  };
+
+  /* ---- Shows (Planner) ----
+     The Planner's one Add Show button became a Shows button, because adding a
+     show is only one of three things a producer does with the show list: the
+     other two — opening one to edit it, and importing one from a back-up file
+     — had no home outside Admin at all.
+
+  /* The file side of Import. A hidden input is the only way to a real file
+     picker, and it's built per use rather than left in the DOM so a cancelled
+     import leaves nothing behind. */
+  function pickShowFile() {
+    const inp = el('input', { type: 'file', accept: '.json,application/json', style: { display: 'none' } });
+    inp.addEventListener('change', () => {
+      const file = inp.files && inp.files[0];
+      inp.remove();
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onerror = () => App.toast('Couldn’t read that file', true);
+      reader.onload = () => {
+        let payload = null;
+        try { payload = JSON.parse(reader.result); }
+        catch (e) { App.toast('That file isn’t valid JSON', true); return; }
+        const res = App.importShow(payload);
+        /* the mutation re-renders on its own, but the filter may well be sitting
+           on other shows — point it at the new one so the import is visible
+           rather than imported into a view that doesn't show it */
+        if (res) {
+          App.state.filters.show = [res.showId];
+          App.render();
+        }
+      };
+      reader.readAsText(file);
+    });
+    document.body.appendChild(inp);
+    inp.click();
+  }
+
+  /* The show browser itself. A dropdown was the wrong shape for this: the list
+     is the point, each row carries a brand, a season and a producer worth
+     reading, and five filters don't fit in a 320px menu. So it's a real
+     dialog — cards, not menu rows, and only current shows: archived ones live
+     in Admin → Shows, where restoring them belongs. */
+  App.showsBrowser = {
+    open() {
+      if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can manage shows', true); return; }
+      App.track.feature('show.browser');
+
+      const eps = App.state.data.episodes;
+      const shows = () => App.state.data.shows.filter(s => !s.archived);
+
+      // Producer is a team slot, not a field on the show — read it back the
+      // same way the roster does, lead first
+      const producersOf = (s) => {
+        const { ids, lead } = App.deptTeam(s, App.roleSlot('producer'));
+        const ordered = lead ? [lead].concat(ids.filter(id => id !== lead)) : ids;
+        return ordered.map(App.person).filter(Boolean);
+      };
+
+      const f = { name: '', brand: '', series: '', producer: '', code: '' };
+
+      /* Brand, season and producer are picked from what the board actually has
+         — a free-text box for a field with eight distinct values means typing
+         to find out you spelled it differently. Name and content code stay
+         typed: those are searches, not choices. */
+      const optionsFor = (get) => {
+        const seen = {};
+        shows().forEach(s => (get(s) || []).forEach(v => { if (v) seen[v] = 1; }));
+        return Object.keys(seen).sort((a, b) => a.localeCompare(b));
+      };
+
+      const grid = el('.shows-grid');
+      const countLbl = el('.shows-count');
+
+      const textFilter = (key, label, ph) => {
+        const inp = el('input.fld.shows-filter-fld', { type: 'text', placeholder: ph, spellcheck: 'false' });
+        inp.addEventListener('input', () => { f[key] = inp.value.trim().toLowerCase(); draw(); });
+        return el('.shows-filter', null, [el('label.shows-filter-lbl', null, label), inp]);
+      };
+      const pickFilter = (key, label, values, anyLabel) => {
+        const sel = el('select.fld.shows-filter-fld');
+        [['', anyLabel]].concat(values.map(v => [v, v])).forEach(([v, l]) => {
+          const o = document.createElement('option'); o.value = v; o.textContent = l; sel.appendChild(o);
+        });
+        sel.addEventListener('change', () => { f[key] = sel.value; draw(); });
+        return { wrap: el('.shows-filter', null, [el('label.shows-filter-lbl', null, label), sel]), sel: sel };
+      };
+
+      const nameF = textFilter('name', 'Name', 'Search shows…');
+      const brandF = pickFilter('brand', 'Brand', optionsFor(s => [s.brand]), 'Any brand');
+      const seriesF = pickFilter('series', 'Series / Season', optionsFor(s => [s.series]), 'Any season');
+      const producerF = pickFilter('producer', 'Producer', optionsFor(s => producersOf(s).map(p => p.name)), 'Any producer');
+      const codeF = textFilter('code', 'Content Code', 'e.g. LA');
+
+      const clearBtn = el('button.shows-clear', {
+        type: 'button', title: 'Show every current show again',
+        onclick: () => {
+          Object.keys(f).forEach(k => { f[k] = ''; });
+          [...filterRow.querySelectorAll('input.shows-filter-fld')].forEach(i => { i.value = ''; });
+          [brandF.sel, seriesF.sel, producerF.sel].forEach(sl => { sl.value = ''; });
+          draw();
+        }
+      }, 'Clear');
+
+      const filterRow = el('.shows-filters', null, [
+        nameF, brandF.wrap, seriesF.wrap, producerF.wrap, codeF, clearBtn
+      ]);
+
+      const matches = (s) => {
+        const prods = producersOf(s);
+        if (f.name && !s.name.toLowerCase().includes(f.name)) return false;
+        if (f.brand && (s.brand || '') !== f.brand) return false;
+        if (f.series && (s.series || '') !== f.series) return false;
+        if (f.producer && !prods.some(p => p.name === f.producer)) return false;
+        if (f.code && !String(s.prefix || '').toLowerCase().includes(f.code)) return false;
+        return true;
+      };
+
+      const cardFor = (s) => {
+        const n = eps.filter(e => e.showId === s.id && !e.archived).length;
+        const crew = App.showTeamSize(s);
+        const prods = producersOf(s);
+        const meta = [s.brand, s.series].filter(Boolean).join(' · ');
+        return el('button.show-card', {
+          type: 'button',
+          title: 'Open “' + s.name + '” to rename, recolour or restaff it',
+          onclick: () => App.editShowDialog.open(s.id, { back: () => App.showsBrowser.open() })
+        }, [
+          // the colour is how this show is recognised everywhere else on the
+          // board, so it's the card's spine rather than a small dot
+          el('.show-card-spine', { style: { background: s.color } }),
+          el('.show-card-body', null, [
+            el('.show-card-top', null, [
+              el('span.show-card-code', { style: { background: s.color, color: App.pickInkFor(s.color) } }, s.prefix || '—'),
+              el('span.show-card-name', null, s.name)
+            ]),
+            meta ? el('.show-card-meta', null, meta) : el('.show-card-meta.none', null, 'No brand or season set'),
+            el('.show-card-foot', null, [
+              el('span.show-card-stat', null, n + ' episode' + (n === 1 ? '' : 's')),
+              el('span.show-card-sep', null, '·'),
+              el('span.show-card-stat' + (crew ? '' : '.none'), null, crew ? crew + ' crew' : 'unstaffed'),
+              prods.length
+                ? el('.show-card-prods', null, prods.slice(0, 3).map(p =>
+                    el('span.avatar.show-card-av', {
+                      style: { background: p.color }, title: p.name + ' — producer on ' + s.name
+                    }, App.initials(p.name))))
+                : null
+            ])
+          ])
+        ]);
+      };
+
+      function draw() {
+        const all = shows();
+        const hits = all.filter(matches);
+        grid.innerHTML = '';
+        if (!all.length) {
+          grid.appendChild(el('.shows-empty', null, 'No current shows — add the first one below.'));
+        } else if (!hits.length) {
+          grid.appendChild(el('.shows-empty', null, 'Nothing matches those filters. Clear them to see all ' + all.length + '.'));
+        } else {
+          hits.forEach(s => grid.appendChild(cardFor(s)));
+        }
+        countLbl.textContent = hits.length === all.length
+          ? all.length + ' current show' + (all.length === 1 ? '' : 's')
+          : hits.length + ' of ' + all.length + ' shows';
+      }
+      draw();
+
+      const sections = [
+        el('.shows-filter-bar', null, [filterRow, countLbl]),
+        grid
+      ];
+
+      const footer = [
+        el('button.btn-ghost', {
+          title: 'Load a show and its episodes from a back-up JSON file',
+          onclick: () => { App.modal.close(); pickShowFile(); }
+        }, [App.icon('upload'), ' Import show']),
+        el('button.btn-primary', {
+          title: 'Plan a new show, its pipeline and its team',
+          onclick: () => { App.modal.close(); App.addShow.open(); }
+        }, '＋ Add show')
+      ];
+
+      App.modal.open(card('clapper', 'Shows', 'Open a show to edit it, or start a new one', sections, footer, 'wide'));
+    }
+  };
+
+  /* ---- Edit Show ----
+     A show's identity, not its plan: name, code and colour. The pipeline, the
+     schedule and the team each already have their own editor, so this links out
+     to the team and leaves the rest of them alone. */
+  App.editShowDialog = {
+    /* opts.back — see App.showTeamDialog. Opened from the Shows browser this
+       reopens it on the way out, so editing a show doesn't dump you back onto
+       the board and make you find the list again. */
+    open(showId, opts) {
+      const show = App.state.data.shows.find(s => s.id === showId);
+      if (!show) { App.toast('That show no longer exists', true); return; }
+      if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change shows', true); return; }
+      App.track.feature('show.editDialog');
+      const back = (opts && opts.back) || null;
+      let nav = false;
+      const goBack = () => { if (!back) { App.modal.close(); return; } nav = true; back(); };
+      // the team editor comes back HERE, and this dialog then goes back to
+      // wherever it was opened from — one step at a time, not straight out
+      const reopen = () => App.editShowDialog.open(showId, opts);
+
+      const epCount = App.state.data.episodes.filter(e => e.showId === showId && !e.archived).length;
+      const nameInput = el('input.fld', { type: 'text', value: show.name });
+      const codeInput = el('input.fld', { type: 'text', maxlength: '6', value: show.prefix || '' });
+      /* Brand and season are what the Shows browser filters on, so this is
+         where they get filled in. Free text with a datalist of what the board
+         already uses: a new brand has to be typeable, but a second spelling of
+         an existing one splits its filter in two. */
+      const listId = 'show-brands-' + showId;
+      const seriesListId = 'show-series-' + showId;
+      const knownValues = (get) => {
+        const seen = {};
+        App.state.data.shows.forEach(x => { const v = get(x); if (v) seen[v] = 1; });
+        return Object.keys(seen).sort((a, b) => a.localeCompare(b));
+      };
+      const datalist = (id, values) => {
+        const dl = document.createElement('datalist'); dl.id = id;
+        values.forEach(v => { const o = document.createElement('option'); o.value = v; dl.appendChild(o); });
+        return dl;
+      };
+      const brandInput = el('input.fld', { type: 'text', value: show.brand || '', list: listId, placeholder: 'e.g. Moonbug' });
+      const seriesInput = el('input.fld', { type: 'text', value: show.series || '', list: seriesListId, placeholder: 'e.g. Season 3' });
+      let color = show.color;
+
+      /* Colour is picked, not typed: the palette is what every show chip, bar
+         and dot on the board is drawn from, and a free-text hex would let a
+         show land unreadable against the timeline. */
+      const swatches = el('.show-swatches');
+      const paint = () => [...swatches.children].forEach(b =>
+        b.classList.toggle('on', b.dataset.color === color));
+      (App.SHOW_PALETTE || []).forEach(c => {
+        swatches.appendChild(el('button.show-swatch', {
+          type: 'button', style: { background: c }, 'data-color': c,
+          title: 'Use this colour for ' + show.name,
+          onclick: () => { color = c; paint(); }
+        }));
+      });
+      paint();
+
+      const sections = [
+        el('.ctx-box.slim', null, [
+          el('span.ctx-chip', { style: { background: show.color, color: App.pickInkFor(show.color) } }, show.prefix || '—'),
+          el('span.ctx-title', null, show.name),
+          el('span.ctx-sub', null, epCount + ' active episode' + (epCount === 1 ? '' : 's') +
+            ' · ' + ((show.pipeline || App.TEMPLATE) || []).length + ' tasks each')
+        ]),
+        el('.plan-grid.two', null, [
+          field('Show Name', nameInput, 'The full title of the series'),
+          field('Content Code', codeInput, 'Renaming it renames every episode code with it (LA-1 → NEW-1)')
+        ]),
+        el('.plan-grid.two', null, [
+          field('Brand', brandInput, 'Groups shows in the Shows browser'),
+          field('Series / Season', seriesInput, 'Which run of the show this is')
+        ]),
+        datalist(listId, knownValues(x => x.brand)),
+        datalist(seriesListId, knownValues(x => x.series)),
+        el('.field', null, [
+          el('label.fld-label', null, 'Show Colour'),
+          swatches
+        ]),
+        el('.modal-section-title', null, 'Elsewhere'),
+        el('.show-edit-links', null, [
+          el('button.btn-mini', {
+            type: 'button', title: 'Who works on this show, department by department',
+            onclick: () => { nav = true; App.showTeamDialog.open(showId, { back: reopen }); }
+          }, [App.icon('users'), ' Production team']),
+          el('button.btn-mini', {
+            type: 'button', title: 'Download this show and all its episodes as a JSON file',
+            onclick: () => App.downloadShowBackup(showId)
+          }, [App.icon('download'), ' Back up']),
+          el('button.btn-mini', {
+            type: 'button',
+            title: show.archived
+              ? 'Bring this show back into every view'
+              : 'Hide this show from every view without losing any of its data',
+            // archiving is an edit like any other: do it, then hand back rather
+            // than leaving the producer on the bare board
+            onclick: () => { App.setShowArchived(showId, !show.archived); goBack(); }
+          }, show.archived
+            ? [App.icon('archive'), ' Restore show']
+            : [App.icon('archive'), ' Archive show'])
+        ])
+      ];
+
+      const footer = [
+        el('button.btn-ghost', { onclick: () => goBack() }, back ? 'Back' : 'Cancel'),
+        el('button.btn-primary', {
+          onclick: () => {
+            // a rejected save (blank name, a code another show holds) leaves the
+            // dialog up with what was typed still in it
+            if (App.updateShow(showId, {
+              name: nameInput.value, code: codeInput.value, color: color,
+              brand: brandInput.value, series: seriesInput.value
+            })) goBack();
+          }
+        }, 'Save Show')
+      ];
+
+      App.modal.open(card('film', 'Edit Show', 'Rename, recolour, or jump to this show’s team', sections, footer),
+        { onClose: () => { if (!nav && back) back(); } });
     }
   };
 })();

@@ -369,8 +369,15 @@ window.App = window.App || {};
       }, '＋ Create'));
     }
 
+    /* Shows is a menu, not a single action: adding one is only one of the
+       three things done to the show list from here — the others being opening
+       an existing show to rename or recolour it, and importing one from a
+       back-up file. */
     if (App.canManageShows(App.state.role)) {
-      actions.appendChild(el('button.btn-addshow', { onclick: () => App.addShow.open() }, '＋ Add show'));
+      actions.appendChild(el('button.btn-addshow', {
+        title: 'Browse this board’s shows — open one to edit it, add one, or import one',
+        onclick: () => App.showsBrowser.open()
+      }, 'Shows'));
     }
     if (actions.children.length) box.appendChild(actions);
   }

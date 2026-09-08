@@ -27,6 +27,28 @@ window.App = window.App || {};
     else { style.left = xOf(s) + 'px'; style.width = xOf.width(s, d) + 'px'; }
   }
 
+  /* A summary bar's gradient runs ALONG the time axis, so it has to turn with
+     it — a 90deg gradient on a tall thin Portrait bar bands it edge-to-edge
+     across its 5px width instead of along its length. */
+  function barGradient(color, axis) {
+    return 'linear-gradient(' + (axis && axis.portrait ? '180deg' : '90deg') + ',' +
+           color + ',' + shade(color, -16) + ')';
+  }
+
+  /* The progress wash inside a summary bar — the "x% done" overlay. Grows
+     along the time axis (leading edge first) in either orientation, which
+     means swapping which pair of sides it pins to. Shared by all four
+     summary-bar builders (episode, show, department, show-department). */
+  function progressFill(prog, axis) {
+    const style = (axis && axis.portrait)
+      ? { position: 'absolute', top: '0', left: '0', right: '0', height: prog + '%' }
+      : { position: 'absolute', left: '0', top: '0', bottom: '0', width: prog + '%' };
+    style.background = 'rgba(255,255,255,.22)';
+    style.borderRadius = '6px';
+    style.pointerEvents = 'none';
+    return el('', { style });
+  }
+
   // ---- ISO week helpers ----
   function isoWeek(d) {
     const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -220,13 +242,13 @@ window.App = window.App || {};
 
     render(episodes) {
       const sort = App.prefs.get('timelineSort', 'department');
-      /* Portrait (time runs top-to-bottom) is Department-sort only for now —
-         Episode/Show build their rows through separate, independent code that
-         hasn't been given a column-based mirror yet. The preference itself
-         isn't scoped to a sort mode, so switching to Episode/Show with
-         Portrait selected just quietly renders Landscape — no error, nothing
-         to explain, and it starts working again the moment you switch back. */
-      const portrait = sort === 'department' && App.prefs.get('timelineOrientation', 'landscape') === 'portrait';
+      /* Portrait (time runs top-to-bottom) applies to all three sorts. Every
+         sort's rows are built from the same .g-row/.g-label/.g-track shape, so
+         Portrait is the same two things everywhere: bars written along the
+         other axis (setBarPos), and .gantt-body flipped to flex-row in CSS so
+         a "row" lays out as a column. Grouping, ordering and interval-stacking
+         are untouched and orientation-agnostic in all three. */
+      const portrait = App.prefs.get('timelineOrientation', 'landscape') === 'portrait';
       const axis = { portrait };
 
       const wrap = el('.gantt' + (App.prefs.get('latchScroll', false) ? '.latch' : '') + (portrait ? '.gantt-portrait' : ''));
@@ -348,10 +370,10 @@ window.App = window.App || {};
         Object.values(byShow)
           .map(eps => eps.sort(byStart))
           .sort((a, b) => byStart(a[0], b[0]))
-          .forEach(eps => this.showRow(body, App.show(eps[0].showId), eps, startIso, dw, timeW, xOf));
+          .forEach(eps => this.showRow(body, App.show(eps[0].showId), eps, startIso, dw, timeW, xOf, axis));
       } else if (sort === 'episode') {
         // one row per episode; expand into department-grouped, stacked task rows
-        episodes.slice().sort(byStart).forEach(ep => this.episodeStackedRow(body, ep, startIso, dw, timeW, xOf));
+        episodes.slice().sort(byStart).forEach(ep => this.episodeStackedRow(body, ep, startIso, dw, timeW, xOf, axis));
       } else {
         // 'department': one row per department, spanning every show in view;
         // expand into one line per task, each holding a bar per episode.
@@ -815,12 +837,20 @@ window.App = window.App || {};
       const colDeltaX = Math.round((e.clientX - d.startClientX) / dw);
 
       if (d.kind === 'note-draw' || d.kind === 'create-draw') {
-        const cur = d.startCol + Math.round((e.clientX - d.startClientX) / dw);
+        // d.portrait is set only by startCreateDraw — a note-draw is always
+        // Landscape, so this reads clientX for notes either way
+        const drawDelta = d.portrait ? (e.clientY - d.startClientY) : (e.clientX - d.startClientX);
+        const cur = d.startCol + Math.round(drawDelta / dw);
         const a = Math.max(0, Math.min(d.startCol, cur)), b = Math.max(0, Math.max(d.startCol, cur));
         d.curA = a; d.curB = b;
-        if (Math.abs(e.clientX - d.startClientX) > 4) d.moved = true;
-        d.ghost.style.left = (a * dw) + 'px';
-        d.ghost.style.width = ((b - a + 1) * dw) + 'px';
+        if (Math.abs(drawDelta) > 4) d.moved = true;
+        if (d.portrait) {
+          d.ghost.style.top = (a * dw) + 'px';
+          d.ghost.style.height = ((b - a + 1) * dw) + 'px';
+        } else {
+          d.ghost.style.left = (a * dw) + 'px';
+          d.ghost.style.width = ((b - a + 1) * dw) + 'px';
+        }
         const sIso = App.addVisibleDays(this._startIso, a, hw), dIso = App.addVisibleDays(this._startIso, b, hw);
         const dotColor = d.kind === 'create-draw' ? '#9b5bff' : '#5b6cff';
         const tip = dragTipEl(); tip.innerHTML = '';
@@ -1130,20 +1160,33 @@ window.App = window.App || {};
 
     // Shared episode summary row (the collapsed/top line for both the
     // Department and Episode sorts). Returns the .g-row element.
-    epTopRow(ep, xOf, dw) {
+    epTopRow(ep, xOf, dw, axis) {
       const show = App.show(ep.showId);
       const expanded = !!App.state.ganttExpanded[ep.id];
       const prog = App.progressPct(ep);
       const blocked = App.epBlockedCount(ep), overdue = App.epOverdueCount(ep);
+      const portrait = !!(axis && axis.portrait);
+      const spine = portrait && expanded;
 
-      const row = el('.g-row');
+      const row = el('.g-row' + (spine ? '.spine' : ''));
       row.dataset.episodeId = ep.id;
-      row.appendChild(el('.g-label', null, [
+      const labelTip = ep.code + ' · ' + ep.title + ' · ' + App.fmtRange(App.epStart(ep), App.epDue(ep)) +
+                       (overdue ? ' · ' + overdue + ' overdue' : '');
+      row.appendChild(el('.g-label', { title: portrait ? labelTip : null }, spine ? [
+        el('.l-title', null, [el('span.chev.open', null, '▶')])
+      ] : [
         el('.l-title', null, [
           el('span.chev' + (expanded ? '.open' : ''), null, '▶'),
           el('span', null, ep.title)
         ]),
-        el('.l-sub', null, [
+        // Portrait's label band is ~96px wide against Landscape's 220px, so
+        // the sub-line keeps only the episode code — the date range and the
+        // overdue count move into the tooltip rather than being ellipsised
+        // into unreadable fragments.
+        el('.l-sub', null, portrait ? [
+          el('span.code', null, ep.code),
+          (overdue ? el('span', { style: { color: '#ff8a95', fontWeight: '700' } }, '· ' + overdue) : null)
+        ] : [
           el('span.code', null, ep.code),
           el('span', null, '· ' + App.fmtRange(App.epStart(ep), App.epDue(ep))),
           (overdue ? el('span', { style: { color: '#ff8a95', fontWeight: '700' } }, ['· ', App.icon('warn'), ' ' + overdue]) : null)
@@ -1152,28 +1195,23 @@ window.App = window.App || {};
 
       const track = el('.g-track');
       const s = App.epStart(ep), d = App.epDue(ep);
-      const left = xOf(s), width = xOf.width(s, d);
       const delivered = App.isDelivered(ep);
+      const barStyle = { background: barGradient(show.color, axis), color: pickInk(show.color) };
+      setBarPos(barStyle, axis, xOf, s, d);
       const bar = el('.bar' + (delivered ? '.delivered' : ''), {
         title: ep.code + ' · ' + ep.title + ' — ' + prog + '% · ' + App.epStatusLabel(ep),
-        style: {
-          left: left + 'px', width: width + 'px',
-          background: 'linear-gradient(90deg,' + show.color + ',' + shade(show.color, -16) + ')',
-          color: pickInk(show.color)
-        }
-      }, [
+        style: barStyle
+      }, spine ? [] : [
         el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, ep.title),
         (blocked ? App.icon('blocked', { cls: 'blk', title: blocked + ' blocked' }) : null)
       ]);
-      if (!delivered && prog > 0) {
-        bar.appendChild(el('', { style: {
-          position: 'absolute', left: '0', top: '0', bottom: '0', width: prog + '%',
-          background: 'rgba(255,255,255,.22)', borderRadius: '6px', pointerEvents: 'none'
-        } }));
-      }
-      attachBar(bar, epBarStatus(ep));
+      if (!spine && !delivered && prog > 0) bar.appendChild(progressFill(prog, axis));
+      attachBar(bar, epBarStatus(ep), !spine);
       track.appendChild(bar);
-      this.milestoneMarks(track, ep, xOf, dw);
+      // milestones sit past the end of the work, so an expanded episode's
+      // spine still draws them — they're the only thing marking where the
+      // delivery and live dates fall once the summary bar is a hairline.
+      this.milestoneMarks(track, ep, xOf, dw, axis);
       row.appendChild(track);
       return row;
     },
@@ -1184,12 +1222,14 @@ window.App = window.App || {};
        the bar. They are not tasks and are never draggable: a date owed to
        someone outside the studio shouldn't be a thing you can nudge with the
        mouse. Clicking one opens its panel, which is where the date is changed. */
-    milestoneMarks(track, ep, xOf, dw) {
+    milestoneMarks(track, ep, xOf, dw, axis) {
       if (isCoarse(dw)) return;                  // a one-day mark says nothing at this scale
       App.epMilestones(ep).forEach(m => {
         const late = m.slipDays > 0;
+        const msStyle = {};
+        setBarPos(msStyle, axis, xOf, m.date, m.date);
         const mark = el('.ms-day.clickable.ms-' + m.key + (m.fixed ? '.fixed' : '') + (late ? '.late' : ''), {
-          style: { left: xOf(m.date) + 'px', width: xOf.width(m.date, m.date) + 'px' },
+          style: msStyle,
           title: m.name + ' — ' + App.fmtDate(m.date) +
                  (m.key === App.LIVE_KEY ? '' : m.fixed
                    ? '\nHeld at its own date'
@@ -1303,23 +1343,32 @@ window.App = window.App || {};
     },
 
     // Faint span header marking where a department's work starts and ends.
-    phaseRow(body, dep, items, xOf, note) {
+    phaseRow(body, dep, items, xOf, note, axis) {
       const gStart = items.reduce((m, x) => x.su.start < m ? x.su.start : m, items[0].su.start);
       const gDue = items.reduce((m, x) => x.su.due > m ? x.su.due : m, items[0].su.due);
       const [r, g, b] = hexToRgb(dep.color);
+      const portrait = !!(axis && axis.portrait);
       const hrow = el('.g-row.sub.phase', { style: { background: this.deptWash(dep) } });
+      // Portrait gives the phase span a spine's width, so its name would clip
+      // to a letter or two — the dot alone carries the department there, with
+      // the name in the tooltip the label already has.
       hrow.appendChild(el('.g-label', { title: dep.label + ' phase', style: { background: deptLabelBg(dep.color) } }, [
-        el('.l-title', { style: { fontWeight: '700', fontSize: '10.5px' } }, [
+        el('.l-title', { style: { fontWeight: '700', fontSize: '10.5px' } }, portrait ? [
+          this.deptDot(dep)
+        ] : [
           this.deptDot(dep),
           el('span', null, dep.label)
         ])
       ]));
       const ht = el('.g-track');
+      const pStyle = {
+        background: 'rgba(' + r + ',' + g + ',' + b + ',.15)',
+        borderColor: 'rgba(' + r + ',' + g + ',' + b + ',.55)'
+      };
+      setBarPos(pStyle, axis, xOf, gStart, gDue);
       ht.appendChild(el('.phase-bar', {
         title: dep.label + ' — ' + App.fmtRange(gStart, gDue) + (note ? ' · ' + note : ''),
-        style: { left: xOf(gStart) + 'px', width: xOf.width(gStart, gDue) + 'px',
-          background: 'rgba(' + r + ',' + g + ',' + b + ',.15)',
-          borderColor: 'rgba(' + r + ',' + g + ',' + b + ',.55)' }
+        style: pStyle
       }));
       hrow.appendChild(ht);
       body.appendChild(hrow);
@@ -1372,13 +1421,13 @@ window.App = window.App || {};
     // beneath — tasks that don't overlap in time share a line, so parallel
     // work reads at a glance. `barLabel` names each bar; it varies because a
     // show's line carries tasks from several episodes at once.
-    deptStackedLines(body, dep, items, xOf, dw, barLabel) {
+    deptStackedLines(body, dep, items, xOf, dw, barLabel, axis) {
       const sorted = items.slice().sort((a, b) => a.su.start < b.su.start ? -1 : 1);
       if (!sorted.length) return;
       const multi = sorted.length > 1;
 
       // phase-span header — only worth it for a multi-task department
-      if (multi) this.phaseRow(body, dep, sorted, xOf, sorted.length + ' tasks');
+      if (multi) this.phaseRow(body, dep, sorted, xOf, sorted.length + ' tasks', axis);
 
       // interval-stack: a task shares a line unless it overlaps the last one
       const levels = [];
@@ -1401,7 +1450,7 @@ window.App = window.App || {};
         ));
         const st = el('.g-track');
         // identity lives on each bar, not the row: one line can hold many episodes
-        lvl.items.forEach(it => this.taskBar(st, it.ep, it.su, dep, xOf, dw, barLabel && barLabel(it)));
+        lvl.items.forEach(it => this.taskBar(st, it.ep, it.su, dep, xOf, dw, barLabel && barLabel(it), null, axis));
         srow.appendChild(st);
         body.appendChild(srow);
       });
@@ -1431,39 +1480,49 @@ window.App = window.App || {};
         const epCount = new Set(all.map(x => x.ep.id)).size;
         const complete = done === all.length;
 
-        const row = el('.g-row');
+        // Portrait gives every department a whole COLUMN, so an expanded
+        // department's own summary bar would sit next to its tasks eating a
+        // full column of width for information the tasks already show. Once
+        // open it collapses to a thin spine — just the dept's span as a
+        // hairline, and a chevron-plus-dot label to close it again.
+        const spine = portrait && expanded;
+        const row = el('.g-row' + (spine ? '.spine' : ''));
         row.dataset.episodeId = expKey;                       // expansion key via the shared click handler
-        row.appendChild(el('.g-label', null, [
+        const labelTip = dep.label + ' — ' + group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's') +
+                         ' · ' + epCount + ' ep' + (epCount === 1 ? '' : 's') + ' · ' + App.fmtRange(min, max);
+        row.appendChild(el('.g-label', { title: portrait ? labelTip : null }, spine ? [
+          el('.l-title', null, [
+            el('span.chev.open', null, '▶'),
+            this.deptDot(dep)
+          ])
+        ] : [
           el('.l-title', null, [
             el('span.chev' + (expanded ? '.open' : ''), null, '▶'),
             this.deptDot(dep),
             el('span', null, dep.label)
           ]),
-          el('.l-sub', null, [
+          // A portrait column is ~96px wide, not the 220px a Landscape label
+          // gets, so the sub-line carries only the task count — the episode
+          // count and date range live in the label's tooltip instead of
+          // being ellipsised into nothing.
+          el('.l-sub', null, portrait ? [
+            el('span.code', null, group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's'))
+          ] : [
             el('span.code', null, group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's')),
             el('span', null, '· ' + epCount + ' ep' + (epCount === 1 ? '' : 's') + ' · ' + App.fmtRange(min, max))
           ])
         ]));
 
         const track = el('.g-track');
-        const barStyle = {
-          background: 'linear-gradient(' + (portrait ? '180deg' : '90deg') + ',' + dep.color + ',' + shade(dep.color, -16) + ')',
-          color: pickInk(dep.color)
-        };
+        const barStyle = { background: barGradient(dep.color, axis), color: pickInk(dep.color) };
         setBarPos(barStyle, axis, xOf, min, max);
         const bar = el('.bar' + (complete ? '.delivered' : ''), {
           title: dep.label + ' — ' + group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's') +
                  ' across ' + epCount + ' episode' + (epCount === 1 ? '' : 's') + ' · ' + prog + '% complete',
           style: barStyle
-        }, [el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, dep.label)]);
-        if (!complete && prog > 0) {
-          const fillStyle = portrait
-            ? { position: 'absolute', top: '0', left: '0', right: '0', height: prog + '%' }
-            : { position: 'absolute', left: '0', top: '0', bottom: '0', width: prog + '%' };
-          fillStyle.background = 'rgba(255,255,255,.22)'; fillStyle.borderRadius = '6px'; fillStyle.pointerEvents = 'none';
-          bar.appendChild(el('', { style: fillStyle }));
-        }
-        attachBar(bar, complete ? { color: '#00c875', label: 'Complete' } : { color: '#fdab3d', label: prog + '% complete' });
+        }, spine ? [] : [el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, dep.label)]);
+        if (!spine && !complete && prog > 0) bar.appendChild(progressFill(prog, axis));
+        attachBar(bar, complete ? { color: '#00c875', label: 'Complete' } : { color: '#fdab3d', label: prog + '% complete' }, !spine);
         track.appendChild(bar);
         row.appendChild(track);
         body.appendChild(row);
@@ -1478,21 +1537,21 @@ window.App = window.App || {};
     // department with 2+ tasks gets a faint phase-span header showing where it
     // starts and ends, with its tasks stacked directly beneath — tasks that
     // don't overlap in time share a row so parallel work reads at a glance.
-    episodeStackedRow(body, ep, startIso, dw, timeW, xOf) {
-      body.appendChild(this.epTopRow(ep, xOf, dw));
+    episodeStackedRow(body, ep, startIso, dw, timeW, xOf, axis) {
+      body.appendChild(this.epTopRow(ep, xOf, dw, axis));
       if (!App.state.ganttExpanded[ep.id]) return;
 
       const { order, byDept } = this.groupByDept([ep]);
       order.forEach(dk => {
         const group = byDept[dk];
-        this.deptStackedLines(body, App.dept(dk), this.groupItems(group), xOf, dw, null);
+        this.deptStackedLines(body, App.dept(dk), this.groupItems(group), xOf, dw, null, axis);
       });
     },
 
     // "Show" sort: one top row per show; expand → the show's departments on
     // the Y axis with their tasks on the board, exactly as the Episode sort
     // reads, but pooling every episode of the show onto the same lines.
-    showRow(body, show, eps, startIso, dw, timeW, xOf) {
+    showRow(body, show, eps, startIso, dw, timeW, xOf, axis) {
       const expKey = 'show:' + show.id;
       const expanded = !!App.state.ganttExpanded[expKey];
       let min = '9999', max = '0000', delivered = true, prog = 0;
@@ -1504,36 +1563,37 @@ window.App = window.App || {};
       });
       prog = Math.round(prog / eps.length);
 
-      const row = el('.g-row');
+      const portrait = !!(axis && axis.portrait);
+      const spine = portrait && expanded;
+
+      const row = el('.g-row' + (spine ? '.spine' : ''));
       row.dataset.episodeId = expKey;                       // expansion key via the shared click handler
-      row.appendChild(el('.g-label', null, [
+      const labelTip = show.name + ' — ' + eps.length + ' episode' + (eps.length === 1 ? '' : 's') +
+                       ' · ' + App.fmtRange(min, max);
+      row.appendChild(el('.g-label', { title: portrait ? labelTip : null }, spine ? [
+        el('.l-title', null, [el('span.chev.open', null, '▶')])
+      ] : [
         el('.l-title', null, [
           el('span.chev' + (expanded ? '.open' : ''), null, '▶'),
           el('span', null, show.name)
         ]),
-        el('.l-sub', null, [
+        el('.l-sub', null, portrait ? [
+          el('span.code', null, eps.length + ' ep' + (eps.length === 1 ? '' : 's'))
+        ] : [
           el('span.code', null, eps.length + ' episode' + (eps.length === 1 ? '' : 's')),
           el('span', null, '· ' + App.fmtRange(min, max))
         ])
       ]));
 
       const track = el('.g-track');
-      const left = xOf(min), width = xOf.width(min, max);
+      const barStyle = { background: barGradient(show.color, axis), color: pickInk(show.color) };
+      setBarPos(barStyle, axis, xOf, min, max);
       const bar = el('.bar' + (delivered ? '.delivered' : ''), {
         title: show.name + ' — ' + eps.length + ' episode' + (eps.length === 1 ? '' : 's') + ' · ' + prog + '% complete',
-        style: {
-          left: left + 'px', width: width + 'px',
-          background: 'linear-gradient(90deg,' + show.color + ',' + shade(show.color, -16) + ')',
-          color: pickInk(show.color)
-        }
-      }, [el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, show.name)]);
-      if (!delivered && prog > 0) {
-        bar.appendChild(el('', { style: {
-          position: 'absolute', left: '0', top: '0', bottom: '0', width: prog + '%',
-          background: 'rgba(255,255,255,.22)', borderRadius: '6px', pointerEvents: 'none'
-        } }));
-      }
-      attachBar(bar, delivered ? { color: '#00c875', label: 'Delivered' } : { color: '#fdab3d', label: prog + '% complete' });
+        style: barStyle
+      }, spine ? [] : [el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, show.name)]);
+      if (!spine && !delivered && prog > 0) bar.appendChild(progressFill(prog, axis));
+      attachBar(bar, delivered ? { color: '#00c875', label: 'Delivered' } : { color: '#fdab3d', label: prog + '% complete' }, !spine);
       track.appendChild(bar);
       row.appendChild(track);
       body.appendChild(row);
@@ -1544,7 +1604,7 @@ window.App = window.App || {};
       // this show and nested one level under it. Expanding a department is
       // what reveals its tasks, so opening a show doesn't dump every task of
       // every department onto the screen at once.
-      this.showDeptRows(body, show, eps, xOf, dw);
+      this.showDeptRows(body, show, eps, xOf, dw, axis);
     },
 
     /* Show sort, expanded: one row per department, in the same collapsed
@@ -1559,8 +1619,9 @@ window.App = window.App || {};
        epTaskLines' per-task rows, `deep`-indented one step further so
        Show → Department → Task reads as a chain rather than two things at
        the same depth. */
-    showDeptRows(body, show, eps, xOf, dw) {
+    showDeptRows(body, show, eps, xOf, dw, axis) {
       const { order, byDept } = this.groupByDept(eps);
+      const portrait = !!(axis && axis.portrait);
       order.forEach(dk => {
         const dep = App.dept(dk), group = byDept[dk];
         const all = this.groupItems(group);
@@ -1578,37 +1639,41 @@ window.App = window.App || {};
         const epCount = new Set(all.map(x => x.ep.id)).size;
         const complete = done === all.length;
 
-        const row = el('.g-row.sub.exp');
+        const spine = portrait && expanded;
+        const row = el('.g-row.sub.exp' + (spine ? '.spine' : ''));
         row.dataset.episodeId = expKey;                     // expansion key via the shared click handler
-        row.appendChild(el('.g-label', null, [
+        const labelTip = dep.label + ' — ' + group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's') +
+                         ' · ' + epCount + ' ep' + (epCount === 1 ? '' : 's') + ' · ' + App.fmtRange(min, max);
+        row.appendChild(el('.g-label', { title: portrait ? labelTip : null }, spine ? [
+          el('.l-title', null, [el('span.chev.open', null, '▶'), this.deptDot(dep)])
+        ] : [
           el('.l-title', null, [
             el('span.chev' + (expanded ? '.open' : ''), null, '▶'),
             this.deptDot(dep),
             el('span', null, dep.label)
           ]),
-          el('.l-sub', null, [
+          // A portrait column is ~96px wide, not the 220px a Landscape label
+          // gets, so the sub-line carries only the task count — the episode
+          // count and date range live in the label's tooltip instead of
+          // being ellipsised into nothing.
+          el('.l-sub', null, portrait ? [
+            el('span.code', null, group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's'))
+          ] : [
             el('span.code', null, group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's')),
             el('span', null, '· ' + epCount + ' ep' + (epCount === 1 ? '' : 's') + ' · ' + App.fmtRange(min, max))
           ])
         ]));
 
         const track = el('.g-track');
+        const barStyle = { background: barGradient(dep.color, axis), color: pickInk(dep.color) };
+        setBarPos(barStyle, axis, xOf, min, max);
         const bar = el('.bar' + (complete ? '.delivered' : ''), {
           title: dep.label + ' — ' + group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's') +
                  ' across ' + epCount + ' episode' + (epCount === 1 ? '' : 's') + ' · ' + prog + '% complete',
-          style: {
-            left: xOf(min) + 'px', width: xOf.width(min, max) + 'px',
-            background: 'linear-gradient(90deg,' + dep.color + ',' + shade(dep.color, -16) + ')',
-            color: pickInk(dep.color)
-          }
-        }, [el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, dep.label)]);
-        if (!complete && prog > 0) {
-          bar.appendChild(el('', { style: {
-            position: 'absolute', left: '0', top: '0', bottom: '0', width: prog + '%',
-            background: 'rgba(255,255,255,.22)', borderRadius: '6px', pointerEvents: 'none'
-          } }));
-        }
-        attachBar(bar, complete ? { color: '#00c875', label: 'Complete' } : { color: '#fdab3d', label: prog + '% complete' });
+          style: barStyle
+        }, spine ? [] : [el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, dep.label)]);
+        if (!spine && !complete && prog > 0) bar.appendChild(progressFill(prog, axis));
+        attachBar(bar, complete ? { color: '#00c875', label: 'Complete' } : { color: '#fdab3d', label: prog + '% complete' }, !spine);
         track.appendChild(bar);
         row.appendChild(track);
         body.appendChild(row);
@@ -1616,7 +1681,7 @@ window.App = window.App || {};
 
         // task rows carry the episode code on each bar, same as the
         // Department sort — a line here still mixes every episode of the show
-        group.keys.forEach(k => this.epTaskLines(body, dep, group.tasks[k].name, group.tasks[k].items, xOf, dw, null, true));
+        group.keys.forEach(k => this.epTaskLines(body, dep, group.tasks[k].name, group.tasks[k].items, xOf, dw, axis, true));
       });
     },
 
@@ -1745,18 +1810,22 @@ window.App = window.App || {};
     // color so a create-draw never reads as "drawing a note"
     startCreateDraw(e, trackEl) {
       const dw = this._dw;
+      const portrait = !!(this._axis && this._axis.portrait);
       const rect = trackEl.getBoundingClientRect();
-      const startCol = Math.max(0, Math.round((e.clientX - rect.left) / dw));
-      const ghost = el('.create-ghost', {
-        style: { left: (startCol * dw) + 'px', width: dw + 'px', background: '#9b5bff', color: '#fff' }
-      }, el('span', null, 'New'));
+      // the Create row is a column in Portrait, so the drawn range runs down
+      // it — read the pointer along whichever axis time is on
+      const startCol = Math.max(0, Math.round(((portrait ? e.clientY - rect.top : e.clientX - rect.left)) / dw));
+      const gStyle = { background: '#9b5bff', color: '#fff' };
+      if (portrait) { gStyle.top = (startCol * dw) + 'px'; gStyle.height = dw + 'px'; }
+      else { gStyle.left = (startCol * dw) + 'px'; gStyle.width = dw + 'px'; }
+      const ghost = el('.create-ghost', { style: gStyle }, el('span', null, 'New'));
       trackEl.appendChild(ghost);
       this._drag = {
-        kind: 'create-draw', ghost,
-        startCol, startClientX: e.clientX, curA: startCol, curB: startCol, moved: false
+        kind: 'create-draw', ghost, portrait,
+        startCol, startClientX: e.clientX, startClientY: e.clientY, curA: startCol, curB: startCol, moved: false
       };
       document.body.classList.add('gantt-dragging');
-      document.body.style.cursor = 'ew-resize';
+      document.body.style.cursor = portrait ? 'ns-resize' : 'ew-resize';
     },
 
     NOTE_COLORS: ['#f6be00', '#ff6f9c', '#6cc2f0', '#6cc24a', '#a06cd5', '#ff7a59', '#9aa0ad'],

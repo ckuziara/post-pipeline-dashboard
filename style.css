@@ -1048,7 +1048,19 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
   display: flex; flex-direction: column;
 }
 .date-rail .th-corner { position: sticky; top: 0; z-index: 9; }
-.date-rail .thead-row.thead-col { display: flex; flex-direction: column; flex: 1; }
+.date-rail .thead-row.thead-col { display: flex; flex-direction: column; flex: none; min-width: 0; overflow: hidden; }
+/* the two date columns have to SHARE the rail's 78px. Left to size
+   themselves, the primary column grows to fit "W35 Aug 24-30" on one line
+   and shoves the day numbers out over the first department's column. */
+.date-rail .thead-row.thead-col.primary { width: 60px; }
+.date-rail .thead-row.thead-col.secondary { width: 18px; }
+.date-rail .thead-cell { overflow: hidden; }
+.date-rail .thead-col.primary .thead-cell {
+  flex-direction: column; align-items: flex-start; justify-content: center;
+  padding: 4px 2px 4px 4px; gap: 0; line-height: 1.25;
+}
+.date-rail .thead-col.primary .seg-main,
+.date-rail .thead-col.primary .seg-sub { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .date-rail .thead-row.thead-col.primary .thead-cell { border-right: none; border-bottom: 1px solid var(--border-2); }
 .date-rail .thead-row.thead-col.secondary .thead-cell { border-right: none; border-bottom: 1px solid var(--border); }
 
@@ -1070,14 +1082,32 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
    than rotated — a rotated label was explicitly the thing not to build. */
 .gantt.gantt-portrait .g-label {
   position: sticky; top: 0; left: auto; z-index: 4;
-  width: 100%; height: 44px; min-height: 44px;
-  flex-direction: row; align-items: center; justify-content: center; text-align: center;
+  width: 100%; min-width: 0; height: 44px; min-height: 44px;
+  flex-direction: column; align-items: center; justify-content: center; text-align: center;
   border-right: none; border-bottom: 1px solid var(--border-2);
-  padding: 3px 6px; gap: 0;
+  padding: 3px 6px; gap: 1px; overflow: hidden;
 }
 .gantt.gantt-portrait .g-row.sub .g-label { padding-left: 6px; background: var(--surface-2); }
+/* the column is only ~76-96px wide, so both label lines have to clip rather
+   than push each other sideways — nowrap without this overflowed and drew
+   one dept's text straight over the next one's. */
 .gantt.gantt-portrait .g-label .l-title,
-.gantt.gantt-portrait .g-label .l-sub { justify-content: center; white-space: nowrap; }
+.gantt.gantt-portrait .g-label .l-sub {
+  justify-content: center; white-space: nowrap;
+  max-width: 100%; min-width: 0; overflow: hidden; flex: none;
+}
+.gantt.gantt-portrait .g-label .l-title > span:last-child,
+.gantt.gantt-portrait .g-label .l-sub > span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.gantt.gantt-portrait .g-label .l-sub { font-size: 10px; }
+
+/* an expanded department: a hairline spine instead of a full column, since
+   its tasks are now drawn in the columns immediately to its right */
+.gantt.gantt-portrait .g-row.spine,
+.gantt.gantt-portrait .g-row.sub.spine { width: 26px; min-width: 26px; border-right: none; }
+.gantt.gantt-portrait .g-row.spine .g-label { padding: 3px 0; gap: 0; }
+.gantt.gantt-portrait .g-row.spine .bar {
+  width: 5px; min-height: 5px; padding: 0; border-radius: 3px; box-shadow: none;
+}
 .gantt.gantt-portrait .g-track { flex: 1; width: 100%; }
 
 /* bars: fixed width (the column), variable height (the duration) — the
@@ -1089,6 +1119,28 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 }
 .gantt.gantt-portrait .g-row.sub .bar { min-height: 12px; }
 .gantt.gantt-portrait .bar .bar-out { left: 50%; top: calc(100% + 8px); transform: translateX(-50%); }
+
+/* Everything else that is absolutely positioned inside a .g-track and sized
+   by setBarPos: same swap as .bar — pinned to the cross-axis centre, growing
+   along the time axis. Without this they keep .bar's translateY(-50%) and
+   float half their own length above where they belong. */
+.gantt.gantt-portrait .rev-ghost,
+.gantt.gantt-portrait .ms-day,
+.gantt.gantt-portrait .phase-bar {
+  left: 50%; top: auto; transform: translateX(-50%); height: auto;
+}
+.gantt.gantt-portrait .rev-ghost {
+  width: 70%; flex-direction: column; justify-content: flex-end; padding: 3px 0;
+}
+.gantt.gantt-portrait .ms-day { width: 70%; }
+.gantt.gantt-portrait .create-ghost { left: 50%; top: auto; transform: translateX(-50%); width: 80%; height: auto; }
+.gantt.gantt-portrait .phase-bar { width: 8px; }
+
+/* A department's phase span is a marker, not a lane you read across, so in
+   Portrait it takes a spine's width rather than a full task column — the
+   tasks it brackets sit immediately to its right. */
+.gantt.gantt-portrait .g-row.sub.phase { width: 22px; min-width: 22px; }
+.gantt.gantt-portrait .g-row.sub.phase .g-label { padding: 3px 0; }
 
 /* full-span chrome: same elements, spanning the cross axis (now horizontal)
    instead of the time axis (now vertical) */
@@ -3984,6 +4036,66 @@ select.fld { cursor: pointer; }
 .sw-menu-new:hover { border-style: solid; border-color: var(--accent); color: var(--text); }
 .sw-menu-done { background: var(--accent); border: none; color: #fff; font: inherit; font-size: 11.5px;
   font-weight: 700; padding: 6px 12px; border-radius: 7px; cursor: pointer; }
+
+/* Planner → Shows browser. A dialog, not a dropdown: the filter bar sticks to
+   the top of the scrolling body so it stays reachable down a long list. */
+.shows-filter-bar { position: sticky; top: -14px; z-index: 2; background: var(--bg-1);
+  padding: 4px 0 12px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.shows-filters { display: grid; grid-template-columns: repeat(5, 1fr) auto; gap: 10px; align-items: end; }
+.shows-filter { min-width: 0; }
+.shows-filter-lbl { display: block; font-size: 9.5px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--text-3); margin-bottom: 5px; }
+.shows-filter-fld { width: 100%; font-size: 12px; padding: 7px 9px; }
+.shows-clear { background: none; border: 1px solid var(--border); color: var(--text-3);
+  font: inherit; font-size: 11.5px; font-weight: 600; padding: 7px 12px; border-radius: 8px; cursor: pointer; }
+.shows-clear:hover { border-color: var(--border-2); color: var(--text); background: var(--hover); }
+.shows-count { margin-top: 9px; font-size: 11px; color: var(--text-3); }
+
+.shows-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 12px; padding: 4px 0 2px; }
+.shows-empty { grid-column: 1 / -1; padding: 34px 10px; text-align: center;
+  color: var(--text-3); font-size: 12.5px; }
+
+.show-card { display: flex; text-align: left; padding: 0; overflow: hidden; cursor: pointer;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px;
+  transition: border-color .12s ease, transform .12s ease, background .12s ease; }
+.show-card:hover { border-color: var(--accent); background: var(--hover); transform: translateY(-1px); }
+.show-card-spine { flex: none; width: 5px; }
+.show-card-body { flex: 1; min-width: 0; padding: 11px 13px 10px; }
+.show-card-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.show-card-code { flex: none; font-size: 10px; font-weight: 800; letter-spacing: .04em;
+  padding: 2px 7px; border-radius: 6px; font-family: ui-monospace, monospace; }
+.show-card-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 700; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.show-card-meta { margin-top: 6px; font-size: 11.5px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.show-card-meta.none { color: var(--text-3); font-style: italic; }
+.show-card-foot { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 11px; color: var(--text-3); }
+.show-card-stat.none { color: #ffce8e; }
+.show-card-sep { opacity: .5; }
+.show-card-prods { display: flex; margin-left: auto; }
+/* producers overlap slightly — three of them shouldn't push the card wider */
+.show-card-av { width: 20px; height: 20px; font-size: 8.5px; margin-left: -5px;
+  border: 1.5px solid var(--bg-2); }
+.show-card-av:first-child { margin-left: 0; }
+
+@media (max-width: 900px) {
+  .shows-filters { grid-template-columns: repeat(2, 1fr); }
+  .shows-clear { grid-column: 1 / -1; }
+}
+
+/* Edit Show dialog. */
+.ctx-sub { margin-left: auto; font-size: 11px; color: var(--text-3); }
+.show-swatches { display: flex; gap: 7px; flex-wrap: wrap; }
+.show-swatch { width: 26px; height: 26px; border-radius: 8px; border: 2px solid transparent;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); cursor: pointer; padding: 0; }
+.show-swatch:hover { border-color: var(--border-2); }
+.show-swatch.on { border-color: var(--text); box-shadow: inset 0 0 0 1px rgba(0,0,0,.25), 0 0 0 2px var(--bg-1); }
+.show-edit-links { display: flex; gap: 8px; flex-wrap: wrap; }
+/* labelled, not the 28px icon square .btn-mini is by default — same shape the
+   Admin → Shows row actions use */
+.show-edit-links .btn-mini { white-space: nowrap; width: auto; height: auto;
+  padding: 7px 11px; font-size: 11.5px; font-weight: 600; gap: 6px;
+  border-color: var(--border); color: var(--text-2); }
 
 /* Add new software: name, extensions, icon grid. */
 .sw-fld { margin-bottom: 14px; }
