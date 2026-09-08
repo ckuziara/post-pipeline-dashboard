@@ -470,7 +470,12 @@ window.App = window.App || {};
         }
 
         const row = label?.closest('.g-row') || bar?.closest('.g-row');
-        if (!row || row.classList.contains('sub')) return;
+        if (!row) return;
+        // `.sub` rows are normally terminal (a task line, nothing further to
+        // open) — `.exp` is the one exception: the Show sort's nested
+        // Department row, indented like a `.sub` row but still expandable
+        // onto its own tasks. See showDeptRows.
+        if (row.classList.contains('sub') && !row.classList.contains('exp')) return;
 
         const epId = row.dataset.episodeId;
         if (!epId) return;
@@ -1324,7 +1329,11 @@ window.App = window.App || {};
     // as an episode-coded bar in its show's colour — a line here mixes shows,
     // and the department is already named on the axis. Bars spill onto
     // continuation rows whenever two would overlap in time.
-    epTaskLines(body, dep, title, items, xOf, dw, axis) {
+    // `deep` is set only when this is called under the Show sort's nested
+    // Department row (see showDeptRows) — one more level than the Department
+    // sort's own use of this method, so the task rows need to sit one step
+    // further indented to keep Show → Department → Task legible as a chain.
+    epTaskLines(body, dep, title, items, xOf, dw, axis, deep) {
       const sorted = items.slice().sort((a, b) => a.su.start < b.su.start ? -1 : 1);
       const levels = [];
       sorted.forEach(it => {
@@ -1335,7 +1344,7 @@ window.App = window.App || {};
 
       const wash = this.deptWash(dep);
       levels.forEach((lvl, li) => {
-        const srow = el('.g-row.sub', { style: { background: wash } });
+        const srow = el('.g-row.sub' + (deep ? '.sub-deep' : ''), { style: { background: wash } });
         srow.appendChild(el('.g-label', { title: dep.label + ' — ' + title, style: { background: deptLabelBg(dep.color) } }, [
           el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } }, li === 0 ? [
             this.deptDot(dep),
@@ -1530,13 +1539,84 @@ window.App = window.App || {};
       body.appendChild(row);
       if (!expanded) return;
 
-      // departments on the Y axis, tasks on the board — the Episode sort's
-      // layout, widened to every episode of the show at once. Bars therefore
-      // lead with the episode code, since one line now mixes episodes.
+      // Departments on the Y axis, one row each — collapsed to a summary bar
+      // exactly like the Department sort's own top-level rows, just scoped to
+      // this show and nested one level under it. Expanding a department is
+      // what reveals its tasks, so opening a show doesn't dump every task of
+      // every department onto the screen at once.
+      this.showDeptRows(body, show, eps, xOf, dw);
+    },
+
+    /* Show sort, expanded: one row per department, in the same collapsed
+       shape departmentRows() draws at the top level — dept dot, task/episode
+       counts, a date-range summary bar — but scoped to just this show's
+       episodes and keyed per-show so opening "Audio" under one show doesn't
+       open it under another, or collide with the flat Department sort's own
+       expand state for the same department key.
+
+       `.exp` marks the row as expandable despite carrying `.sub`'s indent —
+       see the click handler's note on that class. Its own expansion reveals
+       epTaskLines' per-task rows, `deep`-indented one step further so
+       Show → Department → Task reads as a chain rather than two things at
+       the same depth. */
+    showDeptRows(body, show, eps, xOf, dw) {
       const { order, byDept } = this.groupByDept(eps);
       order.forEach(dk => {
-        this.deptStackedLines(body, App.dept(dk), this.groupItems(byDept[dk]), xOf, dw,
-          it => it.ep.code + ' · ' + it.su.name);
+        const dep = App.dept(dk), group = byDept[dk];
+        const all = this.groupItems(group);
+        if (!all.length) return;
+
+        const expKey = 'show:' + show.id + ':dept:' + dk;
+        const expanded = !!App.state.ganttExpanded[expKey];
+        let min = '9999', max = '0000', done = 0;
+        all.forEach(({ su }) => {
+          if (su.start < min) min = su.start;
+          if (su.due > max) max = su.due;
+          if (su.status === 'approved') done++;
+        });
+        const prog = Math.round(done / all.length * 100);
+        const epCount = new Set(all.map(x => x.ep.id)).size;
+        const complete = done === all.length;
+
+        const row = el('.g-row.sub.exp');
+        row.dataset.episodeId = expKey;                     // expansion key via the shared click handler
+        row.appendChild(el('.g-label', null, [
+          el('.l-title', null, [
+            el('span.chev' + (expanded ? '.open' : ''), null, '▶'),
+            this.deptDot(dep),
+            el('span', null, dep.label)
+          ]),
+          el('.l-sub', null, [
+            el('span.code', null, group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's')),
+            el('span', null, '· ' + epCount + ' ep' + (epCount === 1 ? '' : 's') + ' · ' + App.fmtRange(min, max))
+          ])
+        ]));
+
+        const track = el('.g-track');
+        const bar = el('.bar' + (complete ? '.delivered' : ''), {
+          title: dep.label + ' — ' + group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's') +
+                 ' across ' + epCount + ' episode' + (epCount === 1 ? '' : 's') + ' · ' + prog + '% complete',
+          style: {
+            left: xOf(min) + 'px', width: xOf.width(min, max) + 'px',
+            background: 'linear-gradient(90deg,' + dep.color + ',' + shade(dep.color, -16) + ')',
+            color: pickInk(dep.color)
+          }
+        }, [el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, dep.label)]);
+        if (!complete && prog > 0) {
+          bar.appendChild(el('', { style: {
+            position: 'absolute', left: '0', top: '0', bottom: '0', width: prog + '%',
+            background: 'rgba(255,255,255,.22)', borderRadius: '6px', pointerEvents: 'none'
+          } }));
+        }
+        attachBar(bar, complete ? { color: '#00c875', label: 'Complete' } : { color: '#fdab3d', label: prog + '% complete' });
+        track.appendChild(bar);
+        row.appendChild(track);
+        body.appendChild(row);
+        if (!expanded) return;
+
+        // task rows carry the episode code on each bar, same as the
+        // Department sort — a line here still mixes every episode of the show
+        group.keys.forEach(k => this.epTaskLines(body, dep, group.tasks[k].name, group.tasks[k].items, xOf, dw, null, true));
       });
     },
 
