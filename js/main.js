@@ -5,6 +5,9 @@ window.App = window.App || {};
   'use strict';
 
   const SHOW_PALETTE = ['#ff6f9c', '#6cc24a', '#f6be00', '#a06cd5', '#3da4dd', '#ff7a59', '#27c4b8', '#e35d6a'];
+  // the Edit Show dialog offers the same eight, so a recoloured show can only
+  // ever land on a colour the rest of the board already draws with
+  App.SHOW_PALETTE = SHOW_PALETTE;
   const PERSON_PALETTE = ['#e8615b', '#f6a609', '#37b679', '#2d9cdb', '#9b59b6', '#16a085', '#e67e22', '#d6457f', '#4b6bfb'];
 
   // Keep "Ready to Start" honest after any change: a not-started task whose (non-removed)
@@ -935,7 +938,7 @@ window.App = window.App || {};
      stored on the show and also decides who each episode's tasks open against:
      a department with a team draws from it — the lead first — instead of from
      every staff member in the studio who happens to hold that role. */
-  App.createShow = function ({ name, code, type, epNames, pipeline, startIso, cadence, scale, epStarts, epLives, team }) {
+  App.createShow = function ({ name, code, type, brand, series, epNames, pipeline, startIso, cadence, scale, epStarts, epLives, team }) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
     type = type || 'animation';
     pipeline = pipeline || App.defaultPipelineFor(type);
@@ -945,6 +948,8 @@ window.App = window.App || {};
     App.mutate(d => {
       const showId = newShowId = code.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + App.uid().slice(0, 3);
       const show = { id: showId, name, prefix: code, type, color: SHOW_PALETTE[d.shows.length % SHOW_PALETTE.length], pipeline };
+      if (brand) show.brand = String(brand).trim();
+      if (series) show.series = String(series).trim();
       if (team && Object.keys(team).length) show.team = team;
       d.shows.push(show);
       // one pool per department, resolved once: the show's own team where it
@@ -979,6 +984,154 @@ window.App = window.App || {};
           r.episodes + ' episode' + (r.episodes === 1 ? '' : 's') + ' at ' + r.root))
         .catch(e => App.toast('Show created, but folders failed: ' + e.message, true));
     }
+  };
+
+  /* Edit a show that already exists — the identity fields only (name, code,
+     colour). The pipeline, the team and the schedule each have their own
+     editor; this is the "what is this show called and what colour is it"
+     dialog, reached from the Planner's Shows menu.
+
+     Renaming the code renames every episode code with it: the code is the
+     prefix those are built from (see App.nextEpisodeNumber), so leaving them
+     on the old prefix would break the numbering scan for the next episode. */
+  App.updateShow = function (showId, { name, code, color, brand, series }) {
+    if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change shows', true); return false; }
+    const s = App.state.data.shows.find(x => x.id === showId);
+    if (!s) { App.toast('That show no longer exists', true); return false; }
+    name = String(name || '').trim();
+    code = String(code || '').trim().toUpperCase();
+    if (!name) { App.toast('A show needs a name', true); return false; }
+    if (!code) { App.toast('A show needs a code', true); return false; }
+    if (App.state.data.shows.some(x => x.id !== showId && String(x.prefix || '').toUpperCase() === code)) {
+      App.toast('“' + code + '” is already another show’s code', true); return false;
+    }
+    const oldCode = s.prefix || '';
+    const recoded = oldCode && oldCode !== code
+      ? App.state.data.episodes.filter(e => e.showId === showId && e.code.indexOf(oldCode + '-') === 0).length
+      : 0;
+    brand = String(brand == null ? (s.brand || '') : brand).trim();
+    series = String(series == null ? (s.series || '') : series).trim();
+    if (name === s.name && code === oldCode && color === s.color &&
+        brand === (s.brand || '') && series === (s.series || '')) return true;   // nothing to save
+
+    App.mutate(d => {
+      const t = d.shows.find(x => x.id === showId);
+      t.name = name; t.prefix = code;
+      if (color) t.color = color;
+      // blank means "not set" rather than an empty string on every show — the
+      // Shows browser builds its Brand and Season pickers from the values that
+      // are actually there
+      if (brand) t.brand = brand; else delete t.brand;
+      if (series) t.series = series; else delete t.series;
+      if (oldCode && oldCode !== code) {
+        d.episodes.forEach(e => {
+          if (e.showId !== showId) return;
+          if (e.code.indexOf(oldCode + '-') === 0) e.code = code + e.code.slice(oldCode.length);
+        });
+      }
+    }, 'editing the show');
+
+    App.track.audit('show.update', { show: name, code: code, brand: brand || undefined, series: series || undefined,
+      renamedFrom: s.name !== name ? s.name : undefined,
+      recodedFrom: oldCode !== code ? oldCode : undefined, episodesRecoded: recoded });
+    App.toast('Saved “' + name + '”' + (recoded ? ' — ' + recoded + ' episode code' + (recoded === 1 ? '' : 's') + ' renamed' : ''));
+    return true;
+  };
+
+  /* Import a show from a back-up file written by App.downloadShowBackup.
+
+     Everything gets fresh ids: the same file can be imported onto a board that
+     already has the original (restoring a deleted show, or copying one between
+     boards) without the two colliding. Owners are matched by person id against
+     this board's own directory — an import from another board carries people
+     who don't exist here, and inventing them would quietly pollute the team
+     directory, so unknown owners are dropped and reported instead. */
+  App.importShow = function (payload) {
+    if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return null; }
+    const bad = (m) => { App.toast(m, true); return null; };
+    if (!payload || typeof payload !== 'object') return bad('That file isn’t a show back-up');
+    if (payload.format !== 'postpipeline.show-backup') return bad('That file isn’t a Post Pipeline show back-up');
+    const src = payload.show;
+    if (!src || !src.name) return bad('That back-up has no show in it');
+    const srcEps = Array.isArray(payload.episodes) ? payload.episodes : [];
+
+    const clone = (v) => JSON.parse(JSON.stringify(v));
+    const known = (id) => !!App.person(id);
+
+    // a code the board doesn't already use, so episode codes stay unambiguous
+    const taken = App.state.data.shows.map(s => String(s.prefix || '').toUpperCase());
+    let code = String(src.prefix || src.name.slice(0, 2)).toUpperCase();
+    if (taken.includes(code)) { let n = 2; while (taken.includes(code + n)) n++; code = code + n; }
+    const showId = code.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + App.uid().slice(0, 3);
+
+    const pipeline = Array.isArray(src.pipeline) && src.pipeline.length
+      ? clone(src.pipeline) : App.defaultPipelineFor(src.type);
+
+    // team, minus anyone this board has never heard of
+    const team = {};
+    Object.keys(src.team || {}).forEach(slot => {
+      const t = src.team[slot] || {};
+      const ids = (t.ids || []).filter(known);
+      if (ids.length) team[slot] = ids.includes(t.lead) ? { ids: ids, lead: t.lead } : { ids: ids };
+    });
+
+    const idMap = {};                 // old episode id -> new one
+    let droppedOwners = 0;
+    const eps = srcEps.map(e => {
+      const ep = clone(e);
+      idMap[e.id] = ep.id = App.uid();
+      ep.showId = showId;
+      if (typeof ep.code === 'string' && src.prefix && ep.code.indexOf(src.prefix + '-') === 0) {
+        ep.code = code + ep.code.slice(String(src.prefix).length);
+      }
+      const asg = {};
+      Object.keys(ep.assignees || {}).forEach(k => {
+        if (known(ep.assignees[k])) asg[k] = ep.assignees[k]; else droppedOwners++;
+      });
+      ep.assignees = asg;
+      return ep;
+    });
+
+    // attachments and task links are keyed "<episodeId>::<taskKey>" — rekey them
+    // onto the new episode ids or they'd hang off ids nothing references
+    const rekey = (map) => {
+      const out = {};
+      Object.keys(map || {}).forEach(k => {
+        const parts = String(k).split('::');
+        if (idMap[parts[0]]) { parts[0] = idMap[parts[0]]; out[parts.join('::')] = clone(map[k]); }
+      });
+      return out;
+    };
+    const attachments = rekey(payload.attachments);
+    const taskLinks = rekey(payload.taskLinks);
+
+    App.mutate(d => {
+      const show = {
+        id: showId, name: src.name, prefix: code, type: src.type || 'animation',
+        color: src.color || SHOW_PALETTE[d.shows.length % SHOW_PALETTE.length],
+        pipeline: pipeline
+      };
+      if (src.brand) show.brand = src.brand;
+      if (src.series) show.series = src.series;
+      if (Object.keys(team).length) show.team = team;
+      d.shows.push(show);
+      eps.forEach((ep, i) => { ep.index = d.episodes.length + i; d.episodes.push(ep); });
+      if (Object.keys(attachments).length) {
+        d.attachments = d.attachments || {};
+        Object.keys(attachments).forEach(k => { d.attachments[k] = attachments[k]; });
+      }
+      if (Object.keys(taskLinks).length) {
+        d.taskLinks = d.taskLinks || {};
+        Object.keys(taskLinks).forEach(k => { d.taskLinks[k] = taskLinks[k]; });
+      }
+    }, 'importing the show');
+
+    App.track.audit('show.import', { show: src.name, code: code, episodes: eps.length,
+      exportedAt: payload.exportedAt || null, droppedOwners: droppedOwners });
+    App.toast('Imported “' + src.name + '” as ' + code + ' — ' + eps.length +
+      ' episode' + (eps.length === 1 ? '' : 's') +
+      (droppedOwners ? ' · ' + droppedOwners + ' task' + (droppedOwners === 1 ? '' : 's') + ' left unassigned' : ''));
+    return { showId: showId, code: code, episodes: eps.length, droppedOwners: droppedOwners };
   };
 
   /* Existing episode codes aren't necessarily contiguous — a show's episodes
