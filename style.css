@@ -915,21 +915,6 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 }
 .sel-clear:hover { background: var(--hover); color: var(--text); }
 
-/* ---- "+ Create" row (Timeline, draw to create an episode/task) ----
-   Same header+track shape as the Producer Notes row just below, with its own
-   accent (purple, not the notes' yellow/blue) so a create-draw never reads
-   as "drawing a note". */
-.create-row { background: rgba(155,91,255,.05); }
-.create-label .l-title { color: var(--text-3); font-weight: 600; }
-.g-track.cr-drawable { cursor: crosshair; }
-.create-ghost {
-  position: absolute; top: 50%; transform: translateY(-50%); height: 18px;
-  border-radius: 5px; display: flex; align-items: center; justify-content: center; padding: 0 8px;
-  font-size: 10px; font-weight: 700; white-space: nowrap;
-  opacity: .8; pointer-events: none; border: 1px dashed rgba(255,255,255,.7);
-  box-shadow: 0 2px 6px rgba(0,0,0,.3);
-}
-
 /* ---- Producer Notes swimlane (Timeline, per-show) ---- */
 .pn-head { background: var(--bg-2); border-top: 1px solid var(--border-2); }
 .pn-label { cursor: pointer; background: var(--bg-2); }
@@ -1171,7 +1156,6 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 .gantt.gantt-portrait .ms-day { width: 70%; }
 .gantt.gantt-portrait .rev-plan { width: 70%; padding: 2px 0; justify-content: center; }
 .gantt.gantt-portrait .review-day { width: 60%; min-height: 3px; }
-.gantt.gantt-portrait .create-ghost { left: 50%; top: auto; transform: translateX(-50%); width: 80%; height: auto; }
 .gantt.gantt-portrait .phase-bar { width: 8px; }
 
 /* A department's phase span is a marker, not a lane you read across, so in
@@ -1227,7 +1211,7 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 .subgrid { min-width: 980px; }
 .subrow {
   display: grid;
-  grid-template-columns: 184px 132px 60px 150px 96px 96px 1fr;
+  grid-template-columns: 40px 170px 132px 60px 150px 96px 96px 1fr;
   align-items: center; border-top: 1px solid var(--border);
 }
 .subrow.head { background: var(--bg-2); position: sticky; top: 0; }
@@ -4033,9 +4017,10 @@ select.fld { cursor: pointer; }
   .subtable { overflow-x: visible; }
   .subgrid { min-width: 0; }
   .subrow { grid-template-columns: 1fr 38px 108px; column-gap: 8px; }
+  .subrow .cell.c-num,
   .subrow .cell.c-dept, .subrow .cell.c-date, .subrow .cell.c-deps { display: none; }
-  .subrow.head .cell:nth-child(2), .subrow.head .cell:nth-child(5),
-  .subrow.head .cell:nth-child(6), .subrow.head .cell:nth-child(7) { display: none; }
+  .subrow.head .cell:nth-child(3), .subrow.head .cell:nth-child(6),
+  .subrow.head .cell:nth-child(7), .subrow.head .cell:nth-child(8) { display: none; }
   .subrow .cell.c-name { font-size: 13.5px; }
   .status-cell { font-size: 12px; min-height: 46px; }
   .status-opt { min-height: 46px; font-size: 12.5px; }
@@ -4594,3 +4579,16 @@ select.fld { cursor: pointer; }
   .xp-hint { display: none; }
   .xp-count { margin-right: auto; }
 }
+
+/* Board subtable: click a heading to sort */
+.subrow.head .cell.sortable { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 5px; }
+.subrow.head .cell.sortable:hover { color: var(--text); }
+.subrow.head .cell.sorted { color: var(--accent); }
+.subrow.head .sort-ind { font-size: 10px; opacity: 0; transition: opacity .12s; }
+.subrow.head .cell.sortable:hover .sort-ind, .subrow.head .cell.sorted .sort-ind { opacity: 1; }
+
+/* Board subtable: row-number column (pipeline position) */
+.subrow .cell.c-num { padding: 8px 0 8px 14px; color: var(--text-3); font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.subrow.head .cell.c-num { padding: 9px 0 9px 14px; cursor: pointer; }
+.subrow.head .cell.c-num.sorted { cursor: default; }
+.subrow.head .cell.c-num:not(.sorted):hover { color: var(--text); }

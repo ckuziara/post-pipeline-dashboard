@@ -1451,7 +1451,6 @@ window.App = window.App || {};
     // Shift-selected task bars, as 'epId|taskKey' strings. A view-local
     // scratch selection — never synced to teammates, and dropped on reload.
     ganttSel: [],
-    creatingOnGantt: false,           // "+ Create" toggle armed — transient, never synced to teammates
     zoom: 16,                         // px per day on the timeline
     data: null
   };
@@ -1749,8 +1748,7 @@ window.App = window.App || {};
 
      Device-local (like App.prefs), never shared board data: where a teammate
      is looking is their business. Only navigation lives here — nothing that
-     belongs to the board itself, and nothing transient like a half-drawn
-     "+ Create" toggle or an `editing` reference that may since have been
+     belongs to the board itself, and nothing transient like an `editing` reference that may since have been
      deleted by someone else.
   --------------------------------------------------------------------------- */
   App.session = {
