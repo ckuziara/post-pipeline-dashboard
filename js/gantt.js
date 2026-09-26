@@ -241,7 +241,7 @@ window.App = window.App || {};
     _rafId: null,
 
     render(episodes) {
-      const sort = App.prefs.get('timelineSort', 'department');
+      const sort = App.timelineGrouping();
       /* Portrait (time runs top-to-bottom) applies to all three sorts. Every
          sort's rows are built from the same .g-row/.g-label/.g-track shape, so
          Portrait is the same two things everywhere: bars written along the
@@ -347,15 +347,6 @@ window.App = window.App || {};
         const style = portrait ? { top: (COL_HEAD_H + off) + 'px' } : { left: (LABEL_W + off) + 'px' };
         body.appendChild(el('.today-line', { style }));
       }
-
-      // "+ Create" row — drawn before Producer Notes so it sits at the very
-      // top. If the role lost the right mid-session (the role selector
-      // changed while it was armed), clear it silently rather than render an
-      // interactive track the current role can't actually use.
-      if (App.state.creatingOnGantt && !(App.canManageShows(App.state.role) || App.canEditSchedule(App.state.role))) {
-        App.state.creatingOnGantt = false;
-      }
-      if (App.state.creatingOnGantt) this.createRow(body, startIso, dw, xOf);
 
       // Producer Notes swimlane — per-show annotations, only meaningful when a
       // single show is in view (nonsensical mixed across shows on "All shows").
@@ -653,18 +644,6 @@ window.App = window.App || {};
       scroll.addEventListener('mousemove', hoverHandler);
 
       const downHandler = (e) => {
-        // "+ Create" — DRAWING: empty cell on the blank Create row → draw a
-        // new episode/task. Permission is live-checked here too, not just
-        // trusted from render time, matching the same discipline the notes
-        // branch right below already uses (App.canEditNotes() inline).
-        const createTrack = e.target.closest('.g-row.create-row .g-track.cr-drawable');
-        if (createTrack && App.state.creatingOnGantt &&
-            (App.canManageShows(App.state.role) || App.canEditSchedule(App.state.role))) {
-          e.preventDefault();
-          this.startCreateDraw(e, createTrack);
-          return;
-        }
-
         // producer notes — DRAWING: empty grid cell in a notes row → draw a new note
         const drawTrack = e.target.closest('.g-row.pn-row .g-track.pn-drawable');
         if (drawTrack && !e.target.closest('.pn-note') && App.canEditNotes()) {
@@ -852,23 +831,17 @@ window.App = window.App || {};
       // reads clientX. Only the bar-drag branch below ever reads clientY.
       const colDeltaX = Math.round((e.clientX - d.startClientX) / dw);
 
-      if (d.kind === 'note-draw' || d.kind === 'create-draw') {
-        // d.portrait is set only by startCreateDraw — a note-draw is always
-        // Landscape, so this reads clientX for notes either way
-        const drawDelta = d.portrait ? (e.clientY - d.startClientY) : (e.clientX - d.startClientX);
+      if (d.kind === 'note-draw') {
+        // notes are Landscape-only, so the drawn range always reads clientX
+        const drawDelta = e.clientX - d.startClientX;
         const cur = d.startCol + Math.round(drawDelta / dw);
         const a = Math.max(0, Math.min(d.startCol, cur)), b = Math.max(0, Math.max(d.startCol, cur));
         d.curA = a; d.curB = b;
         if (Math.abs(drawDelta) > 4) d.moved = true;
-        if (d.portrait) {
-          d.ghost.style.top = (a * dw) + 'px';
-          d.ghost.style.height = ((b - a + 1) * dw) + 'px';
-        } else {
-          d.ghost.style.left = (a * dw) + 'px';
-          d.ghost.style.width = ((b - a + 1) * dw) + 'px';
-        }
+        d.ghost.style.left = (a * dw) + 'px';
+        d.ghost.style.width = ((b - a + 1) * dw) + 'px';
         const sIso = App.addVisibleDays(this._startIso, a, hw), dIso = App.addVisibleDays(this._startIso, b, hw);
-        const dotColor = d.kind === 'create-draw' ? '#9b5bff' : '#5b6cff';
+        const dotColor = '#5b6cff';
         const tip = dragTipEl(); tip.innerHTML = '';
         tip.appendChild(el('span.tip-dot', { style: { background: dotColor } }));
         tip.appendChild(document.createTextNode(App.fmtRange(sIso, dIso)));
@@ -993,21 +966,6 @@ window.App = window.App || {};
             const nEl = this._scrollEl && this._scrollEl.querySelector('.pn-note[data-note-id="' + id + '"]');
             if (nEl) this.openNoteEditor(nEl);
           });
-        }
-        return;
-      }
-
-      if (d.kind === 'create-draw') {
-        d.ghost.remove();
-        if (d.moved) {
-          const sIso = App.addVisibleDays(this._startIso, d.curA, this._hideWeekends);
-          const dIso = App.addVisibleDays(this._startIso, d.curB, this._hideWeekends);
-          // one-shot per toolbar click: turn the toggle off and re-render
-          // before opening the modal, so a Cancel doesn't leave the row
-          // sitting there armed for an accidental second draw
-          App.state.creatingOnGantt = false;
-          App.render();
-          App.createFromDrag.open({ startIso: sIso, dueIso: dIso, showId: App.singleShowFilter() });
         }
         return;
       }
@@ -1145,7 +1103,7 @@ window.App = window.App || {};
         style: { position: 'sticky', left: '0', zIndex: '9', width: LABEL_W + 'px', minWidth: LABEL_W + 'px',
                  background: 'var(--bg-2)', borderRight: '1px solid var(--border-2)', display: 'flex',
                  alignItems: 'center', padding: '0 14px', fontSize: '11px', fontWeight: '700', color: 'var(--text-3)' }
-      }, { show: 'SHOW / TASK', department: 'DEPARTMENT / TASK' }[App.prefs.get('timelineSort', 'department')] || 'EPISODE / SUBITEM'));
+      }, { show: 'SHOW / TASK', department: 'DEPARTMENT / TASK' }[App.timelineGrouping()] || 'EPISODE / SUBITEM'));
       const cols = el('', { style: { width: (ctx.totalCols * ctx.dw) + 'px' } });
       cols.appendChild(buildSegRow(ctx, tier.primary, 'primary'));
       cols.appendChild(buildSegRow(ctx, tier.secondary, 'secondary'));
@@ -1951,21 +1909,6 @@ window.App = window.App || {};
     // Click-drag an empty grid cell to draw a new note, click a note to
     // edit/recolour/delete, drag the middle to move or an edge to resize
     // (weekend-aware, same math as task bars).
-    /* "+ Create" row — a blank canvas at the very top of the timeline,
-       identical in every sort mode (no per-row context to infer show/episode/
-       department from once a row spans more than one episode, so nothing here
-       tries to). Drawing a date range opens App.createFromDrag (js/dialog.js)
-       to ask explicitly and confirm before anything is written — unlike a
-       Producer Note, an episode or task is a structural, team-visible entity,
-       not a lightweight annotation that's safe to save-then-edit. */
-    createRow(body, startIso, dw, xOf) {
-      const row = el('.g-row.create-row');
-      row.appendChild(el('.g-label.create-label', null,
-        el('.l-title', null, el('span', { style: { fontSize: '10px', color: 'var(--text-3)' } }, 'Drag to create an episode or task →'))));
-      row.appendChild(el('.g-track.cr-drawable'));
-      body.appendChild(row);
-    },
-
     producerNotesLane(body, showId, startIso, dw, xOf) {
       const show = App.show(showId);
       if (!show) return;
@@ -2076,28 +2019,6 @@ window.App = window.App || {};
       };
       document.body.classList.add('gantt-dragging');
       document.body.style.cursor = 'ew-resize';
-    },
-
-    // mirrors startNoteDraw exactly — same ghost/ drag mechanics, different
-    // color so a create-draw never reads as "drawing a note"
-    startCreateDraw(e, trackEl) {
-      const dw = this._dw;
-      const portrait = !!(this._axis && this._axis.portrait);
-      const rect = trackEl.getBoundingClientRect();
-      // the Create row is a column in Portrait, so the drawn range runs down
-      // it — read the pointer along whichever axis time is on
-      const startCol = Math.max(0, Math.round(((portrait ? e.clientY - rect.top : e.clientX - rect.left)) / dw));
-      const gStyle = { background: '#9b5bff', color: '#fff' };
-      if (portrait) { gStyle.top = (startCol * dw) + 'px'; gStyle.height = dw + 'px'; }
-      else { gStyle.left = (startCol * dw) + 'px'; gStyle.width = dw + 'px'; }
-      const ghost = el('.create-ghost', { style: gStyle }, el('span', null, 'New'));
-      trackEl.appendChild(ghost);
-      this._drag = {
-        kind: 'create-draw', ghost, portrait,
-        startCol, startClientX: e.clientX, startClientY: e.clientY, curA: startCol, curB: startCol, moved: false
-      };
-      document.body.classList.add('gantt-dragging');
-      document.body.style.cursor = portrait ? 'ns-resize' : 'ew-resize';
     },
 
     NOTE_COLORS: ['#f6be00', '#ff6f9c', '#6cc2f0', '#6cc24a', '#a06cd5', '#ff7a59', '#9aa0ad'],
