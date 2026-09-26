@@ -34,8 +34,8 @@ const DEFAULT_CONFIG = {
   sessionSecret: '',                     // from SESSION_SECRET env, or auto-generated locally
   devLogin: true,                        // email-only sign-in; MUST be false in a public deploy
   google: { clientId: '', clientSecret: '' },
-  allowedDomain: 'moonbug.com',          // only this Workspace domain may sign in ('' = any)
-  adminEmails: ['chris.kuziara@moonbug.com'],  // always treated as Producer (bootstrap)
+  allowedDomain: '',                     // only this Workspace domain may sign in ('' = any)
+  adminEmails: [],                       // always treated as Producer (bootstrap) — set via ADMIN_EMAILS
   databaseUrl: '',                       // Postgres connection string (Neon) → hosted mode
   accessCode: '',                        // shared team code required by the email sign-in
   /* Companion mode. Origins allowed to drive THIS server's file routes from

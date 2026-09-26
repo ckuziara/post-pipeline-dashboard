@@ -1814,7 +1814,7 @@ window.App = window.App || {};
   function loginScreen() {
     const el = App.el, opts = App.api.loginOpts || {};
     const err = new URLSearchParams(location.search).get('err');
-    const emailInput = el('input.login-input', { type: 'email', placeholder: 'you@moonbug.com' });
+    const emailInput = el('input.login-input', { type: 'email', placeholder: 'you@example.com' });
     const codeInput = opts.needsCode
       ? el('input.login-input', { type: 'password', placeholder: 'Team access code' })
       : null;
@@ -1830,7 +1830,7 @@ window.App = window.App || {};
        not this. Whether a given address actually HAS a password is only
        findable by trying, same as the "incorrect email or password" reply
        the server gives either way. */
-    const pwEmail = el('input.login-input', { type: 'email', placeholder: 'you@moonbug.com' });
+    const pwEmail = el('input.login-input', { type: 'email', placeholder: 'you@example.com' });
     const pwPass = el('input.login-input', { type: 'password', placeholder: 'Password' });
     const pwSubmit = () => App.api.passwordLogin(pwEmail.value, pwPass.value)
       .catch(e => App.toast(e.message, true));

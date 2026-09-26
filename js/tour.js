@@ -372,8 +372,8 @@ window.App = window.App || {};
 
           const modal = document.querySelector('.modal-card');
           if (modal) {
-            const nameInput = modal.querySelector('input.fld[placeholder="e.g. Little Angel"]');
-            const codeInput = modal.querySelector('input.fld[placeholder="e.g. LA"]');
+            const nameInput = modal.querySelector('input.fld[placeholder="e.g. Show Name"]');
+            const codeInput = modal.querySelector('input.fld[placeholder="e.g. ABC"]');
             await this.typeInto(nameInput, 'Air Asia Safari', 800);
             await this.typeInto(codeInput, 'AS', 500);
 

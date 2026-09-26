@@ -1,7 +1,7 @@
 /* Post Pipeline — data model, pipeline template, derived metrics, persistence.
    Buildless: plain JS in window.App, loaded as classic deferred scripts. No Node, no bundler.
    The pipeline TEMPLATE below is transcribed straight from the Monday board (Episode 1:
-   "Joe's Little Angel") — 27 subitems, their departments, dependencies and dates. */
+   "Episode One") — 27 subitems, their departments, dependencies and dates. */
 window.App = window.App || {};
 (function () {
   'use strict';

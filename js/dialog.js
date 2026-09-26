@@ -2639,11 +2639,11 @@ window.App = window.App || {};
       };
 
       // ---------- show details ----------
-      const nameInput = el('input.fld', { type: 'text', placeholder: 'e.g. Little Angel', value: d0.name || '' });
-      const codeInput = el('input.fld', { type: 'text', placeholder: 'e.g. LA', maxlength: '6', value: d0.code || '' });
+      const nameInput = el('input.fld', { type: 'text', placeholder: 'e.g. Show Name', value: d0.name || '' });
+      const codeInput = el('input.fld', { type: 'text', placeholder: 'e.g. ABC', maxlength: '6', value: d0.code || '' });
       // brand and season are what the Shows browser groups and filters on, so a
       // new show gets asked for them here rather than only in the editor
-      const brandInput = el('input.fld', { type: 'text', placeholder: 'e.g. Moonbug', value: d0.brand || '' });
+      const brandInput = el('input.fld', { type: 'text', placeholder: 'e.g. Studio or brand', value: d0.brand || '' });
       const seriesInput = el('input.fld', { type: 'text', placeholder: 'e.g. Season 1', value: d0.series || '' });
       const typeSel = el('select.fld', {
         onchange: () => { rebuildPresetOptions(); loadPipeline(); }
@@ -2995,7 +2995,7 @@ window.App = window.App || {};
       };
       const pipeAdjusted = () => normPipe(pipe) !== normPipe(baselinePipe());
 
-      const presetName = el('input.fld', { type: 'text', placeholder: 'e.g. Blippi 2-week turnaround' });
+      const presetName = el('input.fld', { type: 'text', placeholder: 'e.g. 2-week turnaround' });
       const presetBar = el('.preset-save-bar', { style: { display: 'none' } }, [
         el('span.preset-save-lbl', null, 'Save this pipeline as'),
         presetName,
@@ -3794,7 +3794,7 @@ window.App = window.App || {};
       const brandF = pickFilter('brand', 'Brand', optionsFor(s => [s.brand]), 'Any brand');
       const seriesF = pickFilter('series', 'Series / Season', optionsFor(s => [s.series]), 'Any season');
       const producerF = pickFilter('producer', 'Producer', optionsFor(s => producersOf(s).map(p => p.name)), 'Any producer');
-      const codeF = textFilter('code', 'Content Code', 'e.g. LA');
+      const codeF = textFilter('code', 'Content Code', 'e.g. ABC');
 
       const clearBtn = el('button.shows-clear', {
         type: 'button', title: 'Show every current show again',
@@ -3942,7 +3942,7 @@ window.App = window.App || {};
         values.forEach(v => { const o = document.createElement('option'); o.value = v; dl.appendChild(o); });
         return dl;
       };
-      const brandInput = el('input.fld', { type: 'text', value: show.brand || '', list: listId, placeholder: 'e.g. Moonbug' });
+      const brandInput = el('input.fld', { type: 'text', value: show.brand || '', list: listId, placeholder: 'e.g. Studio or brand' });
       const seriesInput = el('input.fld', { type: 'text', value: show.series || '', list: seriesListId, placeholder: 'e.g. Season 3' });
       let color = show.color;
 

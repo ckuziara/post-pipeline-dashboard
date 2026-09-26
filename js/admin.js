@@ -800,7 +800,7 @@ window.App = window.App || {};
     cardEl.appendChild(list);
 
     // create: name + base type → opens the editor seeded with that default
-    const nameInput = el('input.fld', { type: 'text', placeholder: 'New pipeline name (e.g. “Blippi 2-week turnaround”)', style: { flex: '1', minWidth: '180px' } });
+    const nameInput = el('input.fld', { type: 'text', placeholder: 'New pipeline name (e.g. “2-week turnaround”)', style: { flex: '1', minWidth: '180px' } });
     const typeSel = el('select.fld', { style: { maxWidth: '150px' } });
     [['animation', 'Animation'], ['live_action', 'Live Action']].forEach(([v, l]) => {
       const o = document.createElement('option'); o.value = v; o.textContent = l; typeSel.appendChild(o);
