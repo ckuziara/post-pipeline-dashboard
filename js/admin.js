@@ -416,12 +416,12 @@ window.App = window.App || {};
      it closes — four applications is one board edit and one undo, rather than
      four of each. Ticks are held locally for exactly that reason; the board
      isn't touched until the menu goes away. */
-  let swMenu = null, swMenuCommit = null;
+  let swMenu = null, swMenuCommit = null, swOff = null;
   function closeSoftwareMenu() {
     const commit = swMenuCommit;
+    if (swOff) { swOff(); swOff = null; }
     if (swMenu) { swMenu.remove(); swMenu = null; }
     swMenuCommit = null;
-    document.removeEventListener('click', closeSoftwareMenu);
     if (commit) commit();
   }
 
@@ -508,7 +508,8 @@ window.App = window.App || {};
     /* Focus after the opening click has finished being handled — focusing
        inside the same frame loses it to the button that was clicked, and the
        first thing typed then goes nowhere. */
-    setTimeout(() => { document.addEventListener('click', closeSoftwareMenu); search.focus(); }, 0);
+    swOff = App.onPressOutside(swMenu, closeSoftwareMenu);
+    setTimeout(() => search.focus(), 0);
   }
 
   /* Icons worth offering for a piece of software: the shapes that read as a

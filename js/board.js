@@ -200,7 +200,7 @@ window.App = window.App || {};
           ])),
           el('.cell.c-assignee', null, person
             ? el('span.avatar', { style: { background: person.color }, title: person.name }, App.initials(person.name))
-            : el('span.avatar.empty', { title: 'Unassigned' }, '?')),
+            : el('span.avatar.avatar-none', { title: 'Unassigned' }, '?')),
           // status cell — solid colour, click to change
           el('.cell.c-status', null, el('.status-cell', {
             style: { background: st.color, color: st.ink },

@@ -25,11 +25,13 @@ window.App = window.App || {};
 
   const LABEL_W = 132;     // department rail
   const ROW_H = 26;        // one sub-row of bars
-  const BAR_H = 18;        // the main timeline's bar height, near enough
+  const BAR_H = 12;        // the main timeline's task-bar height (.g-row.sub .bar)
   const REV_ROW_H = 16;    // one sub-row of the Director Reviews lane
   const AXIS_H = 26;
   const PAD_DAYS = 3;      // breathing room past the last thing drawn
-  const ZOOMS = [3, 5, 8, 12, 18, 26, 36];   // px per day
+  // zoom works like the Timeline's: continuous px per day, ×1.25 a step,
+  // Ctrl+scroll / pinch on the chart anchored under the pointer, ⌘+ / ⌘−
+  const ZOOM_MIN = 1.5, ZOOM_MAX = 60, ZOOM_STEP = 1.25;
 
   App.pipelineViz = function (opts) {
     const onSelect = (opts && opts.onSelect) || function () {};
@@ -43,13 +45,13 @@ window.App = window.App || {};
     const previewBatch = opts && opts.previewBatch; // (key, cfg) -> [{ ep, name, day, group }]
     let selected = null, hovered = null;
     let last = null;                        // the args of the last render, for re-zooming
-    let zoom = null;                        // index into ZOOMS; null = fit to width
+    let zoom = null;                        // px per day; null = fit to width
 
     const canvas = el('.pv-canvas');
     const scroller = el('.pv-scroll', null, canvas);
     const summary = el('.pv-summary');
-    const zoomOut = el('button.btn-icon.pv-zoom-btn', { type: 'button', title: 'Zoom out', onclick: () => stepZoom(-1) }, '−');
-    const zoomIn = el('button.btn-icon.pv-zoom-btn', { type: 'button', title: 'Zoom in', onclick: () => stepZoom(1) }, '＋');
+    const zoomOut = el('button.btn-icon.pv-zoom-btn', { type: 'button', title: 'Zoom out (' + App.shortcutLabel('−') + ', or Ctrl+scroll on the chart)', onclick: () => zoomBy(1 / ZOOM_STEP) }, '−');
+    const zoomIn = el('button.btn-icon.pv-zoom-btn', { type: 'button', title: 'Zoom in (' + App.shortcutLabel('+') + ', or Ctrl+scroll on the chart)', onclick: () => zoomBy(ZOOM_STEP) }, '＋');
     const fitBtn = el('button.btn-icon.pv-zoom-btn.pv-fit', { type: 'button', title: 'Fit the episode to the panel', onclick: () => { zoom = null; repaint(); } }, 'Fit');
     const root = el('.pv', null, [
       el('.pv-head', null, [
@@ -73,19 +75,42 @@ window.App = window.App || {};
 
     function fitPx(totalDays) {
       const w = scroller.clientWidth - LABEL_W - 12;
-      if (w <= 0) return ZOOMS[2];
-      // Fit really fits: a long pipeline may go below the smallest preset
-      return Math.max(1.5, Math.min(ZOOMS[ZOOMS.length - 1], w / totalDays));
+      if (w <= 0) return 8;
+      return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, w / totalDays));
     }
-    function stepZoom(d) {
+    /* Zoom by a factor, keeping the day under `anchorX` (px from the
+       scroller's left edge; default its middle) where it is on screen. */
+    function zoomBy(f, anchorX) {
       if (!last) return;
-      // from a fitted zoom, start at whichever preset is closest to it
-      const from = zoom !== null ? zoom
-        : ZOOMS.reduce((bi, z, i) => Math.abs(z - currentPx) < Math.abs(ZOOMS[bi] - currentPx) ? i : bi, 0);
-      zoom = Math.max(0, Math.min(ZOOMS.length - 1, from + d));
+      const old = currentPx, nz = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, old * f));
+      if (Math.abs(nz - old) < 0.001) return;
+      const sx = anchorX == null ? scroller.clientWidth / 2 : anchorX;
+      const day = (scroller.scrollLeft + sx - LABEL_W) / old;
+      zoom = nz;
       repaint();
+      scroller.scrollLeft = Math.max(0, day * currentPx + LABEL_W - sx);
     }
-    let currentPx = ZOOMS[2];
+    let currentPx = 8;
+    scroller.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey) return;                  // pinch arrives as ctrl+wheel too
+      e.preventDefault();
+      const f = App.wheelZoomFactor ? App.wheelZoomFactor(e) : (e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
+      zoomBy(f, e.clientX - scroller.getBoundingClientRect().left);
+    }, { passive: false });
+    // ⌘+ / ⌘− while this preview is on screen (the Timeline's own shortcut
+    // stands down whenever a dialog is open)
+    const onKey = (e) => {
+      if (!root.isConnected) { document.removeEventListener('keydown', onKey); return; }
+      if (!root.offsetParent || !(App.isMac ? e.metaKey : e.ctrlKey) || e.altKey) return;
+      if (App.exporter && App.exporter._ov) return;
+      const k = e.key.toLowerCase();
+      const zin = k === '=' || k === '+' || e.code === 'NumpadAdd';
+      const zout = k === '-' || k === '_' || e.code === 'NumpadSubtract';
+      if (!zin && !zout) return;
+      e.preventDefault();
+      zoomBy(zin ? ZOOM_STEP : 1 / ZOOM_STEP);
+    };
+    document.addEventListener('keydown', onKey);
 
     /* ---- layout ----
        Everything is laid out in days from the episode's start, then turned
@@ -196,10 +221,10 @@ window.App = window.App || {};
         canvas.appendChild(el('.pv-empty.bad', null, [App.icon('warn'), ' The dependencies loop back on themselves — nothing can start.']));
         return;
       }
-      const px = zoom === null ? fitPx(L.totalDays) : ZOOMS[zoom];
+      const px = zoom === null ? fitPx(L.totalDays) : zoom;
       currentPx = px;
-      zoomOut.disabled = zoom === 0 || (zoom === null && px <= ZOOMS[0]);
-      zoomIn.disabled = zoom === ZOOMS.length - 1 || (zoom === null && px >= ZOOMS[ZOOMS.length - 1]);
+      zoomOut.disabled = px <= ZOOM_MIN + 0.001;
+      zoomIn.disabled = px >= ZOOM_MAX - 0.001;
       fitBtn.classList.toggle('active', zoom === null);
 
       const live = L.milestones[L.milestones.length - 1];
@@ -223,6 +248,22 @@ window.App = window.App || {};
       // ---- grid: week ticks, labelled Week 1, 2… — no calendar dates ----
       // label every week, or every other one when a week is too narrow for it
       const labelWeeks = [1, 2, 4, 8].find(n => n * 7 * px >= 56) || 8;
+      /* Zoomed in far enough, each day gets a line and its weekday initial
+         under the week label — still no dates. Days the show doesn't work
+         (its calendar's weekends) are the faded ones. */
+      const showDays = px >= 16;
+      canvas.classList.toggle('days', showDays);
+      if (showDays) {
+        const dow0 = App.parseDate(startIso).getDay();
+        const cal = opts && opts.cal;
+        for (let d = 0; d < L.totalDays; d++) {
+          const dow = (dow0 + d) % 7;
+          if (d % 7) canvas.appendChild(el('.pv-tick', { style: { left: X(d) + 'px', height: height + 'px' } }));
+          // no calendar means every day is a working day (weekends included)
+          const off = cal ? cal.weekend(App.shiftIso(startIso, d)) : false;
+          canvas.appendChild(el('.pv-day-lbl' + (off ? '.off' : ''), { style: { left: X(d) + 'px', width: px + 'px' } }, 'SMTWTFS'[dow]));
+        }
+      }
       for (let d = 0; d < L.totalDays; d += 7) {
         const week = d / 7;
         canvas.appendChild(el('.pv-tick.major', { style: { left: X(d) + 'px', height: height + 'px' } }));
@@ -265,9 +306,48 @@ window.App = window.App || {};
       };
       L.items.forEach(it => {
         const dep = App.dept(it.t.dept);
-        const ink = App.pickInkFor ? App.pickInkFor(dep.color) : '#fff';
+        // the timeline's own ink rule, so a bar reads the same in both places
+        const ink = App.pickInk ? App.pickInk(dep.color) : '#fff';
         const top = it.lane.y + 4 + it.sub * ROW_H + (ROW_H - BAR_H) / 2;
-        it.segs.forEach((sg, si) => {
+        /* Zoomed out, a task's passes (V1 · V2 · V3, a review day apart)
+           shrink to slivers that overlap. Then they're drawn as one bar with a
+           line between each pass: the first pass solid, revisions striped,
+           the right edge still stretching the last one. */
+        const segW = (sg) => (sg.e - sg.s) * px - 2;
+        let merged = false;
+        if (it.segs.length > 1 && it.segs.some((sg, i) => segW(sg) < 16 || (i && (sg.s - it.segs[i - 1].e) * px < 5))) {
+          const s0 = it.segs[0].s, e0 = it.segs[it.segs.length - 1].e, total = e0 - s0;
+          const w = Math.max(4, total * px - 2);
+          const name = it.t.name || 'Untitled';
+          const lastSi = it.segs.length - 1;
+          const batch = !!App.batchCfg(it.t);
+          const pill = el('button.pv-pill.combo' + (batch ? '.batch' : ''), {
+            type: 'button', 'data-key': it.t.key,
+            title: name + ' — ' + dep.label + '\n' + span(it.s, it.e) + '\n' +
+              it.segs.map(sg => (sg.label || 'First pass') + ': ' + (sg.e - sg.s) + ' day' + (sg.e - sg.s === 1 ? '' : 's') + (sg.rev ? ' (planned)' : '')).join(' · '),
+            style: { left: (X(s0) + 1) + 'px', top: top + 'px', width: w + 'px', height: BAR_H + 'px', color: ink },
+            onclick: () => { if (!justDragged) onSelect(it.t.key); },
+            oncontextmenu: (e) => openMenu(e, it.t.key),
+            onmouseenter: () => { hovered = it.t.key; applyFocus(); },
+            onmouseleave: () => { if (hovered === it.t.key) { hovered = null; applyFocus(); } }
+          });
+          it.segs.forEach((sg, i) => {
+            // each pass runs on to where the next begins, so the bar is continuous
+            const a = (sg.s - s0) / total * 100, z = ((i < lastSi ? it.segs[i + 1].s : e0) - s0) / total * 100;
+            pill.appendChild(el('span.pv-part' + (sg.rev ? '.rev' : '') + (i ? '.div' : ''), { style: { left: a + '%', width: (z - a) + '%' } }));
+          });
+          if (batch) pill.appendChild(el('span.pv-batch-tag', null, 'BATCH'));
+          if (w > 24) pill.appendChild(el('span.pv-pill-txt', null, name));
+          pill.style.setProperty('--pv-c', dep.color);
+          if (update) {
+            pill.classList.add('editable');
+            if (drag && drag.t.key === it.t.key) pill.classList.add('dragging');
+            pill.appendChild(el('span.pv-grip', { onpointerdown: (e) => beginResize(e, it.t, lastSi) }));
+          }
+          canvas.appendChild(pill);
+          merged = true;                 // drawn — skip the per-pass bars below
+        }
+        if (!merged) it.segs.forEach((sg, si) => {
           const w = Math.max(4, (sg.e - sg.s) * px - 2);
           const days = sg.e - sg.s;
           const name = it.t.name || 'Untitled';
@@ -297,6 +377,8 @@ window.App = window.App || {};
           // revision's days. Narrow bars are all handle.
           if (update) {
             pill.classList.add('editable');
+            // the one being stretched keeps its handle lit through the repaints
+            if (drag && drag.t.key === it.t.key && drag.si === si) pill.classList.add('dragging');
             pill.appendChild(el('span.pv-grip', {
               onpointerdown: (e) => beginResize(e, it.t, si)
             }));
