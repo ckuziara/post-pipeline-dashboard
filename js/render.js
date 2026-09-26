@@ -289,24 +289,18 @@ window.App = window.App || {};
       }
     }
 
-    /* Legend — Timeline only, where bars are colour-coded by show and there's
-       nothing else to decode them by. The Board and Dashboard label their
-       statuses on the chips themselves, so a key for them is just a second
-       row of noise above the work. */
-    if (App.state.view === 'timeline') {
-      const legend = el('.legend');
-      App.activeShows().forEach(s => legend.appendChild(legItem(s.color, s.name)));
-      bar.appendChild(legend);
+    // Print / Export — the same as ⌘P: a breakdown of the episodes above
+    if (App.state.view === 'timeline' || App.state.view === 'board') {
+      bar.appendChild(el('button.ghost.tb-export', {
+        onclick: () => App.exporter.open(),
+        title: 'Print or export a production breakdown of what’s showing (' + App.shortcutLabel('P') + ')'
+      }, [App.icon('printer'), ' Export']));
     }
 
     if (searchFocused) {
       search.focus();
       try { search.setSelectionRange(caret[0], caret[1]); } catch (e) {}   // not all inputs allow it
     }
-  }
-
-  function legItem(color, label) {
-    return el('.legend-item', null, [el('span.swatch', { style: { background: color } }), label]);
   }
 
   function renderKpis(episodes) {
