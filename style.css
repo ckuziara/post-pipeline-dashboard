@@ -237,6 +237,7 @@
 
 /* timeline bars & producer notes (status cells intentionally excluded) */
 :root[data-skin="expressive"] .bar,
+:root[data-skin="expressive"] .pv-pill,
 :root[data-skin="expressive"] .phase-bar,
 :root[data-skin="expressive"] .pn-note { border-radius: var(--r-bar); }
 
@@ -773,6 +774,29 @@ button.ghost:disabled:hover { background: transparent; }
   display: flex; align-items: center; justify-content: flex-end; padding: 0 3px;
 }
 .g-row.sub .rev-ghost { height: 12px; border-radius: 3px; }
+/* Revisions still ahead of an open task — the reserve the schedule holds in
+   case it's sent back. Striped in the task's colour so it reads as planned
+   contingency, not work under way. */
+.rev-plan {
+  position: absolute; top: 50%; transform: translateY(-50%); height: 17px; z-index: 1;
+  border-radius: 4px; display: flex; align-items: center; padding: 0 5px; overflow: hidden;
+  font-size: 9px; font-weight: 700; color: var(--text); white-space: nowrap; cursor: default;
+  background: repeating-linear-gradient(45deg,
+    color-mix(in srgb, var(--rp-c) 40%, transparent) 0 4px,
+    color-mix(in srgb, var(--rp-c) 18%, transparent) 4px 8px);
+  box-shadow: inset 0 0 0 1px var(--rp-c);
+}
+.g-row.sub .rev-plan { height: 12px; border-radius: 3px; font-size: 8px; }
+.rev-plan.bare { padding: 0; min-width: 2px; }
+/* Director Reviews row: each review day as a small orange block, ringed in
+   the colour of the department whose work is being reviewed */
+.review-row .g-label { background: rgba(253,171,61,.08); }
+.review-dot { width: 7px; height: 7px; border-radius: 2px; background: var(--st-in_progress); flex: none; }
+.review-day {
+  position: absolute; top: 50%; transform: translateY(-50%); height: 12px; min-width: 3px; z-index: 1;
+  border-radius: 3px; background: var(--st-in_progress);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rv-c) 75%, transparent);
+}
 .rev-ghost:hover { border-color: rgba(255,255,255,.4); }
 .rev-ghost-x {
   font-size: 8px; color: var(--text-3); opacity: 0; transition: opacity .12s;
@@ -945,7 +969,7 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 
 /* note editor popover */
 .pn-editor {
-  position: fixed; z-index: 960; width: 240px; padding: 10px;
+  position: fixed; z-index: 960; width: 290px; padding: 10px;
   background: var(--surface-2); border: 1px solid var(--border-2); border-radius: 11px;
   box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 9px;
   animation: pop-in .12s ease;
@@ -962,6 +986,12 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 .pn-editor-actions { display: flex; justify-content: space-between; align-items: center; }
 .pn-del { background: transparent; border: 0; color: var(--danger); font-size: 11.5px; font-weight: 600; padding: 4px 6px; border-radius: 6px; }
 .pn-del:hover { background: rgba(255,91,110,.14); }
+.pn-holiday-btn {
+  background: transparent; border: 1px solid rgba(255,91,110,.45); color: #ff8c99; font-size: 11.5px; font-weight: 700;
+  padding: 4px 9px; border-radius: 7px; margin-left: auto; margin-right: 6px; cursor: pointer;
+}
+.pn-holiday-btn:hover { background: rgba(255,91,110,.12); }
+.hol-off-row.hol-new { outline: 2px solid rgba(255,91,110,.55); outline-offset: 3px; border-radius: 8px; }
 .pn-done { background: var(--accent); border: 0; color: #fff; font-size: 11.5px; font-weight: 700; padding: 5px 14px; border-radius: 7px; }
 .pn-done:hover { background: #6b7bff; }
 
@@ -1129,6 +1159,8 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
    along the time axis. Without this they keep .bar's translateY(-50%) and
    float half their own length above where they belong. */
 .gantt.gantt-portrait .rev-ghost,
+.gantt.gantt-portrait .rev-plan,
+.gantt.gantt-portrait .review-day,
 .gantt.gantt-portrait .ms-day,
 .gantt.gantt-portrait .phase-bar {
   left: 50%; top: auto; transform: translateX(-50%); height: auto;
@@ -1137,6 +1169,8 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
   width: 70%; flex-direction: column; justify-content: flex-end; padding: 3px 0;
 }
 .gantt.gantt-portrait .ms-day { width: 70%; }
+.gantt.gantt-portrait .rev-plan { width: 70%; padding: 2px 0; justify-content: center; }
+.gantt.gantt-portrait .review-day { width: 60%; min-height: 3px; }
 .gantt.gantt-portrait .create-ghost { left: 50%; top: auto; transform: translateX(-50%); width: 80%; height: auto; }
 .gantt.gantt-portrait .phase-bar { width: 8px; }
 
@@ -2301,6 +2335,181 @@ select.fld { cursor: pointer; }
 .modal-card.wide { max-width: 900px; }
 .modal-card.wide .modal-body { max-height: 74vh; overflow-y: auto; overflow-x: hidden; }
 
+/* Add Show split screen — episode 1 drawn across the top, the form below it.
+   The timeline is sticky inside the scrolling body, so it stays in view while
+   the task list scrolls up underneath it. */
+.modal-card.wide.split { max-width: min(1560px, 96vw); }
+.modal-card.wide.split .modal-body { max-height: 82vh; }
+.as-split { display: flex; flex-direction: column; gap: 16px; }
+.as-form { min-width: 0; }
+.as-preview {
+  position: sticky; top: -8px; z-index: 5; min-width: 0;   /* -8px: .modal-body’s top padding */
+  height: clamp(260px, 40vh, 460px);
+  margin-top: -8px; padding-top: 8px; padding-bottom: 4px; background: var(--surface);
+}
+
+.pv {
+  height: 100%; display: flex; flex-direction: column; min-height: 0;
+  background: var(--bg-2); border: 1px solid var(--border-2); border-radius: var(--r-card); overflow: hidden;
+}
+.pv-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.pv-title-wrap { min-width: 0; flex: 1; }
+.pv-title { font-weight: 800; font-size: 13.5px; }
+.pv-summary { font-size: 11.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-zoom { display: flex; gap: 4px; }
+.pv-zoom-btn { width: 28px; height: 26px; font-size: 13px; }
+.pv-zoom-btn.pv-fit { width: auto; padding: 0 9px; font-size: 11.5px; font-weight: 700; }
+.pv-zoom-btn.active { border-color: var(--accent); color: var(--accent); }
+.pv-zoom-btn:disabled { opacity: .4; cursor: default; }
+
+.pv-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.pv-canvas { position: relative; min-width: 100%; }
+.pv-empty { padding: 40px 20px; text-align: center; color: var(--text-3); font-size: 12.5px; }
+.pv-empty.bad { color: var(--danger); }
+
+.pv-off { position: absolute; z-index: 1; background: rgba(255,91,110,.16); box-shadow: inset 1px 0 0 rgba(255,91,110,.35), inset -1px 0 0 rgba(255,91,110,.35); }
+.pv-off.prod { background: rgba(255,91,110,.22); }
+.pv-tick { position: absolute; top: 0; border-left: 1px solid var(--border); pointer-events: none; }
+.pv-tick.major { border-left-color: var(--border-2); }
+.pv-tick-lbl { position: absolute; top: 6px; font-size: 10.5px; color: var(--text-3); white-space: nowrap; pointer-events: none; }
+
+/* lane rows: a sticky label rail so the department stays readable when the
+   episode is scrolled sideways */
+.pv-lane { position: absolute; left: 0; border-top: 1px solid var(--border); pointer-events: none; }
+.pv-lane.reviews { border-top: none; border-bottom: 2px solid var(--border-2); }
+.pv-lane-lbl {
+  position: sticky; left: 0; width: 124px; height: 100%; z-index: 3;
+  display: flex; align-items: center; gap: 7px; padding: 0 10px;
+  font-size: 11.5px; font-weight: 700; color: var(--text-2);
+  background: var(--bg-2); border-right: 2px solid var(--border-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pv-lane-lbl .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.pv-lane.reviews .pv-lane-lbl { color: var(--text); }
+
+.pv-ms { position: absolute; border-left: 2px dashed var(--st-approved); opacity: .7; pointer-events: none; z-index: 1; }
+.pv-ms-lbl {
+  position: absolute; transform: translateX(-50%); z-index: 2; pointer-events: none;
+  font-size: 10px; font-weight: 800; color: var(--st-approved); background: var(--bg-2); padding: 0 4px; border-radius: 4px;
+}
+
+
+/* Bars copy the main Timeline's .bar: squared-off, bold small type, dark
+   ink, the same drop shadow. The expressive skin rounds them with --r-bar,
+   alongside .bar, so the two always match. */
+.pv-pill {
+  position: absolute; z-index: 2; display: flex; align-items: center; justify-content: flex-start;
+  padding: 0 7px; border-radius: 5px; cursor: pointer; font-family: inherit;
+  font-size: 10px; font-weight: 700; line-height: 1; border: none;
+  background: var(--pv-c); box-shadow: 0 2px 8px rgba(0,0,0,.35);
+  transition: opacity .12s, box-shadow .12s;
+}
+.pv-pill.rev {
+  background: repeating-linear-gradient(45deg,
+    color-mix(in srgb, var(--pv-c) 38%, transparent) 0 4px,
+    color-mix(in srgb, var(--pv-c) 20%, transparent) 4px 8px);
+  box-shadow: inset 0 0 0 1px var(--pv-c);
+}
+.pv-pill:hover { box-shadow: 0 3px 10px rgba(0,0,0,.45); z-index: 4; }
+.pv-pill.sel { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); z-index: 4; }
+.pv-pill.dim { opacity: .4; }
+.pv-pill.editable { padding-right: 10px; }
+/* Batch Task / Dependencies windows — a modal card of their own, over Add
+   Show (below the dependency picker, which has to open on top of them) */
+.pv-pop-scrim {
+  position: fixed; inset: 0; z-index: 410; background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.pv-pop { max-width: 560px; }
+.pv-pop .modal-body { display: flex; flex-direction: column; max-height: 70vh; overflow-y: auto; }
+.pv-pop .bd-preview { max-height: 240px; }
+.pv-pop-deps { padding: 14px 0 6px; }
+.pv-pop-remove { margin-right: auto; color: var(--danger); }
+.bd-hint { font-size: 11px; color: var(--text-3); }
+/* Edit Show's Pipeline heading carries the list's count and undo/redo/add */
+.pipe-sec-head { display: flex; align-items: center; gap: 8px; }
+.pipe-sec-tools { margin-left: auto; display: flex; gap: 4px; }
+.pipe-apply-note { margin: 4px 0 8px; }
+
+/* Edit Show: episodes already in production sit greyed behind a padlock */
+.ep-name-row.locked .ep-name-fld, .ep-name-row.locked .ep-live-fld { opacity: .45; }
+.ep-name-row.locked .ep-name-num { opacity: .45; }
+.ep-prod-tag {
+  flex: none; width: 96px; box-sizing: border-box; text-align: center; font-size: 9.5px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 5px; color: var(--st-in_progress);
+  background: color-mix(in srgb, var(--st-in_progress) 14%, transparent);
+}
+.ep-name-row:not(.locked) .ep-prod-tag { color: var(--text-2); background: var(--surface-3); }
+.ep-lock {
+  flex: none; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px; border: 1px solid var(--border-2); background: var(--surface-3); color: var(--text-2); cursor: pointer;
+}
+.ep-lock.on { color: var(--st-in_progress); border-color: color-mix(in srgb, var(--st-in_progress) 50%, transparent); }
+.ep-lock:not(.on) { opacity: .7; }
+/* placeholders holding the slots on rows with nothing to lock */
+.ep-slot-empty { visibility: hidden; }
+.ep-lock { box-sizing: border-box; }
+
+/* plan iterations — each version of the plan and the finish it predicted */
+.iter-box { margin-top: 12px; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+.iter-head { display: flex; align-items: center; gap: 6px; padding: 8px 12px; font-size: 12px; font-weight: 800; background: var(--bg-2); border-bottom: 1px solid var(--border); }
+.iter-row { display: flex; align-items: center; gap: 10px; padding: 7px 12px; font-size: 11.5px; border-bottom: 1px solid var(--border); }
+.iter-row:last-child { border-bottom: 0; }
+.iter-row.next { background: rgba(91,108,255,.07); box-shadow: inset 2px 0 0 var(--accent); }
+.iter-n { font-weight: 800; width: 84px; flex: none; }
+.iter-when { color: var(--text-3); width: 150px; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.iter-note { color: var(--text-2); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.iter-finish { font-weight: 700; flex: none; }
+.iter-delta { flex: none; font-size: 10.5px; font-weight: 800; padding: 1px 7px; border-radius: 10px; }
+.iter-delta.late { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.iter-delta.early { color: var(--st-approved); background: color-mix(in srgb, var(--st-approved) 14%, transparent); }
+.pipe-apply-note.changed { color: var(--st-in_progress); font-weight: 600; }
+/* the right-edge handle: drag to change this pass's days */
+.pv-grip {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 8px; max-width: 100%; cursor: ew-resize;
+  border-radius: 0 5px 5px 0;
+}
+.pv-grip::after {
+  content: ''; position: absolute; top: 4px; bottom: 4px; right: 2px; width: 2px; border-radius: 1px;
+  background: currentColor; opacity: 0; transition: opacity .12s;
+}
+.pv-pill:hover .pv-grip::after, .pv.resizing .pv-grip::after { opacity: .55; }
+.pv.resizing, .pv.resizing * { cursor: ew-resize !important; }
+.pv-drag-badge {
+  position: fixed; z-index: 400; pointer-events: none; white-space: nowrap;
+  background: #0b0c10; color: #fff; border: 1px solid var(--border-2); border-radius: 7px;
+  padding: 4px 9px; font-size: 11.5px; font-weight: 700; box-shadow: var(--shadow);
+}
+/* a batch task: stacked edge so it reads as one bar standing for several */
+.pv-pill.batch { box-shadow: 3px -3px 0 -1px color-mix(in srgb, var(--pv-c) 55%, transparent), 0 2px 8px rgba(0,0,0,.35); }
+.pv-batch-tag {
+  flex: none; margin-right: 5px; padding: 1px 4px; border-radius: 3px;
+  font-size: 8px; letter-spacing: .04em; background: rgba(0,0,0,.22);
+}
+.pipe-batch-tag {
+  flex: none; font-size: 9.5px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 4px; color: var(--text-2); background: var(--surface-3); border: 1px solid var(--border-2);
+}
+.pv-pill-txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.pv-review {
+  position: absolute; z-index: 2; border-radius: 3px; cursor: pointer;
+  background: var(--st-in_progress); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pv-c) 70%, transparent);
+  transition: opacity .12s;
+}
+.pv-review.sel { box-shadow: 0 0 0 2px var(--accent); }
+.pv-review.dim { opacity: .25; }
+
+.pv-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 8px 12px; border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--text-2);
+}
+.pv-lg { display: inline-flex; align-items: center; gap: 6px; }
+.pv-lg-pill { width: 22px; height: 10px; border-radius: 3px; background: var(--accent); }
+.pv-lg-pill.rev { background: repeating-linear-gradient(45deg, rgba(91,108,255,.45) 0 3px, rgba(91,108,255,.2) 3px 6px); box-shadow: inset 0 0 0 1px var(--accent); }
+.pv-lg-dot { width: 8px; height: 10px; border-radius: 2px; background: var(--st-in_progress); }
+.pv-lg-line { width: 0; height: 12px; border-left: 2px dashed var(--st-approved); }
+
 .plan-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 .plan-grid.two { grid-template-columns: 1fr 1fr; }
 .plan-grid .field { margin-bottom: 0; }
@@ -2374,6 +2583,11 @@ select.fld { cursor: pointer; }
    those inputs lower than the label-less Name/Dept/Deps fields. Small controls
    (number, grip, actions) stay vertically centred. */
 .pipe-row.editing { border-color: var(--accent); background: rgba(91,108,255,.06); align-items: end; }
+/* its own columns since the Min field went: lead · grip · name · dept · days
+   · max rev · deps (takes the slack, chips wrap inside it) · actions */
+.pipe-row.editing { grid-template-columns: 20px 22px minmax(120px, 1.2fr) 110px 60px 60px minmax(160px, 1.6fr) auto; }
+.pipe-row.editing .dep-tags { align-self: center; }
+.pipe-row.editing .pipe-actions { justify-content: flex-end; gap: 6px; }
 .pipe-row.editing .pipe-lead,
 .pipe-row.editing .pipe-grip,
 .pipe-row.editing .pipe-actions { align-self: center; }
@@ -3409,7 +3623,12 @@ select.fld { cursor: pointer; }
    and the toasts' lane but below modals (z 400) — a dialog opened from
    anywhere must still cover it.
    ============================================================================ */
-.ai-root { position: fixed; right: 22px; bottom: 22px; z-index: 380; display: flex; flex-direction: column; align-items: flex-end; gap: 12px; }
+/* The root is only a positioning box around the button and the panel. Left
+   hit-testable, the closed (invisible) panel's footprint silently swallowed
+   clicks, drags and hovers over the bottom-right of the timeline — so the box
+   ignores the pointer and only its visible parts take it. */
+.ai-root { position: fixed; right: 22px; bottom: 22px; z-index: 380; display: flex; flex-direction: column; align-items: flex-end; gap: 12px; pointer-events: none; }
+.ai-root .ai-fab { pointer-events: auto; }
 .ai-root.hidden { display: none; }
 
 /* the circle: sparkle normally, ✕ once the panel is up */
@@ -4205,3 +4424,105 @@ select.fld { cursor: pointer; }
   .rvq-row { grid-template-columns: 1fr 1fr; }
   .rvq-acts { grid-column: 1 / -1; justify-content: flex-start; }
 }
+
+/* ---- Add Show / Edit Pipeline · step 3: working days & holidays ---- */
+.hol-page .modal-section-title:first-child { margin-top: 4px; }
+.hol-row-line { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.hol-list {
+  display: flex; flex-direction: column; max-height: 240px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 10px; margin-bottom: 4px;
+}
+.hol-nat { display: flex; align-items: center; gap: 10px; padding: 7px 12px; font-size: 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.hol-nat:last-child { border-bottom: 0; }
+.hol-nat-name { flex: 1; font-weight: 600; }
+.hol-nat-date { color: var(--text-2); }
+.hol-nat input:not(:checked) ~ span { opacity: .45; text-decoration: line-through; }
+.hol-off-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.hol-off-row {
+  display: grid; grid-template-columns: minmax(140px, 1.3fr) 150px 14px 150px 150px minmax(150px, 1.2fr) 30px;
+  align-items: center; gap: 8px;
+}
+.hol-off-row .fld { margin: 0; }
+.hol-to { color: var(--text-3); text-align: center; }
+.hol-target-all { font-size: 12px; color: var(--text-3); padding-left: 4px; }
+.hol-add { margin-bottom: 12px; align-self: flex-start; white-space: nowrap; width: auto; display: inline-flex; }
+.hol-impact {
+  font-size: 12px; font-weight: 600; color: var(--text-2); padding: 10px 12px; border-radius: 9px;
+  background: rgba(91,108,255,.08); border: 1px solid rgba(91,108,255,.25);
+}
+@media (max-width: 900px) {
+  .hol-off-row { grid-template-columns: 1fr 1fr; }
+  .hol-to { display: none; }
+}
+
+/* holidays on the main timeline: red through the rows they block */
+.hol-wash {
+  /* hoverable, for the tooltip naming the holiday; bars sit above it and
+     the row's own gestures find their track through it (closest()) */
+  position: absolute; top: 0; bottom: 0; z-index: 0; cursor: help;
+  background: rgba(255,91,110,.22);
+  box-shadow: inset 1px 0 0 rgba(255,91,110,.45), inset -1px 0 0 rgba(255,91,110,.45);
+}
+.hol-wash.prod { background: rgba(255,91,110,.28); }
+.gantt.gantt-portrait .hol-wash { left: 0; right: 0; width: auto !important; }
+
+/* Holiday clashes dialog */
+.hc-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.hc-row { display: flex; align-items: center; gap: 14px; padding: 10px 12px; border: 1px solid rgba(255,91,110,.35); border-radius: 10px; background: rgba(255,91,110,.06); }
+.hc-main { flex: 1; min-width: 0; }
+.hc-title { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.hc-title .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.hc-task { font-weight: 800; }
+.hc-ep { color: var(--text-3); font-size: 11.5px; }
+.hc-why { margin-top: 4px; font-size: 11.5px; color: #ff8c99; }
+.hc-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.hc-act { display: flex; gap: 6px; }
+.hc-sel { width: 150px; margin: 0; }
+.hc-btn { white-space: nowrap; }
+/* a task bar that runs into its people's time off */
+.bar.hol-clash { outline: 2px dashed #ff5b6e; outline-offset: 1px; }
+
+.pn-hol-editor { width: 240px; }
+.pn-hol-title { font-weight: 800; font-size: 12.5px; }
+.pn-hol-dates { font-size: 11.5px; color: var(--text-2); margin-top: -4px; }
+.pn-note.pn-holiday { cursor: pointer; }
+
+.pc-push-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; max-height: 50vh; overflow-y: auto; }
+.pc-push-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 12px; border-bottom: 1px solid var(--border); }
+.pc-push-row:last-child { border-bottom: 0; }
+.pc-push-row.lead { background: rgba(91,108,255,.07); box-shadow: inset 2px 0 0 var(--accent); }
+.pc-push-row .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.pc-push-name { flex: 1; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-push-was { color: var(--text-3); }
+.pc-push-arrow { color: var(--text-3); }
+.pc-push-now { font-weight: 700; }
+.pc-push-d { width: 70px; text-align: right; color: var(--st-in_progress); font-weight: 800; }
+
+/* Executive view (All shows): show headers and one line per episode of thin
+   department bands, with Delivery and Live marked */
+.g-row.exec-show { background: var(--bg-2); min-height: 38px; }
+.g-row.exec-show, .g-row.exec-row { cursor: pointer; }
+.exec-show-label .chev, .exec-row .chev { color: var(--text-3); font-size: 8px; margin-right: 6px; transition: transform .15s; display: inline-block; }
+.exec-show-label .chev.open, .exec-row .chev.open { transform: rotate(90deg); }
+.exec-show-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.exec-open {
+  margin-left: auto; flex: none; width: 22px; height: 20px; border-radius: 6px; border: 1px solid var(--border-2);
+  background: var(--surface-3); color: var(--text-2); font-size: 12px; line-height: 1; cursor: pointer; opacity: .7;
+}
+.exec-open:hover { opacity: 1; color: var(--accent); border-color: var(--accent); }
+.g-row.exec-row.open { background: rgba(91,108,255,.05); }
+.g-row.exec-show:hover .exec-show-name { color: var(--accent); }
+.exec-chip { font-size: 9.5px; font-weight: 800; padding: 1px 6px; border-radius: 4px; margin-right: 6px; flex: none; }
+.exec-span { position: absolute; top: 50%; transform: translateY(-50%); height: 6px; border-radius: 3px; opacity: .55; }
+.exec-span.solid { height: 12px; border-radius: 4px; opacity: .9; }
+.exec-band { position: absolute; height: 4px; border-radius: 2px; opacity: .95; }
+.exec-band.done { opacity: .35; }
+
+.g-row.exec-key { min-height: 30px; background: var(--bg-2); }
+.exec-key-items { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; padding: 6px 12px; font-size: 11px; color: var(--text-2); position: sticky; left: 220px; }
+.exec-key-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.exec-key-sw { width: 14px; height: 4px; border-radius: 2px; }
+.exec-key-ms { font-size: 8.5px; font-weight: 800; padding: 1px 4px; border-radius: 3px; color: #fff; }
+.exec-key-ms.del { background: #e2445c; }
+.exec-key-ms.live { background: #2f6fed; }
+.exec-key-hint { color: var(--text-3); }

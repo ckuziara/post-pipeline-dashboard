@@ -306,6 +306,9 @@ window.App = window.App || {};
 
   App.pipelineFor = function (ep) {
     const show = ep && App.state.data && App.state.data.shows.find(s => s.id === ep.showId);
+    // an episode locked while its show's pipeline changed keeps the pipeline
+    // it was being made with (see App.replanShow)
+    if (ep && ep.pipeline) return ep.pipeline;
     return (show && show.pipeline) || App.defaultPipeline();
   };
   App.pTask = (ep, key) => App.pipelineFor(ep).find(t => t.key === key);
@@ -327,6 +330,237 @@ window.App = window.App || {};
     // so every task gives up the same fraction of its squeezable range and
     // none is ever pushed below its minimum. s=1 → nominal, s=0 → minimum.
     return min + Math.round((days - min) * s);
+  };
+
+  /* ---------------------------------------------------------------------------
+     Working days & holidays.
+
+     A show's calendar (show.calendar) says which days work happens on:
+       workWeekends   Saturdays and Sundays count as working days
+       region         'none' | 'uk' | 'us' — national holidays, by rule
+       skipNational   national holidays the production works through, as
+                      'uk:2026-12-25' — per country, so switching country
+                      and back keeps the choices (a bare date is older data)
+       offDays        [{ id, label, start, end, scope, target }]
+                        scope 'show'   the whole production
+                              'dept'   one department (target = dept key)
+                              'role'   everyone in a role (target = role key;
+                                       'director' also blocks Director reviews)
+                              'person' one person (target = person id)
+     Durations are working days: a 5-day task takes five days its department,
+     role and owner are actually in — a holiday pushes the work back rather
+     than shortening it. Without a calendar the scheduler counts calendar
+     days, exactly as before.
+  --------------------------------------------------------------------------- */
+  App.normCal = function (c) {
+    c = c || {};
+    return {
+      workWeekends: !!c.workWeekends,
+      region: ['uk', 'us'].includes(c.region) ? c.region : 'none',
+      skipNational: (c.skipNational || []).slice(),
+      offDays: (c.offDays || []).filter(o => o && o.start).map(o => ({
+        id: o.id || App.uid(), label: o.label || '', start: o.start, end: o.end && o.end >= o.start ? o.end : o.start,
+        scope: ['show', 'dept', 'role', 'person'].includes(o.scope) ? o.scope : 'show', target: o.target || null
+      }))
+    };
+  };
+  App.calIsEmpty = (c) => { const n = App.normCal(c); return n.workWeekends && n.region === 'none' && !n.offDays.length; };
+
+  // national holidays, worked out by rule so any year is right
+  const iso3 = (y, m, d) => App.isoDate(new Date(y, m, d));
+  const nthDow = (y, m, dow, n) => {          // n = 1..4, or -1 for the last
+    if (n > 0) { const f = new Date(y, m, 1); const off = (dow - f.getDay() + 7) % 7; return iso3(y, m, 1 + off + (n - 1) * 7); }
+    const l = new Date(y, m + 1, 0); const off = (l.getDay() - dow + 7) % 7; return iso3(y, m, l.getDate() - off);
+  };
+  const easter = (y) => {                      // anonymous Gregorian algorithm
+    const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
+    const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+    return new Date(y, month - 1, day);
+  };
+  const dow = (iso) => App.parseDate(iso).getDay();
+  App.nationalHolidays = function (region, fromIso, toIso) {
+    if (region !== 'uk' && region !== 'us') return [];
+    const out = [];
+    const y0 = App.parseDate(fromIso).getFullYear(), y1 = App.parseDate(toIso).getFullYear();
+    for (let y = y0; y <= y1; y++) {
+      if (region === 'uk') {
+        const e = easter(y);
+        const list = [
+          ['New Year’s Day', iso3(y, 0, 1)],
+          ['Good Friday', App.isoDate(App.addDays(e, -2))],
+          ['Easter Monday', App.isoDate(App.addDays(e, 1))],
+          ['Early May bank holiday', nthDow(y, 4, 1, 1)],
+          ['Spring bank holiday', nthDow(y, 4, 1, -1)],
+          ['Summer bank holiday', nthDow(y, 7, 1, -1)]
+        ];
+        // a New Year on a weekend moves to the Monday
+        if (dow(list[0][1]) === 6) list[0][1] = App.shiftIso(list[0][1], 2);
+        else if (dow(list[0][1]) === 0) list[0][1] = App.shiftIso(list[0][1], 1);
+        // Christmas and Boxing Day each take the next free weekday if they
+        // fall on a weekend
+        const taken = new Set();
+        [['Christmas Day', iso3(y, 11, 25)], ['Boxing Day', iso3(y, 11, 26)]].forEach(([n, d]) => {
+          let x = d;
+          while (dow(x) === 0 || dow(x) === 6 || taken.has(x)) x = App.shiftIso(x, 1);
+          taken.add(x); list.push([n + (x !== d ? ' (substitute)' : ''), x]);
+        });
+        list.forEach(([name, date]) => out.push({ name, date }));
+      } else {
+        // a fixed-date US holiday on Saturday is observed Friday, Sunday → Monday
+        const obs = (d) => dow(d) === 6 ? App.shiftIso(d, -1) : dow(d) === 0 ? App.shiftIso(d, 1) : d;
+        [
+          ['New Year’s Day', obs(iso3(y, 0, 1))],
+          ['Martin Luther King Jr. Day', nthDow(y, 0, 1, 3)],
+          ['Presidents’ Day', nthDow(y, 1, 1, 3)],
+          ['Memorial Day', nthDow(y, 4, 1, -1)],
+          ['Juneteenth', obs(iso3(y, 5, 19))],
+          ['Independence Day', obs(iso3(y, 6, 4))],
+          ['Labor Day', nthDow(y, 8, 1, 1)],
+          ['Columbus Day', nthDow(y, 9, 1, 2)],
+          ['Veterans Day', obs(iso3(y, 10, 11))],
+          ['Thanksgiving', nthDow(y, 10, 4, 4)],
+          ['Christmas Day', obs(iso3(y, 11, 25))]
+        ].forEach(([name, date]) => out.push({ name, date }));
+      }
+    }
+    return out.filter(h => h.date >= fromIso && h.date <= toIso).sort((a, b) => a.date < b.date ? -1 : 1);
+  };
+
+  /* The calendar as something the scheduler can ask: is this day off for
+     this piece of work? `who` = { dept, person, review } — `review` marks a
+     Director review day. Built once per plan; national holidays are cached
+     per year as they're needed. */
+  App.makeCalendar = function (c, team) {
+    const cal = App.normCal(c);
+    const skip = new Set(cal.skipNational);
+    const natCache = {};
+    const national = (iso) => {
+      if (cal.region === 'none') return null;
+      const y = iso.slice(0, 4);
+      if (!natCache[y]) {
+        natCache[y] = {};
+        App.nationalHolidays(cal.region, y + '-01-01', y + '-12-31').forEach(h => { natCache[y][h.date] = h.name; });
+      }
+      const n = natCache[y][iso];
+      return n && !skip.has(cal.region + ':' + iso) && !skip.has(iso) ? n : null;
+    };
+    const within = (o, iso) => iso >= o.start && iso <= o.end;
+    // the show's Directors — their personal time off blocks review days too
+    const directors = team ? App.deptTeam({ team }, App.ROLE_SLOT + 'director').ids : [];
+    const roleOf = (pid) => { const p = pid && App.person(pid); return p ? p.role : null; };
+    const api = {
+      cal,
+      weekend: (iso) => !cal.workWeekends && (dow(iso) === 0 || dow(iso) === 6),
+      national,
+      // off for everyone on the production: weekend, national holiday, or a
+      // whole-production off day
+      prodOff: (iso) => api.weekend(iso) || !!national(iso) || cal.offDays.some(o => o.scope === 'show' && within(o, iso)),
+      isOff(iso, who) {
+        if (api.prodOff(iso)) return true;
+        who = who || {};
+        return cal.offDays.some(o => {
+          if (!within(o, iso)) return false;
+          if (o.scope === 'dept') return !who.review && o.target === who.dept;
+          if (o.scope === 'role') {
+            if (who.review) return o.target === 'director';
+            return (o.target === who.dept && !who.person) || (!!who.person && roleOf(who.person) === o.target);
+          }
+          if (o.scope === 'person') return who.review ? directors.includes(o.target) : o.target === who.person;
+          return false;
+        });
+      },
+      // why a day is off for this work, in words — for clash messages
+      reason(iso, who) {
+        if (api.weekend(iso)) return 'the weekend';
+        const nat = national(iso); if (nat) return nat;
+        who = who || {};
+        const o = cal.offDays.find(x => within(x, iso) && (x.scope === 'show' ||
+          (x.scope === 'dept' && x.target === who.dept) ||
+          (x.scope === 'role' && ((x.target === who.dept && !who.person) || (!!who.person && roleOf(who.person) === x.target))) ||
+          (x.scope === 'person' && x.target === who.person)));
+        if (!o) return null;
+        const who2 = o.scope === 'person' ? (App.person(o.target) || {}).name || 'Someone'
+          : o.scope === 'dept' ? App.dept(o.target).label
+          : o.scope === 'role' ? App.role(o.target).label : 'the whole production';
+        return who2 + ' off' + (o.label ? ' · ' + o.label : '');
+      },
+      // the first working day on or after iso
+      nextWork(iso, who) { let x = iso, g = 0; while (api.isOff(x, who) && g++ < 400) x = App.shiftIso(x, 1); return x; },
+      // the last day of `n` working days that start on (or after) iso
+      addWork(iso, n, who) {
+        let x = api.nextWork(iso, who), left = Math.max(1, n) - 1, g = 0;
+        while (left > 0 && g++ < 2000) { x = App.shiftIso(x, 1); if (!api.isOff(x, who)) left--; }
+        return x;
+      }
+    };
+    return api;
+  };
+  // the calendar a show schedules by — null when it has none worth applying
+  App.showCalendar = function (showOrId) {
+    const show = typeof showOrId === 'string' ? App.state.data.shows.find(s => s.id === showOrId) : showOrId;
+    if (!show || !show.calendar) return null;
+    return App.makeCalendar(show.calendar, show.team);
+  };
+
+  /* Holiday clashes: open tasks whose dates include a day off for the people
+     doing them — their department, role or owner. The scheduler never plans
+     one, but work already under way, padlocked episodes, drags and time off
+     added later can all leave one behind. Each needs a decision: hand the
+     task to someone who's in, or shift it so it gets its full working days.
+     `onlyKey` narrows to one episode task ("epId::taskKey"). */
+  App.holidayClashes = function (showId, onlyKey) {
+    const show = App.state.data.shows.find(s => s.id === showId);
+    const cal = show && App.showCalendar(show);
+    if (!cal) return [];
+    const out = [];
+    App.state.data.episodes.filter(e => e.showId === showId && !e.archived).forEach(ep => {
+      App.subitems(ep).forEach(su => {
+        if (su.status === 'approved') return;
+        if (onlyKey && onlyKey !== ep.id + '::' + su.key) return;
+        // shifted to run around the time off on exactly these dates (App.shiftPastHoliday)
+        if (ep.holidayOk && ep.holidayOk[su.key] === su.start + '|' + su.due) return;
+        const who = { dept: su.dept, person: su.assignee };
+        const days = [];
+        for (let x = su.start; x <= su.due; x = App.shiftIso(x, 1)) {
+          // a weekend inside a task is only a clash when the show works weekends… which
+          // then isn't off at all — so weekends never count here
+          if (cal.weekend(x)) continue;
+          if (cal.isOff(x, who)) days.push(x);
+        }
+        if (days.length) out.push({ ep, su, days, reason: cal.reason(days[0], who), cal, who });
+      });
+    });
+    return out.sort((a, b) => a.su.start < b.su.start ? -1 : 1);
+  };
+  App.hasHolidayClash = (ep, su) => App.holidayClashes(ep.showId, ep.id + '::' + su.key).length > 0;
+
+  /* The review days and revisions that follow a task's pass ending `due`:
+     review · V(n+1) · review · … — each review a working day for the
+     Director, each revision working days for the task's own people. `used`
+     revisions are already inside the pass. Returns { reviews, revs, end }. */
+  App.revisionSteps = function (t, due, cal, who, used) {
+    const out = { reviews: [], revs: [], end: due };
+    const max = (t && t.maxRev) || 0;
+    if (!max) return out;
+    const R = App.REVIEW_DAYS, rwho = { review: true };
+    let at = due;
+    const span = (n, w) => {
+      if (cal) { const s0 = cal.nextWork(App.shiftIso(at, 1), w); const e0 = cal.addWork(s0, n, w); return [s0, e0]; }
+      return [App.shiftIso(at, 1), App.shiftIso(at, n)];
+    };
+    const review = (label) => { const [s0, e0] = span(R, rwho); out.reviews.push({ start: s0, due: e0, label }); at = e0; };
+    const u = used || 0;
+    review('V' + (u + 1));
+    for (let r = u; r < max; r++) {
+      const [s0, e0] = span(Math.max(1, (t.revDays || [])[r] || 1), who);
+      out.revs.push({ start: s0, due: e0, label: 'V' + (r + 2) });
+      at = e0;
+      review('V' + (r + 2));
+    }
+    out.end = at;
+    return out;
   };
 
   // Kahn topological sort; returns ordered keys, or null on a dependency cycle
@@ -353,47 +587,167 @@ window.App = window.App || {};
   // its dependency's finish rather than the next day, which is how a fixed
   // waiting period is expressed (Live Date sits 4 weeks past QC). The lag is a
   // commitment to an outside party, so squeeze/stretch never scales it.
-  App.schedulePipeline = function (pipeline, startIso, scale) {
+  //
+  // Every pass of a task with a revision budget is followed by a review
+  // (App.REVIEW_DAYS — Post Operations hands it to the Director, who approves
+  // it or sends it back); a task with no revisions gets no review,
+  // and shows are planned for the worst case: every task is assumed to spend
+  // its whole revision budget. So a task runs
+  //     V1 · review · V2 · review · … · last revision · review
+  // and its dependents wait for that final review, not the first pass.
+  // `dates[k].due` is still the first pass — the date the work is due for
+  // review — and everything between it and `done[k]` is held in reserve.
+  // Sending a task back (App.requestRevision) stretches its due date into
+  // that reserve, so it never pushes a dependent and never counts the same
+  // days twice. opts.withRevisions: false leaves the revisions out (the first
+  // review stays).
+  App.REVIEW_DAYS = 1;
+  App.schedulePipeline = function (pipeline, startIso, scale, opts) {
     const order = App.topoSort(pipeline); if (!order) return null;
+    const withRev = !(opts && opts.withRevisions === false);
+    // opts.cal (App.makeCalendar) switches durations to working days;
+    // opts.assignees ({ taskKey: personId }) lets personal holidays count
+    const cal = (opts && opts.cal) || null;
+    const assignees = (opts && opts.assignees) || {};
     const byKey = {}; pipeline.forEach(t => { byKey[t.key] = t; });
-    const dates = {}; let end = startIso;
+    // `dates` is stored on episodes as-is, so `done` lives apart from it and
+    // is only handed back when asked for
+    const dates = {}, done = {}; let end = startIso;
+    const fixed = (opts && opts.fixed) || {};
     order.forEach(k => {
       const t = byKey[k];
-      let s = startIso;
+      // a batch task already scheduled by its group's first episode keeps
+      // those dates here — see App.scheduleEpisodes
+      if (fixed[k]) {
+        dates[k] = { start: fixed[k].start, due: fixed[k].due };
+        done[k] = fixed[k].done;
+        if (done[k] > end) end = done[k];
+        return;
+      }
+      // a batch run spaced out on the calendar can't start before its slot
+      let s = (opts && opts.notBefore && opts.notBefore[k] > startIso) ? opts.notBefore[k] : startIso;
       t.deps.forEach(d => {
         if (!dates[d]) return;
-        const next = App.shiftIso(dates[d].due, t.lag > 0 ? t.lag : 1);
+        const next = App.shiftIso(done[d], t.lag > 0 ? t.lag : 1);
         if (next > s) s = next;
       });
-      const due = App.shiftIso(s, App.taskDuration(t, scale) - 1);
+      // with a calendar, the task's days are its people's working days
+      const who = cal ? { dept: t.dept, person: assignees[k] || null } : null;
+      if (cal) s = cal.nextWork(s, who);           // work can't begin on a day off
+      const dur = App.taskDuration(t, scale);
+      const due = cal ? cal.addWork(s, dur, who) : App.shiftIso(s, dur - 1);
+      // only a task that can be sent back goes to the Director — one with no
+      // revision budget has nothing to review for, so it gets no review day.
+      // Worst case: every revision spent, each followed by its review; with
+      // revisions left out, just the first review.
+      const steps = t.maxRev > 0 ? App.revisionSteps(t, due, cal, who, 0) : null;
+      done[k] = !steps ? due : withRev ? steps.end : steps.reviews[0].due;
       dates[k] = { start: s, due };
-      if (due > end) end = due;
+      if (done[k] > end) end = done[k];
     });
-    return { dates, end };
+    return { dates, done, end };
+  };
+
+  /* Batch tasks — the Timeline's Batch Set Dates rule, applied to a pipeline
+     task across the episodes of a show, in episode order:
+       fixed    one run shared by every episode ("Same start")
+       stagger  a run per episode, spaced `every` `unit` apart
+       group    a run per `size` episodes, groups spaced `every` `unit` apart
+     Spacing is a count of days or weeks from the first episode's kick-off —
+     never a calendar date — and only ever holds a run back; it never pulls
+     one ahead of its dependencies. every = 0 means no spacing: runs follow
+     the episode rate.
+     Stored as t.batch = { mode, size, every, unit }. A bare number is an
+     older form of group-of-N. */
+  App.batchCfg = function (t) {
+    const b = t && t.batch;
+    if (!b) return null;
+    if (typeof b === 'number') return b >= 2 ? { mode: 'group', size: Math.floor(b), every: 0, unit: 'week' } : null;
+    const mode = ['fixed', 'stagger', 'group'].includes(b.mode) ? b.mode : 'group';
+    return {
+      mode,
+      size: Math.max(1, Math.min(99, parseInt(b.size, 10) || 2)),
+      every: Math.max(0, Math.min(365, parseInt(b.every, 10) || 0)),
+      unit: b.unit === 'day' ? 'day' : 'week'
+    };
+  };
+  App.batchGroup = (cfg, i) => cfg.mode === 'fixed' ? 0 : cfg.mode === 'stagger' ? i : Math.floor(i / cfg.size);
+  App.batchLabel = function (t) {
+    const c = App.batchCfg(t); if (!c) return '';
+    const unit = c.unit;
+    const every = c.every ? ' · every ' + c.every + ' ' + unit + (c.every === 1 ? '' : 's') : '';
+    return c.mode === 'fixed' ? 'Same start' : c.mode === 'stagger' ? 'Stagger' + every : 'Groups of ' + c.size + every;
+  };
+
+  // calendar arithmetic: "a week" is seven calendar dates, and month-ends
+  // clamp (Jan 31 + 1 month = Feb 28)
+  App.addInterval = function (iso, n, unit) {
+    if (!n) return iso;
+    if (unit === 'day') return App.shiftIso(iso, n);
+    if (unit === 'week') return App.shiftIso(iso, n * 7);
+    const d = App.parseDate(iso), day = d.getDate();
+    const t = new Date(d.getFullYear(), d.getMonth() + n, 1);
+    const last = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate();
+    t.setDate(Math.min(day, last));
+    return App.isoDate(t);
+  };
+
+  /* Every episode of a show, scheduled together — which only matters once a
+     pipeline has a batch task. The first episode of each run's group
+     schedules it; the rest of the group take those same dates, so their own
+     downstream work waits on the one shared piece rather than each doing it
+     again. Each result carries `group` — { taskKey: group index } — for the
+     episode to store, so an edit to the shared task can reach every episode
+     in its group (App.syncBatch). `starts` is each episode's kick-off date.
+     Null on a dependency cycle. */
+  App.scheduleEpisodes = function (pipeline, starts, scale, opts) {
+    const batched = pipeline.map(t => ({ t, cfg: App.batchCfg(t) })).filter(b => b.cfg);
+    const leads = {};               // "taskKey:group" -> the lead episode's schedule
+    const out = [];
+    for (let i = 0; i < starts.length; i++) {
+      const fixed = {}, group = {}, notBefore = {};
+      batched.forEach(({ t, cfg }) => {
+        const g = App.batchGroup(cfg, i);
+        group[t.key] = g;
+        const L = leads[t.key + ':' + g];
+        if (L) fixed[t.key] = { start: L.dates[t.key].start, due: L.dates[t.key].due, done: L.done[t.key] };
+        else if (cfg.every && cfg.mode !== 'fixed') notBefore[t.key] = App.shiftIso(starts[0], g * cfg.every * (cfg.unit === 'week' ? 7 : 1));
+      });
+      // opts.assigneesFor(i) — who owns each task in episode i, for personal holidays
+      const assignees = opts && opts.assigneesFor ? opts.assigneesFor(i) : (opts && opts.assignees);
+      const sch = App.schedulePipeline(pipeline, starts[i], scale, Object.assign({}, opts, { fixed, notBefore, assignees }));
+      if (!sch) return null;
+      batched.forEach(({ t }) => { const k = t.key + ':' + group[t.key]; if (!leads[k]) leads[k] = sch; });
+      sch.group = group;
+      out.push(sch);
+    }
+    return out;
   };
 
   // Whole-show schedule: episode i kicks off at startIso + i*cadence days.
-  // Project end = the last episode's critical-path finish.
-  App.scheduleShow = function (pipeline, startIso, epCount, cadence, scale) {
-    const one = App.schedulePipeline(pipeline, startIso, scale); if (!one) return null;
-    const lastStart = App.shiftIso(startIso, Math.max(0, epCount - 1) * cadence);
-    const last = App.schedulePipeline(pipeline, lastStart, scale);
-    return { end: last.end };
+  // Project end = whichever episode finishes last — usually the last one, but
+  // with batch tasks a later episode can reuse work an earlier one waited for.
+  App.scheduleShow = function (pipeline, startIso, epCount, cadence, scale, opts) {
+    const starts = [];
+    for (let i = 0; i < Math.max(1, epCount); i++) starts.push(App.shiftIso(startIso, i * cadence));
+    const eps = App.scheduleEpisodes(pipeline, starts, scale, opts);
+    if (!eps) return null;
+    return { end: eps.reduce((m, e) => e.end > m ? e.end : m, eps[0].end) };
   };
 
   // Largest scale whose project end still fits targetIso (binary search over a
   // monotonic end(scale)). scale=0 means every task at its minDays — the floor.
-  App.solveScale = function (pipeline, startIso, epCount, cadence, targetIso) {
-    const floor = App.scheduleShow(pipeline, startIso, epCount, cadence, 0);
+  App.solveScale = function (pipeline, startIso, epCount, cadence, targetIso, opts) {
+    const floor = App.scheduleShow(pipeline, startIso, epCount, cadence, 0, opts);
     if (!floor) return null;
     if (targetIso <= floor.end) return { scale: 0, end: floor.end, clamped: targetIso < floor.end };
     let lo = 0, hi = 1;
-    while (hi < 16 && App.scheduleShow(pipeline, startIso, epCount, cadence, hi).end < targetIso) hi *= 2;
+    while (hi < 16 && App.scheduleShow(pipeline, startIso, epCount, cadence, hi, opts).end < targetIso) hi *= 2;
     for (let i = 0; i < 24; i++) {
       const mid = (lo + hi) / 2;
-      if (App.scheduleShow(pipeline, startIso, epCount, cadence, mid).end <= targetIso) lo = mid; else hi = mid;
+      if (App.scheduleShow(pipeline, startIso, epCount, cadence, mid, opts).end <= targetIso) lo = mid; else hi = mid;
     }
-    return { scale: lo, end: App.scheduleShow(pipeline, startIso, epCount, cadence, lo).end, clamped: false };
+    return { scale: lo, end: App.scheduleShow(pipeline, startIso, epCount, cadence, lo, opts).end, clamped: false };
   };
 
   /* Status derivation for freshly scheduled episodes (same rules as
@@ -554,11 +908,12 @@ window.App = window.App || {};
 
      A pipeline task optionally carries `maxRev` (how many times it can be
      bounced) and `revDays` (one duration per revision, since a first pass
-     tends to need longer than a polish). Neither is squeezable or part of the
-     nominal schedule — a revision is contingency, not planned work, so it
-     only ever costs real time when a Director actually spends it (see
-     App.requestRevision in main.js). What's budgeted but never spent is left
-     visible rather than silently forgotten — see revisionGhostDays below.
+     tends to need longer than a polish). Neither is squeezable. The schedule
+     plans for the worst case — dependents wait for the whole budget (see
+     App.schedulePipeline) — but a task's own due date only grows into that
+     reserve when a Director actually spends a revision (App.requestRevision
+     in main.js). What's reserved but never spent is left visible rather than
+     silently forgotten — see revisionGhostDays below.
   --------------------------------------------------------------------------- */
   // how many of a task's budgeted revisions this episode has actually spent
   App.revisionsUsed = function (ep, key) { return (ep.revisions && ep.revisions[key]) || 0; };
@@ -579,6 +934,21 @@ window.App = window.App || {};
     if (ep.revisionsCleared && ep.revisionsCleared[su.key]) return 0;
     const { days, used } = App.taskRevisions(ep, su.key);
     return days.slice(used).reduce((a, n) => a + (n || 0), 0);
+  };
+
+  /* The review days and revisions still ahead of an open task — the reserve
+     the worst-case schedule holds for it (App.schedulePipeline), laid out
+     from the task's current due date: review · V2 · review · V3 · review…
+     Revisions already spent are inside the bar (App.requestRevision grew the
+     due date), so the next version number follows on from them. An approved
+     task has nothing ahead (its unspent budget is the grey ghost instead),
+     and a task with no revisions isn't reviewed by the Director at all. */
+  App.plannedRevisions = function (ep, su) {
+    if (su.status === 'approved') return { reviews: [], revs: [], end: su.due };
+    const t = App.pTask(ep, su.key);
+    if (!t || !t.maxRev) return { reviews: [], revs: [], end: su.due };
+    return App.revisionSteps(t, su.due, App.showCalendar(ep.showId),
+      { dept: su.dept, person: su.assignee }, App.revisionsUsed(ep, su.key));
   };
 
   /* What a proposed reschedule of one task would break.
@@ -847,6 +1217,46 @@ window.App = window.App || {};
   App.epStart = function (ep) {
     return App.subitems(ep).reduce((m, s) => s.start < m ? s.start : m, '9999-99-99');
   };
+  /* An episode is in production once any of its work has started. Edit Show
+     locks these by default — a plan change shouldn't quietly reach into work
+     people are already doing. */
+  App.IN_PRODUCTION = ['in_progress', 'review', 'approved'];
+  App.inProduction = function (ep) {
+    const st = (ep && ep.statuses) || {};
+    return Object.keys(st).some(k => App.IN_PRODUCTION.includes(st[k]));
+  };
+
+  /* When the show's work says it will finish: the latest date any active
+     episode's work allows it to go live (App.msEarliest) — what the plan
+     predicts, not the dates that were promised. */
+  App.showPredictedFinish = function (showId) {
+    return App.state.data.episodes
+      .filter(e => e.showId === showId && !e.archived)
+      .reduce((m, e) => { const f = App.msEarliest(e, App.LIVE_KEY); return f && f > m ? f : m; }, '');
+  };
+
+  /* Plan iterations. A show remembers each version of its plan: iteration 1
+     is how it was created, and every Edit Show save that changes the
+     schedule or pipeline adds the next — when, by whom, what changed and the
+     finish it then predicted — so a show's length reads as a history of
+     decisions rather than one number that silently moved. A show made
+     before iterations existed gets its first one written, from the plan as
+     it stood, the first time it's edited. */
+  App.addPlanIteration = function (show, note) {
+    const u = App.state.user;
+    show.iterations = show.iterations || [];
+    const finish = App.showPredictedFinish(show.id);
+    const prev = show.iterations[show.iterations.length - 1];
+    show.iterations.push({
+      n: show.iterations.length + 1,
+      at: App.isoDate(App.today()),
+      by: (u && u.name) || null,
+      note: note || '',
+      finish: finish || null,
+      delta: prev && prev.finish && finish ? App.diffDays(finish, prev.finish) : null
+    });
+  };
+
   App.epDue = function (ep) {
     return App.subitems(ep).reduce((m, s) => s.due > m ? s.due : m, '0000-00-00');
   };
