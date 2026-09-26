@@ -10,6 +10,25 @@ window.App = window.App || {};
   App.SHOW_PALETTE = SHOW_PALETTE;
   const PERSON_PALETTE = ['#e8615b', '#f6a609', '#37b679', '#2d9cdb', '#9b59b6', '#16a085', '#e67e22', '#d6457f', '#4b6bfb'];
 
+  /* A batch task is one piece of work shared by a group of episodes (see
+     App.scheduleEpisodes): each episode in the group carries its own copy,
+     so whatever just changed on one copy — dates, status, revisions spent —
+     is copied to the rest. Call inside the mutation, after writing `e`. */
+  App.batchMates = function (d, e, key) {
+    const g = e.batch && e.batch[key];
+    if (g == null) return [];
+    return d.episodes.filter(x => x !== e && x.showId === e.showId && x.batch && x.batch[key] === g);
+  };
+  App.syncBatch = function (d, e, key) {
+    App.batchMates(d, e, key).forEach(m => {
+      m.dates = m.dates || {}; m.statuses = m.statuses || {};
+      if (e.dates && e.dates[key]) m.dates[key] = Object.assign({}, e.dates[key]);
+      if (e.statuses && e.statuses[key]) m.statuses[key] = e.statuses[key];
+      if (e.revisions && e.revisions[key] != null) { m.revisions = m.revisions || {}; m.revisions[key] = e.revisions[key]; }
+      App.refreshReadiness(m);
+    });
+  };
+
   // Keep "Ready to Start" honest after any change: a not-started task whose (non-removed)
   // dependencies are all Approved becomes Ready; a Ready task that loses a dep drops back.
   App.refreshReadiness = function (ep) {
@@ -90,7 +109,7 @@ window.App = window.App || {};
     }
     if (!guardReady(g, status)) return;
     const wasApproved = g.su.status === 'approved';
-    App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = status; App.refreshReadiness(e); }, 'the status change');
+    App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = status; App.refreshReadiness(e); App.syncBatch(d, e, key); }, 'the status change');
     App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: g.su.status, to: status });
     App.toast(g.su.name + ' → ' + App.status(status).label);
     if (status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
@@ -144,6 +163,7 @@ window.App = window.App || {};
         if (assignee) e.assignees[key] = assignee; else delete e.assignees[key];
       }
       App.refreshReadiness(e);
+      App.syncBatch(d, e, key);
     }, 'the task edit');
     // record only the fields that actually moved, so the log reads as a diff
     const changed = {};
@@ -205,6 +225,7 @@ window.App = window.App || {};
       App.impactDialog.open(g.ep, key, impact, {
         onConfirm: (shiftDelivery) => App.moveTask(epId, key, newStart, newDue,
           { confirmed: true, shiftDelivery: shiftDelivery }),
+        onPush: () => App.pushSchedule(epId, key, newStart, newDue),
         // the dragged bar is still sitting where it was dropped; a re-render
         // rebuilds it from the unchanged data, snapping it back
         onCancel: () => App.render()
@@ -218,11 +239,22 @@ window.App = window.App || {};
       const e = d.episodes.find(x => x.id === epId);
       e.dates = e.dates || {};
       e.dates[key] = { start: newStart, due: newDue };
+      /* A holiday shift keeps the task's working days by running it around
+         the time off, so its dates still span those days — remember that
+         these exact dates were planned around it, so it isn't flagged again.
+         Any later move changes the dates and the mark no longer applies. */
+      const ack = App._holidayAck;
+      if (ack && ack.epId === epId && ack.key === key && ack.start === newStart && ack.due === newDue) {
+        e.holidayOk = e.holidayOk || {};
+        e.holidayOk[key] = newStart + '|' + newDue;
+        App._holidayAck = null;
+      }
       if (shiftDelivery) {
         e.milestones = e.milestones || {};
         e.milestones[impact.delivery.ms.key] = impact.delivery.suggest;
       }
       App.refreshReadiness(e);
+      App.syncBatch(d, e, key);
     }, shiftDelivery ? 'the reschedule and delivery date' : 'the reschedule');
     if (newStart !== g.su.start || newDue !== g.su.due) {
       App.track.audit('task.reschedule', {
@@ -259,6 +291,71 @@ window.App = window.App || {};
      summary dialog with one delivery-shift choice, instead of N dialogs.
 
      `moves`: [{ epId, suKey, start, due }]. */
+  /* "Push schedule": make a move, and push everything downstream of it back
+     just far enough to keep the order — each dependent starts after what it
+     waits for has finished (review and revision reserve included, as the
+     plan does), keeps its length, and lands on working days when the show
+     has a calendar. Work that's under way, in review or approved is left
+     where it is. Returns the moves, the pushed task first. */
+  App.pushPlan = function (ep, key, newStart, newDue) {
+    const pipe = App.pipelineFor(ep);
+    const order = App.topoSort(pipe); if (!order) return [{ epId: ep.id, suKey: key, start: newStart, due: newDue }];
+    const cal = App.showCalendar(ep.showId);
+    const subs = {}; App.subitems(ep).forEach(su => { subs[su.key] = su; });
+    const byKey = {}; pipe.forEach(t => { byKey[t.key] = t; });
+    const dates = {}; Object.keys(subs).forEach(k => { dates[k] = { start: subs[k].start, due: subs[k].due }; });
+    dates[key] = { start: newStart, due: newDue };
+    // the tasks that (transitively) wait on the moved one
+    const down = new Set([key]);
+    order.forEach(k => { const t = byKey[k]; if (t && subs[k] && t.deps.some(d => down.has(d))) down.add(k); });
+    const doneOf = (k) => {
+      const t = byKey[k], su = subs[k];
+      if (!t || !t.maxRev || su.status === 'approved') return dates[k].due;
+      return App.revisionSteps(t, dates[k].due, cal, { dept: su.dept, person: su.assignee }, App.revisionsUsed(ep, k)).end;
+    };
+    const moves = [{ epId: ep.id, suKey: key, start: newStart, due: newDue }];
+    order.forEach(k => {
+      if (k === key || !down.has(k) || !subs[k]) return;
+      const su = subs[k], t = byKey[k];
+      if (['in_progress', 'review', 'approved'].includes(su.status)) return;
+      let need = null;
+      t.deps.forEach(d => {
+        if (!dates[d]) return;
+        const n = App.shiftIso(doneOf(d), t.lag > 0 ? t.lag : 1);
+        if (!need || n > need) need = n;
+      });
+      if (!need || dates[k].start >= need) return;       // already clear
+      const who = { dept: su.dept, person: su.assignee };
+      let start, due;
+      if (cal) {
+        let n = 0;
+        for (let x = su.start; x <= su.due; x = App.shiftIso(x, 1)) if (!cal.isOff(x, who)) n++;
+        start = cal.nextWork(need, who); due = cal.addWork(start, Math.max(1, n), who);
+      } else {
+        start = need; due = App.shiftIso(need, App.diffDays(su.due, su.start));
+      }
+      dates[k] = { start, due };
+      moves.push({ epId: ep.id, suKey: k, start, due });
+    });
+    return moves;
+  };
+  App.pushSchedule = function (epId, key, newStart, newDue, opts) {
+    const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
+    const moves = App.pushPlan(ep, key, newStart, newDue);
+    // everything that gets pushed is shown before anything moves
+    if (!(opts && opts.confirmed) && App.pushConfirmDialog) {
+      App.pushConfirmDialog.open(ep, moves, {
+        onConfirm: () => App.pushSchedule(epId, key, newStart, newDue, { confirmed: true }),
+        onCancel: () => App.render()
+      });
+      return;
+    }
+    App.track.feature('timeline.pushSchedule');
+    // through moveTasks: the live date still refuses, and a pushed delivery
+    // date is still asked about
+    App.moveTasks(moves, { pushed: true });
+  };
+
   App.moveTasks = function (moves, opts) {
     if (!App.canEditSchedule(App.state.role)) {
       App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
@@ -284,7 +381,9 @@ window.App = window.App || {};
       const task = App.pTask(ep, m.suKey);
       const minDays = (task && task.minDays) || 1;
       const hideWeekends = App.prefs.get('hideWeekends', true);
-      if (App.visibleDayCount(m.start, m.due, hideWeekends) < minDays) {
+      // a push keeps every task's length by construction (App.pushPlan), and
+      // on a show that works weekends hidden weekend columns would miscount it
+      if (!(opts && opts.pushed) && App.visibleDayCount(m.start, m.due, hideWeekends) < minDays) {
         denies.push({ ep, su, text: '“' + su.name + '” needs at least ' + minDays + ' day' + (minDays === 1 ? '' : 's') });
         continue;
       }
@@ -306,7 +405,7 @@ window.App = window.App || {};
 
     if ((deliveries.length || clashes.length) && !(opts && opts.confirmed) && App.bulkMoveDialog) {
       App.bulkMoveDialog.open({ rows, clashes, deliveries }, {
-        onConfirm: (shiftDelivery) => App.moveTasks(moves, { confirmed: true, shiftDelivery }),
+        onConfirm: (shiftDelivery) => App.moveTasks(moves, { confirmed: true, shiftDelivery, pushed: !!(opts && opts.pushed) }),
         onCancel: () => App.render()
       });
       return;
@@ -330,6 +429,11 @@ window.App = window.App || {};
         const e = d.episodes.find(x => x.id === ep.id); if (!e) return;
         e.dates = e.dates || {};
         e.dates[move.suKey] = { start: move.start, due: move.due };
+        const ack = App._holidayAck;           // see moveTask
+        if (ack && ack.epId === e.id && ack.key === move.suKey && ack.start === move.start && ack.due === move.due) {
+          e.holidayOk = e.holidayOk || {}; e.holidayOk[move.suKey] = move.start + '|' + move.due; App._holidayAck = null;
+        }
+        App.syncBatch(d, e, move.suKey);
         touched[e.id] = e;
       });
       Object.keys(epDelivery).forEach(epId => {
@@ -380,7 +484,13 @@ window.App = window.App || {};
     }
 
     const revDays = days[used] || 1;
-    const newDue = App.shiftIso(g.su.due, revDays);
+    // the review that sent it back took its day, then the revision's own days
+    // — exactly the slot the schedule reserved (see App.schedulePipeline)
+    // (working days, when the show keeps a calendar)
+    const cal = App.showCalendar(g.ep.showId);
+    const newDue = cal
+      ? App.revisionSteps(App.pTask(g.ep, key), g.su.due, cal, { dept: g.su.dept, person: g.su.assignee }, used).revs[0].due
+      : App.shiftIso(g.su.due, App.REVIEW_DAYS + revDays);
     const impact = App.scheduleImpact(g.ep, key, g.su.start, newDue);
     if (impact.deny) { App.toast(impact.deny.text + ' — nothing changed', true); return; }
     if ((impact.clashes.length || impact.delivery) && !(opts && opts.confirmed) && App.impactDialog) {
@@ -399,6 +509,7 @@ window.App = window.App || {};
       e.statuses[key] = 'in_progress';
       e.revisions = e.revisions || {};
       e.revisions[key] = used + 1;
+      App.syncBatch(d, e, key);
       if (shiftDelivery) {
         e.milestones = e.milestones || {};
         e.milestones[impact.delivery.ms.key] = impact.delivery.suggest;
@@ -769,6 +880,64 @@ window.App = window.App || {};
      they have, because a task half-finished by someone shouldn't silently
      become someone else's. New episodes pick the new team up automatically,
      since App.addEpisode staffs from it. */
+  /* Remove one time-off entry from a show's calendar. Freed days aren't
+     back-filled — nothing is pulled earlier (see App.replanShow) — so this
+     never moves a task. */
+  App.removeTimeOff = function (showId, offId) {
+    if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change time off', true); return; }
+    const s0 = App.state.data.shows.find(x => x.id === showId);
+    const off = s0 && s0.calendar && (s0.calendar.offDays || []).find(o => o.id === offId);
+    if (!off) return;
+    App.mutate(d => {
+      const s = d.shows.find(x => x.id === showId);
+      s.calendar.offDays = s.calendar.offDays.filter(o => o.id !== offId);
+    }, 'removing the time off');
+    App.track.audit('show.timeOffRemove', { show: s0.name, label: off.label, from: off.start, to: off.end, scope: off.scope });
+    App.toast('Removed ' + (off.label || 'the time off') + ' — dates already planned around it stay as they are');
+  };
+
+  /* Hand one task to someone else — the Holiday clashes dialog's "Reassign".
+     A batch task moves with its group. */
+  App.reassignTask = function (epId, key, personId) {
+    if (!App.canAssignOwners(App.state.role)) { App.toast('Your role can’t reassign tasks', true); return false; }
+    const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return false;
+    const su = App.subitem(ep, key); if (!su) return false;
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.assignees = e.assignees || {};
+      if (personId) e.assignees[key] = personId; else delete e.assignees[key];
+      (App.batchMates(d, e, key) || []).forEach(m => { m.assignees = m.assignees || {}; if (personId) m.assignees[key] = personId; else delete m.assignees[key]; });
+    }, 'the reassignment');
+    const p = App.person(personId);
+    App.track.audit('task.reassign', { episode: ep.code, task: su.name, to: p ? p.name : null });
+    App.toast(su.name + ' (' + ep.code + ') → ' + (p ? p.name : 'unassigned'));
+    return true;
+  };
+
+  /* Shift a clashing task later so it gets every working day it had: same
+     number of working days, starting on the next day its people are all in.
+     Goes through App.moveTask, so dependents and the delivery/live dates are
+     checked exactly as a drag would be. */
+  App.shiftPastHoliday = function (epId, key) {
+    const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
+    const su = App.subitem(ep, key); if (!su) return;
+    const plan = App.shiftPlanFor(ep, su); if (!plan) return;
+    // marked as planned around the time off once the move lands — possibly
+    // later, after moveTask has asked about dependents (see moveTask)
+    App._holidayAck = { epId, key, start: plan.start, due: plan.due };
+    App.moveTask(epId, key, plan.start, plan.due);
+  };
+  // where the shift would put it: its working days (whole-production days
+  // off don't count), restarted on the first day its people are all in
+  App.shiftPlanFor = function (ep, su) {
+    const cal = App.showCalendar(ep.showId); if (!cal) return null;
+    const who = { dept: su.dept, person: su.assignee };
+    let n = 0;
+    for (let x = su.start; x <= su.due; x = App.shiftIso(x, 1)) if (!cal.weekend(x) && !cal.prodOff(x)) n++;
+    const start = cal.nextWork(su.start, who);
+    return { start, due: cal.addWork(start, Math.max(1, n), who) };
+  };
+
   App.setShowTeam = function (showId, team) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change a show’s team', true); return; }
     const s = App.state.data.shows.find(x => x.id === showId); if (!s) return;
@@ -860,6 +1029,7 @@ window.App = window.App || {};
                       days: t.days, minDays: t.minDays, deps: t.deps.slice() };
           if (t.lag) o.lag = t.lag;
           if (t.vc) o.vc = true;
+          if (App.batchCfg(t)) o.batch = App.batchCfg(t);
           if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); }
           return o;
         })
@@ -967,7 +1137,7 @@ window.App = window.App || {};
      stored on the show and also decides who each episode's tasks open against:
      a department with a team draws from it — the lead first — instead of from
      every staff member in the studio who happens to hold that role. */
-  App.createShow = function ({ name, code, type, brand, series, epNames, pipeline, startIso, cadence, scale, epStarts, epLives, team }) {
+  App.createShow = function ({ name, code, type, brand, series, epNames, pipeline, startIso, cadence, scale, epStarts, epLives, team, calendar }) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
     type = type || 'animation';
     pipeline = pipeline || App.defaultPipelineFor(type);
@@ -980,14 +1150,25 @@ window.App = window.App || {};
       if (brand) show.brand = String(brand).trim();
       if (series) show.series = String(series).trim();
       if (team && Object.keys(team).length) show.team = team;
+      // working days & holidays — scheduled by below, and by every later re-plan
+      if (calendar && !App.calIsEmpty(calendar)) show.calendar = App.normCal(calendar);
       d.shows.push(show);
       // one pool per department, resolved once: the show's own team where it
       // has one, else anyone who could do the work
       const byDept = {};
       App.pipelineDepts(pipeline).forEach(dk => { byDept[dk] = App.deptPool(show, dk); });
+      // every episode at once, so a batch task is scheduled once per group
+      const starts = epNames.map((_, i) => (epStarts && epStarts[i]) || App.shiftIso(startIso, i * cadence));
+      const cal = App.showCalendar(show);
+      // each episode's owners, the same rotation the loop below assigns
+      const ownersFor = (i) => {
+        const o = {};
+        pipeline.forEach(t => { const pool = byDept[t.dept] || []; if (pool.length) o[t.key] = pool[i % pool.length]; });
+        return o;
+      };
+      const schedules = App.scheduleEpisodes(pipeline, starts, scale, cal ? { cal, assigneesFor: ownersFor } : undefined);
       epNames.forEach((title, i) => {
-        const epStart = (epStarts && epStarts[i]) || App.shiftIso(startIso, i * cadence);
-        const sch = App.schedulePipeline(pipeline, epStart, scale);
+        const sch = schedules[i];
         const assignees = {};
         pipeline.forEach(t => { const pool = byDept[t.dept] || []; if (pool.length) assignees[t.key] = pool[i % pool.length]; });
         const ep = {
@@ -996,8 +1177,12 @@ window.App = window.App || {};
           statuses: App.deriveStatusesFromDates(pipeline, sch.dates, assignees), assignees
         };
         if (epLives && epLives[i]) ep.milestones = { [App.LIVE_KEY]: epLives[i] };
+        // which group of each batch task this episode belongs to — the key
+        // App.syncBatch uses to keep the shared task in step across the group
+        if (Object.keys(sch.group).length) ep.batch = sch.group;
         d.episodes.push(ep);
       });
+      App.addPlanIteration(show, 'Created');
     });
     App.track.audit('show.create', { show: name, code, type, episodes: epNames.length, tasks: pipeline.length,
       departmentsStaffed: team ? Object.keys(team).length : 0 });
@@ -1023,6 +1208,230 @@ window.App = window.App || {};
      Renaming the code renames every episode code with it: the code is the
      prefix those are built from (see App.nextEpisodeNumber), so leaving them
      on the old prefix would break the numbering scan for the next episode. */
+  /* Apply Edit Show's plan to a running show, as one change (one undo).
+
+     plan = {
+       pipeline,              the show's pipeline from now on
+       type?,                 animation | live_action
+       episodes: [{ id?,      existing episode (absent = a new one to create)
+                    title, start, live,
+                    replan,   re-plan this episode's not-yet-started work
+                              from `start` (its schedule or live date changed)
+                    locked }] in running order; a locked episode (in
+                              production, left padlocked) is untouched: same
+                              dates, same name, and if the pipeline changes
+                              it keeps the one it was being made with
+       archive: [epId]        episodes dropped from the count — archived, so
+                              nothing is lost and they can be restored
+       calendar?              working days & holidays from now on
+     }
+
+     Episodes that aren't being re-planned only move where the pipeline edit
+     touches them: a task that's new, or whose days, dependencies, revisions
+     or batching changed, and everything downstream of one. Everything else
+     keeps its dates, hand-made adjustments included, and the re-plan builds
+     on those real dates. Work under way, in review or approved never moves.
+     A save that changes the plan is recorded as the show's next iteration
+     (App.addPlanIteration). Returns false if refused. */
+  App.replanShow = function (showId, plan) {
+    if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change a show’s plan', true); return false; }
+    const show = App.state.data.shows.find(x => x.id === showId);
+    if (!show) { App.toast('That show no longer exists', true); return false; }
+    const pipeline = plan.pipeline;
+    if (!pipeline.length) { App.toast('The pipeline needs at least one task', true); return false; }
+    if (!App.topoSort(pipeline)) { App.toast('The pipeline has a dependency cycle', true); return false; }
+    const clean = pipeline.map(t => {
+      const o = { key: t.key, name: (t.name || '').trim() || t.key, dept: t.dept, days: t.days, minDays: Math.min(t.minDays || 1, t.days), deps: t.deps.slice() };
+      if (t.lag) o.lag = t.lag;
+      if (t.vc) o.vc = true;
+      if (App.batchCfg(t)) o.batch = App.batchCfg(t);
+      if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = (t.revDays || []).slice(); }
+      return o;
+    });
+    const LOCKED = ['in_progress', 'review', 'approved'];
+
+    // what the pipeline edit touched, then everything that waits on it
+    const old = {};
+    (show.pipeline || App.defaultPipelineFor(show.type)).forEach(t => { old[t.key] = t; });
+    const sig = (t) => JSON.stringify([t.days, t.deps.slice().sort(), t.lag || 0, App.batchCfg(t), t.maxRev || 0, (t.revDays || []).slice()]);
+    // touched against a given starting pipeline — the show's, or the one an
+    // episode was frozen on by an earlier locked edit
+    const touchedFrom = (oldByKey) => {
+      const set = new Set(clean.filter(t => !oldByKey[t.key] || sig(oldByKey[t.key]) !== sig(t)).map(t => t.key));
+      let grew = true;
+      while (grew) {
+        grew = false;
+        clean.forEach(t => { if (!set.has(t.key) && t.deps.some(k => set.has(k))) { set.add(t.key); grew = true; } });
+      }
+      return set;
+    };
+    const touched = touchedFrom(old);
+    const oldPipe = show.pipeline || App.defaultPipelineFor(show.type);
+    const pipeSig = (p) => JSON.stringify(p.map(t => [t.key, (t.name || '').trim(), t.dept, sig(t)]));
+    const pipeChanged = pipeSig(oldPipe) !== pipeSig(clean);
+    // the calendar from now on, and whether it changed
+    const newCalData = plan.calendar !== undefined ? plan.calendar : show.calendar;
+    const cal = newCalData && !App.calIsEmpty(newCalData) ? App.makeCalendar(newCalData, show.team) : null;
+    const calChanged = JSON.stringify(App.normCal(show.calendar || { workWeekends: true })) !== JSON.stringify(App.normCal(newCalData || { workWeekends: true }));
+    // a task's real finish including its review/revision reserve, which is
+    // what the scheduler measures dependents from
+    const doneOf = (t, due, who) => t.maxRev > 0 ? App.revisionSteps(t, due, cal, who, 0).end : due;
+
+    // each episode's dates as it shows them now — older episodes derive
+    // template tasks' dates rather than storing them, so read, don't assume
+    const shown = {};
+    App.state.data.episodes.filter(e => e.showId === showId).forEach(e => {
+      shown[e.id] = {};
+      App.subitems(e).forEach(su => { shown[e.id][su.key] = { start: su.start, due: su.due }; });
+    });
+
+    let moved = 0, kept = 0, added = 0, renamed = 0, livesSet = 0, frozen = 0;
+    const archiveIds = plan.archive || [];
+    const created = [];
+    App.mutate(d => {
+      const s = d.shows.find(x => x.id === showId); if (!s) return;
+      // a show from before iterations: record the plan as it stood first
+      if (!(s.iterations && s.iterations.length)) App.addPlanIteration(s, 'Plan before this edit');
+      s.pipeline = clean;
+      if (plan.type) s.type = plan.type;
+      if (plan.calendar !== undefined) {
+        if (plan.calendar && !App.calIsEmpty(plan.calendar)) s.calendar = App.normCal(plan.calendar); else delete s.calendar;
+      }
+      const byDept = {};
+      App.pipelineDepts(clean).forEach(dk => { byDept[dk] = App.deptPool(s, dk); });
+      // new episodes are numbered on from the highest code the show has used
+      let nextNum = d.episodes.filter(e => e.showId === showId)
+        .reduce((m, e) => { const n = parseInt(String(e.code).split('-').pop(), 10); return n > m ? n : m; }, 0);
+
+      plan.episodes.forEach((pe, i) => {
+        const group = {};
+        clean.forEach(t => { const c = App.batchCfg(t); if (c) group[t.key] = App.batchGroup(c, i); });
+
+        if (!pe.id) {                             // a new episode, planned like Add Show's
+          const assignees = {};
+          clean.forEach(t => { const pool = byDept[t.dept] || []; if (pool.length) assignees[t.key] = pool[i % pool.length]; });
+          const sch = App.schedulePipeline(clean, pe.start, 1, cal ? { cal, assignees } : undefined);
+          if (!sch) return;
+          const ep = {
+            id: App.uid(), showId, code: (s.prefix || 'EP') + '-' + (++nextNum), title: pe.title, index: d.episodes.length,
+            shiftDays: 0, dates: sch.dates,
+            statuses: App.deriveStatusesFromDates(clean, sch.dates, assignees), assignees
+          };
+          if (pe.live) ep.milestones = { [App.LIVE_KEY]: pe.live };
+          if (Object.keys(group).length) ep.batch = group;
+          d.episodes.push(ep);
+          created.push(ep.code);
+          added++;
+          return;
+        }
+
+        const e = d.episodes.find(x => x.id === pe.id); if (!e) return;
+        if (pe.locked) {
+          // left as it is — and if the pipeline changed, still on the old one
+          if (pipeChanged && !e.pipeline) { e.pipeline = oldPipe.map(t => Object.assign({}, t, { deps: t.deps.slice() })); frozen++; }
+          return;
+        }
+        // unlocked: an episode frozen by an earlier edit rejoins the show's
+        // pipeline, re-planned against what it was actually running
+        let touchedHere = touched;
+        if (e.pipeline) {
+          const own = {}; e.pipeline.forEach(t => { own[t.key] = t; });
+          touchedHere = touchedFrom(own);
+          delete e.pipeline;
+        }
+        const whoOf = (t) => ({ dept: t.dept, person: (e.assignees && e.assignees[t.key]) || null });
+        // tasks the calendar change reaches never start earlier than they do now
+        const notBefore = {};
+        /* A calendar change pushes back whatever it lands on: a task whose
+           dates now include a day off for its department, role or owner is
+           re-planned (so it gets all its working days), and so is everything
+           downstream of it. Nothing is pulled earlier. */
+        if (cal && calChanged) {
+          const hit = new Set(touchedHere);
+          clean.forEach(t => {
+            const cur = e.dates[t.key] || (shown[e.id] && shown[e.id][t.key]);
+            if (!cur) return;
+            for (let x = cur.start; x <= cur.due; x = App.shiftIso(x, 1)) {
+              if (cal.isOff(x, whoOf(t))) { hit.add(t.key); break; }
+            }
+          });
+          let grew2 = true;
+          while (grew2) {
+            grew2 = false;
+            clean.forEach(t => { if (!hit.has(t.key) && t.deps.some(k => hit.has(k))) { hit.add(t.key); grew2 = true; } });
+          }
+          hit.forEach(k => {
+            if (touchedHere.has(k)) return;          // a pipeline edit may move it either way
+            const cur = e.dates[k] || (shown[e.id] && shown[e.id][k]);
+            if (cur) notBefore[k] = cur.start;
+          });
+          touchedHere = hit;
+        }
+        if (pe.title && pe.title !== e.title) { e.title = pe.title; renamed++; }
+        if (pe.live && (!e.milestones || e.milestones[App.LIVE_KEY] !== pe.live)) {
+          e.milestones = e.milestones || {};
+          e.milestones[App.LIVE_KEY] = pe.live;
+          livesSet++;
+        }
+        e.dates = e.dates || {}; e.statuses = e.statuses || {};
+        // pinned: whatever this change leaves alone, and anything under way
+        const fixed = {};
+        clean.forEach(t => {
+          const cur = e.dates[t.key] || (shown[e.id] && shown[e.id][t.key]);
+          if (!cur) return;
+          const moves = pe.replan || touchedHere.has(t.key);
+          if (!moves || LOCKED.includes(e.statuses[t.key])) {
+            fixed[t.key] = { start: cur.start, due: cur.due, done: doneOf(t, cur.due, whoOf(t)) };
+          }
+        });
+        const sch = App.schedulePipeline(clean, pe.start || App.epStart(e), 1, { fixed, cal, assignees: e.assignees || {}, notBefore: pe.replan ? {} : notBefore });
+        if (!sch) return;
+        clean.forEach(t => {
+          if (fixed[t.key]) { if (pe.replan || touchedHere.has(t.key)) kept++; return; }
+          const nd = sch.dates[t.key];
+          const cur = e.dates[t.key] || (shown[e.id] && shown[e.id][t.key]);
+          if (!cur || cur.start !== nd.start || cur.due !== nd.due) moved++;
+          e.dates[t.key] = { start: nd.start, due: nd.due };
+          if (!e.statuses[t.key]) e.statuses[t.key] = 'not_started';
+        });
+        if (Object.keys(group).length) e.batch = group; else delete e.batch;
+        App.refreshReadiness(e);
+      });
+
+      archiveIds.forEach(id => { const e = d.episodes.find(x => x.id === id); if (e) e.archived = true; });
+
+      // a new iteration whenever the plan itself changed
+      const notes = [];
+      if (calChanged) notes.push('working days & holidays changed');
+      if (pipeChanged) notes.push('pipeline changed');
+      if (moved) notes.push(moved + ' date' + (moved === 1 ? '' : 's') + ' re-planned');
+      if (added) notes.push(added + ' episode' + (added === 1 ? '' : 's') + ' added');
+      if (archiveIds.length) notes.push(archiveIds.length + ' archived');
+      if (livesSet) notes.push(livesSet + ' live date' + (livesSet === 1 ? '' : 's') + ' moved');
+      if (frozen) notes.push(frozen + ' in production kept on the old plan');
+      if (notes.length) App.addPlanIteration(s, notes.join(' · '));
+    }, 'the show plan');
+
+    App.track.audit('show.replan', { show: show.name, tasks: clean.length, rescheduled: moved, kept,
+      added, archived: archiveIds.length, renamed, liveDates: livesSet });
+    const bits = [];
+    if (moved) bits.push(moved + ' task date' + (moved === 1 ? '' : 's') + ' rescheduled');
+    if (kept) bits.push(kept + ' under way left as they were');
+    if (added) bits.push(added + ' episode' + (added === 1 ? '' : 's') + ' added');
+    if (archiveIds.length) bits.push(archiveIds.length + ' archived');
+    if (livesSet) bits.push(livesSet + ' live date' + (livesSet === 1 ? '' : 's') + ' set');
+    if (frozen) bits.push(frozen + ' in production left on the old plan');
+    const it = (App.state.data.shows.find(x => x.id === showId).iterations || []).slice(-1)[0];
+    if (it && it.at === App.isoDate(App.today()) && bits.length) bits.push('iteration ' + it.n);
+    App.toast('Saved “' + show.name + '”' + (bits.length ? ' — ' + bits.join(', ') : ''));
+    if (created.length && App.masterPathSet()) {
+      App.api.flush()
+        .then(() => App.api.createFolders({ showId, pipeline: clean }))
+        .catch(e => App.toast('Episodes added, but folders failed: ' + e.message, true));
+    }
+    return true;
+  };
+
   App.updateShow = function (showId, { name, code, color, brand, series }) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change shows', true); return false; }
     const s = App.state.data.shows.find(x => x.id === showId);

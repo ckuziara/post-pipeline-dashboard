@@ -295,6 +295,9 @@ window.App = window.App || {};
       // threading a second function through every row-building method)
       xOf.width = (s, d) => Math.max(dw, (colOf(App.shiftIso(d, 1)) - colOf(s)) * dw);
       const ctx = { start, totalCalDays, totalCols, dw, colOf };
+      // the dates in view, for painting holidays; spans are cached per render
+      this._vis = { start: startIso, end: App.isoDate(end) };
+      this._holCache = {};
 
       // stashed so drag handlers (which run between renders) can convert
       // pixels back to dates using the exact same scale just rendered with
@@ -363,7 +366,11 @@ window.App = window.App || {};
       if (singleShow && !portrait) this.producerNotesLane(body, singleShow, startIso, dw, xOf);
 
       const byStart = (a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1;
-      if (sort === 'show') {
+      // All shows: the executive view — departments and the two dates that
+      // matter, no tasks (see execRows). Landscape only.
+      if (!App.state.filters.show.length && !portrait) {
+        this.execRows(body, episodes.slice().sort(byStart), xOf, dw, axis);
+      } else if (sort === 'show') {
         // one row per show; matching tasks across its episodes share a line
         const byShow = {};
         episodes.forEach(ep => (byShow[ep.showId] = byShow[ep.showId] || []).push(ep));
@@ -439,6 +446,9 @@ window.App = window.App || {};
         // a drag or a hold just ended on this element — that gesture already had
         // its effect, and it isn't "open Edit Task"
         if (self._clickSuppressed) { e.stopPropagation(); return; }
+        // a time-off note: its own small editor (edit on the holidays page, or delete)
+        const holNote = e.target.closest('.pn-holiday');
+        if (holNote) { e.stopPropagation(); self.openHolidayNote(holNote); return; }
 
         const mark = e.target.closest('.ms-day.clickable');
         if (mark) {
@@ -553,6 +563,12 @@ window.App = window.App || {};
         menu.appendChild(el('.ctx-sep'));
       }
       menu.appendChild(item('Edit task…', null, () => App.editTask.open(epId, suKey)));
+      {
+        const ep = App.state.data.episodes.find(x => x.id === epId);
+        if (ep && this.clashes(ep.showId)[epId + '::' + suKey] && App.canManageShows(App.state.role)) {
+          menu.appendChild(item('Resolve holiday clash…', null, () => App.holidayClashDialog.open(ep.showId, { onlyKey: epId + '::' + suKey })));
+        }
+      }
       if (sel.length) {
         menu.appendChild(item('Clear selection', 'Esc', () => { selClear(); App.render(); }));
       }
@@ -1158,6 +1174,122 @@ window.App = window.App || {};
       return rail;
     },
 
+    /* ---- Executive view (All shows) ----
+       The whole slate at a glance, for people who need the shape and not the
+       tasks: each show is a header row, each episode one line of thin
+       department bands — when each department is on it — with its Delivery
+       and Live dates marked. Detail is opened a level at a time: click a show
+       to fold its episodes away (leaving one start-to-end bar)
+       or bring them back; click an episode to open its tasks beneath it, as
+       the Episode sort shows them. ↗ on a show opens its full timeline.
+       Whole-production holidays still show. */
+    execRows(body, episodes, xOf, dw, axis) {
+      const byShow = {}, order = [];
+      episodes.forEach(ep => {
+        if (!byShow[ep.showId]) { byShow[ep.showId] = []; order.push(ep.showId); }
+        byShow[ep.showId].push(ep);
+      });
+      const depts = Object.keys(App.DEPARTMENTS);
+      // the key: which colour is which department, and what D / LD mean
+      const key = el('.g-row.exec-key');
+      key.appendChild(el('.g-label', null, el('.l-title', null, 'All shows · overview')));
+      key.appendChild(el('.exec-key-items', null, depts.map(dk => el('span.exec-key-item', null, [
+        el('span.exec-key-sw', { style: { background: App.dept(dk).color } }), App.dept(dk).label
+      ])).concat([
+        el('span.exec-key-item', null, [el('span.exec-key-ms.del', null, 'D'), 'Delivery']),
+        el('span.exec-key-item', null, [el('span.exec-key-ms.live', null, 'LD'), 'Live']),
+        el('span.exec-key-hint', null, 'Click a show or episode for more or less detail · ↗ opens a show’s full timeline')
+      ])));
+      body.appendChild(key);
+      const collapsed = App.state.execCollapsed = App.state.execCollapsed || {};
+      // department bands for a set of episodes, one thin line per department
+      const bands = (track, eps) => {
+        const subs = [].concat(...eps.map(e => App.subitems(e)));
+        const present = depts.filter(dk => subs.some(su => su.dept === dk));
+        present.forEach((dk, i) => {
+          const mine = subs.filter(su => su.dept === dk);
+          const a = mine.reduce((m, su) => su.start < m ? su.start : m, mine[0].start);
+          const b = mine.reduce((m, su) => su.due > m ? su.due : m, mine[0].due);
+          const done = mine.filter(su => su.status === 'approved').length;
+          const style = {}; setBarPos(style, axis, xOf, a, b);
+          style.top = (5 + i * 6) + 'px';
+          style.background = App.dept(dk).color;
+          track.appendChild(el('.exec-band' + (done === mine.length ? '.done' : ''), {
+            style, title: App.dept(dk).label + ' · ' + App.fmtRange(a, b) + ' · ' + done + ' of ' + mine.length + ' done'
+          }));
+        });
+        return present.length;
+      };
+      // a click on a Delivery/Live mark is that mark's own (it opens its date)
+      const toggleOn = (row, fn) => row.addEventListener('click', (e) => {
+        if (e.target.closest('.ms-day, .exec-open')) return;
+        e.stopPropagation(); fn(); App.render();
+      });
+      order.forEach(showId => {
+        const show = App.show(showId); if (!show) return;
+        const eps = byShow[showId];
+        const open = !collapsed[showId];
+        const s0 = eps.reduce((m, e) => { const x = App.epStart(e); return x < m ? x : m; }, '9999-99-99');
+        const f0 = eps.reduce((m, e) => { const x = App.epFinal(e); return x > m ? x : m; }, '0000-00-00');
+        const delivered = eps.filter(App.isDelivered).length;
+
+        // show header — click to fold its episodes away or bring them back
+        const head = el('.g-row.exec-show' + (open ? '' : '.folded'));
+        head.appendChild(el('.g-label.exec-show-label', { title: (open ? 'Collapse ' : 'Expand ') + show.name }, [
+          el('.l-title', null, [
+            el('span.chev' + (open ? '.open' : ''), null, '▶'),
+            el('span.exec-chip', { style: { background: show.color, color: App.pickInkFor(show.color) } }, show.prefix || ''),
+            el('span.exec-show-name', null, show.name),
+            el('button.exec-open', {
+              type: 'button', title: 'Open ' + show.name + '’s full timeline',
+              onclick: (e) => { e.stopPropagation(); App.state.filters.show = [showId]; App.render(); }
+            }, '↗')
+          ]),
+          el('.l-sub', null, eps.length + ' episode' + (eps.length === 1 ? '' : 's') + ' · ' + delivered + ' delivered · ends ' + App.fmtDate(f0))
+        ]));
+        const ht = el('.g-track');
+        this.holWash(ht, [showId], null, xOf, axis);
+        // the show's span, start to end — folded it's the whole story, so it's
+        // drawn solid, with the show's final Delivery and Live dates on it
+        const st = {}; setBarPos(st, axis, xOf, s0, f0);
+        st.background = show.color;
+        ht.appendChild(el('.exec-span' + (open ? '' : '.solid'), {
+          style: st, title: show.name + ' · ' + App.fmtRange(s0, f0) + ' · ' + eps.length + ' episode' + (eps.length === 1 ? '' : 's')
+        }));
+        if (!open) {
+          const lastEp = eps.reduce((m, e) => App.epFinal(e) > App.epFinal(m) ? e : m, eps[0]);
+          this.milestoneMarks(ht, lastEp, xOf, dw, axis);
+        }
+        head.appendChild(ht);
+        toggleOn(head, () => { collapsed[showId] = open; });
+        body.appendChild(head);
+        if (!open) return;
+
+        eps.forEach(ep => {
+          const epOpen = !!App.state.ganttExpanded[ep.id];
+          const row = el('.g-row.exec-row' + (epOpen ? '.open' : ''));
+          row.appendChild(el('.g-label', { title: (epOpen ? 'Hide ' : 'Show ') + ep.title + '’s tasks' }, [
+            el('.l-title', null, [el('span.chev' + (epOpen ? '.open' : ''), null, '▶'), el('span', null, ep.title)]),
+            el('.l-sub', null, el('span.code', null, ep.code))
+          ]));
+          const track = el('.g-track');
+          this.holWash(track, [showId], null, xOf, axis);
+          const n = bands(track, [ep]);          // one thin band per department
+          row.style.minHeight = Math.max(34, 10 + n * 6) + 'px';
+          this.milestoneMarks(track, ep, xOf, dw, axis);
+          row.appendChild(track);
+          toggleOn(row, () => { App.state.ganttExpanded[ep.id] = !epOpen; });
+          body.appendChild(row);
+          // opened: the episode's tasks, exactly as the Episode sort draws them
+          if (epOpen) {
+            this.reviewRows(body, [ep], xOf, axis, false);
+            const { order: dOrder, byDept } = this.groupByDept([ep]);
+            dOrder.forEach(dk => this.deptStackedLines(body, App.dept(dk), this.groupItems(byDept[dk]), xOf, dw, null, axis));
+          }
+        });
+      });
+    },
+
     // Shared episode summary row (the collapsed/top line for both the
     // Department and Episode sorts). Returns the .g-row element.
     epTopRow(ep, xOf, dw, axis) {
@@ -1212,6 +1344,7 @@ window.App = window.App || {};
       // spine still draws them — they're the only thing marking where the
       // delivery and live dates fall once the summary bar is a hairline.
       this.milestoneMarks(track, ep, xOf, dw, axis);
+      this.holWash(track, [ep.showId], null, xOf, axis);
       row.appendChild(track);
       return row;
     },
@@ -1260,9 +1393,11 @@ window.App = window.App || {};
       const style = { background: bg, color: pickInk(bg) };
       setBarPos(style, axis, xOf, su.start, su.due);
       if (ring) style.outlineColor = st.color;
+      const clash = this.clashes(ep.showId)[ep.id + '::' + su.key];
       const sbar = el('.bar' + (done ? '.delivered' : '') + (ring ? '.st-ring' : '') + (bare ? '.bare' : '') +
-                      (selHas(ep.id, su.key) ? '.selected' : ''), {
-        title: (labelText ? labelText + ' — ' : '') + su.name + ' — ' + st.label + ' · ' + App.fmtRange(su.start, su.due),
+                      (selHas(ep.id, su.key) ? '.selected' : '') + (clash ? '.hol-clash' : ''), {
+        title: (labelText ? labelText + ' — ' : '') + su.name + ' — ' + st.label + ' · ' + App.fmtRange(su.start, su.due) +
+               (clash ? '\n⚠ Runs into ' + clash.reason + ' — right-click to reassign or shift' : ''),
         style
       }, bare ? null : [
         el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, labelText || su.name),
@@ -1272,6 +1407,22 @@ window.App = window.App || {};
       sbar.dataset.suKey = su.key;
       attachBar(sbar, { color: st.color, label: st.label }, false);
       track.appendChild(sbar);
+
+      /* Revisions still ahead of an open task: the time the schedule holds in
+         reserve in case it's sent back, drawn as striped V2, V3… bars after
+         it (the gaps between are the Director's review days — see the
+         Director Reviews row). Not part of `su.due`; the first one becomes
+         real when a revision is actually requested. */
+      App.plannedRevisions(ep, su).revs.forEach(rv => {
+        const rStyle = {};
+        setBarPos(rStyle, axis, xOf, rv.start, rv.due);
+        const rbar = el('.rev-plan' + (bare ? '.bare' : ''), {
+          title: su.name + ' ' + rv.label + ' — planned revision, ' + App.fmtRange(rv.start, rv.due) + ' · only used if it’s sent back',
+          style: rStyle
+        }, bare ? null : el('span', null, rv.label));
+        rbar.style.setProperty('--rp-c', bg);
+        track.appendChild(rbar);
+      });
 
       /* Unused revision budget, left visible rather than forgotten: a task
          approved without spending every revision it was allowed banked real
@@ -1297,6 +1448,106 @@ window.App = window.App || {};
         }
       }
       return sbar;
+    },
+
+    /* Holidays on the timeline, in red. A whole-production day off — a
+       national holiday or production time off — is painted through every row
+       of the show; a department's own time off only through that
+       department's rows ('role:director' asks for the Director's, on the
+       Director Reviews row). Weekends aren't painted: they're either hidden
+       columns or simply not working days. Spans are worked out once per
+       show/department per render. */
+    holSpans(showId, dept) {
+      const key = showId + '|' + (dept || '');
+      if (this._holCache && this._holCache[key]) return this._holCache[key];
+      const show = App.show(showId);
+      const cal = show && App.showCalendar(show);
+      const out = [];
+      if (cal && this._vis) {
+        const roleKey = dept && dept.indexOf('role:') === 0 ? dept.slice(5) : dept;
+        let cur = null;
+        for (let x = this._vis.start; x <= this._vis.end; x = App.shiftIso(x, 1)) {
+          let hit = null;
+          if (!cal.weekend(x)) {
+            const nat = cal.national(x);
+            const prod = cal.cal.offDays.find(o => o.scope === 'show' && x >= o.start && x <= o.end);
+            // the label is what hovering the red shows: what the day is, and who's off
+            if (nat) hit = { prod: true, label: nat + ' — national holiday, whole production off' };
+            else if (prod) hit = { prod: true, label: (prod.label || 'Time off') + ' — whole production off' };
+            else if (dept) {
+              const o = cal.cal.offDays.find(o2 => x >= o2.start && x <= o2.end &&
+                ((o2.scope === 'dept' && o2.target === dept) || (o2.scope === 'role' && o2.target === roleKey)));
+              if (o) hit = { prod: false, label: (o.label || 'Time off') + ' — ' +
+                (o.scope === 'role' ? App.role(o.target).label : App.dept(o.target).label) + ' off' };
+            }
+          }
+          if (hit && cur && cur.prod === hit.prod && cur.label === hit.label && App.shiftIso(cur.end, 1) === x) cur.end = x;
+          else if (hit) { cur = Object.assign({ start: x, end: x }, hit); out.push(cur); }
+          else cur = null;
+        }
+      }
+      if (this._holCache) this._holCache[key] = out;
+      return out;
+    },
+    // this show's holiday clashes, keyed "epId::taskKey" — once per render
+    clashes(showId) {
+      const key = 'clash|' + showId;
+      if (this._holCache && this._holCache[key]) return this._holCache[key];
+      const map = {};
+      App.holidayClashes(showId).forEach(c => { map[c.ep.id + '::' + c.su.key] = c; });
+      if (this._holCache) this._holCache[key] = map;
+      return map;
+    },
+    holWash(track, showIds, dept, xOf, axis) {
+      showIds.forEach(id => this.holSpans(id, dept).forEach(sp => {
+        const style = {};
+        setBarPos(style, axis, xOf, sp.start, sp.end);
+        // first in the track, so every bar stacks above it
+        track.insertBefore(el('.hol-wash' + (sp.prod ? '.prod' : ''), {
+          style, title: sp.label + ' · ' + (sp.start === sp.end ? App.fmtDate(sp.start) : App.fmtRange(sp.start, sp.end))
+        }), track.firstChild);
+      }));
+    },
+
+    /* Director Reviews: every review day still ahead for the episodes in view
+       (App.plannedRevisions) — one after each pass of a task that has
+       revisions. Reviews landing on the same day stack onto extra lines, which
+       is itself worth seeing: that's a day the Director has more than one
+       thing to look at. Nothing to review, no row. */
+    reviewRows(body, eps, xOf, axis, withCode) {
+      const items = [];
+      eps.forEach(ep => App.subsView(ep).forEach(su => {
+        App.plannedRevisions(ep, su).reviews.forEach(rv => items.push({ ep, su, rv }));
+      }));
+      if (!items.length) return;
+      items.sort((a, b) => a.rv.start < b.rv.start ? -1 : 1);
+      const levels = [];
+      items.forEach(it => {
+        const lvl = levels.find(l => it.rv.start > l.lastDue);
+        if (lvl) { lvl.lastDue = it.rv.due; lvl.items.push(it); }
+        else levels.push({ lastDue: it.rv.due, items: [it] });
+      });
+      levels.forEach((lvl, li) => {
+        const row = el('.g-row.sub.review-row');
+        row.appendChild(el('.g-label', { title: 'Director Reviews' },
+          el('.l-title', { style: { fontWeight: '700', fontSize: '10.5px' } },
+            li === 0 ? [el('span.review-dot'), el('span', null, 'Director Reviews')] : [])));
+        const track = el('.g-track');
+        this.holWash(track, [...new Set(eps.map(e => e.showId))], 'role:director', xOf, axis);
+        lvl.items.forEach(({ ep, su, rv }) => {
+          const style = {};
+          setBarPos(style, axis, xOf, rv.start, rv.due);
+          const b = el('.review-day', {
+            title: 'Director review — ' + (withCode ? ep.code + ' · ' : '') + su.name + ' ' + rv.label + ' · ' +
+                   App.fmtRange(rv.start, rv.due) + ' — approved, or sent back for the next revision',
+            style
+          });
+          b.style.setProperty('--rv-c', App.dept(su.dept).color);
+          track.appendChild(b);
+        });
+        row.appendChild(track);
+        body.appendChild(row);
+      });
     },
 
     // ---- shared building blocks for the two "many episodes on one line"
@@ -1366,6 +1617,7 @@ window.App = window.App || {};
         borderColor: 'rgba(' + r + ',' + g + ',' + b + ',.55)'
       };
       setBarPos(pStyle, axis, xOf, gStart, gDue);
+      this.holWash(ht, [...new Set(items.map(x => x.ep.showId))], items[0].su.dept, xOf, axis);
       ht.appendChild(el('.phase-bar', {
         title: dep.label + ' — ' + App.fmtRange(gStart, gDue) + (note ? ' · ' + note : ''),
         style: pStyle
@@ -1386,9 +1638,10 @@ window.App = window.App || {};
       const sorted = items.slice().sort((a, b) => a.su.start < b.su.start ? -1 : 1);
       const levels = [];
       sorted.forEach(it => {
+        const end = App.plannedRevisions(it.ep, it.su).end;
         const lvl = levels.find(l => it.su.start > l.lastDue);
-        if (lvl) { lvl.lastDue = it.su.due; lvl.items.push(it); }
-        else levels.push({ lastDue: it.su.due, items: [it] });
+        if (lvl) { lvl.lastDue = end; lvl.items.push(it); }
+        else levels.push({ lastDue: end, items: [it] });
       });
 
       const wash = this.deptWash(dep);
@@ -1406,6 +1659,7 @@ window.App = window.App || {};
         // in Landscape an overlap becomes an extra stacked row; in Portrait,
         // .gantt-body's flex-row (CSS) turns that same extra .g-row.sub into
         // an extra side-by-side sub-column instead. Same algorithm either way.
+        this.holWash(st, [...new Set(lvl.items.map(it => it.ep.showId))], lvl.items[0].su.dept, xOf, axis);
         lvl.items.forEach(({ ep, su }) => {
           const show = App.show(ep.showId);
           this.taskBar(st, ep, su, dep, xOf, dw, ep.code, show && show.color, axis);
@@ -1430,11 +1684,13 @@ window.App = window.App || {};
       if (multi) this.phaseRow(body, dep, sorted, xOf, sorted.length + ' tasks', axis);
 
       // interval-stack: a task shares a line unless it overlaps the last one
+      // (planned revisions included, so a V2 never lands on the next task)
       const levels = [];
       sorted.forEach(it => {
+        const end = App.plannedRevisions(it.ep, it.su).end;
         const lvl = levels.find(l => it.su.start > l.lastDue);
-        if (lvl) { lvl.lastDue = it.su.due; lvl.items.push(it); }
-        else levels.push({ lastDue: it.su.due, items: [it] });
+        if (lvl) { lvl.lastDue = end; lvl.items.push(it); }
+        else levels.push({ lastDue: end, items: [it] });
       });
 
       const wash = this.deptWash(dep);
@@ -1449,6 +1705,7 @@ window.App = window.App || {};
           )
         ));
         const st = el('.g-track');
+        this.holWash(st, [...new Set(lvl.items.map(it => it.ep.showId))], dep.key || lvl.items[0].su.dept, xOf, axis);
         // identity lives on each bar, not the row: one line can hold many episodes
         lvl.items.forEach(it => this.taskBar(st, it.ep, it.su, dep, xOf, dw, barLabel && barLabel(it), null, axis));
         srow.appendChild(st);
@@ -1540,6 +1797,7 @@ window.App = window.App || {};
     episodeStackedRow(body, ep, startIso, dw, timeW, xOf, axis) {
       body.appendChild(this.epTopRow(ep, xOf, dw, axis));
       if (!App.state.ganttExpanded[ep.id]) return;
+      this.reviewRows(body, [ep], xOf, axis, false);
 
       const { order, byDept } = this.groupByDept([ep]);
       order.forEach(dk => {
@@ -1604,6 +1862,7 @@ window.App = window.App || {};
       // this show and nested one level under it. Expanding a department is
       // what reveals its tasks, so opening a show doesn't dump every task of
       // every department onto the screen at once.
+      this.reviewRows(body, eps, xOf, axis, true);
       this.showDeptRows(body, show, eps, xOf, dw, axis);
     },
 
@@ -1710,7 +1969,18 @@ window.App = window.App || {};
     producerNotesLane(body, showId, startIso, dw, xOf) {
       const show = App.show(showId);
       if (!show) return;
-      const notes = (show.notes || []).slice().sort((a, b) => a.start < b.start ? -1 : 1);
+      /* Time off for departments, roles and people shows up here as read-only
+         red notes on its dates (the whole production's days are painted
+         through the timeline instead). */
+      const cal = show.calendar ? App.normCal(show.calendar) : null;
+      const offNotes = cal ? cal.offDays.filter(o => o.scope !== 'show').map(o => {
+        const who = o.scope === 'dept' ? App.dept(o.target).label
+          : o.scope === 'role' ? App.role(o.target).label
+          : (App.person(o.target) || { name: 'Someone' }).name;
+        return { start: o.start, due: o.end, color: '#ff5b6e', holiday: true, offId: o.id,
+                 text: who + ' off' + (o.label ? ' · ' + o.label : '') };
+      }) : [];
+      const notes = (show.notes || []).concat(offNotes).sort((a, b) => a.start < b.start ? -1 : 1);
       const open = App.state.notesOpen !== false;   // default open
       const canEdit = App.canEditNotes();
 
@@ -1776,11 +2046,13 @@ window.App = window.App || {};
           const ink = pickInk(n.color || '#f6be00');
           const style = { left: left + 'px', width: s.width + 'px', background: n.color || '#f6be00', color: ink };
           if (s.portrait) style.height = s.portraitH + 'px';
-          const note = el('.pn-note' + (canEdit ? '.editable' : '') + (s.portrait ? '.portrait' : ''), {
-            title: s.text + ' · ' + App.fmtRange(n.start, n.due),
+          // time-off notes come from the show's calendar — edited there, not here
+          const note = el('.pn-note' + (canEdit && !n.holiday ? '.editable' : '') + (n.holiday ? '.pn-holiday' : '') + (s.portrait ? '.portrait' : ''), {
+            title: s.text + ' · ' + App.fmtRange(n.start, n.due) + (n.holiday ? ' — click to edit or delete' : ''),
             style: style
           }, [el('span', null, s.text)]);
-          note.dataset.noteId = n.id;
+          if (n.id) note.dataset.noteId = n.id;
+          if (n.offId) note.dataset.offId = n.offId;
           note.dataset.showId = showId;
           track.appendChild(note);
         });
@@ -1856,6 +2128,23 @@ window.App = window.App || {};
         swatches,
         el('.pn-editor-actions', null, [
           el('button.pn-del', { onclick: () => { pop._commit = null; this.closeNoteEditor(); App.removeNote(showId, id); } }, [App.icon('trash'), ' Delete']),
+          /* Turn the note into time off: the show's Working Days & Holidays
+             page opens with the note's dates and text already filled in as a
+             new entry, ready to say who's off. The note is only removed once
+             that's saved — cancel, and it stays a note. */
+          (App.canManageShows(App.state.role) ? el('button.pn-holiday-btn', {
+            title: 'Make this a holiday — opens Working Days & Holidays with these dates',
+            onclick: () => {
+              pop._commit = null;
+              const text = input.value.trim() || note.text || '';
+              this.closeNoteEditor();
+              App.addShow.open({
+                showId, step: 3,
+                newOff: { label: text, start: note.start, end: note.due },
+                onSaved: () => App.removeNote(showId, id)
+              });
+            }
+          }, [App.icon('calendar'), ' Make holiday']) : null),
           el('button.pn-done', { onclick: () => this.closeNoteEditor() }, 'Done')
         ])
       ]);
@@ -1874,6 +2163,42 @@ window.App = window.App || {};
         input.focus(); input.select();
       });
 
+      if (!this._noteOutside) {
+        this._noteOutside = () => this.closeNoteEditor();
+        setTimeout(() => document.addEventListener('mousedown', this._noteOutside), 0);
+      }
+    },
+
+    /* A time-off note's editor: what it is, and the two things to do with it.
+       Edit opens the show's Working Days & Holidays page on that entry (who,
+       dates, label all live there); Delete removes the time off. */
+    openHolidayNote(noteEl) {
+      this.closeNoteEditor();
+      const showId = noteEl.dataset.showId, offId = noteEl.dataset.offId;
+      const show = App.show(showId);
+      const off = show && show.calendar && (show.calendar.offDays || []).find(o => o.id === offId);
+      if (!off) return;
+      const r = noteEl.getBoundingClientRect();
+      const can = App.canManageShows(App.state.role);
+      const pop = el('.pn-editor.pn-hol-editor', { onclick: (e) => e.stopPropagation(), onmousedown: (e) => e.stopPropagation() }, [
+        el('.pn-hol-title', null, noteEl.textContent),
+        el('.pn-hol-dates', null, off.start === off.end ? App.fmtDate(off.start) : App.fmtRange(off.start, off.end)),
+        can ? el('.pn-editor-actions', null, [
+          el('button.pn-del', { onclick: () => { this.closeNoteEditor(); App.removeTimeOff(showId, offId); } }, [App.icon('trash'), ' Delete']),
+          el('button.pn-done', { onclick: () => { this.closeNoteEditor(); App.addShow.open({ showId, step: 3, focusOff: offId }); } }, [App.icon('pencil'), ' Edit'])
+        ]) : el('.fld-hint', null, 'Only Producers can change time off.')
+      ]);
+      pop._commit = null;
+      document.body.appendChild(pop);
+      this._noteEditor = pop;
+      requestAnimationFrame(() => {
+        const pw = pop.offsetWidth, ph = pop.offsetHeight;
+        let left = r.left, top = r.bottom + 8;
+        if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+        if (top + ph > window.innerHeight - 8) top = r.top - ph - 8;
+        pop.style.left = Math.max(8, left) + 'px';
+        pop.style.top = Math.max(8, top) + 'px';
+      });
       if (!this._noteOutside) {
         this._noteOutside = () => this.closeNoteEditor();
         setTimeout(() => document.addEventListener('mousedown', this._noteOutside), 0);

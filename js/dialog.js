@@ -1200,10 +1200,20 @@ window.App = window.App || {};
         legend
       ];
 
+      /* Push schedule: the third answer to a downstream clash — move it, and
+         push everything that waits on it back just far enough (App.pushPlan).
+         Offered when something downstream would start too early. */
+      const onPush = handlers && handlers.onPush;
+      const downstream = impact.clashes.filter(c => c.dir === 'downstream');
+      const pushN = onPush && downstream.length ? App.pushPlan(ep, key, impact.to.start, impact.to.due).length - 1 : 0;
       const footer = [
         el('button.btn-ghost', { onclick: () => finish(onCancel) }, 'Keep as it was'),
         el('button.btn-danger', { onclick: () => finish(() => onConfirm(shiftBox && shiftBox.checked)) },
-          [App.icon('warn'), ' Move anyway'])
+          [App.icon('warn'), ' Move anyway']),
+        (pushN > 0 ? el('button.btn-primary', {
+          title: 'Move it and push the ' + pushN + ' task' + (pushN === 1 ? '' : 's') + ' that wait on it back, keeping their lengths',
+          onclick: () => finish(onPush)
+        }, [App.icon('calendar'), ' Push schedule (' + pushN + ' task' + (pushN === 1 ? '' : 's') + ')']) : null)
       ];
 
       const title = del
@@ -1214,6 +1224,48 @@ window.App = window.App || {};
         // dismissing by ✕, backdrop or Escape is an answer too, and it's "no"
         { onClose: () => finish(onCancel) }
       );
+    }
+  };
+
+  /* ---- Push schedule confirmation ----
+     Every task a push would move, old dates → new, and by how much, before
+     anything moves — plus a warning when the pushed work reaches the
+     episode's delivery or live date (App.moveTasks refuses or asks about
+     those when it's applied, exactly as for a drag). */
+  App.pushConfirmDialog = {
+    open(ep, moves, handlers) {
+      let decided = false;
+      const finish = (fn) => { if (decided) return; decided = true; App.modal.close(); fn(); };
+      const subs = {}; App.subitems(ep).forEach(su => { subs[su.key] = su; });
+      const rows = moves.map((m, i) => {
+        const su = subs[m.suKey]; if (!su) return null;
+        const d = App.diffDays(m.start, su.start);
+        return el('.pc-push-row' + (i === 0 ? '.lead' : ''), null, [
+          el('span.dot', { style: { background: App.dept(su.dept).color } }),
+          el('span.pc-push-name', null, su.name),
+          el('span.pc-push-was', null, App.fmtRange(su.start, su.due)),
+          el('span.pc-push-arrow', null, '→'),
+          el('span.pc-push-now', null, App.fmtRange(m.start, m.due)),
+          el('span.pc-push-d', null, i === 0 ? 'the move' : (d > 0 ? '+' + d + 'd' : d + 'd'))
+        ]);
+      }).filter(Boolean);
+      const lastDue = moves.reduce((m, x) => x.due > m ? x.due : m, '');
+      const ms = App.epMilestones(ep);
+      const warn = ms.filter(m => lastDue >= m.date).map(m => m.name + ' (' + App.fmtDate(m.date) + ')');
+      const sections = [
+        el('.ctx-box.slim', null, [el('span.ctx-chip', null, ep.code), el('span.ctx-title', null, ep.title)]),
+        el('.fld-hint', { style: { margin: '10px 0 8px' } },
+          (moves.length - 1) + ' task' + (moves.length === 2 ? '' : 's') + ' that wait on it ' + (moves.length === 2 ? 'is' : 'are') +
+          ' pushed back just far enough to keep the order. Each keeps its length; work already under way stays put.'),
+        el('.pc-push-list', null, rows),
+        warn.length ? el('.end-feedback.warn', { style: { marginTop: '10px' } },
+          'The pushed work now finishes ' + App.fmtDate(lastDue) + ' — on or past the ' + warn.join(' and ') +
+          '. Moving past the live date isn’t allowed; the delivery date will be asked about.') : null
+      ];
+      App.modal.open(card('calendar', 'Push the schedule?', 'Everything that moves', sections, [
+        el('button.btn-ghost', { onclick: () => finish(handlers.onCancel) }, 'Cancel'),
+        el('button.btn-primary', { onclick: () => finish(handlers.onConfirm) }, 'Push ' + moves.length + ' task' + (moves.length === 1 ? '' : 's'))
+      ], 'wide'), { onClose: () => finish(handlers.onCancel) });
     }
   };
 
@@ -1361,16 +1413,7 @@ window.App = window.App || {};
 
   // calendar arithmetic, because "space by a week" means seven dates on a
   // calendar — not seven working days. Month-ends clamp (Jan 31 + 1m = Feb 28).
-  function addInterval(iso, n, unit) {
-    if (!n) return iso;
-    if (unit === 'day') return App.shiftIso(iso, n);
-    if (unit === 'week') return App.shiftIso(iso, n * 7);
-    const d = App.parseDate(iso), day = d.getDate();
-    const t = new Date(d.getFullYear(), d.getMonth() + n, 1);
-    const last = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate();
-    t.setDate(Math.min(day, last));
-    return App.isoDate(t);
-  }
+  const addInterval = App.addInterval;
 
   /* The order the rule is applied in, which the producer has to be able to
      predict or the result is arbitrary. Episode number first — that IS the
@@ -1557,6 +1600,11 @@ window.App = window.App || {};
      alter scheduling (add/remove/reorder/deps/durations). */
   App.pipelineEditor = function (initialPipe, opts) {
     const onChange = (opts && opts.onChange) || function () {};
+    /* onDraft fires on every keystroke into a name or number — for a live
+       view of the pipeline, which shouldn't wait for the field to blur.
+       onEdit reports which task (if any) is open in the list. */
+    const onDraft = (opts && opts.onDraft) || function () {};
+    const onEdit = (opts && opts.onEdit) || function () {};
     const tip = (opts && opts.tooltips === false) ? () => null : (text) => text;
     let pipe = initialPipe;
     let editingKey = null;
@@ -1630,7 +1678,9 @@ window.App = window.App || {};
       return walk(fromKey);
     };
 
-    function openDepMenu(btn, t) {
+    // `after` runs once the pick has landed — for a deps box living outside
+    // the list (the timeline's Dependencies popup), which renderPipe can't reach
+    function openDepMenu(btn, t, after) {
       closeDepMenu();
       const options = pipe.filter(p => p.key !== t.key && !t.deps.includes(p.key) && !dependsOn(p.key, t.key));
       depMenu = el('.dep-menu');
@@ -1638,7 +1688,7 @@ window.App = window.App || {};
       options.forEach(p => {
         depMenu.appendChild(el('button.dep-menu-item', {
           type: 'button',
-          onclick: (e) => { e.stopPropagation(); snapshot(); t.deps.push(p.key); closeDepMenu(); renderPipe(); onChange(); }
+          onclick: (e) => { e.stopPropagation(); snapshot(); t.deps.push(p.key); closeDepMenu(); renderPipe(); onChange(); if (after) after(); }
         }, [el('span.dot', { style: { background: App.dept(p.dept).color } }), p.name]));
       });
       document.body.appendChild(depMenu);
@@ -1651,9 +1701,17 @@ window.App = window.App || {};
       setTimeout(() => document.addEventListener('click', closeDepMenu), 0);
     }
 
+    /* minDays is no longer shown, but the scheduler never lets a task run
+       shorter than it — so a task shortened below its old floor would quietly
+       keep the old length. Pull the floor down with it. */
+    const fitMin = (t) => { if (t.minDays > t.days) t.minDays = t.days; };
+
     const numFld = (t, prop, min) => selectOnFocus(el('input.fld.fld-num', {
       type: 'number', value: String(t[prop] != null ? t[prop] : min), min: String(min), max: '365',
-      onchange: (e) => { t[prop] = Math.max(min, Math.min(365, parseInt(e.target.value) || min)); e.target.value = t[prop]; onChange(); }
+      // live while typing, but only a value that's already in range — the
+      // clamp and the real onChange still happen on commit
+      oninput: (e) => { const n = parseInt(e.target.value); if (n >= min && n <= 365) { t[prop] = n; fitMin(t); onDraft(); } },
+      onchange: (e) => { t[prop] = Math.max(min, Math.min(365, parseInt(e.target.value) || min)); e.target.value = t[prop]; fitMin(t); onChange(); }
     }));
 
     // whole weeks read better than "28d" for the long waits a lag is used for
@@ -1785,41 +1843,50 @@ window.App = window.App || {};
         el('span.pipe-dot', { style: { background: dep.color }, title: tip(dep.label) }),
         el('span.pipe-name-ro', null, t.name || '—'),
         (t.vc ? App.icon('lock', { cls: 'pipe-vc-tag', title: 'LucidLink version control enabled' }) : null),
+        (App.batchCfg(t) ? el('span.pipe-batch-tag', { title: tip('Batch task — ' + App.batchLabel(t)) }, 'Batch') : null),
         el('span.pipe-deps-sum', { title: tip(depNames.join(', ')) }, depNames.length ? '◷ ' + depNames.join(', ') : ''),
         (t.maxRev ? el('span.pipe-rev', { title: tip(t.maxRev + ' revision' + (t.maxRev === 1 ? '' : 's') + ' budgeted — ' +
           (t.revDays || []).map((d, ri) => '#' + (ri + 1) + ': ' + d + 'd').join(', ')) }, '↺' + t.maxRev) : null),
-        el('span.pipe-dur', { title: tip('Nominal ' + t.days + ' days · minimum ' + t.minDays) }, t.days + 'd'),
+        el('span.pipe-dur', { title: tip(t.days + ' day' + (t.days === 1 ? '' : 's')) }, t.days + 'd'),
         dragGrip(i, t, '.hov')
       ]);
     }
 
-    function editRow(t, i) {
-      const deptSel = el('select.fld.fld-dept', { onchange: (e) => { t.dept = e.target.value; } });
-      Object.keys(App.DEPARTMENTS).forEach(dk => {
-        const o = document.createElement('option'); o.value = dk; o.textContent = App.DEPARTMENTS[dk].label;
-        if (dk === t.dept) o.selected = true; deptSel.appendChild(o);
-      });
-
-      const depsBox = el('.dep-tags', null, [
+    /* The dependency chips: a tag per dependency with ✕ to drop it, and ＋ to
+       pick another from a list that already leaves out cycles. `after` is
+       for a box shown somewhere renderPipe doesn't rebuild. */
+    function depTags(t, after) {
+      return el('.dep-tags', null, [
         ...t.deps.map(dk => {
           const dep = pipe.find(p => p.key === dk);
           return el('span.dep-tag', null, [
             dep ? dep.name : dk,
             el('button.dep-tag-x', {
               type: 'button', title: tip('Remove dependency'),
-              onclick: () => { snapshot(); t.deps = t.deps.filter(k => k !== dk); renderPipe(); onChange(); }
+              onclick: () => { snapshot(); t.deps = t.deps.filter(k => k !== dk); renderPipe(); onChange(); if (after) after(); }
             }, '✕')
           ]);
         }),
         el('button.dep-add', {
           type: 'button', title: tip('Add dependency'),
-          onclick: (e) => { e.stopPropagation(); openDepMenu(e.currentTarget, t); }
+          onclick: (e) => { e.stopPropagation(); openDepMenu(e.currentTarget, t, after); }
         }, '＋')
       ]);
+    }
+
+    function editRow(t, i) {
+      const deptSel = el('select.fld.fld-dept', { onchange: (e) => { t.dept = e.target.value; onChange(); } });
+      Object.keys(App.DEPARTMENTS).forEach(dk => {
+        const o = document.createElement('option'); o.value = dk; o.textContent = App.DEPARTMENTS[dk].label;
+        if (dk === t.dept) o.selected = true; deptSel.appendChild(o);
+      });
+
+      const depsBox = depTags(t);
 
       // LucidLink version-control toggle — the ONLY place VC is switched on for
       // a task, and off by default. Shown only when the connector is enabled.
-      const vcToggle = App.connectorEnabled('lucidlink') ? el('button.pipe-vc' + (t.vc ? '.on' : ''), {
+      // Add Show leaves it out (opts.vcToggle: false); Admin → Workflow keeps it
+      const vcToggle = (opts && opts.vcToggle === false) ? null : App.connectorEnabled('lucidlink') ? el('button.pipe-vc' + (t.vc ? '.on' : ''), {
         type: 'button', title: tip(t.vc ? 'Version control ON — click to turn off' : 'Enable LucidLink version control for this task'),
         onclick: (e) => { e.stopPropagation(); t.vc = !t.vc; renderPipe(); onChange(); }
       }, App.icon('lock')) : null;
@@ -1838,6 +1905,7 @@ window.App = window.App || {};
           const inp = selectOnFocus(el('input.fld.fld-num.pipe-rev-sel', {
             type: 'number', value: String(days), min: '1', max: '365',
             title: tip('Days needed for revision ' + (ri + 1)),
+            oninput: (e) => { const n = parseInt(e.target.value, 10); if (n >= 1 && n <= 365) { t.revDays[ri] = n; onDraft(); } },
             onchange: (e) => { t.revDays[ri] = Math.max(1, parseInt(e.target.value, 10) || 1); onChange(); }
           }));
           revDaysRow.appendChild(el('.pipe-rev-day', null, [el('span.pipe-rev-day-lbl', null, '#' + (ri + 1)), inp]));
@@ -1863,14 +1931,16 @@ window.App = window.App || {};
         leadCell(i),
         dragGrip(i, t),
         el('input.fld.fld-name', { type: 'text', value: t.name, placeholder: 'Task name',
-          oninput: (e) => { t.name = e.target.value; },
+          oninput: (e) => { t.name = e.target.value; onDraft(); },
           onchange: () => onChange() }),        // renaming counts as an edit; on blur, not per keystroke
         deptSel,
         el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'days'), numFld(t, 'days', 1)]),
-        el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'min'), numFld(t, 'minDays', 1)]),
+        // no "min" field: producers never set it. minDays still exists on the
+        // task (it's the squeeze floor for an earlier end date) — it just
+        // keeps whatever the preset or the new-task default gave it
         // how many times this task may be sent back from Review, and for how long
         el('.pipe-days', { title: tip('Maximum revisions this task can be sent back for from the Reviews tab') },
-          [el('span.pipe-days-lbl', null, 'max rev'), maxRevFld]),
+          [el('span.pipe-days-lbl', null, 'revisions'), maxRevFld]),
         depsBox,
         (t.maxRev ? el('.pipe-rev-block', { style: { gridColumn: '1 / -1' } }, [
           el('span.pipe-rev-block-lbl', null, 'Days per revision'),
@@ -1898,6 +1968,7 @@ window.App = window.App || {};
         t.key === confirmKey ? confirmRow(t, i)
         : t.key === editingKey ? editRow(t, i)
         : compactRow(t, i)));
+      onEdit(editingKey);
     }
 
     /* ---- removing a task, and the dependencies it leaves behind ----
@@ -1997,7 +2068,32 @@ window.App = window.App || {};
       // a wholesale swap (different show type or preset) starts a new history —
       // undoing back into a pipeline that's no longer on screen would confuse
       setPipe: (p) => { pipe = p; editingKey = null; undoStack = []; redoStack = []; refreshHistory(); renderPipe(); },
-      closeMenus: closeDepMenu
+      closeMenus: closeDepMenu,
+      /* Change the pipeline from outside the list (the timeline preview): one
+         undo step, then the list re-renders so its fields show the new values.
+         `fn` gets the task and returns false to cancel without a step. */
+      update: (key, fn) => {
+        const t = pipe.find(x => x.key === key); if (!t) return;
+        const before = clonePipe(pipe);
+        if (fn(t) === false) return;
+        fitMin(t);
+        undoStack.push({ pipe: before, editingKey });
+        if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
+        redoStack = [];
+        refreshHistory(); renderPipe(); onChange();
+      },
+      // may `key` wait on `depKey`? Not itself, and not something that
+      // already waits on it (that would be a cycle)
+      canDependOn: (key, depKey) => key !== depKey && !dependsOn(depKey, key),
+      // the same dependency chips as the task's row, for use elsewhere
+      depTags: (key, after) => { const t = pipe.find(x => x.key === key); return t ? depTags(t, after) : null; },
+      // open a task for editing from outside the list (the pipeline preview)
+      edit: (key) => {
+        if (!pipe.some(t => t.key === key)) return;
+        editingKey = key; confirmKey = null; renderPipe();
+        const row = pipeList.querySelector('.pipe-row.editing');
+        if (row) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
     };
     App._pipeEditor = api;
     return api;
@@ -2377,23 +2473,111 @@ window.App = window.App || {};
     };
   };
 
+  /* ---- Pipeline workspace ----
+     The episode preview and the task list, wired to edit each other: a bar
+     clicked opens its task in the list, a task opened in the list lights its
+     bar, a bar dragged changes the task's days, and the bar's right-click
+     windows (Batch Task, Dependencies) write through the list so every change
+     lands in one undo history. Shared by Add Show and Edit Show.
+       o.onChange()  anything that could move the schedule changed
+       o.onDraft()   a keystroke into a name or number (preview-only repaint)
+       o.onSelect()  a bar was clicked — before its task is opened in the list
+       o.starts()    each episode's kick-off date, in order (batch previews)
+       o.names()     each episode's name, in the same order */
+  App.pipelineWorkspace = function (pipe, o) {
+    let editor = null;
+    const viz = App.pipelineViz({
+      onSelect: (key) => { if (o.onSelect) o.onSelect(key); editor.edit(key); },
+      update: (key, fn) => editor.update(key, fn),
+      // the Dependencies window shows the task row's own chips
+      depTags: (key, after) => editor.depTags(key, after),
+      // Batch Task window: set (cfg) or clear (null) the rule, as one undo step
+      setBatch: (key, cfg) => editor.update(key, (t) => { if (cfg) t.batch = cfg; else delete t.batch; }),
+      // what a rule would do across the show's episodes, worked on a copy so
+      // nothing changes until it's applied
+      previewBatch: (key, cfg) => {
+        const starts = o.starts();
+        if (!starts.length) return [];
+        const trial = editor.getPipe().map(t => t.key === key ? Object.assign({}, t, { batch: cfg }) : t);
+        const all = App.scheduleEpisodes(trial, starts, 1, o.schedOpts ? o.schedOpts() : undefined);
+        if (!all) return [];
+        const names = (o.names && o.names()) || [];
+        return all.map((sch, i) => ({
+          ep: '#' + (i + 1), name: names[i] || 'Episode ' + (i + 1),
+          day: App.diffDays(sch.dates[key].start, starts[0]), group: sch.group[key]
+        }));
+      }
+    });
+    editor = App.pipelineEditor(pipe, {
+      onChange: () => o.onChange(),
+      onDraft: () => (o.onDraft || o.onChange)(),
+      onEdit: (key) => viz.setSelected(key),
+      tooltips: false,
+      vcToggle: false
+    });
+    return { viz, editor };
+  };
+
   // ---- Add Show ----
   // Schedule planner + per-show pipeline editor. The producer supplies a start
   // date; a dependency-aware forward pass (App.schedulePipeline) computes the
   // recommended finish. Picking an earlier/later project end date squeezes or
   // extends every task proportionally — but never below a task's minimum days.
   App.addShow = {
-    open() {
+    /* opts.showId opens the same dialog on an existing show — Edit Show —
+       with every field filled in from it; opts.back reopens wherever it was
+       opened from. Saving then applies the changes (App.replanShow) instead
+       of creating a show.
+       opts.step opens on that page; opts.newOff adds a time-off entry to the
+       holidays page ({ label, start, end }); opts.onSaved runs after a
+       successful save — "Make holiday" on a producer note uses all three. */
+    open(opts) {
       if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
-      App.track.feature('show.addDialog');
+      const editId = (opts && opts.showId) || null;
+      const editShow = editId ? App.state.data.shows.find(s => s.id === editId) : null;
+      if (editId && !editShow) { App.toast('That show no longer exists', true); return; }
+      const back = (opts && opts.back) || null;
+      App.track.feature(editShow ? 'show.editDialog' : 'show.addDialog');
+      // the show's episodes in running order, and where each starts now
+      const editEps = editShow ? App.state.data.episodes
+        .filter(e => e.showId === editId && !e.archived)
+        .sort((a, b) => (a.index || 0) - (b.index || 0)) : [];
+      const editStarts = editEps.map(e => { const st = App.epStart(e); return st === '9999-99-99' ? App.isoDate(App.today()) : st; });
+      /* What's been changed, so Save moves only that: the schedule inputs
+         re-plan every episode, a live date just its own episode. */
+      let schedDirty = false;
+      const liveDirty = [];
+      let itersReady = false;          // the iterations panel is built further down
+      // episodes already in production start padlocked; the padlock on the
+      // row opens one up so this edit can reach it too
+      const epLocked = editEps.map(e => App.inProduction(e));
+      // an episode's kick-off: a padlocked one, or any while the schedule is
+      // untouched, stays where it really is; the rest follow the plan
+      const planStart = (i, start, cadence) =>
+        (editShow && editStarts[i] && (epLocked[i] || !schedDirty)) ? editStarts[i] : App.shiftIso(start, i * cadence);
 
       /* A dismissed dialog keeps what was typed in it: clicking the backdrop to
          check something on the board behind shouldn't cost a half-planned show.
          The draft is written on close and cleared the moment the show is
          actually created — see App.draft. */
       const DRAFT = 'addShow';
-      const d0 = App.draft.get(DRAFT) || {};
-      const restored = !!d0.name || !!d0.code || !!d0.pipe;
+      const fromShow = (s) => ({
+        name: s.name, code: s.prefix || '', brand: s.brand || '', series: s.series || '',
+        type: s.type || 'animation', preset: '',
+        start: editStarts[0] || App.isoDate(App.today()),
+        epCount: Math.max(1, editEps.length),
+        // the gap the show actually runs at, between its first two episodes
+        cadence: editStarts.length > 1 ? Math.max(1, App.diffDays(editStarts[1], editStarts[0])) : 14,
+        epNames: editEps.map(e => e.title),
+        epLive: editEps.map(e => (e.milestones && e.milestones[App.LIVE_KEY]) || null),
+        pipe: s.pipeline || App.defaultPipelineFor(s.type),
+        team: s.team,
+        // its working days & holidays — a copy, edited here until Save
+        calendar: s.calendar ? JSON.parse(JSON.stringify(s.calendar)) : null
+      });
+      // editing never reads or writes the Add Show draft
+      const d0 = editShow ? fromShow(editShow) : (App.draft.get(DRAFT) || {});
+      const restored = !editShow && (!!d0.name || !!d0.code || !!d0.pipe);
       let created = false;                          // a real save clears the draft instead
 
       // working copy of the pipeline this show will own — reloaded when the
@@ -2403,10 +2587,56 @@ window.App = window.App || {};
         ? JSON.parse(JSON.stringify(d0.pipe))
         : App.defaultPipelineFor(d0.type || 'animation');
       let targetTouched = !!d0.targetTouched;       // has the user hand-picked an end date?
-      const editor = App.pipelineEditor(pipe, { onChange: () => updateSchedule(), tooltips: false });
+      /* The split screen: episode 1 drawn across the top, the task list below,
+         each able to edit the other (see App.pipelineWorkspace). */
+      const ws = App.pipelineWorkspace(pipe, {
+        onChange: () => updateSchedule(),
+        onDraft: () => paintPreview(),
+        onSelect: () => { if (!pipePanel.open) pipePanel.setOpen(true); },
+        starts: () => {
+          const { start, cadence, epCount } = readPlan();
+          const out = [];
+          for (let i = 0; i < epCount; i++) out.push(planStart(i, start, cadence));
+          return out;
+        },
+        names: () => [...epList.querySelectorAll('.ep-name-fld')].map(i => i.value.trim()),
+        schedOpts: () => schedOpts
+      });
+      const viz = ws.viz, editor = ws.editor;
       // step 2 — who works on it. Built here so a dismissed dialog's draft can
       // carry the staffing back in alongside the schedule.
       const team = App.teamEditor(pipe, d0.team);
+
+      /* Working days & holidays (step 3). A new show works Monday to Friday
+         unless told otherwise; an existing show that never had a calendar
+         keeps counting calendar days, so opening it changes nothing. */
+      let calState = App.normCal(d0.calendar || (editShow ? { workWeekends: true } : null));
+      // a producer note being turned into time off arrives as a new entry
+      // opts.focusOff: an existing entry to open the page on (a time-off note's Edit)
+      let focusOffId = (opts && opts.focusOff) || null;
+      if (opts && opts.newOff && opts.newOff.start) {
+        focusOffId = App.uid();
+        calState.offDays.push({ id: focusOffId, label: opts.newOff.label || '', start: opts.newOff.start,
+          end: opts.newOff.end && opts.newOff.end >= opts.newOff.start ? opts.newOff.end : opts.newOff.start,
+          scope: 'show', target: null });
+      }
+      /* What every schedule in this dialog is worked out with: the calendar,
+         and who'd own each task in episode i (for personal holidays) — the
+         episode's real owners when it exists, else the rotation createShow
+         staffs new episodes with. Rebuilt on every repaint. */
+      let schedOpts = {};
+      const refreshSchedOpts = () => {
+        if (App.calIsEmpty(calState)) { schedOpts = {}; return; }
+        const teamNow = team.read();
+        const cal = App.makeCalendar(calState, teamNow);
+        const assigneesFor = (i) => {
+          if (editEps[i] && editEps[i].assignees) return editEps[i].assignees;
+          const o = {};
+          pipe.forEach(t => { const pool = App.deptPool({ team: teamNow }, t.dept); if (pool.length) o[t.key] = pool[i % pool.length]; });
+          return o;
+        };
+        schedOpts = { cal, assigneesFor };
+      };
 
       // ---------- show details ----------
       const nameInput = el('input.fld', { type: 'text', placeholder: 'e.g. Little Angel', value: d0.name || '' });
@@ -2466,12 +2696,29 @@ window.App = window.App || {};
           const liveInput = el('input.fld.ep-live-fld', { type: 'date' });
           liveInput.addEventListener('change', () => {
             epLive[idx] = liveInput.value || null;
+            liveDirty[idx] = true;
             updateSchedule();
           });
-          epList.appendChild(el('.ep-name-row', null, [
+          const nameInput = el('input.fld.ep-name-fld', { type: 'text', value: epNameVals[i] || ('Episode ' + (i + 1)), placeholder: 'Episode ' + (i + 1) });
+          const inProd = editShow && editEps[i] && App.inProduction(editEps[i]);
+          const locked = inProd && epLocked[i];
+          nameInput.disabled = liveInput.disabled = !!locked;
+          const lockBtn = inProd ? el('button.ep-lock' + (locked ? '.on' : ''), {
+            type: 'button',
+            title: locked
+              ? editEps[i].code + ' is in production — this edit leaves it alone. Click to let it change too.'
+              : 'This edit will change ' + editEps[i].code + ', though work already started keeps its dates. Click to lock it again.',
+            onclick: () => { epLocked[idx] = !epLocked[idx]; rebuildEps(); updateSchedule(); }
+          }, App.icon('lock')) : null;
+          epList.appendChild(el('.ep-name-row' + (locked ? '.locked' : ''), null, [
             el('span.ep-name-num', null, '#' + (i + 1)),
-            el('input.fld.ep-name-fld', { type: 'text', value: epNameVals[i] || ('Episode ' + (i + 1)), placeholder: 'Episode ' + (i + 1) }),
-            el('.ep-live-cell', null, [el('span.ep-live-lbl', null, 'Live'), liveInput])
+            nameInput,
+            // editing keeps the tag and padlock slots on every row, filled or
+            // not, so the live dates line up down the list
+            (inProd ? el('span.ep-prod-tag', null, locked ? 'In production' : 'Unlocked')
+              : editShow ? el('span.ep-prod-tag.ep-slot-empty') : null),
+            el('.ep-live-cell', null, [el('span.ep-live-lbl', null, 'Live'), liveInput]),
+            lockBtn || (editShow ? el('span.ep-lock.ep-slot-empty') : null)
           ]));
         }
         epLive.length = n;
@@ -2503,7 +2750,7 @@ window.App = window.App || {};
         [['week', 'Week'], ['month', 'Month']].map(([v, l]) => {
           const b = el('button.seg', {
             type: 'button',
-            onclick: () => { rateUnitVal = v; updateSchedule(); }
+            onclick: () => { rateUnitVal = v; schedDirty = true; updateSchedule(); }
           }, l);
           rateSegs[v] = b;
           return b;
@@ -2539,7 +2786,7 @@ window.App = window.App || {};
       const endFeedback = el('.end-feedback');
       const useRecBtn = el('button.btn-icon', {
         type: 'button',
-        onclick: () => { targetTouched = false; updateSchedule(); }
+        onclick: () => { targetTouched = false; schedDirty = true; updateSchedule(); }
       }, '↺');
 
       const readPlan = () => ({
@@ -2549,9 +2796,10 @@ window.App = window.App || {};
       });
 
       function updateSchedule() {
+        refreshSchedOpts();
         const { start, cadence, epCount } = readPlan();
-        const rec = App.scheduleShow(pipe, start, epCount, cadence, 1);
-        const floor = App.scheduleShow(pipe, start, epCount, cadence, 0);
+        const rec = App.scheduleShow(pipe, start, epCount, cadence, 1, schedOpts);
+        const floor = App.scheduleShow(pipe, start, epCount, cadence, 0, schedOpts);
         recPill.innerHTML = '';
         endFeedback.innerHTML = '';
         if (!rec) {   // dependency cycle — the dep picker prevents this, but belt & braces
@@ -2564,7 +2812,12 @@ window.App = window.App || {};
         const recDays = App.diffDays(rec.end, start) + 1;
         recPill.appendChild(App.icon('calendar', { cls: 'range-ic' }));
         recPill.appendChild(el('span.range-txt', null, 'Recommended finish: ' + App.fmtDate(rec.end) + ', ' + App.parseDate(rec.end).getFullYear()));
-        recPill.appendChild(el('span.range-days', null, recDays + ' days · ' + pipe.length + ' tasks × ' + epCount + ' ep'));
+        // the plan is the worst case — say how much of each episode is revision
+        // time held in reserve, so a long finish isn't mistaken for slow work
+        const firstPass = App.schedulePipeline(pipe, start, 1, Object.assign({ withRevisions: false }, schedOpts, schedOpts.assigneesFor ? { assignees: schedOpts.assigneesFor(0) } : {}));
+        const reserve = firstPass ? App.diffDays(App.schedulePipeline(pipe, start, 1, Object.assign({}, schedOpts, schedOpts.assigneesFor ? { assignees: schedOpts.assigneesFor(0) } : {})).end, firstPass.end) : 0;
+        recPill.appendChild(el('span.range-days', null, recDays + ' days · ' + pipe.length + ' tasks × ' + epCount + ' ep' +
+          (reserve > 0 ? ' · incl. ' + reserve + ' revision day' + (reserve === 1 ? '' : 's') + ' per episode' : '')));
         if (target !== rec.end) {                 // manual squeeze/extend — compare vs recommended
           const selDays = App.diffDays(target, start) + 1;
           const delta = selDays - recDays;
@@ -2580,13 +2833,13 @@ window.App = window.App || {};
           endFeedback.textContent = 'Impossible — even with every task at its minimum time the earliest finish is ' +
             App.fmtDate(floor.end) + ', ' + App.parseDate(floor.end).getFullYear() + '. It will be clamped to that.';
         } else if (target < rec.end) {
-          const solved = App.solveScale(pipe, start, epCount, cadence, target);
+          const solved = App.solveScale(pipe, start, epCount, cadence, target, schedOpts);
           const giveUp = 100 - Math.round(solved.scale * 100);
           endFeedback.className = 'end-feedback warn';
           endFeedback.textContent = 'Squeezed fairly — every task gives up ' + giveUp +
             '% of its squeezable slack; no task goes below its minimum';
         } else {
-          const solved = App.solveScale(pipe, start, epCount, cadence, target);
+          const solved = App.solveScale(pipe, start, epCount, cadence, target, schedOpts);
           endFeedback.className = 'end-feedback ok';
           endFeedback.textContent = '⤢ Extended to ' + Math.round(solved.scale * 100) + '% of nominal — extra breathing room on every task';
         }
@@ -2594,6 +2847,19 @@ window.App = window.App || {};
         paintRateHint();
         paintEpisodeDates();
         refreshPresetBtn();
+        paintPreview();
+        if (itersReady) paintIterations();
+      }
+
+      // the preview shows episode 1 at the squeeze the end date asks for —
+      // the same scale the show will be created with
+      function paintPreview() {
+        const { start, cadence, epCount } = readPlan();
+        const rec = App.scheduleShow(pipe, start, epCount, cadence, 1, schedOpts);
+        const target = rec && (endInput.value || rec.end);
+        const scale = !rec || target === rec.end ? 1
+          : (App.solveScale(pipe, start, epCount, cadence, target, schedOpts) || { scale: 1 }).scale;
+        viz.render(pipe, start, scale, schedOpts);
       }
 
       /* Every episode's kick-off and live date under the current plan.
@@ -2609,21 +2875,34 @@ window.App = window.App || {};
       const LIVE_OFFSET = App.milestoneDef(App.LIVE_KEY).afterQc;
       function episodePlan() {
         const { start, cadence, epCount } = readPlan();
-        const rec = App.scheduleShow(pipe, start, epCount, cadence, 1);
+        const rec = App.scheduleShow(pipe, start, epCount, cadence, 1, schedOpts);
         if (!rec) return [];
         const target = endInput.value || rec.end;
         const scale = target === rec.end ? 1
-          : (App.solveScale(pipe, start, epCount, cadence, target) || { scale: 1 }).scale;
+          : (App.solveScale(pipe, start, epCount, cadence, target, schedOpts) || { scale: 1 }).scale;
         const out = [];
+        const baseStarts = [];
+        // editing: an episode that exists keeps its real kick-off until the
+        // schedule itself is changed; new ones follow on at the rate
         for (let i = 0; i < epCount; i++) {
-          const baseStart = App.shiftIso(start, i * cadence);
-          const sch = App.schedulePipeline(pipe, baseStart, scale);
-          if (!sch) return [];
+          baseStarts.push(planStart(i, start, cadence));
+        }
+        // scheduled together, so an episode sharing a batch task gets its dates
+        const all = App.scheduleEpisodes(pipe, baseStarts, scale, schedOpts);
+        if (!all) return [];
+        for (let i = 0; i < epCount; i++) {
+          const baseStart = baseStarts[i];
+          const sch = all[i];
           // milestones hang off QC, not off whatever finishes last — anchor
           // here the same way so the date shown is the date the episode gets
-          const anchor = (sch.dates.qc && sch.dates.qc.due) || sch.end;
+          // …after QC's last budgeted revision, since the plan is the worst case
+          const anchor = (sch.done.qc) || sch.end;
           const suggestedLive = App.shiftIso(anchor, LIVE_OFFSET);
-          const wanted = epLive[i] || null;
+          // editing: once the schedule changes, a live date nobody touched
+          // here follows the new plan instead of pinning the episode in place
+          // (a padlocked episode keeps its own)
+          const follows = editShow && schedDirty && !liveDirty[i] && !epLocked[i];
+          const wanted = follows ? null : (epLive[i] || null);
           const shift = wanted ? App.diffDays(wanted, suggestedLive) : 0;
           out.push({
             i, scale, suggestedLive,
@@ -2659,9 +2938,9 @@ window.App = window.App || {};
         const n = Math.max(1, Math.min(EP_MAX, parseInt(countInput.value) || 1));
         if (String(n) !== countInput.value) { countInput.value = n; rebuildEps(); updateSchedule(); }
       });
-      startInput.addEventListener('change', updateSchedule);
-      rateNum.addEventListener('input', updateSchedule);
-      endInput.addEventListener('change', () => { targetTouched = true; updateSchedule(); });
+      startInput.addEventListener('change', () => { schedDirty = true; updateSchedule(); });
+      rateNum.addEventListener('input', () => { schedDirty = true; updateSchedule(); });
+      endInput.addEventListener('change', () => { targetTouched = true; schedDirty = true; updateSchedule(); });
 
       /* ---------- collapsible sections ----------
          The dialog is already taller than most screens, so only one of these
@@ -2708,7 +2987,7 @@ window.App = window.App || {};
       const normPipe = (p) => JSON.stringify((p || []).map(t => ({
         key: t.key, name: (t.name || '').trim(), dept: t.dept,
         days: t.days, minDays: t.minDays, deps: t.deps.slice().sort(),
-        lag: t.lag || 0, vc: !!t.vc, maxRev: t.maxRev || 0, revDays: (t.revDays || []).slice()
+        lag: t.lag || 0, vc: !!t.vc, batch: App.batchCfg(t), maxRev: t.maxRev || 0, revDays: (t.revDays || []).slice()
       })));
       const baselinePipe = () => {
         const preset = presetSel.value && (App.state.data.pipelinePresets || []).find(p => p.id === presetSel.value);
@@ -2774,7 +3053,7 @@ window.App = window.App || {};
 
       const pipeBody = el('.pipe-body', null, [
         el('.fld-hint', { style: { margin: '8px 0' } },
-          '“days” is the nominal duration, “min” the floor it can be squeezed to. Dependencies gate when a task can start. Click a task to edit it.'),
+          '“days” is how long a task takes. Dependencies gate when a task can start. Click a task to edit it.'),
         presetBar,
         editor.list
       ]);
@@ -2824,10 +3103,86 @@ window.App = window.App || {};
         return s.epNames.some((n, i) => n.trim() && n.trim() !== 'Episode ' + (i + 1));
       };
       const keepDraft = () => {
+        if (editShow) return;
         if (created) { App.draft.clear(DRAFT); return; }
         if (worthKeeping()) App.draft.set(DRAFT, snapshot());
         else App.draft.clear(DRAFT);
       };
+
+      /* ---------- edit-only pieces ---------- */
+      let color = editShow ? editShow.color : null;
+      const swatches = el('.show-swatches');
+      if (editShow) {
+        const paintSw = () => [...swatches.children].forEach(b => b.classList.toggle('on', b.dataset.color === color));
+        (App.SHOW_PALETTE || []).forEach(c => swatches.appendChild(el('button.show-swatch', {
+          type: 'button', style: { background: c }, 'data-color': c,
+          onclick: () => { color = c; paintSw(); }
+        })));
+        paintSw();
+      }
+      // dropping the episode count archives the episodes off the end — said
+      // up front, by code, so it can't happen by accident
+      const archNote = el('.end-feedback.warn', { style: { display: 'none' } });
+
+      /* Plan iterations (editing only): every earlier version of the plan and
+         the finish it predicted, then what saving this edit would predict —
+         in-production episodes counted as they really are. */
+      const iterBox = el('.iter-box', { style: { display: editShow ? '' : 'none' } });
+      const fmtY = (iso) => iso ? App.fmtDate(iso) + ', ' + App.parseDate(iso).getFullYear() : '—';
+      const deltaTag = (d) => d == null || d === 0 ? null
+        : el('span.iter-delta' + (d > 0 ? '.late' : '.early'), null, (d > 0 ? '+' : '−') + Math.abs(d) + ' day' + (Math.abs(d) === 1 ? '' : 's'));
+      function predictedForEdit() {
+        const { epCount } = readPlan();
+        const plan = episodePlan();
+        let m = '';
+        for (let i = 0; i < epCount; i++) {
+          const ex = editEps[i], p = plan[i];
+          const replan = ex && !epLocked[i] && (schedDirty || liveDirty[i]);
+          // padlocked or untouched episodes finish where their work says now
+          const f = (ex && !replan) ? App.msEarliest(ex, App.LIVE_KEY) : (p && p.live);
+          if (f && f > m) m = f;
+        }
+        return m;
+      }
+      function paintIterations() {
+        if (!editShow) return;
+        const its = (editShow.iterations || []).slice();
+        const current = App.showPredictedFinish(editId);
+        iterBox.innerHTML = '';
+        iterBox.appendChild(el('.iter-head', null, [App.icon('calendar'), ' Plan iterations']));
+        if (!its.length) its.push({ n: 1, at: null, note: 'As planned so far', finish: current, delta: null });
+        its.forEach(it => iterBox.appendChild(el('.iter-row', null, [
+          el('span.iter-n', null, 'Iteration ' + it.n),
+          el('span.iter-when', null, (it.at ? App.fmtDate(it.at) : '') + (it.by ? ' · ' + it.by : '')),
+          el('span.iter-note', null, it.note || ''),
+          el('span.iter-finish', null, fmtY(it.finish)),
+          deltaTag(it.delta)
+        ])));
+        const next = predictedForEdit();
+        const last = its[its.length - 1].finish;
+        iterBox.appendChild(el('.iter-row.next', null, [
+          el('span.iter-n', null, 'Iteration ' + (its.length + 1)),
+          el('span.iter-when', null, 'if saved now'),
+          el('span.iter-note', null, 'predicted finish'),
+          el('span.iter-finish', null, fmtY(next)),
+          deltaTag(next && last ? App.diffDays(next, last) : null)
+        ]));
+      }
+      const paintArch = () => {
+        if (!editShow) return;
+        const drop = editEps.slice(readPlan().epCount);
+        archNote.style.display = drop.length ? '' : 'none';
+        const lockedDrop = drop.filter((e, j) => epLocked[readPlan().epCount + j]);
+        archNote.textContent = !drop.length ? ''
+          : lockedDrop.length
+            ? lockedDrop.map(e => e.code).join(', ') + ' ' + (lockedDrop.length === 1 ? 'is' : 'are') + ' in production — unlock ' +
+              (lockedDrop.length === 1 ? 'it' : 'them') + ' in Episodes to archive, or keep the count.'
+            : 'Saving archives ' + drop.map(e => e.code).join(', ') + ' — nothing is deleted, and archived episodes can be restored.';
+      };
+      countInput.addEventListener('input', paintArch);
+      let saved = false;
+      const closeMenus = () => { editor.closeMenus(); team.closeMenus(); viz.closeMenus(); };
+      const goBack = () => { if (back) back(); else App.modal.close(); };
 
       const sections = [
         (restored ? el('.draft-note', null, [
@@ -2846,6 +3201,7 @@ window.App = window.App || {};
           field('Series / Season', seriesInput, 'Optional — which run of the show this is'),
           field('Pipeline', presetSel, 'The standard pipeline, or a preset saved in Admin → Workflow')
         ]),
+        (editShow ? el('.field', { style: { marginTop: '12px' } }, [el('label.fld-label', null, 'Show Colour'), swatches]) : null),
         el('.modal-section-title', null, 'Schedule'),
         el('.sched-box', null, [
           el('.plan-grid', null, [
@@ -2862,7 +3218,9 @@ window.App = window.App || {};
             el('.field.end-btn-slot', null, useRecBtn)
           ]),
           recPill,
-          endFeedback
+          endFeedback,
+          archNote,
+          iterBox
         ]),
         epPanel.head,
         epPanel.body,
@@ -2876,17 +3234,170 @@ window.App = window.App || {};
          the pipeline chosen on page 1. So Add Show is a wizard rather than one
          longer form, and the pipeline is re-read on the way in so a task moved
          to another department is reflected before anyone is assigned. */
-      const step1 = el('div', null, sections);
+      const step1 = el('.as-split', null, [
+        el('.as-preview', null, viz.el),       // across the top, sticky while the form scrolls
+        el('.as-form', null, sections)
+      ]);
       const step2 = el('div', { style: { display: 'none' } }, [
         el('.fld-hint.team-intro', null,
           'Add staff to a department with ＋. The percentage is how much of that person this show can expect — hover a name to see what else they’re on. Where a department has more than one person, star the lead.'),
         team.list
       ]);
 
-      const cancelBtn = el('button.btn-ghost', { onclick: () => { editor.closeMenus(); team.closeMenus(); App.modal.close(); } }, 'Cancel');
-      const backBtn = el('button.btn-ghost', { style: { display: 'none' }, onclick: () => goStep(1) }, '← Back');
-      const nextBtn = el('button.btn-primary', { onclick: () => { if (validateStep1()) goStep(2); } }, 'Next: Production Team →');
-      const createBtn = el('button.btn-primary', { style: { display: 'none' } }, '＋ Create Show');
+      /* ---------- step 3: working days & holidays ----------
+         Everything here feeds the scheduler through calState: the working
+         week, national holidays (each can be worked through), and time off
+         for the whole production, a department, a role or a person. Task
+         durations are working days, so time off pushes work back rather than
+         squeezing it. */
+      const holBody = el('.hol-page');
+      const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const longDate = (iso) => DOW[App.parseDate(iso).getDay()] + ' ' + App.fmtDate(iso) + ', ' + App.parseDate(iso).getFullYear();
+      const holImpact = el('.hol-impact');
+      const calChanged = () => { updateSchedule(); paintHolImpact(); };
+      function paintHolImpact() {
+        const { start, cadence, epCount } = readPlan();
+        const plain = App.scheduleShow(pipe, start, epCount, cadence, 1);
+        const withCal = App.scheduleShow(pipe, start, epCount, cadence, 1, schedOpts);
+        if (!plain || !withCal) { holImpact.textContent = ''; return; }
+        const d = App.diffDays(withCal.end, plain.end);
+        holImpact.textContent = 'Recommended finish with these working days: ' + longDate(withCal.end) +
+          (d > 0 ? ' — ' + d + ' day' + (d === 1 ? '' : 's') + ' later than counting every day' : '') +
+          '. Tasks keep all their working days; time off moves them, it never shortens them.';
+      }
+      function seg(options, cur, onPick) {
+        return el('.prefs-seg', null, options.map(([v, l]) => el('button.seg' + (v === cur ? '.active' : ''), {
+          type: 'button', onclick: () => onPick(v)
+        }, l)));
+      }
+      function paintHolidays() {
+        holBody.innerHTML = '';
+        // working week
+        holBody.appendChild(el('.modal-section-title', null, 'Working week'));
+        holBody.appendChild(el('.hol-row-line', null, [
+          seg([['5', 'Monday – Friday'], ['7', 'Seven days — weekends included']], calState.workWeekends ? '7' : '5',
+            (v) => { calState.workWeekends = v === '7'; paintHolidays(); calChanged(); }),
+          el('span.fld-hint', null, calState.workWeekends ? 'Weekends count as working days.' : 'Nothing is scheduled on Saturdays or Sundays.')
+        ]));
+
+        // national holidays
+        holBody.appendChild(el('.modal-section-title', null, 'National holidays'));
+        holBody.appendChild(el('.hol-row-line', null, [
+          seg([['none', 'None'], ['uk', 'UK (England & Wales)'], ['us', 'US (Federal)']], calState.region,
+            // unticked holidays are kept per country, so switching back finds them as left
+            (v) => { calState.region = v; paintHolidays(); calChanged(); }),
+          el('span.fld-hint', null, calState.region === 'none' ? '' : 'Untick any the production works through.')
+        ]));
+        if (calState.region !== 'none') {
+          const { start } = readPlan();
+          const plain = App.scheduleShow(pipe, start, readPlan().epCount, readPlan().cadence, 1, schedOpts);
+          const to = App.shiftIso((plain && plain.end) || start, 120);
+          const list = el('.hol-list');
+          App.nationalHolidays(calState.region, start, to).forEach(h => {
+            const key = calState.region + ':' + h.date;
+            const on = !calState.skipNational.includes(key) && !calState.skipNational.includes(h.date);
+            const box = el('input', { type: 'checkbox' });
+            box.checked = on;
+            box.addEventListener('change', () => {
+              // (a bare date is how older calendars stored it — cleared either way)
+              calState.skipNational = calState.skipNational.filter(d => d !== key && d !== h.date);
+              if (!box.checked) calState.skipNational.push(key);
+              calChanged();
+            });
+            list.appendChild(el('label.hol-nat', null, [box, el('span.hol-nat-name', null, h.name), el('span.hol-nat-date', null, longDate(h.date))]));
+          });
+          if (!list.children.length) list.appendChild(el('.fld-hint', null, 'No national holidays fall inside this show’s schedule.'));
+          holBody.appendChild(list);
+        }
+
+        // time off
+        holBody.appendChild(el('.modal-section-title', null, 'Time off'));
+        holBody.appendChild(el('.fld-hint', { style: { marginBottom: '8px' } },
+          'Whole-production days are blocked for everyone and show red across the timeline. Department time off shows red on that department’s rows; department and staff time off also appear in the Producer Notes.'));
+        /* People are the show's own team (step 2), grouped by the department
+           or role they're staffed in — someone in two departments is listed
+           under both. */
+        const teamNow = team.read();
+        const slotLabel = (sl) => sl.indexOf(App.ROLE_SLOT) === 0 ? App.role(sl.slice(App.ROLE_SLOT.length)).label : App.dept(sl).label;
+        const personGroups = Object.keys(teamNow).map(sl => ({
+          label: slotLabel(sl),
+          people: teamNow[sl].ids.map(id => App.person(id)).filter(Boolean)
+            .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        })).filter(g => g.people.length);
+        const targetsFor = (scope) => scope === 'dept'
+          ? App.pipelineDepts(pipe).map(dk => [dk, App.dept(dk).label])
+          : scope === 'role' ? App.ROLES.map(r => [r.key, r.label])
+          : scope === 'person' ? [].concat(...personGroups.map(g => g.people.map(p => [p.id, p.name])))
+          : [];
+        // the person picker's options, as department groups; someone an older
+        // entry names who has since left the team is kept, marked, not swapped
+        const personOptions = (cur) => {
+          const out = personGroups.map(g => el('optgroup', { label: g.label }, g.people.map(p => el('option', { value: p.id }, p.name || p.id))));
+          const known = personGroups.some(g => g.people.some(p => p.id === cur));
+          if (cur && !known && App.person(cur)) {
+            out.push(el('optgroup', { label: 'No longer on this show' }, [el('option', { value: cur }, App.person(cur).name)]));
+          }
+          return out;
+        };
+        const list = el('.hol-off-list');
+        calState.offDays.forEach((o, idx) => {
+          const label = el('input.fld.hol-lbl', { type: 'text', value: o.label, placeholder: 'e.g. Summer break' });
+          label.addEventListener('input', () => { o.label = label.value; });
+          const from = el('input.fld.hol-date', { type: 'date', value: o.start });
+          const to = el('input.fld.hol-date', { type: 'date', value: o.end });
+          from.addEventListener('change', () => { o.start = from.value || o.start; if (o.end < o.start) { o.end = o.start; to.value = o.end; } calChanged(); });
+          to.addEventListener('change', () => { o.end = to.value && to.value >= o.start ? to.value : o.start; to.value = o.end; calChanged(); });
+          const scopeSel = el('select.fld.hol-scope', null, [['show', 'Whole production'], ['dept', 'Department'], ['role', 'Role'], ['person', 'Person']]
+            .map(([v, l]) => el('option', { value: v }, l)));
+          scopeSel.value = o.scope;
+          const targets = targetsFor(o.scope);
+          const keepGone = o.scope === 'person' && o.target && App.person(o.target) && !targets.some(([v]) => v === o.target);
+          const targetSel = (targets.length || keepGone) ? el('select.fld.hol-target', null,
+            o.scope === 'person' ? personOptions(o.target) : targets.map(([v, l]) => el('option', { value: v }, l))) : null;
+          if (o.scope === 'person' && !targetSel) {
+            // nobody staffed yet: say so rather than offering the whole studio
+            o.target = null;
+          }
+          if (targetSel) {
+            if (!keepGone && !targets.some(([v]) => v === o.target)) o.target = targets[0][0];
+            targetSel.value = o.target;
+            targetSel.addEventListener('change', () => { o.target = targetSel.value; calChanged(); });
+          } else o.target = null;
+          scopeSel.addEventListener('change', () => { o.scope = scopeSel.value; o.target = null; paintHolidays(); calChanged(); });
+          list.appendChild(el('.hol-off-row' + (o.id === focusOffId ? '.hol-new' : ''), { 'data-off': o.id }, [
+            label, from, el('span.hol-to', null, '→'), to, scopeSel,
+            targetSel || el('span.hol-target.hol-target-all', null,
+              o.scope === 'person' ? 'No one on the team yet — add people in Production Team' : 'Everyone'),
+            el('button.btn-row-x', { type: 'button', title: 'Remove this time off',
+              onclick: () => { calState.offDays.splice(idx, 1); paintHolidays(); calChanged(); } }, App.icon('trash'))
+          ]));
+        });
+        holBody.appendChild(list);
+        holBody.appendChild(el('button.btn-mini.hol-add', {
+          type: 'button',
+          onclick: () => {
+            const st = readPlan().start;
+            calState.offDays.push({ id: App.uid(), label: '', start: st, end: st, scope: 'show', target: null });
+            paintHolidays(); calChanged();
+            const lbls = holBody.querySelectorAll('.hol-lbl'); if (lbls.length) lbls[lbls.length - 1].focus();
+          }
+        }, '＋ Add time off'));
+        holBody.appendChild(holImpact);
+        paintHolImpact();
+        // the entry a note just became: bring it into view, ready to say who's off
+        if (focusOffId) {
+          const row = holBody.querySelector('[data-off="' + focusOffId + '"]');
+          if (row) requestAnimationFrame(() => { row.scrollIntoView({ block: 'center' }); const sc = row.querySelector('.hol-scope'); if (sc) sc.focus(); });
+        }
+      }
+      const step3 = el('div', { style: { display: 'none' } }, [holBody]);
+
+      const cancelBtn = el('button.btn-ghost', { onclick: () => { editor.closeMenus(); team.closeMenus(); viz.closeMenus(); App.modal.close(); } }, 'Cancel');
+      const backBtn = el('button.btn-ghost', { style: { display: 'none' }, onclick: () => goStep(step - 1) }, '← Back');
+      const nextBtn = el('button.btn-primary', {
+        onclick: () => { if (step === 1 && !validateStep1()) return; goStep(step + 1); }
+      }, 'Next: Production Team →');
+      const createBtn = el('button.btn-primary', { style: { display: 'none' } }, editShow ? 'Save Show' : '＋ Create Show');
 
       let step = 1;
       function goStep(n) {
@@ -2895,16 +3406,21 @@ window.App = window.App || {};
           editor.closeMenus();                 // a dep menu would hang over page 2
           team.setPipeline(pipe);              // page 1 may have re-departmented a task
         }
+        if (n === 3) paintHolidays();         // people and departments may have changed
         const one = n === 1;
         step1.style.display = one ? '' : 'none';
-        step2.style.display = one ? 'none' : '';
+        step2.style.display = n === 2 ? '' : 'none';
+        step3.style.display = n === 3 ? '' : 'none';
         backBtn.style.display = one ? 'none' : '';
-        nextBtn.style.display = one ? '' : 'none';
-        createBtn.style.display = one ? 'none' : '';
-        if (titleEl) titleEl.textContent = one ? 'Add New Show' : 'Production Team';
+        nextBtn.style.display = n < 3 ? '' : 'none';
+        nextBtn.textContent = n === 1 ? 'Next: Production Team →' : 'Next: Working Days →';
+        createBtn.style.display = n === 3 ? '' : 'none';
+        if (titleEl) titleEl.textContent = one ? (editShow ? 'Edit Pipeline · ' + editShow.name : 'Add New Show')
+          : n === 2 ? 'Production Team' : 'Working Days & Holidays';
         if (subEl) subEl.textContent = one
-          ? 'Step 1 of 2 · Plan the schedule and customize the pipeline'
-          : 'Step 2 of 2 · Staff each department, and star who leads it';
+          ? (editShow ? 'Step 1 of 3 · Details, schedule, episodes and pipeline' : 'Step 1 of 3 · Plan the schedule and customize the pipeline')
+          : n === 2 ? 'Step 2 of 3 · Staff each department, and star who leads it'
+          : 'Step 3 of 3 · The working week, national holidays and time off';
         const body = step1.parentNode; if (body) body.scrollTop = 0;
       }
 
@@ -2918,14 +3434,15 @@ window.App = window.App || {};
 
       const footer = [cancelBtn, backBtn, nextBtn, createBtn];
       createBtn.addEventListener('click', () => {
+          if (editShow) { saveEdit(); return; }
           {
             if (!validateStep1()) { goStep(1); return; }
             const name = nameInput.value.trim(), code = codeInput.value.trim().toUpperCase();
             const { start, cadence, epCount } = readPlan();
             const epNames = [...epList.querySelectorAll('.ep-name-fld')].map((inp, idx) => inp.value.trim() || ('Episode ' + (idx + 1))).slice(0, epCount);
-            const rec = App.scheduleShow(pipe, start, epCount, cadence, 1);
+            const rec = App.scheduleShow(pipe, start, epCount, cadence, 1, schedOpts);
             const target = endInput.value || rec.end;
-            const scale = target === rec.end ? 1 : App.solveScale(pipe, start, epCount, cadence, target).scale;
+            const scale = target === rec.end ? 1 : App.solveScale(pipe, start, epCount, cadence, target, schedOpts).scale;
             // an episode given its own live date starts wherever it must to
             // land there; the rest keep the even cadence. The live date is
             // stamped on the episode either way — it's the commitment now.
@@ -2938,12 +3455,14 @@ window.App = window.App || {};
               const o = { key: t.key, name: t.name.trim() || t.key, dept: t.dept, days: t.days, minDays: t.minDays, deps: t.deps.slice() };
               if (t.lag) o.lag = t.lag;
               if (t.vc) o.vc = true;
+              if (App.batchCfg(t)) o.batch = App.batchCfg(t);
               if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); }
               return o;
             });
             const teamOut = team.read();
             App.createShow({ name, code, type: typeSel.value, brand: brandInput.value, series: seriesInput.value,
-              epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives, team: teamOut });
+              epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives, team: teamOut,
+              calendar: App.calIsEmpty(calState) ? null : calState });
             App.track.flowDone('Create show', true, { episodes: epNames.length, departmentsStaffed: Object.keys(teamOut).length });
             created = true;                       // the draft has served its purpose
             editor.closeMenus();
@@ -2951,14 +3470,149 @@ window.App = window.App || {};
           }
       });
 
+      /* Edit Show's save: identity first (it can refuse — a code another show
+         holds), then the plan, then the team if it changed. */
+      function saveEdit() {
+        if (!validateStep1()) { goStep(1); return; }
+        if (!App.updateShow(editId, {
+          name: nameInput.value, code: codeInput.value, color: color,
+          brand: brandInput.value, series: seriesInput.value
+        })) { goStep(1); return; }
+        const { epCount } = readPlan();
+        const lockedDrop = editEps.slice(epCount).filter((e, j) => epLocked[epCount + j]);
+        if (lockedDrop.length) {
+          App.toast(lockedDrop.map(e => e.code).join(', ') + ' ' + (lockedDrop.length === 1 ? 'is' : 'are') +
+            ' in production — unlock ' + (lockedDrop.length === 1 ? 'it' : 'them') + ' before archiving', true);
+          return;
+        }
+        const plan = episodePlan();
+        const names = [...epList.querySelectorAll('.ep-name-fld')].map((inp, i) => inp.value.trim() || ('Episode ' + (i + 1)));
+        const episodes = plan.slice(0, epCount).map((p, i) => {
+          const ex = editEps[i];
+          const locked = !!(ex && epLocked[i]);
+          const replan = !locked && (!ex || schedDirty || !!liveDirty[i]);
+          return { id: ex ? ex.id : null, title: names[i], start: p.start, replan, locked,
+                   // a live date is written when it was set here, when the
+                   // episode is re-planned onto a new schedule, or for a new one
+                   live: (!ex || liveDirty[i] || replan) ? p.live : null };
+        });
+        const ok = App.replanShow(editId, {
+          pipeline: pipe, type: typeSel.value, episodes, calendar: calState,
+          archive: editEps.slice(epCount).map(e => e.id)
+        });
+        if (!ok) return;
+        const teamOut = team.read();
+        if (JSON.stringify(teamOut) !== JSON.stringify(editShow.team || {})) App.setShowTeam(editId, teamOut);
+        saved = true;
+        closeMenus();
+        if (opts && opts.onSaved) opts.onSaved();
+        // time off that lands on work already under way can't be planned
+        // around automatically — put each clash to the producer
+        if (App.holidayClashes(editId).length) App.holidayClashDialog.open(editId, { back: back || null });
+        else goBack();
+      }
+
       // onClose fires for ✕, the backdrop, Escape and Cancel alike, which is
       // exactly the set of ways someone leaves without meaning to lose the form
-      const theCard = card('clapper', 'Add New Show', 'Step 1 of 2 · Plan the schedule and customize the pipeline',
-        [step1, step2], footer, 'wide');
+      const theCard = card(editShow ? 'film' : 'clapper', editShow ? 'Edit Pipeline · ' + editShow.name : 'Add New Show',
+        editShow ? 'Step 1 of 3 · Details, schedule, episodes and pipeline' : 'Step 1 of 3 · Plan the schedule and customize the pipeline',
+        [step1, step2, step3], footer, 'wide.split');
       const titleEl = theCard.querySelector('.modal-title');
       const subEl = theCard.querySelector('.modal-subtitle');
-      App.modal.open(theCard, { onClose: () => { team.closeMenus(); keepDraft(); } });
-      App.track.flowStart('Create show');   // after open() for the same reason
+      App.modal.open(theCard, { onClose: () => {
+        team.closeMenus(); viz.closeMenus(); keepDraft();
+        // editing, left without saving: back to wherever it was opened from
+        if (editShow && !saved && back) setTimeout(back, 0);
+      } });
+      if (!editShow) App.track.flowStart('Create show');   // after open() for the same reason
+      paintArch();
+      itersReady = true;
+      paintIterations();
+      if (opts && opts.step > 1) goStep(Math.min(3, opts.step));
+    }
+  };
+
+  /* ---- Holiday clashes ----
+     Open tasks whose dates run into time off for the people doing them
+     (App.holidayClashes), each put to the producer as a decision: reassign it
+     to someone in the same department who's in on those days, or shift it so
+     it keeps all its working days. Nothing is decided for them. A shift goes
+     through App.moveTask, which may ask about dependents or the delivery date
+     itself — this list comes back afterwards if anything's still clashing.
+     opts.onlyKey narrows to one task ("epId::taskKey"); opts.back reopens
+     wherever it was opened from once it's closed. */
+  App.holidayClashDialog = {
+    open(showId, opts) {
+      opts = opts || {};
+      const show = App.state.data.shows.find(s => s.id === showId); if (!show) return;
+      const back = opts.back || null;
+      let nav = false;
+      const clashes = App.holidayClashes(showId, opts.onlyKey);
+      if (!clashes.length) { App.toast('No holiday clashes in ' + show.name); if (back) back(); return; }
+      const reopen = () => {
+        // if the move opened its own question, let that finish first
+        setTimeout(() => {
+          if (document.querySelector('.modal-card') && !document.querySelector('.hc-list')) return;
+          if (App.holidayClashes(showId, opts.onlyKey).length) App.holidayClashDialog.open(showId, opts);
+          else { App.modal.close(); App.toast('All holiday clashes resolved'); if (back) back(); }
+        }, 60);
+      };
+      const canAssign = App.canAssignOwners(App.state.role), canMove = App.canEditSchedule(App.state.role);
+      const list = el('.hc-list');
+      clashes.forEach(c => {
+        const { ep, su, days, cal } = c;
+        const owner = App.person(su.assignee);
+        // who else in the department is in for the whole task
+        const pool = App.deptPool(show, su.dept).filter(id => id !== su.assignee);
+        const free = pool.filter(id => {
+          for (let x = su.start; x <= su.due; x = App.shiftIso(x, 1)) {
+            if (!cal.weekend(x) && cal.isOff(x, { dept: su.dept, person: id })) return false;
+          }
+          return true;
+        });
+        const sel = el('select.fld.hc-sel', null, free.length
+          ? free.map(id => el('option', { value: id }, (App.person(id) || {}).name || id))
+          : [el('option', { value: '' }, 'No one else free')]);
+        sel.disabled = !free.length;
+        const plan = App.shiftPlanFor(ep, su);
+        const dayTxt = days.length === 1 ? App.fmtDate(days[0]) : App.fmtRange(days[0], days[days.length - 1]);
+        list.appendChild(el('.hc-row', null, [
+          el('.hc-main', null, [
+            el('.hc-title', null, [
+              el('span.dot', { style: { background: App.dept(su.dept).color } }),
+              el('span.hc-task', null, su.name), el('span.hc-ep', null, ep.code + ' · ' + App.fmtRange(su.start, su.due))
+            ]),
+            // the owner leads when it's their department or role that's off;
+            // their own time off already names them
+            el('.hc-why', null, [App.icon('warn'), ' ' + (owner && c.reason.indexOf(owner.name) !== 0 ? owner.name + ' · ' : '') + c.reason + ' — ' + days.length +
+              ' day' + (days.length === 1 ? '' : 's') + ' (' + dayTxt + ')'])
+          ]),
+          el('.hc-actions', null, [
+            el('.hc-act', null, [
+              sel,
+              el('button.btn-ghost.hc-btn', {
+                type: 'button', disabled: (!free.length || !canAssign) ? 'disabled' : null,
+                title: canAssign ? 'Give ' + su.name + ' to someone who’s in on those days' : 'Your role can’t reassign tasks',
+                onclick: () => { if (App.reassignTask(ep.id, su.key, sel.value)) reopen(); }
+              }, 'Reassign')
+            ]),
+            el('button.btn-primary.hc-btn', {
+              type: 'button', disabled: (!plan || !canMove) ? 'disabled' : null,
+              title: plan ? 'Keep ' + (owner ? owner.name : 'the owner') + ' and move it to ' + App.fmtRange(plan.start, plan.due) : '',
+              onclick: () => { nav = true; App.shiftPastHoliday(ep.id, su.key); reopen(); }
+            }, plan ? 'Shift → ' + App.fmtRange(plan.start, plan.due) : 'Shift')
+          ])
+        ]));
+      });
+      const sections = [
+        el('.fld-hint', { style: { marginBottom: '10px' } },
+          clashes.length + ' task' + (clashes.length === 1 ? ' runs' : 's run') + ' into time off for the people doing ' +
+          (clashes.length === 1 ? 'it' : 'them') + '. Reassign to someone who’s in, or shift so no one loses working days.'),
+        list
+      ];
+      const footer = [el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Leave for now')];
+      App.modal.open(card('warn', 'Holiday clashes', show.name, sections, footer, 'wide'),
+        { onClose: () => { if (!nav && back) setTimeout(back, 0); nav = false; } });
     }
   };
 
@@ -3194,9 +3848,10 @@ window.App = window.App || {};
   };
 
   /* ---- Edit Show ----
-     A show's identity, not its plan: name, code and colour. The pipeline, the
-     schedule and the team each already have their own editor, so this links out
-     to the team and leaves the rest of them alone. */
+     A show's identity, not its plan: name, code and colour. The team and the
+     plan each have their own editor, linked from here — Edit Pipeline opens
+     the full Add Show layout on this show (App.addShow, opts.showId):
+     schedule, episodes and live dates, pipeline with its preview. */
   App.editShowDialog = {
     /* opts.back — see App.showTeamDialog. Opened from the Shows browser this
        reopens it on the way out, so editing a show doesn't dump you back onto
@@ -3278,6 +3933,14 @@ window.App = window.App || {};
             type: 'button', title: 'Who works on this show, department by department',
             onclick: () => { nav = true; App.showTeamDialog.open(showId, { back: reopen }); }
           }, [App.icon('users'), ' Production team']),
+          el('button.btn-mini', {
+            type: 'button', title: 'Schedule, episodes and live dates, and the pipeline with its episode preview',
+            onclick: () => { nav = true; App.addShow.open({ showId, back: reopen }); }
+          }, [App.icon('calendar'), ' Edit Pipeline']),
+          el('button.btn-mini', {
+            type: 'button', title: 'Working week, national holidays and time off for this show',
+            onclick: () => { nav = true; App.addShow.open({ showId, step: 3, back: reopen }); }
+          }, [App.icon('sun'), ' Holiday']),
           el('button.btn-mini', {
             type: 'button', title: 'Download this show and all its episodes as a JSON file',
             onclick: () => App.downloadShowBackup(showId)
