@@ -1495,7 +1495,8 @@ window.App = window.App || {};
     let editingKey = null;
     let confirmKey = null;      // task awaiting the inline remove confirmation
     let depMenu = null;
-    const closeDepMenu = () => { if (depMenu) { depMenu.remove(); depMenu = null; document.removeEventListener('click', closeDepMenu); } };
+    let depOff = null;
+    const closeDepMenu = () => { if (depOff) { depOff(); depOff = null; } if (depMenu) { depMenu.remove(); depMenu = null; } };
 
     const pipeCount = el('span.count-badge');
     const pipeList = el('.pipe-list');
@@ -1583,7 +1584,7 @@ window.App = window.App || {};
         depMenu.style.top = (r.bottom + mh + 6 > window.innerHeight ? r.top - mh - 4 : r.bottom + 4) + 'px';
         depMenu.style.left = Math.min(r.left, window.innerWidth - mw - 8) + 'px';
       });
-      setTimeout(() => document.addEventListener('click', closeDepMenu), 0);
+      depOff = App.onPressOutside(depMenu, closeDepMenu);
     }
 
     /* minDays is no longer shown, but the scheduler never lets a task run
@@ -1998,10 +1999,10 @@ window.App = window.App || {};
                        wizard's footer summary honest)  */
   // one staff picker at a time, held here rather than per-editor so a second
   // (+) click closes the first menu instead of stacking another over it
-  let staffMenu = null;
+  let staffMenu = null, staffOff = null;
   function closeStaffMenu() {
+    if (staffOff) { staffOff(); staffOff = null; }
     if (staffMenu) { staffMenu.remove(); staffMenu = null; }
-    document.removeEventListener('click', closeStaffMenu);
   }
 
   App.teamEditor = function (pipeline, team0, opts) {
@@ -2207,7 +2208,7 @@ window.App = window.App || {};
         menu.style.top = (rct.bottom + mh + 6 > window.innerHeight ? Math.max(8, rct.top - mh - 4) : rct.bottom + 4) + 'px';
         menu.style.left = Math.min(rct.left, window.innerWidth - mw - 8) + 'px';
       });
-      setTimeout(() => document.addEventListener('click', closeStaffMenu), 0);
+      staffOff = App.onPressOutside(staffMenu, closeStaffMenu);
     }
 
     /* The (+) picker. Ticks apply straight to the working copy — nothing here
@@ -2267,7 +2268,8 @@ window.App = window.App || {};
       });
       // deferred for the same reason the software menu defers it: focusing in
       // the click's own frame loses the focus back to the button
-      setTimeout(() => { document.addEventListener('click', closeStaffMenu); search.focus(); }, 0);
+      staffOff = App.onPressOutside(staffMenu, closeStaffMenu);
+      setTimeout(() => search.focus(), 0);
     }
 
     /* Progress across the whole show, not per department: the question this
@@ -3069,6 +3071,16 @@ window.App = window.App || {};
       const closeMenus = () => { editor.closeMenus(); team.closeMenus(); viz.closeMenus(); };
       const goBack = () => { if (back) back(); else App.modal.close(); };
 
+      /* Working weekends, right beside the dates it changes — the same switch
+         as the Working Days & Holidays page (calState.workWeekends), so
+         ticking either one ticks both. */
+      const weekendCb = el('input', { type: 'checkbox' });
+      weekendCb.checked = calState.workWeekends;
+      weekendCb.addEventListener('change', () => { calState.workWeekends = weekendCb.checked; updateSchedule(); });
+      const weekendChk = el('label.sched-weekends', {
+        title: 'Count Saturdays and Sundays as working days. Also on the Working Days & Holidays page.'
+      }, [weekendCb, el('span', null, 'Include working weekends')]);
+
       const sections = [
         (restored ? el('.draft-note', null, [
           el('span', null, [App.icon('save'), ' Picking up where you left off — nothing was lost.']),
@@ -3100,7 +3112,7 @@ window.App = window.App || {};
           ]),
           el('.plan-grid.two.end-row', null, [
             field('Project End Date', endInput, 'Pull it earlier to squeeze the pipeline, push it later to extend'),
-            el('.field.end-btn-slot', null, useRecBtn)
+            el('.field.end-btn-slot', null, [useRecBtn, weekendChk])
           ]),
           recPill,
           endFeedback,
@@ -3292,6 +3304,7 @@ window.App = window.App || {};
           team.setPipeline(pipe);              // page 1 may have re-departmented a task
         }
         if (n === 3) paintHolidays();         // people and departments may have changed
+        weekendCb.checked = calState.workWeekends;   // the Working Days page may have changed it
         const one = n === 1;
         step1.style.display = one ? '' : 'none';
         step2.style.display = n === 2 ? '' : 'none';
@@ -3299,7 +3312,12 @@ window.App = window.App || {};
         backBtn.style.display = one ? 'none' : '';
         nextBtn.style.display = n < 3 ? '' : 'none';
         nextBtn.textContent = n === 1 ? 'Next: Production Team →' : 'Next: Working Days →';
-        createBtn.style.display = n === 3 ? '' : 'none';
+        /* Editing an existing show can be saved from any step — a producer
+           fixing a live date shouldn't have to walk through the team and
+           holidays pages to get to Save. Next steps back to a secondary
+           button then, so Save is the one primary action. */
+        createBtn.style.display = (n === 3 || editShow) ? '' : 'none';
+        nextBtn.className = editShow && n < 3 ? 'btn-ghost' : 'btn-primary';
         if (titleEl) titleEl.textContent = one ? (editShow ? 'Edit Pipeline · ' + editShow.name : 'Add New Show')
           : n === 2 ? 'Production Team' : 'Working Days & Holidays';
         if (subEl) subEl.textContent = one
@@ -3457,6 +3475,7 @@ window.App = window.App || {};
       itersReady = true;
       paintIterations();
       if (opts && opts.step > 1) goStep(Math.min(3, opts.step));
+      else if (editShow) goStep(1);        // puts Save Show on the first page too
       if (editShow) { try { baseKey = snapKey(draftSnap()); } catch (e) { baseKey = null; } }
     }
   };

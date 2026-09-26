@@ -1971,6 +1971,18 @@ window.App = window.App || {};
   /* ---------------------------------------------------------------------------
      Tiny DOM helper:  el('div.cls#id', {attr|on…}, [children|string])
   --------------------------------------------------------------------------- */
+  /* Close a floating menu when the pointer goes down anywhere outside it.
+     Listens in the capture phase, because dialogs stop their clicks from
+     bubbling (so the backdrop can tell a click on the card from a click
+     beside it) — a plain document click listener never hears a press inside
+     a dialog, which left menus open over the form. Returns the un-listener. */
+  App.onPressOutside = function (menu, close) {
+    const h = (e) => { if (menu.isConnected && !menu.contains(e.target)) close(); };
+    // armed on the next tick so the press that opened the menu can't close it
+    const t = setTimeout(() => document.addEventListener('pointerdown', h, true), 0);
+    return () => { clearTimeout(t); document.removeEventListener('pointerdown', h, true); };
+  };
+
   App.el = function (sel, props, children) {
     const m = sel.match(/^([a-z0-9]+)?(.*)$/i);
     const node = document.createElement(m[1] || 'div');
