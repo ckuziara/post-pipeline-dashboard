@@ -11,7 +11,7 @@ window.App = window.App || {};
       const wrap = el('.board');
       if (App.canManageShows(App.state.role)) wrap.appendChild(this.showManager());
       if (!episodes.length) { wrap.appendChild(el('.empty', null, 'No episodes match the current filters.')); return wrap; }
-      episodes.forEach(ep => wrap.appendChild(this.group(ep)));
+      App.sortEpisodes(episodes, 'board').forEach(ep => wrap.appendChild(this.group(ep)));
       return wrap;
     },
 
@@ -140,13 +140,49 @@ window.App = window.App || {};
     subtable(ep) {
       const box = el('.subtable');
       const grid = el('.subgrid');
-      grid.appendChild(el('.subrow.head', null, [
-        el('.cell', null, 'Subitem'), el('.cell', null, 'Department'),
-        el('.cell', null, 'Owner'), el('.cell', null, 'Status'),
-        el('.cell', null, 'Start'), el('.cell', null, 'Due'), el('.cell', null, 'Dependency')
-      ]));
+      /* Click a heading (all but Dependency) to sort by it: ascending, descending, then back to
+         pipeline order. One choice for every episode on the board, kept on
+         this device. The row number stays the task's place in the pipeline,
+         so a sorted list still says where each task sits in the flow. */
+      const cs = App.prefs.get('boardColSort', null) || {};
+      const cols = [['name', 'Subitem'], ['dept', 'Department'], ['owner', 'Owner'], ['status', 'Status'],
+        ['start', 'Start'], ['due', 'Due']];
+      // # is pipeline order — clicking it drops any column sort
+      const numHead = el('.cell.c-num' + (!cs.key ? '.sorted' : ''), {
+        title: cs.key ? 'Back to pipeline order' : 'Pipeline order',
+        onclick: (e) => { e.stopPropagation(); if (cs.key) { App.prefs.set('boardColSort', null); App.render(); } }
+      }, '#');
+      grid.appendChild(el('.subrow.head', null, [numHead].concat(cols.map(([k, label]) => {
+        const on = cs.key === k;
+        return el('.cell.sortable' + (on ? '.sorted' : ''), {
+          title: !on ? 'Sort by ' + label.toLowerCase() : cs.dir === 'asc' ? 'Sorted ascending — click for descending' : 'Sorted descending — click for pipeline order',
+          onclick: (e) => {
+            e.stopPropagation();
+            App.prefs.set('boardColSort', !on ? { key: k, dir: 'asc' } : cs.dir === 'asc' ? { key: k, dir: 'desc' } : null);
+            App.render();
+          }
+        }, [label, el('span.sort-ind', null, on ? (cs.dir === 'asc' ? '↑' : '↓') : '↕')]);
+      })).concat([el('.cell', null, 'Dependency')])));
       const todayIso = App.isoDate(App.today());
-      App.subsView(ep).forEach((su, i) => {
+      const view = App.subsView(ep);
+      const pos = {}; App.subitems(ep).forEach((su, i) => { pos[su.key] = i; });
+      if (cs.key) {
+        const val = {
+          name: su => su.name.toLowerCase(),
+          dept: su => App.dept(su.dept).label.toLowerCase(),
+          owner: su => { const p = su.assignee && App.person(su.assignee); return p ? p.name.toLowerCase() : '\uffff'; },
+          status: su => App.STATUS_ORDER.indexOf(su.status),
+          start: su => su.start, due: su => su.due
+        }[cs.key];
+        const sign = cs.dir === 'desc' ? -1 : 1;
+        if (val) view.sort((a, b) => {
+          const x = val(a), y = val(b);
+          const c = typeof x === 'number' ? x - y : x < y ? -1 : x > y ? 1 : 0;
+          return c ? sign * c : pos[a.key] - pos[b.key];
+        });
+      }
+      view.forEach((su) => {
+        const i = pos[su.key];
         const dep = App.dept(su.dept);
         const person = su.assignee ? App.person(su.assignee) : null;
         const st = App.status(su.status);
@@ -154,8 +190,8 @@ window.App = window.App || {};
         const overdue = su.status !== 'approved' && su.due < todayIso;
 
         grid.appendChild(el('.subrow', null, [
+          el('.cell.c-num', null, i + 1),
           el('.cell.c-name', { style: { cursor: 'pointer' }, title: 'Edit task', onclick: (e) => { e.stopPropagation(); App.editTask.open(ep.id, su.key); } }, [
-            el('span.num', null, i + 1),
             el('span', null, su.name),
             App.icon('pencil', { cls: 'edit-hint' })
           ]),
@@ -164,7 +200,7 @@ window.App = window.App || {};
           ])),
           el('.cell.c-assignee', null, person
             ? el('span.avatar', { style: { background: person.color }, title: person.name }, App.initials(person.name))
-            : el('span.avatar.empty', { title: 'Unassigned' }, '?')),
+            : el('span.avatar.avatar-none', { title: 'Unassigned' }, '?')),
           // status cell — solid colour, click to change
           el('.cell.c-status', null, el('.status-cell', {
             style: { background: st.color, color: st.ink },

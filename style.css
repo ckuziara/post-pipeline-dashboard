@@ -237,9 +237,9 @@
 
 /* timeline bars & producer notes (status cells intentionally excluded) */
 :root[data-skin="expressive"] .bar,
-:root[data-skin="expressive"] .pv-pill,
-:root[data-skin="expressive"] .phase-bar,
-:root[data-skin="expressive"] .pn-note { border-radius: var(--r-bar); }
+:root[data-skin="expressive"] .phase-bar { border-radius: var(--r-bar); }
+/* producer notes keep a small corner in every theme — fully rounded, a tall
+   upright note read as a pill and wasted its ends */
 
 /* accent-filled controls need theme-aware ink — lime-on-white is unreadable */
 :root[data-skin="expressive"] .btn-primary,
@@ -642,7 +642,7 @@ button.ghost:disabled:hover { background: transparent; }
   font-size: 9.5px; font-weight: 700; color: #fff; flex: 0 0 auto;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
 }
-.avatar.empty { background: var(--surface-3) !important; color: var(--text-3); box-shadow: inset 0 0 0 1px var(--border-2); }
+.avatar.avatar-none { background: var(--surface-3) !important; color: var(--text-3); box-shadow: inset 0 0 0 1px var(--border-2); }
 .dep-chip {
   display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 6px;
   background: rgba(91,108,255,.16); color: #b9c2ff; border: 1px solid rgba(91,108,255,.32);
@@ -915,21 +915,6 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 }
 .sel-clear:hover { background: var(--hover); color: var(--text); }
 
-/* ---- "+ Create" row (Timeline, draw to create an episode/task) ----
-   Same header+track shape as the Producer Notes row just below, with its own
-   accent (purple, not the notes' yellow/blue) so a create-draw never reads
-   as "drawing a note". */
-.create-row { background: rgba(155,91,255,.05); }
-.create-label .l-title { color: var(--text-3); font-weight: 600; }
-.g-track.cr-drawable { cursor: crosshair; }
-.create-ghost {
-  position: absolute; top: 50%; transform: translateY(-50%); height: 18px;
-  border-radius: 5px; display: flex; align-items: center; justify-content: center; padding: 0 8px;
-  font-size: 10px; font-weight: 700; white-space: nowrap;
-  opacity: .8; pointer-events: none; border: 1px dashed rgba(255,255,255,.7);
-  box-shadow: 0 2px 6px rgba(0,0,0,.3);
-}
-
 /* ---- Producer Notes swimlane (Timeline, per-show) ---- */
 .pn-head { background: var(--bg-2); border-top: 1px solid var(--border-2); }
 .pn-label { cursor: pointer; background: var(--bg-2); }
@@ -943,7 +928,7 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 .pn-ghost { opacity: .6; pointer-events: none; border: 1px dashed rgba(255,255,255,.7); }
 .pn-note {
   position: absolute; top: 50%; transform: translateY(-50%); height: 18px;
-  border-radius: 5px; display: flex; align-items: center; justify-content: center; padding: 0 8px;
+  border-radius: 4px; display: flex; align-items: center; justify-content: center; padding: 0 8px;
   font-size: 10px; font-weight: 700; white-space: nowrap; overflow: visible;
   box-shadow: 0 2px 6px rgba(0,0,0,.3);
 }
@@ -953,6 +938,11 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
   writing-mode: vertical-rl; text-orientation: mixed; padding: 6px 0; font-size: 9.5px;
 }
 .pn-note.portrait > span { max-width: none; max-height: 100%; white-space: nowrap; }
+/* two lines (flat) or two columns (upright) */
+.pn-note.two { flex-direction: column; line-height: 1.2; gap: 1px; }
+.pn-note.two > span { max-width: 100%; }
+.pn-note.portrait.two > span { max-width: none; max-height: 100%; }
+.pn-note.two > span + span { font-weight: 600; opacity: .9; }
 .pn-note.editable { cursor: grab; }
 .pn-note.dragging { box-shadow: 0 0 0 2px rgba(255,255,255,.6), 0 6px 16px rgba(0,0,0,.5); z-index: 3; }
 /* reuse the task bar's edge grip-tab look */
@@ -1171,7 +1161,6 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 .gantt.gantt-portrait .ms-day { width: 70%; }
 .gantt.gantt-portrait .rev-plan { width: 70%; padding: 2px 0; justify-content: center; }
 .gantt.gantt-portrait .review-day { width: 60%; min-height: 3px; }
-.gantt.gantt-portrait .create-ghost { left: 50%; top: auto; transform: translateX(-50%); width: 80%; height: auto; }
 .gantt.gantt-portrait .phase-bar { width: 8px; }
 
 /* A department's phase span is a marker, not a lane you read across, so in
@@ -1227,7 +1216,7 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 .subgrid { min-width: 980px; }
 .subrow {
   display: grid;
-  grid-template-columns: 184px 132px 60px 150px 96px 96px 1fr;
+  grid-template-columns: 40px 170px 132px 60px 150px 96px 96px 1fr;
   align-items: center; border-top: 1px solid var(--border);
 }
 .subrow.head { background: var(--bg-2); position: sticky; top: 0; }
@@ -2372,6 +2361,10 @@ select.fld { cursor: pointer; }
 .pv-tick { position: absolute; top: 0; border-left: 1px solid var(--border); pointer-events: none; }
 .pv-tick.major { border-left-color: var(--border-2); }
 .pv-tick-lbl { position: absolute; top: 6px; font-size: 10.5px; color: var(--text-3); white-space: nowrap; pointer-events: none; }
+/* days showing: the week label moves up to make room for the weekday row */
+.pv-canvas.days .pv-tick-lbl { top: 1px; font-size: 9.5px; }
+.pv-day-lbl { position: absolute; top: 13px; text-align: center; font-size: 8.5px; font-weight: 700; color: var(--text-3); pointer-events: none; }
+.pv-day-lbl.off { opacity: .4; }
 
 /* lane rows: a sticky label rail so the department stays readable when the
    episode is scrolled sideways */
@@ -2399,8 +2392,10 @@ select.fld { cursor: pointer; }
    alongside .bar, so the two always match. */
 .pv-pill {
   position: absolute; z-index: 2; display: flex; align-items: center; justify-content: flex-start;
-  padding: 0 7px; border-radius: 5px; cursor: pointer; font-family: inherit;
-  font-size: 10px; font-weight: 700; line-height: 1; border: none;
+  /* the Timeline's task bar exactly (.g-row.sub .bar) — which keeps its 4px
+     corner in every theme, so this does too */
+  padding: 0 7px; border-radius: 4px; cursor: pointer; font-family: inherit;
+  font-size: 9px; font-weight: 700; line-height: 1; border: none; white-space: nowrap;
   background: var(--pv-c); box-shadow: 0 2px 8px rgba(0,0,0,.35);
   transition: opacity .12s, box-shadow .12s;
 }
@@ -2410,10 +2405,10 @@ select.fld { cursor: pointer; }
     color-mix(in srgb, var(--pv-c) 20%, transparent) 4px 8px);
   box-shadow: inset 0 0 0 1px var(--pv-c);
 }
-.pv-pill:hover { box-shadow: 0 3px 10px rgba(0,0,0,.45); z-index: 4; }
+.pv-pill:hover { z-index: 4; }
 .pv-pill.sel { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); z-index: 4; }
 .pv-pill.dim { opacity: .4; }
-.pv-pill.editable { padding-right: 10px; }
+.pv-pill.editable { padding-right: 7px; }
 /* Batch Task / Dependencies windows — a modal card of their own, over Add
    Show (below the dependency picker, which has to open on top of them) */
 .pv-pop-scrim {
@@ -2464,16 +2459,24 @@ select.fld { cursor: pointer; }
 .iter-delta.late { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
 .iter-delta.early { color: var(--st-approved); background: color-mix(in srgb, var(--st-approved) 14%, transparent); }
 .pipe-apply-note.changed { color: var(--st-in_progress); font-weight: 600; }
-/* the right-edge handle: drag to change this pass's days */
+/* the right-edge handle: drag to change this pass's days. The same white
+   grip tab as the Timeline's bars (.bar.adjustable::after) — straddling the
+   edge, faded in on hover and held while dragging. Only the right edge: a
+   pass's start follows its dependencies, so there's no left handle. */
 .pv-grip {
-  position: absolute; top: 0; right: 0; bottom: 0; width: 8px; max-width: 100%; cursor: ew-resize;
-  border-radius: 0 5px 5px 0;
+  position: absolute; top: 0; right: -4px; bottom: 0; width: 10px; cursor: ew-resize;
 }
 .pv-grip::after {
-  content: ''; position: absolute; top: 4px; bottom: 4px; right: 2px; width: 2px; border-radius: 1px;
-  background: currentColor; opacity: 0; transition: opacity .12s;
+  content: ''; position: absolute; top: 50%; right: 4px; width: 4px; height: 85%;
+  background: #fff; border: 1px solid rgba(0,0,0,.3); border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.4); pointer-events: none;
+  opacity: 0; transform: translate(50%, -50%); transition: opacity .12s ease, transform .12s ease;
 }
-.pv-pill:hover .pv-grip::after, .pv.resizing .pv-grip::after { opacity: .55; }
+.pv-pill:hover .pv-grip::after, .pv-pill.dragging .pv-grip::after { opacity: 1; transform: translate(50%, -50%) scaleX(1.15); }
+/* mid-drag, only the bar being stretched shows its handle — the pointer
+   sweeping over other bars doesn't light theirs */
+.pv.resizing .pv-pill:not(.dragging) .pv-grip::after { opacity: 0; }
+.pv-pill.dragging { box-shadow: 0 0 0 2px rgba(255,255,255,.6), 0 6px 16px rgba(0,0,0,.5); z-index: 4; }
 .pv.resizing, .pv.resizing * { cursor: ew-resize !important; }
 .pv-drag-badge {
   position: fixed; z-index: 400; pointer-events: none; white-space: nowrap;
@@ -2483,8 +2486,8 @@ select.fld { cursor: pointer; }
 /* a batch task: stacked edge so it reads as one bar standing for several */
 .pv-pill.batch { box-shadow: 3px -3px 0 -1px color-mix(in srgb, var(--pv-c) 55%, transparent), 0 2px 8px rgba(0,0,0,.35); }
 .pv-batch-tag {
-  flex: none; margin-right: 5px; padding: 1px 4px; border-radius: 3px;
-  font-size: 8px; letter-spacing: .04em; background: rgba(0,0,0,.22);
+  flex: none; margin-right: 4px; padding: 0 3px; border-radius: 2px;
+  font-size: 7px; line-height: 9px; letter-spacing: .04em; background: rgba(0,0,0,.22);
 }
 .pipe-batch-tag {
   flex: none; font-size: 9.5px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase;
@@ -2514,7 +2517,9 @@ select.fld { cursor: pointer; }
 .plan-grid.two { grid-template-columns: 1fr 1fr; }
 .plan-grid .field { margin-bottom: 0; }
 .end-row { margin-top: 12px; align-items: start; }
-.end-btn-slot { display: flex; align-items: flex-end; padding-top: 24px; }
+.end-btn-slot { display: flex; align-items: center; gap: 16px; padding-top: 24px; min-height: 66px; }
+.sched-weekends { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); cursor: pointer; white-space: nowrap; }
+.sched-weekends input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
 
 .rec-pill {
   display: flex; align-items: center; gap: 8px; margin: 12px 0 0;
@@ -4033,9 +4038,10 @@ select.fld { cursor: pointer; }
   .subtable { overflow-x: visible; }
   .subgrid { min-width: 0; }
   .subrow { grid-template-columns: 1fr 38px 108px; column-gap: 8px; }
+  .subrow .cell.c-num,
   .subrow .cell.c-dept, .subrow .cell.c-date, .subrow .cell.c-deps { display: none; }
-  .subrow.head .cell:nth-child(2), .subrow.head .cell:nth-child(5),
-  .subrow.head .cell:nth-child(6), .subrow.head .cell:nth-child(7) { display: none; }
+  .subrow.head .cell:nth-child(3), .subrow.head .cell:nth-child(6),
+  .subrow.head .cell:nth-child(7), .subrow.head .cell:nth-child(8) { display: none; }
   .subrow .cell.c-name { font-size: 13.5px; }
   .status-cell { font-size: 12px; min-height: 46px; }
   .status-opt { min-height: 46px; font-size: 12.5px; }
@@ -4594,6 +4600,33 @@ select.fld { cursor: pointer; }
   .xp-hint { display: none; }
   .xp-count { margin-right: auto; }
 }
+
+/* Board subtable: click a heading to sort */
+.subrow.head .cell.sortable { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 5px; }
+.subrow.head .cell.sortable:hover { color: var(--text); }
+.subrow.head .cell.sorted { color: var(--accent); }
+.subrow.head .sort-ind { font-size: 10px; opacity: 0; transition: opacity .12s; }
+.subrow.head .cell.sortable:hover .sort-ind, .subrow.head .cell.sorted .sort-ind { opacity: 1; }
+
+/* Board subtable: row-number column (pipeline position) */
+.subrow .cell.c-num { padding: 8px 0 8px 14px; color: var(--text-3); font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.subrow.head .cell.c-num { padding: 9px 0 9px 14px; cursor: pointer; }
+.subrow.head .cell.c-num.sorted { cursor: default; }
+.subrow.head .cell.c-num:not(.sorted):hover { color: var(--text); }
+
+/* Episode preview: a task's passes merged into one bar when zoomed out */
+.pv-pill.combo { background: transparent; overflow: hidden; }
+.pv-pill.combo .pv-part { position: absolute; top: 0; bottom: 0; background: var(--pv-c); pointer-events: none; }
+.pv-pill.combo .pv-part.rev {
+  background: repeating-linear-gradient(45deg,
+    color-mix(in srgb, var(--pv-c) 60%, transparent) 0 4px,
+    color-mix(in srgb, var(--pv-c) 38%, transparent) 4px 8px);
+}
+.pv-pill.combo .pv-part.div { box-shadow: inset 1px 0 0 rgba(0,0,0,.45); }
+.pv-pill.combo .pv-pill-txt, .pv-pill.combo .pv-batch-tag { position: relative; z-index: 1; }
+.pv-pill.combo.editable { overflow: visible; }
+.pv-pill.combo.editable .pv-part:first-child { border-radius: 4px 0 0 4px; }
+.pv-pill.combo.editable .pv-part:nth-last-child(1 of .pv-part) { border-radius: 0 4px 4px 0; }
 
 /* ---- keyboard shortcuts: ⌘K palette and the ? cheat sheet (js/shortcuts.js) ---- */
 .kb-keys { display: inline-flex; align-items: center; gap: 3px; flex: none; }

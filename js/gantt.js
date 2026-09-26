@@ -172,6 +172,7 @@ window.App = window.App || {};
              : e.deltaY;
     return Math.max(0.75, Math.min(1.33, Math.exp(-px * ZOOM_PER_PX)));
   }
+  App.wheelZoomFactor = wheelZoomFactor;   // the episode preview zooms the same way (js/pipeviz.js)
 
   // ctx = { start, totalCalDays, totalCols, dw, colOf } — colOf maps an ISO
   // date to its rendered column index, collapsing hidden (weekend) days onto
@@ -259,7 +260,7 @@ window.App = window.App || {};
 
     render(episodes) {
       this._episodes = episodes;       // what "all" means for the Opt shortcuts
-      const sort = App.prefs.get('timelineSort', 'department');
+      const sort = App.timelineGrouping();
       /* Portrait (time runs top-to-bottom) applies to all three sorts. Every
          sort's rows are built from the same .g-row/.g-label/.g-track shape, so
          Portrait is the same two things everywhere: bars written along the
@@ -317,6 +318,20 @@ window.App = window.App || {};
       this._vis = { start: startIso, end: App.isoDate(end) };
       this._holCache = {};
 
+      /* Hide weekends switched since the last render: every column shifts, so
+         the same scroll offset would land on different dates. Find the date
+         that sat mid-view under the old column map and keep it there under
+         the new one (via _preserve, the same hand-off zoom uses). */
+      if (this._hideWeekends !== undefined && this._hideWeekends !== hideWeekends && this._startIso && this._dw && App.state.gantt) {
+        const g = App.state.gantt;
+        const pos = portrait ? (this._viewH || 0) / 2 : (this._viewW || 0) / 2;
+        const off = portrait ? (g.scrollTop || 0) + pos - COL_HEAD_H : (g.scrollLeft || 0) + pos - LABEL_W;
+        const oldCol = Math.max(0, off / this._dw);
+        const whole = Math.floor(oldCol);
+        const date = App.addVisibleDays(this._startIso, whole, this._hideWeekends);
+        this._preserve = { dayOffset: colOf(date) + (oldCol - whole), screenPos: pos };
+      }
+
       // stashed so drag handlers (which run between renders) can convert
       // pixels back to dates using the exact same scale just rendered with
       this._dw = dw;
@@ -366,15 +381,6 @@ window.App = window.App || {};
         body.appendChild(el('.today-line', { style }));
       }
 
-      // "+ Create" row — drawn before Producer Notes so it sits at the very
-      // top. If the role lost the right mid-session (the role selector
-      // changed while it was armed), clear it silently rather than render an
-      // interactive track the current role can't actually use.
-      if (App.state.creatingOnGantt && !(App.canManageShows(App.state.role) || App.canEditSchedule(App.state.role))) {
-        App.state.creatingOnGantt = false;
-      }
-      if (App.state.creatingOnGantt) this.createRow(body, startIso, dw, xOf);
-
       // Producer Notes swimlane — per-show annotations, only meaningful when a
       // single show is in view (nonsensical mixed across shows on "All shows").
       // Not yet given a Portrait transpose (it has its own unrelated .portrait
@@ -382,6 +388,8 @@ window.App = window.App || {};
       // transpose problem); hidden in Portrait rather than half-drawn.
       const singleShow = App.singleShowFilter();
       if (singleShow && !portrait) this.producerNotesLane(body, singleShow, startIso, dw, xOf);
+      // every episode's Director reviews on one lane, just under the notes
+      if (!portrait) this.directorReviewsLane(body, episodes, xOf, axis);
 
       const byStart = (a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1;
       // All shows: the executive view — departments and the two dates that
@@ -672,18 +680,6 @@ window.App = window.App || {};
       scroll.addEventListener('mousemove', hoverHandler);
 
       const downHandler = (e) => {
-        // "+ Create" — DRAWING: empty cell on the blank Create row → draw a
-        // new episode/task. Permission is live-checked here too, not just
-        // trusted from render time, matching the same discipline the notes
-        // branch right below already uses (App.canEditNotes() inline).
-        const createTrack = e.target.closest('.g-row.create-row .g-track.cr-drawable');
-        if (createTrack && App.state.creatingOnGantt &&
-            (App.canManageShows(App.state.role) || App.canEditSchedule(App.state.role))) {
-          e.preventDefault();
-          this.startCreateDraw(e, createTrack);
-          return;
-        }
-
         // producer notes — DRAWING: empty grid cell in a notes row → draw a new note
         const drawTrack = e.target.closest('.g-row.pn-row .g-track.pn-drawable');
         if (drawTrack && !e.target.closest('.pn-note') && App.canEditNotes()) {
@@ -895,23 +891,17 @@ window.App = window.App || {};
       // reads clientX. Only the bar-drag branch below ever reads clientY.
       const colDeltaX = Math.round((e.clientX - d.startClientX) / dw);
 
-      if (d.kind === 'note-draw' || d.kind === 'create-draw') {
-        // d.portrait is set only by startCreateDraw — a note-draw is always
-        // Landscape, so this reads clientX for notes either way
-        const drawDelta = d.portrait ? (e.clientY - d.startClientY) : (e.clientX - d.startClientX);
+      if (d.kind === 'note-draw') {
+        // notes are Landscape-only, so the drawn range always reads clientX
+        const drawDelta = e.clientX - d.startClientX;
         const cur = d.startCol + Math.round(drawDelta / dw);
         const a = Math.max(0, Math.min(d.startCol, cur)), b = Math.max(0, Math.max(d.startCol, cur));
         d.curA = a; d.curB = b;
         if (Math.abs(drawDelta) > 4) d.moved = true;
-        if (d.portrait) {
-          d.ghost.style.top = (a * dw) + 'px';
-          d.ghost.style.height = ((b - a + 1) * dw) + 'px';
-        } else {
-          d.ghost.style.left = (a * dw) + 'px';
-          d.ghost.style.width = ((b - a + 1) * dw) + 'px';
-        }
+        d.ghost.style.left = (a * dw) + 'px';
+        d.ghost.style.width = ((b - a + 1) * dw) + 'px';
         const sIso = App.addVisibleDays(this._startIso, a, hw), dIso = App.addVisibleDays(this._startIso, b, hw);
-        const dotColor = d.kind === 'create-draw' ? '#9b5bff' : '#5b6cff';
+        const dotColor = '#5b6cff';
         const tip = dragTipEl(); tip.innerHTML = '';
         tip.appendChild(el('span.tip-dot', { style: { background: dotColor } }));
         tip.appendChild(document.createTextNode(App.fmtRange(sIso, dIso)));
@@ -1040,21 +1030,6 @@ window.App = window.App || {};
         return;
       }
 
-      if (d.kind === 'create-draw') {
-        d.ghost.remove();
-        if (d.moved) {
-          const sIso = App.addVisibleDays(this._startIso, d.curA, this._hideWeekends);
-          const dIso = App.addVisibleDays(this._startIso, d.curB, this._hideWeekends);
-          // one-shot per toolbar click: turn the toggle off and re-render
-          // before opening the modal, so a Cancel doesn't leave the row
-          // sitting there armed for an accidental second draw
-          App.state.creatingOnGantt = false;
-          App.render();
-          App.createFromDrag.open({ startIso: sIso, dueIso: dIso, showId: App.singleShowFilter() });
-        }
-        return;
-      }
-
       if (d.kind === 'marquee') {
         // read the band before removing it, then hit-test the bars against it
         const box = d.ghost.getBoundingClientRect();
@@ -1129,6 +1104,7 @@ window.App = window.App || {};
       const s = this._scrollEl;
       if (!s || !s.isConnected) return;
       App.state.gantt = { scrollLeft: s.scrollLeft, scrollTop: s.scrollTop };
+      this._viewW = s.clientWidth; this._viewH = s.clientHeight;    // for re-anchoring (render)
     },
 
     // ---- scroll settle ----
@@ -1188,7 +1164,7 @@ window.App = window.App || {};
         style: { position: 'sticky', left: '0', zIndex: '9', width: LABEL_W + 'px', minWidth: LABEL_W + 'px',
                  background: 'var(--bg-2)', borderRight: '1px solid var(--border-2)', display: 'flex',
                  alignItems: 'center', padding: '0 14px', fontSize: '11px', fontWeight: '700', color: 'var(--text-3)' }
-      }, { show: 'SHOW / TASK', department: 'DEPARTMENT / TASK' }[App.prefs.get('timelineSort', 'department')] || 'EPISODE / SUBITEM'));
+      }, { show: 'SHOW / TASK', department: 'DEPARTMENT / TASK' }[App.timelineGrouping()] || 'EPISODE / SUBITEM'));
       const cols = el('', { style: { width: (ctx.totalCols * ctx.dw) + 'px' } });
       cols.appendChild(buildSegRow(ctx, tier.primary, 'primary'));
       cols.appendChild(buildSegRow(ctx, tier.secondary, 'secondary'));
@@ -1332,7 +1308,6 @@ window.App = window.App || {};
           body.appendChild(row);
           // opened: the episode's tasks, exactly as the Episode sort draws them
           if (epOpen) {
-            this.reviewRows(body, [ep], xOf, axis, false);
             const { order: dOrder, byDept } = this.groupByDept([ep]);
             dOrder.forEach(dk => this.deptStackedLines(body, App.dept(dk), this.groupItems(byDept[dk]), xOf, dw, null, axis));
           }
@@ -1564,11 +1539,56 @@ window.App = window.App || {};
        revisions. Reviews landing on the same day stack onto extra lines, which
        is itself worth seeing: that's a day the Director has more than one
        thing to look at. Nothing to review, no row. */
-    reviewRows(body, eps, xOf, axis, withCode) {
+    reviewItems(eps) {
       const items = [];
       eps.forEach(ep => App.subsView(ep).forEach(su => {
         App.plannedRevisions(ep, su).reviews.forEach(rv => items.push({ ep, su, rv }));
       }));
+      return items;
+    },
+    reviewDay(it, xOf, axis, withCode) {
+      const { ep, su, rv } = it;
+      const style = {};
+      setBarPos(style, axis, xOf, rv.start, rv.due);
+      const b = el('.review-day', {
+        title: 'Director review — ' + (withCode ? ep.code + ' · ' : '') + su.name + ' ' + rv.label + ' · ' +
+               App.fmtRange(rv.start, rv.due) + ' — approved, or sent back for the next revision',
+        style
+      });
+      b.style.setProperty('--rv-c', App.dept(su.dept).color);
+      return b;
+    },
+
+    /* Director Reviews lane — every episode in view combined, sitting under
+       Producer Notes. Minimised by default: the header alone still marks each
+       review day along its track, so the Director's busy days read at a
+       glance; opening it stacks them out, one line per clash. */
+    directorReviewsLane(body, eps, xOf, axis) {
+      const items = this.reviewItems(eps);
+      if (!items.length) return;
+      const open = App.state.reviewsOpen === true;          // default minimised
+      const head = el('.g-row.pn-head.rv-head');
+      head.appendChild(el('.g-label.pn-label', {
+        title: open ? 'Minimise Director reviews' : 'Show every Director review, one line per clash',
+        onclick: () => { App.state.reviewsOpen = !open; App.render(); }
+      }, el('.l-title', null, [
+        el('span.chev' + (open ? '.open' : ''), null, '▶'),
+        el('span.review-dot'),
+        el('span', null, 'DIRECTOR REVIEWS'),
+        el('span.pn-count', null, String(items.length))
+      ])));
+      const track = el('.g-track');
+      if (!open) {
+        this.holWash(track, [...new Set(eps.map(e => e.showId))], 'role:director', xOf, axis);
+        items.forEach(it => track.appendChild(this.reviewDay(it, xOf, axis, true)));
+      }
+      head.appendChild(track);
+      body.appendChild(head);
+      if (open) this.reviewRows(body, eps, xOf, axis, true, items);
+    },
+
+    reviewRows(body, eps, xOf, axis, withCode, given) {
+      const items = given || this.reviewItems(eps);
       if (!items.length) return;
       items.sort((a, b) => a.rv.start < b.rv.start ? -1 : 1);
       const levels = [];
@@ -1581,20 +1601,10 @@ window.App = window.App || {};
         const row = el('.g-row.sub.review-row');
         row.appendChild(el('.g-label', { title: 'Director Reviews' },
           el('.l-title', { style: { fontWeight: '700', fontSize: '10.5px' } },
-            li === 0 ? [el('span.review-dot'), el('span', null, 'Director Reviews')] : [])));
+            given ? [] : li === 0 ? [el('span.review-dot'), el('span', null, 'Director Reviews')] : [])));
         const track = el('.g-track');
         this.holWash(track, [...new Set(eps.map(e => e.showId))], 'role:director', xOf, axis);
-        lvl.items.forEach(({ ep, su, rv }) => {
-          const style = {};
-          setBarPos(style, axis, xOf, rv.start, rv.due);
-          const b = el('.review-day', {
-            title: 'Director review — ' + (withCode ? ep.code + ' · ' : '') + su.name + ' ' + rv.label + ' · ' +
-                   App.fmtRange(rv.start, rv.due) + ' — approved, or sent back for the next revision',
-            style
-          });
-          b.style.setProperty('--rv-c', App.dept(su.dept).color);
-          track.appendChild(b);
-        });
+        lvl.items.forEach(it => track.appendChild(this.reviewDay(it, xOf, axis, withCode)));
         row.appendChild(track);
         body.appendChild(row);
       });
@@ -1847,7 +1857,6 @@ window.App = window.App || {};
     episodeStackedRow(body, ep, startIso, dw, timeW, xOf, axis) {
       body.appendChild(this.epTopRow(ep, xOf, dw, axis));
       if (!App.state.ganttExpanded[ep.id]) return;
-      this.reviewRows(body, [ep], xOf, axis, false);
 
       const { order, byDept } = this.groupByDept([ep]);
       order.forEach(dk => {
@@ -1912,7 +1921,6 @@ window.App = window.App || {};
       // this show and nested one level under it. Expanding a department is
       // what reveals its tasks, so opening a show doesn't dump every task of
       // every department onto the screen at once.
-      this.reviewRows(body, eps, xOf, axis, true);
       this.showDeptRows(body, show, eps, xOf, dw, axis);
     },
 
@@ -2001,21 +2009,6 @@ window.App = window.App || {};
     // Click-drag an empty grid cell to draw a new note, click a note to
     // edit/recolour/delete, drag the middle to move or an edge to resize
     // (weekend-aware, same math as task bars).
-    /* "+ Create" row — a blank canvas at the very top of the timeline,
-       identical in every sort mode (no per-row context to infer show/episode/
-       department from once a row spans more than one episode, so nothing here
-       tries to). Drawing a date range opens App.createFromDrag (js/dialog.js)
-       to ask explicitly and confirm before anything is written — unlike a
-       Producer Note, an episode or task is a structural, team-visible entity,
-       not a lightweight annotation that's safe to save-then-edit. */
-    createRow(body, startIso, dw, xOf) {
-      const row = el('.g-row.create-row');
-      row.appendChild(el('.g-label.create-label', null,
-        el('.l-title', null, el('span', { style: { fontSize: '10px', color: 'var(--text-3)' } }, 'Drag to create an episode or task →'))));
-      row.appendChild(el('.g-track.cr-drawable'));
-      body.appendChild(row);
-    },
-
     producerNotesLane(body, showId, startIso, dw, xOf) {
       const show = App.show(showId);
       if (!show) return;
@@ -2055,12 +2048,30 @@ window.App = window.App || {};
       // short) date span flips to an upright portrait box, which makes its row
       // taller. HFONT/VSTEP ≈ px per character horizontally / vertically at 10px.
       const HFONT = 5.6, VSTEP = 7.4;
+      /* A note may take a second line: split at " · " (how time off reads —
+         "Chris off · Holiday") or else at the space nearest the middle. Flat,
+         that keeps a note sideways that would otherwise stand upright; upright,
+         it's a second column so a long note isn't cut to a few letters. */
+      const split2 = (t) => {
+        const dot = t.indexOf(' · ');
+        if (dot > 0) return [t.slice(0, dot), t.slice(dot + 3)];
+        const mid = t.length / 2;
+        let best = -1;
+        for (let i = 0; i < t.length; i++) if (t[i] === ' ' && (best < 0 || Math.abs(i - mid) < Math.abs(best - mid))) best = i;
+        return best > 0 ? [t.slice(0, best), t.slice(best + 1)] : null;
+      };
       const shaped = notes.map(n => {
         const width = xOf.width(n.start, n.due);
         const text = n.text || 'Untitled note';
         const fitsFlat = width - 16 >= text.length * HFONT;
-        const portraitH = Math.max(36, Math.min(84, Math.round(text.length * VSTEP) + 14));
-        return { n, width, text, portrait: !fitsFlat, portraitH };
+        const lines = fitsFlat ? null : split2(text);
+        const longest = lines ? Math.max(lines[0].length, lines[1].length) : text.length;
+        const flat2 = !!lines && width - 16 >= longest * HFONT;
+        const portrait = !fitsFlat && !flat2;
+        // upright: a second column only when one would be cut short and there's room for two
+        const two = flat2 || (portrait && !!lines && width >= 28 && text.length * VSTEP + 14 > 84);
+        const portraitH = Math.max(36, Math.min(two ? 110 : 84, Math.round((two ? longest : text.length) * VSTEP) + 14));
+        return { n, width, text, portrait, portraitH, lines: two ? lines : null, flat2 };
       });
 
       // Interval-stack, but keep portrait notes on their own lanes and flat
@@ -2081,7 +2092,7 @@ window.App = window.App || {};
       if (canEdit) levels.push({ items: [] });                 // spare row so there's always open grid to draw in
 
       levels.forEach((lvl, li) => {
-        const rowH = lvl.items.reduce((m, s) => s.portrait ? Math.max(m, s.portraitH + 8) : m, 26);
+        const rowH = lvl.items.reduce((m, s) => s.portrait ? Math.max(m, s.portraitH + 8) : s.flat2 ? Math.max(m, 38) : m, 26);
         const row = el('.g-row.sub.pn-row', { style: { minHeight: rowH + 'px' } });
         row.appendChild(el('.g-label.pn-sublabel', null,
           el('.l-title', { style: { fontWeight: '600', fontSize: '10px' } },
@@ -2096,11 +2107,12 @@ window.App = window.App || {};
           const ink = pickInk(n.color || '#f6be00');
           const style = { left: left + 'px', width: s.width + 'px', background: n.color || '#f6be00', color: ink };
           if (s.portrait) style.height = s.portraitH + 'px';
+          else if (s.flat2) style.height = '30px';
           // time-off notes come from the show's calendar — edited there, not here
-          const note = el('.pn-note' + (canEdit && !n.holiday ? '.editable' : '') + (n.holiday ? '.pn-holiday' : '') + (s.portrait ? '.portrait' : ''), {
+          const note = el('.pn-note' + (canEdit && !n.holiday ? '.editable' : '') + (n.holiday ? '.pn-holiday' : '') + (s.portrait ? '.portrait' : '') + (s.lines ? '.two' : ''), {
             title: s.text + ' · ' + App.fmtRange(n.start, n.due) + (n.holiday ? ' — click to edit or delete' : ''),
             style: style
-          }, [el('span', null, s.text)]);
+          }, s.lines ? s.lines.map(t => el('span', null, t)) : [el('span', null, s.text)]);
           if (n.id) note.dataset.noteId = n.id;
           if (n.offId) note.dataset.offId = n.offId;
           note.dataset.showId = showId;
@@ -2126,28 +2138,6 @@ window.App = window.App || {};
       };
       document.body.classList.add('gantt-dragging');
       document.body.style.cursor = 'ew-resize';
-    },
-
-    // mirrors startNoteDraw exactly — same ghost/ drag mechanics, different
-    // color so a create-draw never reads as "drawing a note"
-    startCreateDraw(e, trackEl) {
-      const dw = this._dw;
-      const portrait = !!(this._axis && this._axis.portrait);
-      const rect = trackEl.getBoundingClientRect();
-      // the Create row is a column in Portrait, so the drawn range runs down
-      // it — read the pointer along whichever axis time is on
-      const startCol = Math.max(0, Math.round(((portrait ? e.clientY - rect.top : e.clientX - rect.left)) / dw));
-      const gStyle = { background: '#9b5bff', color: '#fff' };
-      if (portrait) { gStyle.top = (startCol * dw) + 'px'; gStyle.height = dw + 'px'; }
-      else { gStyle.left = (startCol * dw) + 'px'; gStyle.width = dw + 'px'; }
-      const ghost = el('.create-ghost', { style: gStyle }, el('span', null, 'New'));
-      trackEl.appendChild(ghost);
-      this._drag = {
-        kind: 'create-draw', ghost, portrait,
-        startCol, startClientX: e.clientX, startClientY: e.clientY, curA: startCol, curB: startCol, moved: false
-      };
-      document.body.classList.add('gantt-dragging');
-      document.body.style.cursor = portrait ? 'ns-resize' : 'ew-resize';
     },
 
     NOTE_COLORS: ['#f6be00', '#ff6f9c', '#6cc2f0', '#6cc24a', '#a06cd5', '#ff7a59', '#9aa0ad'],

@@ -10,7 +10,7 @@ window.App = window.App || {};
   // rather than each re-deriving what "nothing selected" should mean.
   App.filterHas = (arr, id) => !arr.length || arr.includes(id);
 
-  /* A handful of features (Producer Notes, drag-to-create, Re-Arrange's
+  /* A handful of features (Producer Notes, Re-Arrange's
      preselect, the Schedule Assistant) are inherently per-show — a note or a
      dragged-out task has to belong to exactly one show, and a scheduling
      command needs one clear target. Multi-select doesn't remove that need;
@@ -28,6 +28,50 @@ window.App = window.App || {};
       App.filterHas(f.dept, su.dept) &&
       App.filterHas(f.person, su.assignee));
   };
+
+  /* Sort By — the Board's episode order (the Timeline stays in start
+     order). Device-local like the other view settings, never synced to teammates. Every
+     option breaks ties by running order, so equal keys never shuffle. */
+  App.SORT_OPTIONS = [
+    ['running', 'Running order', 'Show, then episode number'],
+    ['start', 'Start date', 'When each episode’s first task starts'],
+    ['live', 'Live date', 'The date each episode goes live'],
+    ['delivery', 'Delivery date', 'The date each episode is delivered'],
+    ['progress', 'Progress', 'How much of each episode is done'],
+    ['overdue', 'Overdue tasks', 'Episodes with the most overdue work'],
+    ['code', 'Episode code', 'Alphabetical by code'],
+    ['title', 'Title', 'Alphabetical by episode title']
+  ];
+  const SORT_DEFAULT = { board: { key: 'running', dir: 'asc' } };
+  App.sortPref = function (view) {
+    const v = App.prefs.get('sortBy.' + view, null) || {};
+    const d = SORT_DEFAULT[view] || SORT_DEFAULT.board;
+    return { key: App.SORT_OPTIONS.some(o => o[0] === v.key) ? v.key : d.key, dir: v.dir === 'desc' ? 'desc' : 'asc' };
+  };
+  App.episodeComparator = function (view) {
+    const { key, dir } = App.sortPref(view);
+    const running = (a, b) => App.show(a.showId).name.localeCompare(App.show(b.showId).name) || (a.index || 0) - (b.index || 0);
+    const ms = (ep, k) => { const m = App.epMilestone(ep, k); return m ? m.date : '9999-99-99'; };
+    const val = {
+      start: App.epStart, live: (ep) => ms(ep, App.LIVE_KEY), delivery: (ep) => ms(ep, 'delivery_date'),
+      progress: App.progressPct, overdue: App.epOverdueCount,
+      code: (ep) => String(ep.code || ''), title: (ep) => String(ep.title || '')
+    }[key];
+    const sign = dir === 'desc' ? -1 : 1;
+    return (a, b) => {
+      if (!val) return sign * running(a, b);
+      const x = val(a), y = val(b);
+      const c = typeof x === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true });
+      return c ? sign * c : running(a, b);
+    };
+  };
+  App.sortEpisodes = (eps, view) => eps.slice().sort(App.episodeComparator(view));
+
+  /* Timeline grouping (Episode / Department / Show). Switched off for now:
+     the toolbar control is hidden and the timeline always groups by episode.
+     Set to true to bring the control — and each person's saved choice — back. */
+  App.TIMELINE_GROUPING = false;
+  App.timelineGrouping = () => App.TIMELINE_GROUPING ? App.prefs.get('timelineSort', 'department') : 'episode';
 
   App.visibleEpisodes = function () {
     const f = App.state.filters;
@@ -243,6 +287,19 @@ window.App = window.App || {};
     bar.appendChild(multiSelectEl('person', App.state.data.people.filter(p => App.roleDept(p.role)).map(p => [p.id, p.name]), f.person, 'Everyone',
       arr => { f.person = arr; App.render(); }));
 
+    // Sort By — Board only. The same trigger and popover as the filters beside it; direction is picked
+    // in the same menu rather than on a separate button.
+    if (App.state.view === 'board') {
+      const view = 'board', cur = App.sortPref(view);
+      const setSort = (patch) => { App.prefs.set('sortBy.' + view, Object.assign({}, cur, patch)); App.filterMenu.close(); App.render(); };
+      const opt = App.SORT_OPTIONS.find(o => o[0] === cur.key);
+      bar.appendChild(el('span.toolbar-label', null, 'Sort'));
+      bar.appendChild(sortMenuEl('sort', opt[1] + (cur.dir === 'desc' ? ' ↓' : ' ↑'), [
+        App.SORT_OPTIONS.map(([v, l, tip]) => ({ label: l, tip, on: v === cur.key, pick: () => setSort({ key: v }) })),
+        [['asc', 'Ascending ↑'], ['desc', 'Descending ↓']].map(([d, l]) => ({ label: l, on: d === cur.dir, pick: () => setSort({ dir: d }) }))
+      ]));
+    }
+
     const search = el('input#search', {
       type: 'text', placeholder: 'Search episodes…  ' + App.shortcutLabel('F'), value: f.q });
     search.addEventListener('input', e => { f.q = e.target.value; debouncedRender(); });
@@ -253,8 +310,9 @@ window.App = window.App || {};
          sits in the toolbar with the other filters rather than two clicks deep
          in preferences. No label: three view names in a segmented control read
          as what they are. */
-      const sort = App.prefs.get('timelineSort', 'department');
-      bar.appendChild(el('.prefs-seg.toolbar-seg', null,
+      // hidden while App.TIMELINE_GROUPING is off (see above)
+      const sort = App.timelineGrouping();
+      if (App.TIMELINE_GROUPING) bar.appendChild(el('.prefs-seg.toolbar-seg', null,
         [['episode', 'Episode'], ['department', 'Department'], ['show', 'Show']].map(([v, label]) =>
           el('button.seg' + (sort === v ? '.active' : ''), {
             title: 'Group the timeline by ' + label.toLowerCase(),
@@ -352,17 +410,6 @@ window.App = window.App || {};
       }, '⇅ Re-Arrange'));
     }
 
-    /* Two different rights (episode creation is Producer-only via
-       canManageShows; task creation is the broader canEditSchedule), so the
-       button shows if either passes — the dialog itself only offers what
-       the role in front of it can actually do. */
-    if (App.canManageShows(App.state.role) || App.canEditSchedule(App.state.role)) {
-      actions.appendChild(el('button.ghost' + (App.state.creatingOnGantt ? '.active' : ''), {
-        onclick: () => { App.state.creatingOnGantt = !App.state.creatingOnGantt; App.render(); },
-        title: 'Drag on the timeline to create a new episode or task'
-      }, '＋ Create'));
-    }
-
     /* Shows is a menu, not a single action: adding one is only one of the
        three things done to the show list from here — the others being opening
        an existing show to rename or recolour it, and importing one from a
@@ -453,6 +500,40 @@ window.App = window.App || {};
       else { App.filterMenu.openKey = key; draw(); }
     });
     // survives the rebuild a selection just triggered — see the note above
+    if (App.filterMenu.openKey === key) draw();
+    return btn;
+  }
+
+  /* Single-choice sibling of multiSelectEl: same trigger, same popover, same
+     open-by-key survival across the rebuild — a tick instead of checkboxes.
+     `sections` are lists of { label, tip, on, pick }, drawn with a rule
+     between them. */
+  function sortMenuEl(key, label, sections) {
+    const btn = el('button.filter.filter-multi', { type: 'button', title: 'Sort the episodes' }, [
+      el('span.filter-multi-label', null, label),
+      el('span.filter-multi-chev', null, '▾')
+    ]);
+    const draw = () => {
+      if (!btn.isConnected) { requestAnimationFrame(() => { if (App.filterMenu.openKey === key) draw(); }); return; }
+      if (App.filterMenu._pop) { App.filterMenu._pop.remove(); App.filterMenu._pop = null; }
+      // short and fixed, so it shows in full rather than scrolling
+      const pop = el('.filter-pop', { style: { maxHeight: 'none' }, onclick: e => e.stopPropagation() });
+      sections.forEach((items, i) => {
+        if (i) pop.appendChild(el('.filter-pop-sep'));
+        items.forEach(it => pop.appendChild(el('.filter-pop-row' + (it.on ? '.active' : ''), { title: it.tip || null, onclick: it.pick },
+          [el('span.filter-pop-check', null, it.on ? '✓' : ''), el('span', null, it.label)])));
+      });
+      const r = btn.getBoundingClientRect();
+      pop.style.top = (r.bottom + 6) + 'px';
+      pop.style.left = r.left + 'px';
+      document.body.appendChild(pop);
+      App.filterMenu._pop = pop;
+    };
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (App.filterMenu.openKey === key) App.filterMenu.close();
+      else { App.filterMenu.openKey = key; draw(); }
+    });
     if (App.filterMenu.openKey === key) draw();
     return btn;
   }

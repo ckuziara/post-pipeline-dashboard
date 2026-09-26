@@ -678,121 +678,6 @@ window.App = window.App || {};
     }
   };
 
-  /* ---- Create from a Timeline drag ----
-     Opened after drawing a date range on the Timeline's "+ Create" row (see
-     js/gantt.js). Nothing is written until this dialog's own Create button —
-     the drag only captures dates; who it belongs to (show, episode,
-     department) is always asked explicitly rather than guessed from which
-     row happened to be nearby, which is genuinely ambiguous once a row spans
-     more than one episode (Department/Show sort modes).
-
-     Episode and Task are two different rights (App.canManageShows vs
-     App.canEditSchedule, held by different roles), so the toggle only offers
-     what the current role can actually do — if just one applies, that's the
-     only form shown, no toggle at all. */
-  App.createFromDrag = {
-    open({ startIso, dueIso, showId }) {
-      const canEp = App.canManageShows(App.state.role);
-      const canTask = App.canEditSchedule(App.state.role);
-      if (!canEp && !canTask) return;   // toolbar button is already gated; belt and braces
-
-      let mode = canEp && canTask
-        ? (App.prefs.get('timelineSort', 'department') === 'episode' ? 'episode' : 'task')
-        : (canEp ? 'episode' : 'task');
-
-      const shows = App.activeShows();
-      const showSel = el('select.fld');
-      if (!shows.some(s => s.id === showId)) {
-        const ph = document.createElement('option');
-        ph.value = ''; ph.textContent = 'Choose a show…'; ph.disabled = true; showSel.appendChild(ph);
-      }
-      shows.forEach(s => {
-        const o = document.createElement('option'); o.value = s.id; o.textContent = s.name; showSel.appendChild(o);
-      });
-      showSel.value = shows.some(s => s.id === showId) ? showId : '';
-
-      // ---- episode-mode fields ----
-      const epNumFld = el('input.fld', { type: 'number', min: '1', style: { maxWidth: '90px' } });
-      const epTitleFld = el('input.fld', { type: 'text', placeholder: 'Episode title' });
-      const epHint = el('.fld-hint', null,
-        'Starts ' + App.fmtDate(startIso) + ' — the pipeline runs its own natural length from there.');
-      const epSection = el('div', null, [
-        field('Episode number', epNumFld),
-        field('Title', epTitleFld),
-        epHint
-      ]);
-
-      // ---- task-mode fields ----
-      const refEpSel = el('select.fld');
-      const deptSel = el('select.fld');
-      Object.keys(App.DEPARTMENTS).forEach(k => {
-        const o = document.createElement('option'); o.value = k; o.textContent = App.DEPARTMENTS[k].label; deptSel.appendChild(o);
-      });
-      const nameFld = el('input.fld', { type: 'text', placeholder: 'Task name' });
-      const taskHint = el('.fld-hint', null, App.fmtRange(startIso, dueIso) + ' — applies across every episode of the show.');
-      const taskSection = el('div', null, [
-        field('Reference episode', refEpSel, 'Every other episode gets the same offset from its own start, and the same duration.'),
-        field('Department', deptSel),
-        field('Task name', nameFld),
-        taskHint
-      ]);
-
-      const refreshForShow = () => {
-        const show = App.show(showSel.value);
-        const eps = App.activeEpisodes().filter(e => e.showId === showSel.value)
-          .sort((a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1);
-        refEpSel.innerHTML = '';
-        eps.forEach(e => {
-          const o = document.createElement('option'); o.value = e.id; o.textContent = e.code + ' — ' + e.title; refEpSel.appendChild(o);
-        });
-        if (showSel.value && shows.some(s => s.id === showSel.value)) {
-          epNumFld.value = App.nextEpisodeNumber(show);
-          epTitleFld.value = 'Episode ' + epNumFld.value;
-        }
-      };
-      showSel.addEventListener('change', refreshForShow);
-      if (showSel.value) refreshForShow();
-
-      const showPicked = () => !!(showSel.value && shows.some(s => s.id === showSel.value));
-
-      const createBtn = el('button.btn-primary', {
-        onclick: () => {
-          if (!showPicked()) { App.toast('Pick a show first', true); return; }
-          App.modal.close();
-          if (mode === 'episode') {
-            App.addEpisode({ showId: showSel.value, code: App.show(showSel.value).prefix + '-' + epNumFld.value,
-              title: epTitleFld.value, startIso });
-          } else {
-            App.addTaskAcrossShow({ showId: showSel.value, referenceEpId: refEpSel.value,
-              name: nameFld.value, dept: deptSel.value, startIso, dueIso });
-          }
-        }
-      }, [App.icon('save'), ' Create']);
-
-      // .hidden isn't a bare utility class in this codebase — every existing
-      // use scopes it to a specific element (.et-panel.hidden etc.) — so this
-      // toggles display directly rather than adding a new CSS rule for it.
-      const showMode = () => {
-        epSection.style.display = mode === 'episode' ? '' : 'none';
-        taskSection.style.display = mode === 'task' ? '' : 'none';
-      };
-      const sections = [field('Show', showSel)];
-      if (canEp && canTask) {
-        const epBtn = el('button.seg' + (mode === 'episode' ? '.active' : ''),
-          { onclick: () => { mode = 'episode'; epBtn.classList.add('active'); taskBtn.classList.remove('active'); showMode(); } }, 'New Episode');
-        const taskBtn = el('button.seg' + (mode === 'task' ? '.active' : ''),
-          { onclick: () => { mode = 'task'; taskBtn.classList.add('active'); epBtn.classList.remove('active'); showMode(); } }, 'New Task');
-        sections.push(el('.prefs-seg', null, [epBtn, taskBtn]));
-      }
-      showMode();
-      sections.push(epSection, taskSection);
-
-      const footer = [el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'), createBtn];
-      App.modal.open(card('calendar', canEp && canTask ? 'Create on the Timeline' : (canEp ? 'New Episode' : 'New Task'),
-        App.fmtRange(startIso, dueIso), sections, footer));
-    }
-  };
-
   /* ---- Milestone (Delivery / Live date) ----
      These aren't tasks, so there's nothing to drag — they're the dates the
      episode is committed to, and this is the only place they change. For the
@@ -1610,7 +1495,8 @@ window.App = window.App || {};
     let editingKey = null;
     let confirmKey = null;      // task awaiting the inline remove confirmation
     let depMenu = null;
-    const closeDepMenu = () => { if (depMenu) { depMenu.remove(); depMenu = null; document.removeEventListener('click', closeDepMenu); } };
+    let depOff = null;
+    const closeDepMenu = () => { if (depOff) { depOff(); depOff = null; } if (depMenu) { depMenu.remove(); depMenu = null; } };
 
     const pipeCount = el('span.count-badge');
     const pipeList = el('.pipe-list');
@@ -1698,7 +1584,7 @@ window.App = window.App || {};
         depMenu.style.top = (r.bottom + mh + 6 > window.innerHeight ? r.top - mh - 4 : r.bottom + 4) + 'px';
         depMenu.style.left = Math.min(r.left, window.innerWidth - mw - 8) + 'px';
       });
-      setTimeout(() => document.addEventListener('click', closeDepMenu), 0);
+      depOff = App.onPressOutside(depMenu, closeDepMenu);
     }
 
     /* minDays is no longer shown, but the scheduler never lets a task run
@@ -2113,10 +1999,10 @@ window.App = window.App || {};
                        wizard's footer summary honest)  */
   // one staff picker at a time, held here rather than per-editor so a second
   // (+) click closes the first menu instead of stacking another over it
-  let staffMenu = null;
+  let staffMenu = null, staffOff = null;
   function closeStaffMenu() {
+    if (staffOff) { staffOff(); staffOff = null; }
     if (staffMenu) { staffMenu.remove(); staffMenu = null; }
-    document.removeEventListener('click', closeStaffMenu);
   }
 
   App.teamEditor = function (pipeline, team0, opts) {
@@ -2322,7 +2208,7 @@ window.App = window.App || {};
         menu.style.top = (rct.bottom + mh + 6 > window.innerHeight ? Math.max(8, rct.top - mh - 4) : rct.bottom + 4) + 'px';
         menu.style.left = Math.min(rct.left, window.innerWidth - mw - 8) + 'px';
       });
-      setTimeout(() => document.addEventListener('click', closeStaffMenu), 0);
+      staffOff = App.onPressOutside(staffMenu, closeStaffMenu);
     }
 
     /* The (+) picker. Ticks apply straight to the working copy — nothing here
@@ -2382,7 +2268,8 @@ window.App = window.App || {};
       });
       // deferred for the same reason the software menu defers it: focusing in
       // the click's own frame loses the focus back to the button
-      setTimeout(() => { document.addEventListener('click', closeStaffMenu); search.focus(); }, 0);
+      staffOff = App.onPressOutside(staffMenu, closeStaffMenu);
+      setTimeout(() => search.focus(), 0);
     }
 
     /* Progress across the whole show, not per department: the question this
@@ -3184,6 +3071,16 @@ window.App = window.App || {};
       const closeMenus = () => { editor.closeMenus(); team.closeMenus(); viz.closeMenus(); };
       const goBack = () => { if (back) back(); else App.modal.close(); };
 
+      /* Working weekends, right beside the dates it changes — the same switch
+         as the Working Days & Holidays page (calState.workWeekends), so
+         ticking either one ticks both. */
+      const weekendCb = el('input', { type: 'checkbox' });
+      weekendCb.checked = calState.workWeekends;
+      weekendCb.addEventListener('change', () => { calState.workWeekends = weekendCb.checked; updateSchedule(); });
+      const weekendChk = el('label.sched-weekends', {
+        title: 'Count Saturdays and Sundays as working days. Also on the Working Days & Holidays page.'
+      }, [weekendCb, el('span', null, 'Include working weekends')]);
+
       const sections = [
         (restored ? el('.draft-note', null, [
           el('span', null, [App.icon('save'), ' Picking up where you left off — nothing was lost.']),
@@ -3215,7 +3112,7 @@ window.App = window.App || {};
           ]),
           el('.plan-grid.two.end-row', null, [
             field('Project End Date', endInput, 'Pull it earlier to squeeze the pipeline, push it later to extend'),
-            el('.field.end-btn-slot', null, useRecBtn)
+            el('.field.end-btn-slot', null, [useRecBtn, weekendChk])
           ]),
           recPill,
           endFeedback,
@@ -3407,6 +3304,7 @@ window.App = window.App || {};
           team.setPipeline(pipe);              // page 1 may have re-departmented a task
         }
         if (n === 3) paintHolidays();         // people and departments may have changed
+        weekendCb.checked = calState.workWeekends;   // the Working Days page may have changed it
         const one = n === 1;
         step1.style.display = one ? '' : 'none';
         step2.style.display = n === 2 ? '' : 'none';
@@ -3414,7 +3312,12 @@ window.App = window.App || {};
         backBtn.style.display = one ? 'none' : '';
         nextBtn.style.display = n < 3 ? '' : 'none';
         nextBtn.textContent = n === 1 ? 'Next: Production Team →' : 'Next: Working Days →';
-        createBtn.style.display = n === 3 ? '' : 'none';
+        /* Editing an existing show can be saved from any step — a producer
+           fixing a live date shouldn't have to walk through the team and
+           holidays pages to get to Save. Next steps back to a secondary
+           button then, so Save is the one primary action. */
+        createBtn.style.display = (n === 3 || editShow) ? '' : 'none';
+        nextBtn.className = editShow && n < 3 ? 'btn-ghost' : 'btn-primary';
         if (titleEl) titleEl.textContent = one ? (editShow ? 'Edit Pipeline · ' + editShow.name : 'Add New Show')
           : n === 2 ? 'Production Team' : 'Working Days & Holidays';
         if (subEl) subEl.textContent = one
@@ -3572,6 +3475,7 @@ window.App = window.App || {};
       itersReady = true;
       paintIterations();
       if (opts && opts.step > 1) goStep(Math.min(3, opts.step));
+      else if (editShow) goStep(1);        // puts Save Show on the first page too
       if (editShow) { try { baseKey = snapKey(draftSnap()); } catch (e) { baseKey = null; } }
     }
   };
