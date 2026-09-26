@@ -2068,6 +2068,21 @@ window.App = window.App || {};
       }
 
       const mod = App.isMac ? e.metaKey : e.ctrlKey;
+
+      /* Single-key shortcuts — arrows, G-then-a-letter, T and ?. Never while
+         typing, never under a dialog, and never with Cmd/Ctrl held, which
+         belong to the browser and to the chords below. */
+      if (!mod && !e.ctrlKey && !e.metaKey && !modalOpen() && !inTextField(e.target)) {
+        if (App.keys.single(e)) { e.preventDefault(); return; }
+      }
+
+      // Cmd+K — the command palette, from anywhere a dialog isn't already up
+      if (mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k' && !modalOpen()) {
+        e.preventDefault();
+        App.palette.open();
+        return;
+      }
+
       if (!mod || e.altKey) return;
       const key = e.key.toLowerCase();
 

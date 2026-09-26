@@ -132,6 +132,23 @@ window.App = window.App || {};
   }
   App.ganttSelection = { has: selHas, clear: selClear, resolved: selResolved };
 
+  /* Opt means "all". Opt+Shift on a row label takes every task that row stands
+     for — an episode, a department, a show, one task across episodes — so each
+     label row carries its own {ep, su} list, rebuilt with the row on every
+     render. Built from the data rather than the drawn bars, so an episode left
+     collapsed still gives up its tasks. */
+  const selRow = (row, items) => { row._selItems = items; return row; };
+  const epItems = (ep) => App.subsView(ep).map(su => ({ ep, su }));
+  // one press adds the lot, unless the lot is already picked — then it drops it
+  function selAll(items) {
+    const adding = !items.every(({ ep, su }) => selHas(ep.id, su.key));
+    items.forEach(({ ep, su }) => {
+      if (adding) selAdd(ep.id, su.key);
+      else if (selHas(ep.id, su.key)) selToggle(ep.id, su.key);
+    });
+    return adding;
+  }
+
   /* How far one Ctrl+scroll event should zoom.
 
      A fixed step per event is what made this twitchy: a mouse wheel sends one
@@ -242,6 +259,7 @@ window.App = window.App || {};
     _rafId: null,
 
     render(episodes) {
+      this._episodes = episodes;       // what "all" means for the Opt shortcuts
       const sort = App.timelineGrouping();
       /* Portrait (time runs top-to-bottom) applies to all three sorts. Every
          sort's rows are built from the same .g-row/.g-label/.g-track shape, so
@@ -521,7 +539,8 @@ window.App = window.App || {};
         if (!epId) return;
 
         e.preventDefault();
-        App.state.ganttExpanded[epId] = !App.state.ganttExpanded[epId];
+        if (e.altKey) self.expandAllLike(epId, !App.state.ganttExpanded[epId]);
+        else App.state.ganttExpanded[epId] = !App.state.ganttExpanded[epId];
         App.render();
       };
 
@@ -692,6 +711,21 @@ window.App = window.App || {};
 
         const bar = e.target.closest('.bar');
 
+        /* Opt+Shift on a row label → every task that row stands for. */
+        if (e.shiftKey && e.altKey && !bar && e.target.closest('.g-label')) {
+          const lrow = e.target.closest('.g-row');
+          if (lrow && lrow._selItems && lrow._selItems.length && App.canEditSchedule(App.state.role)) {
+            e.preventDefault();
+            hideTip();
+            const adding = selAll(lrow._selItems);
+            this.suppressNextClick();                // the click after isn't "expand this row"
+            App.render();
+            App.toast((adding ? 'Selected ' : 'Dropped ') + lrow._selItems.length + ' task' +
+              (lrow._selItems.length === 1 ? '' : 's') + ' · ' + selList().length + ' selected');
+            return;
+          }
+        }
+
         /* Shift on empty grid → marquee. Starting the band on a bar would take
            the shift+click-to-toggle gesture away, and dragging out from a bar
            you've just added is the natural way to extend a selection, so the
@@ -722,7 +756,16 @@ window.App = window.App || {};
         if (e.shiftKey) {
           e.preventDefault();
           hideTip();
-          selToggle(epId, suKey);
+          /* Opt+Shift → this task on every episode the timeline is showing,
+             open or collapsed; the filters narrow what "all" reaches. */
+          if (e.altKey) {
+            selAll((this._episodes || []).map(x => {
+              const s = App.subsView(x).find(t => t.key === suKey);
+              return s ? { ep: x, su: s } : null;
+            }).filter(Boolean));
+          } else {
+            selToggle(epId, suKey);
+          }
           this.suppressNextClick();
           App.render();
           return;
@@ -1199,7 +1242,8 @@ window.App = window.App || {};
       // a click on a Delivery/Live mark is that mark's own (it opens its date)
       const toggleOn = (row, fn) => row.addEventListener('click', (e) => {
         if (e.target.closest('.ms-day, .exec-open')) return;
-        e.stopPropagation(); fn(); App.render();
+        if (this._clickSuppressed) { e.stopPropagation(); return; }   // an Opt+Shift pick just ended here
+        e.stopPropagation(); fn(e); App.render();
       });
       order.forEach(showId => {
         const show = App.show(showId); if (!show) return;
@@ -1237,7 +1281,9 @@ window.App = window.App || {};
           this.milestoneMarks(ht, lastEp, xOf, dw, axis);
         }
         head.appendChild(ht);
-        toggleOn(head, () => { collapsed[showId] = open; });
+        selRow(head, [].concat(...eps.map(epItems)));
+        // Opt+click folds or opens every show at once
+        toggleOn(head, (e) => { (e.altKey ? order : [showId]).forEach(id => { collapsed[id] = open; }); });
         body.appendChild(head);
         if (!open) return;
 
@@ -1254,7 +1300,11 @@ window.App = window.App || {};
           row.style.minHeight = Math.max(34, 10 + n * 6) + 'px';
           this.milestoneMarks(track, ep, xOf, dw, axis);
           row.appendChild(track);
-          toggleOn(row, () => { App.state.ganttExpanded[ep.id] = !epOpen; });
+          selRow(row, epItems(ep));
+          toggleOn(row, (e) => {
+            if (e.altKey) this.expandAllLike(ep.id, !epOpen);
+            else App.state.ganttExpanded[ep.id] = !epOpen;
+          });
           body.appendChild(row);
           // opened: the episode's tasks, exactly as the Episode sort draws them
           if (epOpen) {
@@ -1275,7 +1325,7 @@ window.App = window.App || {};
       const portrait = !!(axis && axis.portrait);
       const spine = portrait && expanded;
 
-      const row = el('.g-row' + (spine ? '.spine' : ''));
+      const row = selRow(el('.g-row' + (spine ? '.spine' : '')), epItems(ep));
       row.dataset.episodeId = ep.id;
       const labelTip = ep.code + ' · ' + ep.title + ' · ' + App.fmtRange(App.epStart(ep), App.epDue(ep)) +
                        (overdue ? ' · ' + overdue + ' overdue' : '');
@@ -1609,7 +1659,7 @@ window.App = window.App || {};
       const gDue = items.reduce((m, x) => x.su.due > m ? x.su.due : m, items[0].su.due);
       const [r, g, b] = hexToRgb(dep.color);
       const portrait = !!(axis && axis.portrait);
-      const hrow = el('.g-row.sub.phase', { style: { background: this.deptWash(dep) } });
+      const hrow = selRow(el('.g-row.sub.phase', { style: { background: this.deptWash(dep) } }), items);
       // Portrait gives the phase span a spine's width, so its name would clip
       // to a letter or two — the dot alone carries the department there, with
       // the name in the tooltip the label already has.
@@ -1656,7 +1706,7 @@ window.App = window.App || {};
 
       const wash = this.deptWash(dep);
       levels.forEach((lvl, li) => {
-        const srow = el('.g-row.sub' + (deep ? '.sub-deep' : ''), { style: { background: wash } });
+        const srow = selRow(el('.g-row.sub' + (deep ? '.sub-deep' : ''), { style: { background: wash } }), items);
         srow.appendChild(el('.g-label', { title: dep.label + ' — ' + title, style: { background: deptLabelBg(dep.color) } }, [
           el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } }, li === 0 ? [
             this.deptDot(dep),
@@ -1705,7 +1755,7 @@ window.App = window.App || {};
 
       const wash = this.deptWash(dep);
       levels.forEach(lvl => {
-        const srow = el('.g-row.sub', { style: { background: wash } });
+        const srow = selRow(el('.g-row.sub', { style: { background: wash } }), sorted);
         srow.appendChild(el('.g-label', { title: dep.label, style: { background: deptLabelBg(dep.color) } },
           el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } },
             multi
@@ -1753,7 +1803,7 @@ window.App = window.App || {};
         // open it collapses to a thin spine — just the dept's span as a
         // hairline, and a chevron-plus-dot label to close it again.
         const spine = portrait && expanded;
-        const row = el('.g-row' + (spine ? '.spine' : ''));
+        const row = selRow(el('.g-row' + (spine ? '.spine' : '')), all);
         row.dataset.episodeId = expKey;                       // expansion key via the shared click handler
         const labelTip = dep.label + ' — ' + group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's') +
                          ' · ' + epCount + ' ep' + (epCount === 1 ? '' : 's') + ' · ' + App.fmtRange(min, max);
@@ -1833,7 +1883,7 @@ window.App = window.App || {};
       const portrait = !!(axis && axis.portrait);
       const spine = portrait && expanded;
 
-      const row = el('.g-row' + (spine ? '.spine' : ''));
+      const row = selRow(el('.g-row' + (spine ? '.spine' : '')), [].concat(...eps.map(epItems)));
       row.dataset.episodeId = expKey;                       // expansion key via the shared click handler
       const labelTip = show.name + ' — ' + eps.length + ' episode' + (eps.length === 1 ? '' : 's') +
                        ' · ' + App.fmtRange(min, max);
@@ -1907,7 +1957,7 @@ window.App = window.App || {};
         const complete = done === all.length;
 
         const spine = portrait && expanded;
-        const row = el('.g-row.sub.exp' + (spine ? '.spine' : ''));
+        const row = selRow(el('.g-row.sub.exp' + (spine ? '.spine' : '')), all);
         row.dataset.episodeId = expKey;                     // expansion key via the shared click handler
         const labelTip = dep.label + ' — ' + group.keys.length + ' task' + (group.keys.length === 1 ? '' : 's') +
                          ' · ' + epCount + ' ep' + (epCount === 1 ? '' : 's') + ' · ' + App.fmtRange(min, max);
@@ -2271,6 +2321,66 @@ window.App = window.App || {};
 
     // Deliberate navigation is the ONE place smooth scrolling belongs — scroll
     // in place with no re-render, so nothing else on the page can shift.
+    /* Opt+click on an expandable row: every row of the same kind opens or
+       closes with it. Episodes reach the whole timeline, collapsed shows
+       included; department and show rows reach the ones on screen, which at
+       their level is all of them. */
+    expandAllLike(key, open) {
+      const exp = App.state.ganttExpanded;
+      let keys;
+      if (key.indexOf(':') === -1) keys = (this._episodes || []).map(ep => ep.id);
+      else {
+        const shape = key.replace(/[^:]+/g, 'x');     // 'dept:x', 'show:x', 'show:x:dept:x'
+        const head = key.split(':')[0];
+        keys = [...(this._scrollEl ? this._scrollEl.querySelectorAll('.g-row[data-episode-id]') : [])]
+          .map(r => r.dataset.episodeId)
+          .filter(k => k.split(':')[0] === head && k.replace(/[^:]+/g, 'x') === shape);
+      }
+      if (keys.indexOf(key) === -1) keys.push(key);
+      keys.forEach(k => { if (open) exp[k] = true; else delete exp[k]; });
+    },
+
+    /* ← / → on a selection. `step` is in the columns the timeline draws, so
+       with weekends hidden a day step goes Friday → Monday, the same as a
+       one-column drag. `cascade` (Opt) carries along everything downstream of
+       the selection — transitively, within each episode — by the same step,
+       so the gaps between them hold. Approved work stays where it landed. */
+    nudgeSelection(step, cascade) {
+      if (!App.canEditSchedule(App.state.role)) {
+        App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
+      }
+      const sel = selResolved();
+      if (!sel.length) return;
+      const hw = App.prefs.get('hideWeekends', true);
+      const moves = new Map();
+      const add = (ep, su) => {
+        const k = selKey(ep.id, su.key);
+        if (!moves.has(k)) moves.set(k, {
+          epId: ep.id, suKey: su.key,
+          start: App.addVisibleDays(su.start, step, hw), due: App.addVisibleDays(su.due, step, hw)
+        });
+      };
+      sel.forEach(s => add(s.ep, s.su));
+      if (cascade) {
+        const byEp = new Map();
+        sel.forEach(s => { if (!byEp.has(s.epId)) byEp.set(s.epId, { ep: s.ep, keys: new Set() }); byEp.get(s.epId).keys.add(s.suKey); });
+        byEp.forEach(({ ep, keys }) => {
+          const pipe = App.pipelineFor(ep);
+          const byKey = {}; pipe.forEach(t => { byKey[t.key] = t; });
+          const order = App.topoSort(pipe) || pipe.map(t => t.key);
+          const down = new Set(keys);
+          order.forEach(k => { const t = byKey[k]; if (t && !down.has(k) && t.deps.some(d => down.has(d))) down.add(k); });
+          down.forEach(k => {
+            if (keys.has(k)) return;
+            const su = App.subitem(ep, k);
+            if (su && su.status !== 'approved') add(ep, su);
+          });
+        });
+      }
+      App.track.feature(cascade ? 'timeline.keyNudgeCascade' : 'timeline.keyNudge');
+      App.moveTasks([...moves.values()]);
+    },
+
     centerToday() {
       const s = this._scrollEl;
       if (!s) { this._wantCenter = true; App.render(); return; }
