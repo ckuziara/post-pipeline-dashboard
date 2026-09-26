@@ -291,8 +291,8 @@ window.App = window.App || {};
     ]));
 
     // ---- identity ----
-    const nameI = el('input.fld', { type: 'text', value: intake.name, placeholder: 'e.g. Emmie’s Wonder Wardrobe' });
-    const codeI = el('input.fld', { type: 'text', value: intake.code, placeholder: 'e.g. EWW', maxlength: '6' });
+    const nameI = el('input.fld', { type: 'text', value: intake.name, placeholder: 'e.g. Show Name' });
+    const codeI = el('input.fld', { type: 'text', value: intake.code, placeholder: 'e.g. ABC', maxlength: '6' });
     const typeI = el('select.fld');
     [['animation', 'Animation'], ['live_action', 'Live Action']].forEach(([v, l]) => {
       const o = document.createElement('option'); o.value = v; o.textContent = l;

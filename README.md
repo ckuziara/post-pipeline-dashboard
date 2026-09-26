@@ -107,7 +107,8 @@ cookies, so no session store is needed either.
    - `MASTER_KEY_V1` — only if you want BYOK (bring-your-own Gemini key) live;
      see below. Leave blank and the feature 503s gracefully — everything else
      works either way
-   - `ADMIN_EMAILS`, `ALLOWED_DOMAIN` — already defaulted in `render.yaml`
+   - `ADMIN_EMAILS` — comma-separated bootstrap admin address(es)
+   - `ALLOWED_DOMAIN` — your Workspace domain (blank allows any address — see below)
 3. Deploy. Render gives you a URL like `https://post-pipeline-dashboard.onrender.com`.
 
 The database connection verifies the server's TLS certificate by default, which
@@ -125,8 +126,10 @@ both on by default once configured:
   Pick your own memorable phrase — don't reuse an example from these docs.
   Compared in constant time, so it can't be guessed character-by-character.
   **Always set this on a public deploy that doesn't have SSO yet.**
-- **`ALLOWED_DOMAIN`** — the email must end in `@moonbug.com` (or be listed in
-  `ADMIN_EMAILS`), so a leaked code alone isn't enough.
+- **`ALLOWED_DOMAIN`** — the email must end in `@your-domain.com` (or be listed
+  in `ADMIN_EMAILS`), so a leaked code alone isn't enough. Left blank (the
+  default), any address that knows the code can sign in — set this once you
+  know your team's Workspace domain.
 
 The server prints which protections are active at startup and warns loudly if
 email sign-in is exposed without a code. Once Google SSO is working, set
@@ -163,7 +166,7 @@ fine on a trusted office network, but no passwords, so do the below when ready):
    - hosted: set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` env vars
    - local: put them in `server-config.json` under `"google"`
 5. Restart. The *Sign in with Google* button lights up, restricted to
-   `ALLOWED_DOMAIN` (moonbug.com). Set `DEV_LOGIN=false` to turn off the
+   `ALLOWED_DOMAIN` if you've set one. Set `DEV_LOGIN=false` to turn off the
    email-only fallback — **do this on any public deploy.**
 
 > Note: Google accepts `localhost` and public `https` redirect URLs, but not a

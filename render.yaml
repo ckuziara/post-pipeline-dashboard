@@ -18,10 +18,10 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
-      - key: ALLOWED_DOMAIN
-        value: moonbug.com
-      - key: ADMIN_EMAILS
-        value: chris.kuziara@moonbug.com
+      - key: ALLOWED_DOMAIN         # your Workspace domain, e.g. example.com — blank ('') allows any
+        sync: false
+      - key: ADMIN_EMAILS           # comma-separated bootstrap admin(s), e.g. you@example.com
+        sync: false
       - key: DEV_LOGIN             # email sign-in; set "false" once Google SSO works
         value: "true"
       - key: ACCESS_CODE           # REQUIRED while DEV_LOGIN is true on a public URL —

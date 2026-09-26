@@ -10,10 +10,10 @@ const pick = a => a[Math.floor(rnd() * a.length)];
 const DEPT = { producer:null, manager:null, director:null, creative:'creative',
   animation:'animation', audio:'audio', video:'video', ops:'ops', qc:'qc' };
 const people = {
-  producer:['chris.kuziara@moonbug.com'], manager:['sam.reyes@moonbug.com'],
-  director:['alex.rivera@moonbug.com'], creative:['maya.chen@moonbug.com','tom.okafor@moonbug.com'],
-  animation:['diego.santos@moonbug.com','lena.vyas@moonbug.com'], audio:['chris.k@moonbug.com'],
-  video:['noah.kim@moonbug.com'], ops:['ravi.patel@moonbug.com'], qc:['grace.lin@moonbug.com']
+  producer:['jordan.blake@example.com'], manager:['sam.reyes@example.com'],
+  director:['alex.rivera@example.com'], creative:['maya.chen@example.com','tom.okafor@example.com'],
+  animation:['diego.santos@example.com','lena.vyas@example.com'], audio:['casey.turner@example.com'],
+  video:['noah.kim@example.com'], ops:['ravi.patel@example.com'], qc:['grace.lin@example.com']
 };
 // growth <1 = adoption fading, >1 = sticking
 const profile = {
@@ -41,9 +41,9 @@ const flowRole = {
   'LucidLink delivery':['ops','audio','video']
 };
 const audits = [
-  ['task.status', () => ({ episode:'LA-10'+(1+Math.floor(rnd()*4)), task:pick(['Animatic V1','Design','Scripts','VO Records']), from:'ready', to:'in_progress' })],
-  ['task.reschedule', () => ({ episode:'BW-30'+(7+Math.floor(rnd()*2)), task:pick(['Layout','Blocking','Wallah V1']), from:'2026-07-01→2026-07-05', to:'2026-07-03→2026-07-07', brokeDependency:false })],
-  ['note.add', () => ({ show:pick(['Little Angel','CoComelon','Blippi Wonders']) })]
+  ['task.status', () => ({ episode:'SA-10'+(1+Math.floor(rnd()*4)), task:pick(['Animatic V1','Design','Scripts','VO Records']), from:'ready', to:'in_progress' })],
+  ['task.reschedule', () => ({ episode:'SC-30'+(7+Math.floor(rnd()*2)), task:pick(['Layout','Blocking','Wallah V1']), from:'2026-07-01→2026-07-05', to:'2026-07-03→2026-07-07', brokeDependency:false })],
+  ['note.add', () => ({ show:pick(['Show Alpha','Show Bravo','Show Charlie']) })]
 ];
 
 const rows = [], DAYS = 60, now = Date.now();

@@ -1,7 +1,7 @@
 /* Demo data. Mirrors how a Monday board feeds the app: shows, people (roles +
-   departments they cover), and episodes. Each episode expands into the 27-subitem
-   TEMPLATE (see state.js). Episode 1 of Little Angel is the EXACT reference board;
-   the rest are staggered in time and have dependency-valid statuses derived from "today".
+   departments they cover), and episodes. Episode 1 of Show Alpha is the EXACT
+   reference board; the rest are staggered in time and have dependency-valid
+   statuses derived from "today".
    Replace App.seedData() with a Monday sync later. */
 window.App = window.App || {};
 (function () {
@@ -13,27 +13,27 @@ window.App = window.App || {};
 
   App.seedData = function () {
     const shows = [
-      { id: 'la',   name: 'Little Angel',    prefix: 'LA', color: '#ff6f9c' },
-      { id: 'cm',   name: 'CoComelon',       prefix: 'CM', color: '#6cc24a' },
-      { id: 'bw',   name: 'Blippi Wonders',  prefix: 'BW', color: '#f6be00' },
-      { id: 'mo',   name: 'Morphle',         prefix: 'MO', color: '#a06cd5' }
+      { id: 'sa',   name: 'Show Alpha',      prefix: 'SA', color: '#ff6f9c' },
+      { id: 'sb',   name: 'Show Bravo',      prefix: 'SB', color: '#6cc24a' },
+      { id: 'sc',   name: 'Show Charlie',    prefix: 'SC', color: '#f6be00' },
+      { id: 'sd',   name: 'Show Delta',      prefix: 'SD', color: '#a06cd5' }
     ];
 
     // Each person's role is one of App.ROLES. Department staff carry a department role
     // (creative/music/animation/audio/video/ops/qc); their role key IS the department.
     const people = [
-      { id: 'jordan', name: 'Jordan Blake',  role: 'producer' },
-      { id: 'sam',    name: 'Sam Reyes',     role: 'manager' },
-      { id: 'alex',   name: 'Alex Rivera',   role: 'director' },
-      { id: 'maya',   name: 'Maya Chen',     role: 'creative' },
-      { id: 'tom',    name: 'Tom Okafor',    role: 'creative' },
-      { id: 'priya',  name: 'Priya Nair',    role: 'music' },
-      { id: 'diego',  name: 'Diego Santos',  role: 'animation' },
-      { id: 'lena',   name: 'Lena Vyas',     role: 'animation' },
-      { id: 'chris',  name: 'Chris Kuziara', role: 'audio' },
-      { id: 'noah',   name: 'Noah Kim',      role: 'video' },
-      { id: 'ravi',   name: 'Ravi Patel',    role: 'ops' },
-      { id: 'grace',  name: 'Grace Lin',     role: 'qc' }
+      { id: 'p1',  name: 'Jordan Blake',  role: 'producer' },
+      { id: 'p2',  name: 'Sam Reyes',     role: 'manager' },
+      { id: 'p3',  name: 'Alex Rivera',   role: 'director' },
+      { id: 'p4',  name: 'Maya Chen',     role: 'creative' },
+      { id: 'p5',  name: 'Tom Okafor',    role: 'creative' },
+      { id: 'p6',  name: 'Priya Nair',    role: 'music' },
+      { id: 'p7',  name: 'Diego Santos',  role: 'animation' },
+      { id: 'p8',  name: 'Lena Vyas',     role: 'animation' },
+      { id: 'p9',  name: 'Casey Turner',  role: 'audio' },
+      { id: 'p10', name: 'Noah Kim',      role: 'video' },
+      { id: 'p11', name: 'Ravi Patel',    role: 'ops' },
+      { id: 'p12', name: 'Grace Lin',     role: 'qc' }
     ];
     people.forEach((p, i) => { p.color = PALETTE[i % PALETTE.length]; });
 
@@ -60,17 +60,17 @@ window.App = window.App || {};
 
     // (showId, num, title, shiftDays, useExact?)
     const plan = [
-      ['la', 101, "Joe's Little Angel",  0,    true ],
-      ['la', 102, 'Jo Jo Melon',         21,   false],
-      ['la', 103, 'Counting Sheep',     -70,   false],
-      ['la', 104, 'Rainy Day Friends', -119,   false],
-      ['cm', 211, 'Bath Song Remix',   -112,   false],
-      ['cm', 212, 'Apple Picking Day',  -49,   false],
-      ['cm', 213, 'Wheels on the Bus',   35,   false],
-      ['bw', 307, 'Volcano Adventure', -126,   false],
-      ['bw', 308, 'Deep Sea Dive',      -28,   false],
-      ['bw', 309, 'Space Station Tour',  14,   false],
-      ['mo', 410, 'Pet Parade',         -91,   false]
+      ['sa', 101, 'Episode One',        0,    true ],
+      ['sa', 102, 'Episode Two',        21,   false],
+      ['sa', 103, 'Episode Three',     -70,   false],
+      ['sa', 104, 'Episode Four',     -119,   false],
+      ['sb', 211, 'Episode One',      -112,   false],
+      ['sb', 212, 'Episode Two',       -49,   false],
+      ['sb', 213, 'Episode Three',      35,   false],
+      ['sc', 307, 'Episode One',      -126,   false],
+      ['sc', 308, 'Episode Two',       -28,   false],
+      ['sc', 309, 'Episode Three',      14,   false],
+      ['sd', 410, 'Episode One',       -91,   false]
     ];
 
     const episodes = plan.map((row, i) => {

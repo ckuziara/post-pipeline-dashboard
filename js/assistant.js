@@ -100,7 +100,7 @@ window.App = window.App || {};
     return hit.length === 1 ? hit[0] : null;
   }
 
-  // "…in this show" / "…for Little Angel" is scope the toolbar already carries,
+  // "…in this show" / "…for Show Alpha" is scope the toolbar already carries,
   // so it's stripped before the phrase is read as a task name.
   function stripScope(text) {
     return text
