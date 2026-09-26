@@ -3432,7 +3432,11 @@ window.App = window.App || {};
         return true;
       }
 
-      const footer = [cancelBtn, backBtn, nextBtn, createBtn];
+      const exportBtn = el('button.btn-ghost.foot-left', {
+        title: 'Print or export this plan as it stands — unfinished sections included (' + App.shortcutLabel('P') + ')',
+        onclick: () => App.exporter.open()
+      }, [App.icon('printer'), ' Export']);
+      const footer = [exportBtn, cancelBtn, backBtn, nextBtn, createBtn];
       createBtn.addEventListener('click', () => {
           if (editShow) { saveEdit(); return; }
           {
@@ -3519,6 +3523,45 @@ window.App = window.App || {};
         [step1, step2, step3], footer, 'wide.split');
       const titleEl = theCard.querySelector('.modal-title');
       const subEl = theCard.querySelector('.modal-subtitle');
+
+      /* Print / Export reads the plan as it is on screen, saved or not — so a
+         half-planned show exports with its gaps listed rather than refusing.
+         The Working Days page exports its holidays; the others the show. */
+      const draftSnap = () => {
+        const { epCount } = readPlan();
+        const plan = episodePlan();
+        const names = [...epList.querySelectorAll('.ep-name-fld')].map((inp, i) => inp.value.trim() || ('Episode ' + (i + 1)));
+        const code = codeInput.value.trim().toUpperCase();
+        return {
+          id: editId, isNew: !editShow, unsaved: true,
+          name: nameInput.value.trim(), code, brand: brandInput.value.trim(), series: seriesInput.value.trim(),
+          type: typeSel.value, color: color || null,
+          pipeline: pipe, team: team.read(), calendar: App.calIsEmpty(calState) ? null : calState,
+          iterations: editShow ? (editShow.iterations || []) : [],
+          episodes: plan.slice(0, epCount).map((p, i) => {
+            const ex = editEps[i];
+            const live = ex && App.epMilestone(ex, App.LIVE_KEY);
+            return {
+              code: ex ? ex.code : (code ? code + '-' + (i + 1) : '#' + (i + 1)), title: names[i],
+              // an episode this edit leaves alone keeps the start it really has
+              start: ex && (epLocked[i] || (!schedDirty && !liveDirty[i])) ? App.epStart(ex) : p.start,
+              live: p.live, liveSet: true,
+              state: ex ? (App.isDelivered(ex) ? 'done' : App.inProduction(ex) ? 'active' : 'pending') : 'pending',
+              statusLabel: ex ? App.epStatusLabel(ex) : 'Planned', progress: ex ? App.progressPct(ex) : 0,
+              locked: !!(ex && epLocked[i]), slip: ex && live && !schedDirty ? live.slipDays : 0, ep: ex || null
+            };
+          })
+        };
+      };
+      // an edit only counts as unsaved once something differs from how it opened
+      const snapKey = (s) => JSON.stringify([s.name, s.code, s.brand, s.series, s.type, s.color, s.pipeline, s.team, s.calendar,
+        s.episodes.map(e => [e.title, e.start, e.live, e.locked])]);
+      let baseKey = null;
+      theCard._exportCtx = () => {
+        const get = () => { const s = draftSnap(); if (editShow) s.unsaved = snapKey(s) !== baseKey; return s; };
+        return step === 3 ? App.exportHolidaysCtx(get, 'Working Days & Holidays')
+          : App.exportShowCtx(get, editShow ? 'Edit Pipeline' : 'Add Show');
+      };
       App.modal.open(theCard, { onClose: () => {
         team.closeMenus(); viz.closeMenus(); keepDraft();
         // editing, left without saving: back to wherever it was opened from
@@ -3529,6 +3572,7 @@ window.App = window.App || {};
       itersReady = true;
       paintIterations();
       if (opts && opts.step > 1) goStep(Math.min(3, opts.step));
+      if (editShow) { try { baseKey = snapKey(draftSnap()); } catch (e) { baseKey = null; } }
     }
   };
 
@@ -3843,7 +3887,18 @@ window.App = window.App || {};
         }, '＋ Add show')
       ];
 
-      App.modal.open(card('clapper', 'Shows', 'Open a show to edit it, or start a new one', sections, footer, 'wide'));
+      footer.unshift(el('button.btn-ghost.foot-left', {
+        title: 'Print or export the shows listed (' + App.shortcutLabel('P') + ')',
+        onclick: () => App.exporter.open()
+      }, [App.icon('printer'), ' Export']));
+      const browser = card('clapper', 'Shows', 'Open a show to edit it, or start a new one', sections, footer, 'wide');
+      // ⌘P exports what the filters leave listed, and says which filters did it
+      browser._exportCtx = () => {
+        const note = [f.name && 'name “' + f.name + '”', f.brand, f.series, f.producer && 'producer ' + f.producer,
+          f.code && 'code “' + f.code + '”'].filter(Boolean);
+        return App.exportShowsCtx(shows().filter(matches), note.length ? 'Filtered by ' + note.join(', ') : null);
+      };
+      App.modal.open(browser);
     }
   };
 
@@ -3942,6 +3997,10 @@ window.App = window.App || {};
             onclick: () => { nav = true; App.addShow.open({ showId, step: 3, back: reopen }); }
           }, [App.icon('sun'), ' Holiday']),
           el('button.btn-mini', {
+            type: 'button', title: 'Print or export a breakdown of this show — and what’s still unfinished (' + App.shortcutLabel('P') + ')',
+            onclick: () => App.exporter.open()
+          }, [App.icon('printer'), ' Export']),
+          el('button.btn-mini', {
             type: 'button', title: 'Download this show and all its episodes as a JSON file',
             onclick: () => App.downloadShowBackup(showId)
           }, [App.icon('download'), ' Back up']),
@@ -3973,8 +4032,17 @@ window.App = window.App || {};
         }, 'Save Show')
       ];
 
-      App.modal.open(card('film', 'Edit Show', 'Rename, recolour, or jump to this show’s team', sections, footer),
-        { onClose: () => { if (!nav && back) back(); } });
+      const editCard = card('film', 'Edit Show', 'Rename, recolour, or jump to this show’s team', sections, footer);
+      // the show as saved, with whatever's been typed here over the top
+      editCard._exportCtx = () => App.exportShowCtx(() => {
+        const s = App.exportShowSnap(show);
+        const typed = { name: nameInput.value.trim(), code: codeInput.value.trim().toUpperCase(),
+          brand: brandInput.value.trim(), series: seriesInput.value.trim(), color: color };
+        s.unsaved = typed.name !== s.name || typed.code !== s.code || typed.brand !== s.brand ||
+          typed.series !== s.series || typed.color !== s.color;
+        return Object.assign(s, typed);
+      }, 'Edit Show');
+      App.modal.open(editCard, { onClose: () => { if (!nav && back) back(); } });
     }
   };
 })();
