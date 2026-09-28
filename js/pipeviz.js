@@ -65,8 +65,7 @@ window.App = window.App || {};
       el('.pv-legend', null, [
         el('span.pv-lg', null, [el('span.pv-lg-pill'), 'First pass']),
         el('span.pv-lg', null, [el('span.pv-lg-pill.rev'), 'Revision (planned)']),
-        el('span.pv-lg', null, [el('span.pv-lg-dot'), 'Director review (1 day)']),
-        el('span.pv-lg', null, [el('span.pv-lg-line'), 'Delivery / Live'])
+                el('span.pv-lg', null, [el('span.pv-lg-line'), 'Delivery / Live'])
       ])
     ]);
 
@@ -125,10 +124,8 @@ window.App = window.App || {};
       const items = pipe.map(t => {
         const d = sch.dates[t.key];
         const s = App.diffDays(d.start, startIso), e = App.diffDays(d.due, startIso) + 1;   // e exclusive
-        // every pass is followed by a review day; the gap between one pass's
-        // bar and the next is that review, drawn in the Director Reviews lane
-        // (the scheduler's own review/revision steps, so working days and
-        // holidays land exactly as they will on the real show)
+        // versions run back to back (the scheduler's own revision steps, so
+        // working days and holidays land exactly as they will on the real show)
         const segs = [{ s, e, label: t.maxRev ? 'V1' : '' }];
         const off = (iso) => App.diffDays(iso, startIso);
         const steps = App.revisionSteps(t, d.due, cal, { dept: t.dept, person: assignees[t.key] || null }, 0);
@@ -202,7 +199,7 @@ window.App = window.App || {};
           });
         }
       }
-      return { items, lanes, milestones, workEnd, offDays, revRows: Math.max(1, revRows.length), totalDays: drawEnd + PAD_DAYS };
+      return { items, lanes, milestones, workEnd, offDays, revRows: revRows.length, totalDays: drawEnd + PAD_DAYS };
     }
 
     function render(pipe, startIso, scale, opts) {
@@ -236,7 +233,8 @@ window.App = window.App || {};
       const width = X(L.totalDays);
 
       // vertical positions: axis, reviews lane, then each department's sub-rows
-      const reviewH = L.revRows * REV_ROW_H + 10;
+      // no review days any more, so the Director Reviews lane only shows if something lands in it
+      const reviewH = L.revRows ? L.revRows * REV_ROW_H + 10 : 0;
       let y = AXIS_H + reviewH;
       L.lanes.forEach(lane => { lane.y = y; lane.h = lane.rows * ROW_H + 8; y += lane.h; });
       const height = y;
@@ -273,7 +271,7 @@ window.App = window.App || {};
       }
 
       // ---- lane rails ----
-      canvas.appendChild(el('.pv-lane.reviews', { style: { top: AXIS_H + 'px', height: reviewH + 'px', width: width + 'px' } },
+      if (reviewH) canvas.appendChild(el('.pv-lane.reviews', { style: { top: AXIS_H + 'px', height: reviewH + 'px', width: width + 'px' } },
         el('.pv-lane-lbl', null, 'Director Reviews')));
       L.lanes.forEach(lane => {
         const dep = App.dept(lane.dept);

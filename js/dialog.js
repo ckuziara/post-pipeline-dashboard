@@ -1735,6 +1735,11 @@ window.App = window.App || {};
       }
     }, '⠿');
 
+    // a task's versions: V1 is t.days, V2… are t.revDays (one per budgeted revision)
+    const taskTotal = (t) => (t.days || 0) + (t.revDays || []).slice(0, t.maxRev || 0).reduce((a, n) => a + (n || 0), 0);
+    const versionTip = (t) => [t.days].concat((t.revDays || []).slice(0, t.maxRev || 0))
+      .map((d, vi) => 'V' + (vi + 1) + ': ' + d + 'd').join(' · ') + ' — ' + taskTotal(t) + ' days in total';
+
     function compactRow(t, i) {
       const dep = App.dept(t.dept);
       const depNames = t.deps.map(dk => { const d = pipe.find(p => p.key === dk); return d ? d.name : dk; });
@@ -1748,9 +1753,8 @@ window.App = window.App || {};
         (t.vc ? App.icon('lock', { cls: 'pipe-vc-tag', title: 'LucidLink version control enabled' }) : null),
         (App.batchCfg(t) ? el('span.pipe-batch-tag', { title: tip('Batch task — ' + App.batchLabel(t)) }, 'Batch') : null),
         el('span.pipe-deps-sum', { title: tip(depNames.join(', ')) }, depNames.length ? '◷ ' + depNames.join(', ') : ''),
-        (t.maxRev ? el('span.pipe-rev', { title: tip(t.maxRev + ' revision' + (t.maxRev === 1 ? '' : 's') + ' budgeted — ' +
-          (t.revDays || []).map((d, ri) => '#' + (ri + 1) + ': ' + d + 'd').join(', ')) }, '↺' + t.maxRev) : null),
-        el('span.pipe-dur', { title: tip(t.days + ' day' + (t.days === 1 ? '' : 's')) }, t.days + 'd'),
+        (t.maxRev ? el('span.pipe-rev', { title: tip(versionTip(t)) }, 'V1–V' + (t.maxRev + 1)) : null),
+        el('span.pipe-dur', { title: tip(versionTip(t)) }, taskTotal(t) + 'd'),
         dragGrip(i, t, '.hov')
       ]);
     }
@@ -1794,41 +1798,39 @@ window.App = window.App || {};
         onclick: (e) => { e.stopPropagation(); t.vc = !t.vc; renderPipe(); onChange(); }
       }, App.icon('lock')) : null;
 
-      /* Revisions: how many times this task can be sent back once it reaches
-         Review, and how many days each one is worth — a first pass usually
-         needs longer than a polish, so each revision gets its own count
-         rather than sharing one number. Raising Max Revisions grows the list
-         with a 1-day default; lowering it truncates from the end, so an
-         existing revision's day count is never disturbed by a change to the
-         ones after it. */
-      const revDaysRow = el('.pipe-rev-days');
-      const paintRevDays = () => {
-        revDaysRow.innerHTML = '';
-        (t.revDays || []).forEach((days, ri) => {
-          const inp = selectOnFocus(el('input.fld.fld-num.pipe-rev-sel', {
-            type: 'number', value: String(days), min: '1', max: '365',
-            title: tip('Days needed for revision ' + (ri + 1)),
-            oninput: (e) => { const n = parseInt(e.target.value, 10); if (n >= 1 && n <= 365) { t.revDays[ri] = n; onDraft(); } },
-            onchange: (e) => { t.revDays[ri] = Math.max(1, parseInt(e.target.value, 10) || 1); onChange(); }
-          }));
-          revDaysRow.appendChild(el('.pipe-rev-day', null, [el('span.pipe-rev-day-lbl', null, '#' + (ri + 1)), inp]));
-        });
-      };
-      paintRevDays();
-      const maxRevFld = selectOnFocus(el('input.fld.fld-num', {
-        type: 'number', value: String(t.maxRev || 0), min: '0', max: '9',
-        onchange: (e) => {
-          const n = Math.max(0, Math.min(9, parseInt(e.target.value, 10) || 0));
-          t.maxRev = n;
-          t.revDays = t.revDays || [];
-          while (t.revDays.length < n) t.revDays.push(1);
-          t.revDays.length = n;
-          // the row itself gains or loses the whole revisions block, not just
-          // a value inside it — a full repaint, same as add/remove dependency
-          renderPipe();
-          onChange();
-        }
-      }));
+      /* Versions: V1 is the first pass (t.days); each ＋ adds a version the
+         Director can ask for, with its own days (t.revDays, t.maxRev = how
+         many). They run back to back — V2 starts the day after V1 ends — but
+         only once the Director sends the task back for it. The total is what
+         the task can take end to end, and what its dependents wait for. */
+      const versBox = el('.pipe-vers');
+      const totalLbl = el('span.pipe-vers-total');
+      const paintTotal = () => { totalLbl.textContent = '= ' + taskTotal(t) + ' day' + (taskTotal(t) === 1 ? '' : 's'); };
+      const setVersions = (arr) => { snapshot(); t.revDays = arr; t.maxRev = arr.length; renderPipe(); onChange(); };
+      const v1 = numFld(t, 'days', 1);
+      v1.addEventListener('input', paintTotal); v1.addEventListener('change', paintTotal);
+      versBox.appendChild(el('.pipe-ver', null, [el('span.pipe-ver-lbl', null, 'V1'), v1]));
+      (t.revDays || []).slice(0, t.maxRev || 0).forEach((days, ri) => {
+        const inp = selectOnFocus(el('input.fld.fld-num.pipe-rev-sel', {
+          type: 'number', value: String(days), min: '1', max: '365',
+          title: tip('Days for V' + (ri + 2)),
+          oninput: (e) => { const n = parseInt(e.target.value, 10); if (n >= 1 && n <= 365) { t.revDays[ri] = n; paintTotal(); onDraft(); } },
+          onchange: (e) => { t.revDays[ri] = Math.max(1, Math.min(365, parseInt(e.target.value, 10) || 1)); e.target.value = t.revDays[ri]; paintTotal(); onChange(); }
+        }));
+        const last = ri === t.maxRev - 1;
+        versBox.appendChild(el('.pipe-ver', null, [
+          el('span.pipe-ver-lbl', null, 'V' + (ri + 2)), inp,
+          // only the last version comes off, so the numbering never has a gap
+          last ? el('button.pipe-ver-x', { type: 'button', title: tip('Remove V' + (ri + 2)),
+            onclick: () => setVersions(t.revDays.slice(0, ri)) }, '✕') : null
+        ]));
+      });
+      if ((t.maxRev || 0) < 9) versBox.appendChild(el('button.pipe-ver-add', {
+        type: 'button', title: tip('Add V' + ((t.maxRev || 0) + 2) + ' — a version the Director can ask for'),
+        onclick: () => setVersions((t.revDays || []).slice(0, t.maxRev || 0).concat(t.revDays && t.revDays[t.maxRev || 0] || Math.max(1, Math.round((t.days || 2) / 2))))
+      }, '＋'));
+      versBox.appendChild(totalLbl);
+      paintTotal();
 
       return el('.pipe-row.editing', null, [
         leadCell(i),
@@ -1837,18 +1839,14 @@ window.App = window.App || {};
           oninput: (e) => { t.name = e.target.value; onDraft(); },
           onchange: () => onChange() }),        // renaming counts as an edit; on blur, not per keystroke
         deptSel,
-        el('.pipe-days', null, [el('span.pipe-days-lbl', null, 'days'), numFld(t, 'days', 1)]),
         // no "min" field: producers never set it. minDays still exists on the
         // task (it's the squeeze floor for an earlier end date) — it just
         // keeps whatever the preset or the new-task default gave it
-        // how many times this task may be sent back from Review, and for how long
-        el('.pipe-days', { title: tip('Maximum revisions this task can be sent back for from the Reviews tab') },
-          [el('span.pipe-days-lbl', null, 'revisions'), maxRevFld]),
         depsBox,
-        (t.maxRev ? el('.pipe-rev-block', { style: { gridColumn: '1 / -1' } }, [
-          el('span.pipe-rev-block-lbl', null, 'Days per revision'),
-          revDaysRow
-        ]) : null),
+        el('.pipe-rev-block', { style: { gridColumn: '1 / -1' } }, [
+          el('span.pipe-rev-block-lbl', null, 'Days per version'),
+          versBox
+        ]),
         el('.pipe-actions', null, [
           vcToggle,
           el('button.btn-done', {
