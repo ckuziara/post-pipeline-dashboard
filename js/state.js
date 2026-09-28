@@ -554,7 +554,7 @@ window.App = window.App || {};
       const n = Math.max(1, (t.revDays || [])[r] || 1);
       const s0 = cal ? cal.nextWork(App.shiftIso(at, 1), who) : App.shiftIso(at, 1);
       const e0 = cal ? cal.addWork(s0, n, who) : App.shiftIso(at, n);
-      out.revs.push({ start: s0, due: e0, label: 'V' + (r + 2) });
+      out.revs.push({ start: s0, due: e0, label: 'V' + (r + 2), idx: r });
       at = e0;
     }
     out.end = at;
@@ -952,10 +952,23 @@ window.App = window.App || {};
      in main.js). What's reserved but never spent is left visible rather than
      silently forgotten — see revisionGhostDays below.
   --------------------------------------------------------------------------- */
+  /* A task's pipeline entry with this episode's own version lengths laid
+     over it. A version dragged longer or shorter on the Timeline is stored
+     per episode (ep.revDays[key][r] = days, sparse), so one episode's V2
+     can run long without touching the show's pipeline. Anything not set
+     falls back to the pipeline's own days. */
+  App.revTask = function (ep, key) {
+    const t = App.pTask(ep, key);
+    const own = ep && ep.revDays && ep.revDays[key];
+    if (!t || !own) return t;
+    const days = (t.revDays || []).slice();
+    own.forEach((n, r) => { if (n > 0) days[r] = n; });
+    return Object.assign({}, t, { revDays: days });
+  };
   // how many of a task's budgeted revisions this episode has actually spent
   App.revisionsUsed = function (ep, key) { return (ep.revisions && ep.revisions[key]) || 0; };
   App.taskRevisions = function (ep, key) {
-    const t = App.pTask(ep, key);
+    const t = App.revTask(ep, key);
     const max = Math.max(0, (t && t.maxRev) || 0);
     const days = (t && t.revDays) || [];
     const used = App.revisionsUsed(ep, key);
@@ -982,7 +995,7 @@ window.App = window.App || {};
      and a task with no revisions isn't reviewed by the Director at all. */
   App.plannedRevisions = function (ep, su) {
     if (su.status === 'approved') return { reviews: [], revs: [], end: su.due };
-    const t = App.pTask(ep, su.key);
+    const t = App.revTask(ep, su.key);
     if (!t || !t.maxRev) return { reviews: [], revs: [], end: su.due };
     return App.revisionSteps(t, su.due, App.showCalendar(ep.showId),
       { dept: su.dept, person: su.assignee }, App.revisionsUsed(ep, su.key));

@@ -788,6 +788,9 @@ button.ghost:disabled:hover { background: transparent; }
 }
 .g-row.sub .rev-plan { height: 12px; border-radius: 3px; font-size: 8px; }
 .rev-plan.bare { padding: 0; min-width: 2px; }
+/* its end drags to change how long that version runs (see gantt.js) */
+.rev-plan.adjustable:hover { box-shadow: inset 0 0 0 1px var(--rp-c), 0 0 0 1px var(--rp-c); }
+.rev-plan.dragging { z-index: 5; box-shadow: inset 0 0 0 2px var(--rp-c); }
 /* Director Reviews row: each review day as a small orange block, ringed in
    the colour of the department whose work is being reviewed */
 .rev-ghost:hover { border-color: rgba(255,255,255,.4); }
