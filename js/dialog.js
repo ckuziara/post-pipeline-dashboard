@@ -2524,7 +2524,7 @@ window.App = window.App || {};
       /* Advanced → Set start episode number: a show picked up mid-production
          numbers its episodes on from there (start at 14 and they're LA-14,
          LA-15…). New shows only — an existing show's codes are already set. */
-      const startNumInput = selectOnFocus(el('input.fld', { type: 'number', value: String(d0.startNum || 1), min: '1', max: '9999', style: { maxWidth: '110px' } }));
+      const startNumInput = selectOnFocus(el('input.fld', { type: 'number', value: String(d0.startNum || 1), min: '1', max: '9999' }));
       const startNum = () => (editShow ? 1 : Math.max(1, Math.min(9999, parseInt(startNumInput.value, 10) || 1)));
       const defaultEpName = (i, sn) => 'Episode ' + ((sn == null ? startNum() : sn) + i);
       let shownStart = startNum();                  // the start number the rows on screen were drawn with
@@ -3049,11 +3049,10 @@ window.App = window.App || {};
       startNumInput.addEventListener('input', () => { rebuildEps(); keepDraft(); });
       const advBody = el('.as-adv-body', { style: { display: 'none' } }, [
         weekendChk,
-        editShow ? null : el('.as-adv-field', null, [
-          el('label.fld-label', null, 'Set start episode number'),
-          startNumInput,
-          el('.fld-hint', null, 'To pick a show up mid-production — episodes are numbered on from here.')
-        ])
+        // one line, like the checkbox beside it; the explanation is the tooltip
+        editShow ? null : el('label.as-adv-num', {
+          title: 'To pick a show up mid-production — episodes are numbered on from here'
+        }, [el('span', null, 'Start episode number'), startNumInput])
       ]);
       const advChev = el('span.chev', null, '▶');
       const advOpen = d0.startNum > 1;               // a restored draft with a start number shows it

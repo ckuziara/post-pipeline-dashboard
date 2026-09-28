@@ -2517,7 +2517,7 @@ select.fld { cursor: pointer; }
 .sched-weekends { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); cursor: pointer; white-space: nowrap; }
 .sched-weekends input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
 /* Add Show → Advanced: a small fold at the foot of the Schedule box */
-.as-adv { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+.as-adv { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 6px; }
 .as-adv-toggle {
   display: inline-flex; align-items: center; gap: 6px; padding: 2px 0;
   background: none; border: 0; color: var(--text-3); font-size: 11.5px; font-weight: 600; cursor: pointer;
@@ -2525,9 +2525,9 @@ select.fld { cursor: pointer; }
 .as-adv-toggle:hover { color: var(--text); }
 .as-adv-toggle .chev { font-size: 8px; transition: transform .12s; }
 .as-adv-toggle .chev.open { transform: rotate(90deg); }
-.as-adv-body { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 28px; padding: 10px 0 2px; }
-.as-adv-field { display: flex; flex-direction: column; gap: 4px; }
-.as-adv-field .fld-label { margin: 0; }
+.as-adv-body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; padding: 6px 0 0; }
+.as-adv-num { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
+.as-adv-num .fld { width: 64px; height: 28px; padding: 3px 8px; font-size: 12.5px; }
 
 .rec-pill {
   display: flex; align-items: center; gap: 8px; margin: 12px 0 0;
