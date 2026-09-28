@@ -164,7 +164,7 @@
 /* ---- the structural layer: only expressive themes opt in ----
    Everything here reads the vars above, so adding a sixth skin is a palette
    block and nothing more. Deliberately NOT restyled: .status-cell (status
-   coding stays pixel-identical), and anything that must stay a circle
+   colours stay identical; its radius follows --r-ctl), and anything that must stay a circle
    (avatars, dots, switches, swatches). */
 :root[data-skin="expressive"] body { background-image: var(--page-art); background-attachment: fixed; }
 
@@ -1216,7 +1216,7 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 .subgrid { min-width: 980px; }
 .subrow {
   display: grid;
-  grid-template-columns: 40px 170px 132px 60px 150px 96px 96px 1fr;
+  grid-template-columns: 40px 170px 132px 60px 36px 150px 96px 96px 1fr;
   align-items: center; border-top: 1px solid var(--border);
 }
 .subrow.head { background: var(--bg-2); position: sticky; top: 0; }
@@ -1237,12 +1237,14 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 .status-cell {
   height: 100%; min-height: 36px; display: flex; align-items: center; justify-content: center;
   font-size: 11px; font-weight: 700; cursor: pointer; position: relative; user-select: none;
-  border-left: 1px solid rgba(0,0,0,.25); border-right: 1px solid rgba(0,0,0,.25);
+  border-radius: var(--r-ctl, 8px); box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
   transition: filter .1s;
 }
+/* an inset, rounded label rather than a full-bleed block — same status colours */
+.subrow .cell.c-status { padding: 4px 6px; }
+.subrow .cell.c-status .status-cell { min-height: 28px; }
 .status-cell:hover { filter: brightness(1.08); }
 .status-cell .blk { position: absolute; right: 6px; font-size: 11px; }
-.subrow .cell.c-status { padding: 0; }
 
 /* status picker popup */
 .status-pop {
@@ -4037,11 +4039,11 @@ select.fld { cursor: pointer; }
      those three stay. ---- */
   .subtable { overflow-x: visible; }
   .subgrid { min-width: 0; }
-  .subrow { grid-template-columns: 1fr 38px 108px; column-gap: 8px; }
+  .subrow { grid-template-columns: 1fr 38px 22px 108px; column-gap: 8px; }
   .subrow .cell.c-num,
   .subrow .cell.c-dept, .subrow .cell.c-date, .subrow .cell.c-deps { display: none; }
-  .subrow.head .cell:nth-child(3), .subrow.head .cell:nth-child(6),
-  .subrow.head .cell:nth-child(7), .subrow.head .cell:nth-child(8) { display: none; }
+  .subrow.head .cell:nth-child(3), .subrow.head .cell:nth-child(7),
+  .subrow.head .cell:nth-child(8), .subrow.head .cell:nth-child(9) { display: none; }
   .subrow .cell.c-name { font-size: 13.5px; }
   .status-cell { font-size: 12px; min-height: 46px; }
   .status-opt { min-height: 46px; font-size: 12.5px; }
@@ -4662,3 +4664,62 @@ select.fld { cursor: pointer; }
 /* an episode the palette just jumped to */
 .kb-flash > .g-label, .kb-flash { animation: kb-flash 1.4s ease; }
 @keyframes kb-flash { 0%, 40% { box-shadow: inset 0 0 0 2px var(--accent); } 100% { box-shadow: inset 0 0 0 2px transparent; } }
+
+/* ---- Kick Offs ---- */
+.ko-tag {
+  font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 4px; margin-left: 6px; flex: none;
+  color: var(--text-2); background: var(--surface-3); border: 1px solid var(--border);
+}
+.ko-tag.done { color: #7fe3b0; border-color: rgba(0,200,117,.3); background: rgba(0,200,117,.1); }
+.ko-tag.due  { color: #ffb3bb; border-color: rgba(255,91,110,.3); background: rgba(255,91,110,.12); }
+.ko-line { display: flex; align-items: center; gap: 8px; margin: 10px 0 2px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font-size: 12px; }
+.ko-line .ko-tag { margin-left: 0; }
+.ko-line-text { flex: 1; color: var(--text-2); }
+.ko-line.due { border-color: rgba(255,91,110,.3); }
+
+.kocal { display: flex; flex-direction: column; gap: 8px; }
+.kocal-nav { display: flex; align-items: center; gap: 6px; }
+.kocal-month { font-weight: 700; font-size: 12.5px; min-width: 130px; text-align: center; }
+.kocal-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; }
+.kocal-dow { font-size: 10px; font-weight: 700; color: var(--text-3); text-align: center; padding-bottom: 2px; }
+.kocal-day { min-height: 54px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 3px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.kocal-day.out { opacity: .4; }
+.kocal-day.past .kocal-num { color: var(--text-3); }
+.kocal-day.today { border-color: var(--accent); }
+.kocal-day.today .kocal-num { color: var(--accent); }
+.kocal-num { font-size: 10px; font-weight: 700; color: var(--text-2); }
+.kocal-chip {
+  display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 10.5px; line-height: 1.3; cursor: pointer;
+  background: var(--surface-3); border-left: 3px solid; border-radius: 4px; padding: 2px 3px 2px 5px;
+}
+.kocal-chip:hover { background: var(--surface); }
+.kocal-code { font-weight: 700; flex: none; }
+.kocal-dept { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+.kocal-date { flex: none; color: var(--text-3); }
+.kocal-tick { font: inherit; font-size: 10px; flex: none; border: 0; background: transparent; color: var(--text-3); cursor: pointer; padding: 0 2px; border-radius: 3px; }
+.kocal-tick:hover { color: #00c875; background: rgba(0,200,117,.14); }
+.kocal-more { font-size: 10px; color: var(--text-3); padding-left: 4px; }
+.kocal-strip, .kocal-agenda { display: flex; flex-direction: column; gap: 3px; padding: 4px 0 2px; }
+.kocal-strip .kocal-chip, .kocal-agenda .kocal-chip { font-size: 11.5px; padding: 4px 6px 4px 8px; }
+.kocal-overdue { padding-bottom: 4px; }
+.subrow .cell.c-ko { padding-left: 0; padding-right: 0; text-align: center; }
+.ko-tick { color: #00c875; font-weight: 800; font-size: 13px; }
+
+.subrow .cell.c-ko.can { cursor: pointer; }
+.subrow .cell.c-ko.can:hover { background: var(--hover); }
+.subrow.head .cell.c-ko.can:hover { color: var(--text); }
+.ko-ring { display: inline-block; width: 11px; height: 11px; border-radius: 50%; border: 2px solid #fdab3d; vertical-align: middle; }
+.ko-ring.due { border-color: #ff5b6e; }
+.subrow .cell.c-ko.can:hover .ko-ring { background: rgba(0,200,117,.25); border-color: #00c875; }
+.subrow:not(.head) .cell.c-ko.can:empty:hover::after { content: '+'; color: var(--text-2); font-weight: 700; font-size: 14px; }
+.ko-line .c-ko { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; flex: none; }
+.ko-line .c-ko.can { cursor: pointer; }
+.ko-line .c-ko.can:hover { background: var(--hover); }
+.ko-line .c-ko.can:hover .ko-ring { background: rgba(0,200,117,.25); border-color: #00c875; }
+.kocal-grid.week { flex: 1; align-items: stretch; }
+.kocal-grid.week .kocal-day { min-height: 220px; gap: 4px; padding: 6px; }
+.kocal-grid.week .kocal-num { font-size: 11px; margin-bottom: 2px; }
+.kocal-grid.week .kocal-chip { flex-wrap: wrap; font-size: 11px; padding: 4px 4px 4px 6px; }
+.kocal-grid.week .kocal-dept { white-space: normal; flex-basis: 100%; order: 3; }
+.kocal-empty { color: var(--text-3); font-size: 11px; padding-left: 2px; }
+.kocal-nav .btn-mini { white-space: nowrap; }

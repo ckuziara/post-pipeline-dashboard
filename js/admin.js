@@ -247,6 +247,8 @@ window.App = window.App || {};
         get: k => App.rolePermOf(k, 'reviewQueue', App.role(k).reviewQueue), set: (k, v) => App.setRolePerm(k, 'reviewQueue', v, 'Reviews Tab') },
       { title: 'Change the Schedule', desc: 'Can move task dates — in the Edit Task dialog and by dragging bars on the Timeline — for every department, not just their own.',
         get: k => App.rolePermOf(k, 'editSchedule', App.role(k).editSchedule), set: (k, v) => App.setRolePerm(k, 'editSchedule', v, 'Change the Schedule') },
+      { title: 'Kick Offs', desc: 'Can choose which departments and tasks need a Kick Off on each episode, set a show’s usual list, and mark Kick Offs done.',
+        get: k => App.rolePermOf(k, 'kickOff', App.role(k).kickOff), set: (k, v) => App.setRolePerm(k, 'kickOff', v, 'Kick Offs') },
       { title: 'Manage Shows', danger: true, desc: 'Can create new shows — and permanently remove a show together with all of its episodes.',
         get: k => App.rolePermOf(k, 'manageShows', App.role(k).manageShows), set: (k, v) => App.setRolePerm(k, 'manageShows', v, 'Manage Shows') }
     ]},

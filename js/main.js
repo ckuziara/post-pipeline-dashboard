@@ -545,6 +545,38 @@ window.App = window.App || {};
      IS the commitment — so it can only be changed, never cleared. Neither ever
      drifts with the work: a slip shows up as a warning instead of being quietly
      absorbed by the date someone outside the studio was promised. */
+  /* ---- Kick Offs ----
+     See App.epKoTasks (js/state.js). An episode's first change snapshots the
+     show's default list into ep.ko, so later show-default edits leave it be. */
+  const koDeny = () => { App.toast('Only Producers and Directors can set Kick Offs', true); };
+  const koOf = (e) => e.ko || (e.ko = { tasks: App.epKoTasks(e), done: {} });
+  const koDepts = (ep, keys) => [...new Set(App.subitems(ep).filter(su => keys.includes(su.key)).map(su => App.dept(su.dept).label))];
+
+  App.setEpisodeKo = function (epId, taskKeys) {
+    if (!App.canSetKickOff(App.state.role)) return koDeny();
+    const ep = App.state.data.episodes.find(x => x.id === epId); if (!ep) return;
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      const ko = koOf(e);
+      ko.tasks = taskKeys.slice();
+      Object.keys(ko.done || {}).forEach(k => { if (!taskKeys.includes(k)) delete ko.done[k]; });
+    }, 'the Kick Offs');
+    App.track.audit('episode.kickoff', { episode: ep.code, tasks: taskKeys.length, depts: koDepts(ep, taskKeys) });
+  };
+
+  App.setKoDone = function (epId, taskKeys, done) {
+    if (!App.canSetKickOff(App.state.role)) return koDeny();
+    const ep = App.state.data.episodes.find(x => x.id === epId); if (!ep) return;
+    const keys = [].concat(taskKeys);
+    const by = (App.state.user && App.state.user.name) || App.role(App.state.role).label;
+    App.mutate(d => {
+      const ko = koOf(d.episodes.find(x => x.id === epId));
+      ko.done = ko.done || {};
+      keys.forEach(k => { if (done) ko.done[k] = { by, at: new Date().toISOString() }; else delete ko.done[k]; });
+    }, 'the Kick Off');
+    App.track.audit('kickoff.done', { episode: ep.code, depts: koDepts(ep, keys), tasks: keys.length, done: !!done });
+  };
+
   App.setEpisodeMilestone = function (epId, key, iso) {
     if (!App.canEditSchedule(App.state.role)) {
       App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;

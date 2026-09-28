@@ -487,6 +487,7 @@ window.App = window.App || {};
             locked: !canSched, hint: canSched ? null : 'Only Producers, Managers and Post Operations can change the schedule'
           })
         ]),
+        koLine(ep, su),
         // LucidLink version control — only for tasks flagged version-controlled
         // in the pipeline (enabled in Pipeline Presets, not here)
         (App.vc && App.vc.isVc(ep, key) ? App.vc.inlineSection(epId, key) : null),
@@ -683,6 +684,22 @@ window.App = window.App || {};
      episode is committed to, and this is the only place they change. For the
      delivery date it also lists what has to be in hand on the day, so one click
      answers both "when is it" and "are we ready". */
+  // the Edit Task dialog's one-line Kick Off status, with the Board's own symbol
+  function koLine(ep, su) {
+    const st = App.koState(ep, su.key); if (!st) return null;
+    const can = App.canSetKickOff(App.state.role);
+    const d = st === 'done' && ep.ko.done[su.key];
+    const due = App.koOverdue(ep, su);
+    const redo = (v) => { App.modal.close(); App.setKoDone(ep.id, su.key, v); App.editTask.open(ep.id, su.key); };
+    // the Board's own KO symbol (ring / tick), clickable the same way
+    return el('.ko-line' + (st === 'done' ? '.done' : due ? '.due' : ''), null, [
+      el('span.c-ko' + (can ? '.can' : ''), can ? { onclick: () => redo(st !== 'done') } : null, App.board.koTag(ep, su)),
+      el('span.ko-line-text', null, st === 'done'
+        ? 'Kick Off done' + (d && d.by ? ' by ' + d.by : '') + (d && d.at ? ' on ' + App.fmtDate(d.at.slice(0, 10)) : '')
+        : (due ? 'Kick Off overdue — was due ' : 'Kick Off due ') + App.fmtDate(su.start))
+    ]);
+  }
+
   App.milestoneDialog = {
     open(epId, key) {
       const ep = App.state.data.episodes.find(x => x.id === epId); if (!ep) return;
