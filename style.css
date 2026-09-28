@@ -790,13 +790,6 @@ button.ghost:disabled:hover { background: transparent; }
 .rev-plan.bare { padding: 0; min-width: 2px; }
 /* Director Reviews row: each review day as a small orange block, ringed in
    the colour of the department whose work is being reviewed */
-.review-row .g-label { background: rgba(253,171,61,.08); }
-.review-dot { width: 7px; height: 7px; border-radius: 2px; background: var(--st-in_progress); flex: none; }
-.review-day {
-  position: absolute; top: 50%; transform: translateY(-50%); height: 12px; min-width: 3px; z-index: 1;
-  border-radius: 3px; background: var(--st-in_progress);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rv-c) 75%, transparent);
-}
 .rev-ghost:hover { border-color: rgba(255,255,255,.4); }
 .rev-ghost-x {
   font-size: 8px; color: var(--text-3); opacity: 0; transition: opacity .12s;
@@ -1150,7 +1143,6 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
    float half their own length above where they belong. */
 .gantt.gantt-portrait .rev-ghost,
 .gantt.gantt-portrait .rev-plan,
-.gantt.gantt-portrait .review-day,
 .gantt.gantt-portrait .ms-day,
 .gantt.gantt-portrait .phase-bar {
   left: 50%; top: auto; transform: translateX(-50%); height: auto;
@@ -1160,8 +1152,7 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 }
 .gantt.gantt-portrait .ms-day { width: 70%; }
 .gantt.gantt-portrait .rev-plan { width: 70%; padding: 2px 0; justify-content: center; }
-.gantt.gantt-portrait .review-day { width: 60%; min-height: 3px; }
-.gantt.gantt-portrait .phase-bar { width: 8px; }
+.gantt.gantt-portrait .gantt.gantt-portrait .phase-bar { width: 8px; }
 
 /* A department's phase span is a marker, not a lane you read across, so in
    Portrait it takes a spine's width rather than a full task column — the
