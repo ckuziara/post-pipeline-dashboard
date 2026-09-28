@@ -544,10 +544,9 @@ window.App = window.App || {};
      review sits between versions but takes no scheduled time of its own — the
      next version only starts once the Director sends the task back for it
      (App.requestRevision). `used` revisions are already inside the pass.
-     Returns { reviews, revs, end }; `reviews` is always empty now and kept so
-     older callers stay safe. */
+     Returns { revs, end }. */
   App.revisionSteps = function (t, due, cal, who, used) {
-    const out = { reviews: [], revs: [], end: due };
+    const out = { revs: [], end: due };
     const max = (t && t.maxRev) || 0;
     if (!max) return out;
     let at = due;
@@ -987,17 +986,16 @@ window.App = window.App || {};
     return days.slice(used).reduce((a, n) => a + (n || 0), 0);
   };
 
-  /* The review days and revisions still ahead of an open task — the reserve
-     the worst-case schedule holds for it (App.schedulePipeline), laid out
-     from the task's current due date: review · V2 · review · V3 · review…
+  /* The revisions still ahead of an open task — the reserve the worst-case
+     schedule holds for it (App.schedulePipeline), laid out back to back from
+     the task's current due date: V2 · V3 · …
      Revisions already spent are inside the bar (App.requestRevision grew the
      due date), so the next version number follows on from them. An approved
-     task has nothing ahead (its unspent budget is the grey ghost instead),
-     and a task with no revisions isn't reviewed by the Director at all. */
+     task has nothing ahead (its unspent budget is the grey ghost instead). */
   App.plannedRevisions = function (ep, su) {
-    if (su.status === 'approved') return { reviews: [], revs: [], end: su.due };
+    if (su.status === 'approved') return { revs: [], end: su.due };
     const t = App.revTask(ep, su.key);
-    if (!t || !t.maxRev) return { reviews: [], revs: [], end: su.due };
+    if (!t || !t.maxRev) return { revs: [], end: su.due };
     return App.revisionSteps(t, su.due, App.showCalendar(ep.showId),
       { dept: su.dept, person: su.assignee }, App.revisionsUsed(ep, su.key));
   };
