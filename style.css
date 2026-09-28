@@ -2362,7 +2362,6 @@ select.fld { cursor: pointer; }
 /* lane rows: a sticky label rail so the department stays readable when the
    episode is scrolled sideways */
 .pv-lane { position: absolute; left: 0; border-top: 1px solid var(--border); pointer-events: none; }
-.pv-lane.reviews { border-top: none; border-bottom: 2px solid var(--border-2); }
 .pv-lane-lbl {
   position: sticky; left: 0; width: 124px; height: 100%; z-index: 3;
   display: flex; align-items: center; gap: 7px; padding: 0 10px;
@@ -2371,7 +2370,6 @@ select.fld { cursor: pointer; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .pv-lane-lbl .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.pv-lane.reviews .pv-lane-lbl { color: var(--text); }
 
 .pv-ms { position: absolute; border-left: 2px dashed var(--st-approved); opacity: .7; pointer-events: none; z-index: 1; }
 .pv-ms-lbl {
@@ -2488,13 +2486,6 @@ select.fld { cursor: pointer; }
 }
 .pv-pill-txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.pv-review {
-  position: absolute; z-index: 2; border-radius: 3px; cursor: pointer;
-  background: var(--st-in_progress); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pv-c) 70%, transparent);
-  transition: opacity .12s;
-}
-.pv-review.sel { box-shadow: 0 0 0 2px var(--accent); }
-.pv-review.dim { opacity: .25; }
 
 .pv-legend {
   display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 8px 12px; border-top: 1px solid var(--border);
@@ -2503,7 +2494,6 @@ select.fld { cursor: pointer; }
 .pv-lg { display: inline-flex; align-items: center; gap: 6px; }
 .pv-lg-pill { width: 22px; height: 10px; border-radius: 3px; background: var(--accent); }
 .pv-lg-pill.rev { background: repeating-linear-gradient(45deg, rgba(91,108,255,.45) 0 3px, rgba(91,108,255,.2) 3px 6px); box-shadow: inset 0 0 0 1px var(--accent); }
-.pv-lg-dot { width: 8px; height: 10px; border-radius: 2px; background: var(--st-in_progress); }
 .pv-lg-line { width: 0; height: 12px; border-left: 2px dashed var(--st-approved); }
 
 .plan-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }

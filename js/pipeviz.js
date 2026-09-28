@@ -1,11 +1,9 @@
 /* Pipeline preview — one episode drawn start to finish, beside the task list
    in Add Show so a producer sees the shape of the pipeline while building it.
 
-   Rows are departments (in App.DEPARTMENTS order), with a Director Reviews lane
-   on top. Each task is a pill spanning its scheduled first pass; its revision
-   budget follows as dashed V2, V3… bars. For a task with revisions, every pass
-   is followed by a one-day review, drawn in the Director Reviews lane; a task
-   without them isn't reviewed. Time reads in weeks from the episode's start, not calendar
+   Rows are departments (in App.DEPARTMENTS order). Each task is a pill
+   spanning its scheduled first pass; its revision budget follows as dashed
+   V2, V3… bars, back to back. Time reads in weeks from the episode's start, not calendar
    dates — this is the shape of the pipeline, not a schedule. Dependencies
    aren't drawn; hovering a task lights what it waits for and what waits for it.
 
@@ -26,7 +24,6 @@ window.App = window.App || {};
   const LABEL_W = 132;     // department rail
   const ROW_H = 26;        // one sub-row of bars
   const BAR_H = 12;        // the main timeline's task-bar height (.g-row.sub .bar)
-  const REV_ROW_H = 16;    // one sub-row of the Director Reviews lane
   const AXIS_H = 26;
   const PAD_DAYS = 3;      // breathing room past the last thing drawn
   // zoom works like the Timeline's: continuous px per day, ×1.25 a step,
@@ -129,26 +126,10 @@ window.App = window.App || {};
         const segs = [{ s, e, label: t.maxRev ? 'V1' : '' }];
         const off = (iso) => App.diffDays(iso, startIso);
         const steps = App.revisionSteps(t, d.due, cal, { dept: t.dept, person: assignees[t.key] || null }, 0);
-        // a task with no revision budget isn't reviewed by the Director
-        const reviews = steps.reviews.map((rv, i) => ({ s: off(rv.start), e: off(rv.due) + 1, label: rv.label, rev: i > 0 }));
         steps.revs.forEach(rv => segs.push({ s: off(rv.start), e: off(rv.due) + 1, label: rv.label, rev: true }));
         const at = off(steps.end) + 1;
-        return { t, s, e, end: Math.max(at, e), segs, reviews, start: d.start, due: d.due };
+        return { t, s, e, end: Math.max(at, e), segs, start: d.start, due: d.due };
       });
-
-      /* Reviews from tasks running in parallel can land on the same day, so
-         the Director Reviews lane packs into sub-rows the same way a
-         department does — which also shows at a glance when the Director has
-         more than one thing to look at in a day. */
-      const revRows = [];
-      items.flatMap(it => it.reviews.map(rv => Object.assign(rv, { it })))
-        .sort((a, b) => a.s - b.s)
-        .forEach(rv => {
-          let r = revRows.findIndex(endAt => endAt <= rv.s);
-          if (r < 0) { r = revRows.length; revRows.push(0); }
-          revRows[r] = rv.e;
-          rv.sub = r;
-        });
 
       /* Department lanes, each packed greedily into sub-rows: a task takes the
          first sub-row whose last occupant has finished (revisions included,
@@ -199,7 +180,7 @@ window.App = window.App || {};
           });
         }
       }
-      return { items, lanes, milestones, workEnd, offDays, revRows: revRows.length, totalDays: drawEnd + PAD_DAYS };
+      return { items, lanes, milestones, workEnd, offDays, totalDays: drawEnd + PAD_DAYS };
     }
 
     function render(pipe, startIso, scale, opts) {
@@ -232,10 +213,8 @@ window.App = window.App || {};
       const X = (day) => LABEL_W + day * px;
       const width = X(L.totalDays);
 
-      // vertical positions: axis, reviews lane, then each department's sub-rows
-      // no review days any more, so the Director Reviews lane only shows if something lands in it
-      const reviewH = L.revRows ? L.revRows * REV_ROW_H + 10 : 0;
-      let y = AXIS_H + reviewH;
+      // vertical positions: axis, then each department's sub-rows
+      let y = AXIS_H;
       L.lanes.forEach(lane => { lane.y = y; lane.h = lane.rows * ROW_H + 8; y += lane.h; });
       const height = y;
       L.lanes.forEach(lane => lane.items.forEach(it => { it.lane = lane; }));
@@ -271,8 +250,6 @@ window.App = window.App || {};
       }
 
       // ---- lane rails ----
-      if (reviewH) canvas.appendChild(el('.pv-lane.reviews', { style: { top: AXIS_H + 'px', height: reviewH + 'px', width: width + 'px' } },
-        el('.pv-lane-lbl', null, 'Director Reviews')));
       L.lanes.forEach(lane => {
         const dep = App.dept(lane.dept);
         canvas.appendChild(el('.pv-lane', { style: { top: lane.y + 'px', height: lane.h + 'px', width: width + 'px' } },
@@ -296,7 +273,7 @@ window.App = window.App || {};
 
       const byKey = {}; L.items.forEach(it => { byKey[it.t.key] = it; });
 
-      // ---- bars and reviews ----
+      // ---- bars ----
       // "Week 2" or "Weeks 2–3", from day offsets (e exclusive)
       const span = (s0, e0) => {
         const a = Math.floor(s0 / 7) + 1, b = Math.floor((e0 - 1) / 7) + 1;
@@ -307,7 +284,7 @@ window.App = window.App || {};
         // the timeline's own ink rule, so a bar reads the same in both places
         const ink = App.pickInk ? App.pickInk(dep.color) : '#fff';
         const top = it.lane.y + 4 + it.sub * ROW_H + (ROW_H - BAR_H) / 2;
-        /* Zoomed out, a task's passes (V1 · V2 · V3, a review day apart)
+        /* Zoomed out, a task's passes (V1 · V2 · V3, back to back)
            shrink to slivers that overlap. Then they're drawn as one bar with a
            line between each pass: the first pass solid, revisions striped,
            the right edge still stretching the last one. */
@@ -382,25 +359,6 @@ window.App = window.App || {};
             }));
           }
           canvas.appendChild(pill);
-        });
-        it.reviews.forEach((rv, ri) => {
-          const last = ri === it.reviews.length - 1;
-          const name = it.t.name || 'Untitled';
-          const block = el('.pv-review' + (rv.rev ? '.rev' : ''), {
-            'data-key': it.t.key,
-            title: 'Director review — ' + name + (rv.label ? ' ' + rv.label : '') + ' · ' + (rv.e - rv.s) + ' day' +
-              (rv.e - rv.s === 1 ? '' : 's') + (last ? '' : '\nApproved, or sent back for ' + it.segs[ri + 1].label),
-            style: {
-              left: (X(rv.s) + 1) + 'px', width: Math.max(3, (rv.e - rv.s) * px - 2) + 'px',
-              top: (AXIS_H + 5 + rv.sub * REV_ROW_H) + 'px', height: (REV_ROW_H - 4) + 'px'
-            },
-            onclick: () => { if (!justDragged) onSelect(it.t.key); },
-            oncontextmenu: (e) => openMenu(e, it.t.key),
-            onmouseenter: () => { hovered = it.t.key; applyFocus(); },
-            onmouseleave: () => { if (hovered === it.t.key) { hovered = null; applyFocus(); } }
-          });
-          block.style.setProperty('--pv-c', dep.color);
-          canvas.appendChild(block);
         });
       });
 
