@@ -1196,12 +1196,14 @@ window.App = window.App || {};
      stored on the show and also decides who each episode's tasks open against:
      a department with a team draws from it — the lead first — instead of from
      every staff member in the studio who happens to hold that role. */
-  App.createShow = function ({ name, code, type, brand, series, epNames, pipeline, startIso, cadence, scale, epStarts, epLives, team, calendar }) {
+  App.createShow = function ({ name, code, type, brand, series, epNames, pipeline, startIso, cadence, scale, epStarts, epLives, team, calendar, startNum }) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
     type = type || 'animation';
     pipeline = pipeline || App.defaultPipelineFor(type);
     startIso = startIso || App.isoDate(App.today());
     cadence = cadence == null ? 14 : cadence;
+    // a show picked up mid-production numbers on from its first episode here
+    const firstNum = Math.max(1, parseInt(startNum, 10) || 1);
     let newShowId = null;
     App.mutate(d => {
       const showId = newShowId = code.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + App.uid().slice(0, 3);
@@ -1231,7 +1233,7 @@ window.App = window.App || {};
         const assignees = {};
         pipeline.forEach(t => { const pool = byDept[t.dept] || []; if (pool.length) assignees[t.key] = pool[i % pool.length]; });
         const ep = {
-          id: App.uid(), showId, code: code + '-' + (i + 1), title, index: d.episodes.length,
+          id: App.uid(), showId, code: code + '-' + (firstNum + i), title, index: d.episodes.length,
           shiftDays: 0, dates: sch.dates,
           statuses: App.deriveStatusesFromDates(pipeline, sch.dates, assignees), assignees
         };

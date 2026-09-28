@@ -2521,11 +2521,21 @@ window.App = window.App || {};
          the plan when the start, cadence or pipeline changes. */
       const epNameVals = (d0.epNames || []).slice(), epLive = (d0.epLive || []).slice();
       const epCountBadge = el('span.count-badge');
+      /* Advanced → Set start episode number: a show picked up mid-production
+         numbers its episodes on from there (start at 14 and they're LA-14,
+         LA-15…). New shows only — an existing show's codes are already set. */
+      const startNumInput = selectOnFocus(el('input.fld', { type: 'number', value: String(d0.startNum || 1), min: '1', max: '9999', style: { maxWidth: '110px' } }));
+      const startNum = () => (editShow ? 1 : Math.max(1, Math.min(9999, parseInt(startNumInput.value, 10) || 1)));
+      const defaultEpName = (i, sn) => 'Episode ' + ((sn == null ? startNum() : sn) + i);
+      let shownStart = startNum();                  // the start number the rows on screen were drawn with
       const rebuildEps = () => {
         const n = Math.max(1, Math.min(EP_MAX, parseInt(countInput.value) || 1));
         [...epList.querySelectorAll('.ep-name-row')].forEach((row, i) => {
-          epNameVals[i] = row.querySelector('.ep-name-fld').value;
+          const v = row.querySelector('.ep-name-fld').value;
+          // a name still at its default follows the start number; a typed one stays
+          epNameVals[i] = v === defaultEpName(i, shownStart) ? '' : v;
         });
+        shownStart = startNum();
         epList.innerHTML = '';
         for (let i = 0; i < n; i++) {
           const idx = i;
@@ -2535,7 +2545,7 @@ window.App = window.App || {};
             liveDirty[idx] = true;
             updateSchedule();
           });
-          const nameInput = el('input.fld.ep-name-fld', { type: 'text', value: epNameVals[i] || ('Episode ' + (i + 1)), placeholder: 'Episode ' + (i + 1) });
+          const nameInput = el('input.fld.ep-name-fld', { type: 'text', value: epNameVals[i] || defaultEpName(i), placeholder: defaultEpName(i) });
           const inProd = editShow && editEps[i] && App.inProduction(editEps[i]);
           const locked = inProd && epLocked[i];
           nameInput.disabled = liveInput.disabled = !!locked;
@@ -2547,7 +2557,8 @@ window.App = window.App || {};
             onclick: () => { epLocked[idx] = !epLocked[idx]; rebuildEps(); updateSchedule(); }
           }, App.icon('lock')) : null;
           epList.appendChild(el('.ep-name-row' + (locked ? '.locked' : ''), null, [
-            el('span.ep-name-num', null, '#' + (i + 1)),
+            // an existing episode shows its own number (a show started mid-production doesn't begin at 1)
+            el('span.ep-name-num', null, '#' + ((editEps[i] && /-(\d+)$/.exec(editEps[i].code || '') || [])[1] || (startNum() + i))),
             nameInput,
             // editing keeps the tag and padlock slots on every row, filled or
             // not, so the live dates line up down the list
@@ -2924,6 +2935,7 @@ window.App = window.App || {};
         end: endInput.value, targetTouched: targetTouched,
         epNames: [...epList.querySelectorAll('.ep-name-fld')].map(i => i.value),
         epLive: epLive.slice(),
+        startNum: startNum(),
         pipe: pipe,
         team: team.read()
       });
@@ -2934,9 +2946,10 @@ window.App = window.App || {};
         const s = snapshot();
         if (s.name.trim() || s.code.trim() || s.brand.trim() || s.series.trim() || s.targetTouched) return true;
         if (s.epLive.some(Boolean)) return true;
+        if (s.startNum !== 1) return true;
         if (Object.keys(s.team).length) return true;      // staffing is real work too
         if (normPipe(s.pipe) !== normPipe(App.defaultPipelineFor(s.type))) return true;
-        return s.epNames.some((n, i) => n.trim() && n.trim() !== 'Episode ' + (i + 1));
+        return s.epNames.some((n, i) => n.trim() && n.trim() !== defaultEpName(i));
       };
       const keepDraft = () => {
         if (editShow) return;
@@ -3030,6 +3043,28 @@ window.App = window.App || {};
         title: 'Count Saturdays and Sundays as working days. Also on the Working Days & Holidays page.'
       }, [weekendCb, el('span', null, 'Include working weekends')]);
 
+      /* Advanced — settings most shows never touch, folded away under a small
+         toggle of their own so they don't cost the form any height. Not one
+         of the accordion panels below: opening it leaves those as they are. */
+      startNumInput.addEventListener('input', () => { rebuildEps(); keepDraft(); });
+      const advBody = el('.as-adv-body', { style: { display: 'none' } }, [
+        weekendChk,
+        editShow ? null : el('.as-adv-field', null, [
+          el('label.fld-label', null, 'Set start episode number'),
+          startNumInput,
+          el('.fld-hint', null, 'To pick a show up mid-production — episodes are numbered on from here.')
+        ])
+      ]);
+      const advChev = el('span.chev', null, '▶');
+      const advOpen = d0.startNum > 1;               // a restored draft with a start number shows it
+      const setAdv = (v) => { advBody.style.display = v ? '' : 'none'; advChev.classList.toggle('open', v); };
+      const advanced = el('.as-adv', null, [
+        el('button.as-adv-toggle', { type: 'button', onclick: () => setAdv(advBody.style.display === 'none') },
+          [advChev, el('span', null, 'Advanced')]),
+        advBody
+      ]);
+      setAdv(advOpen);
+
       const sections = [
         (restored ? el('.draft-note', null, [
           el('span', null, [App.icon('save'), ' Picking up where you left off — nothing was lost.']),
@@ -3061,12 +3096,13 @@ window.App = window.App || {};
           ]),
           el('.plan-grid.two.end-row', null, [
             field('Project End Date', endInput, 'Pull it earlier to squeeze the pipeline, push it later to extend'),
-            el('.field.end-btn-slot', null, [useRecBtn, weekendChk])
+            el('.field.end-btn-slot', null, [useRecBtn])
           ]),
           recPill,
           endFeedback,
           archNote,
-          iterBox
+          iterBox,
+          advanced
         ]),
         epPanel.head,
         epPanel.body,
@@ -3295,7 +3331,7 @@ window.App = window.App || {};
             if (!validateStep1()) { goStep(1); return; }
             const name = nameInput.value.trim(), code = codeInput.value.trim().toUpperCase();
             const { start, cadence, epCount } = readPlan();
-            const epNames = [...epList.querySelectorAll('.ep-name-fld')].map((inp, idx) => inp.value.trim() || ('Episode ' + (idx + 1))).slice(0, epCount);
+            const epNames = [...epList.querySelectorAll('.ep-name-fld')].map((inp, idx) => inp.value.trim() || defaultEpName(idx)).slice(0, epCount);
             const rec = App.scheduleShow(pipe, start, epCount, cadence, 1, schedOpts);
             const target = endInput.value || rec.end;
             const scale = target === rec.end ? 1 : App.solveScale(pipe, start, epCount, cadence, target, schedOpts).scale;
@@ -3317,7 +3353,7 @@ window.App = window.App || {};
             });
             const teamOut = team.read();
             App.createShow({ name, code, type: typeSel.value, brand: brandInput.value, series: seriesInput.value,
-              epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives, team: teamOut,
+              epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives, team: teamOut, startNum: startNum(),
               calendar: App.calIsEmpty(calState) ? null : calState });
             App.track.flowDone('Create show', true, { episodes: epNames.length, departmentsStaffed: Object.keys(teamOut).length });
             created = true;                       // the draft has served its purpose
@@ -3382,7 +3418,7 @@ window.App = window.App || {};
       const draftSnap = () => {
         const { epCount } = readPlan();
         const plan = episodePlan();
-        const names = [...epList.querySelectorAll('.ep-name-fld')].map((inp, i) => inp.value.trim() || ('Episode ' + (i + 1)));
+        const names = [...epList.querySelectorAll('.ep-name-fld')].map((inp, i) => inp.value.trim() || defaultEpName(i));
         const code = codeInput.value.trim().toUpperCase();
         return {
           id: editId, isNew: !editShow, unsaved: true,
@@ -3394,7 +3430,7 @@ window.App = window.App || {};
             const ex = editEps[i];
             const live = ex && App.epMilestone(ex, App.LIVE_KEY);
             return {
-              code: ex ? ex.code : (code ? code + '-' + (i + 1) : '#' + (i + 1)), title: names[i],
+              code: ex ? ex.code : (code ? code + '-' + (startNum() + i) : '#' + (startNum() + i)), title: names[i],
               // an episode this edit leaves alone keeps the start it really has
               start: ex && (epLocked[i] || (!schedDirty && !liveDirty[i])) ? App.epStart(ex) : p.start,
               live: p.live, liveSet: true,
