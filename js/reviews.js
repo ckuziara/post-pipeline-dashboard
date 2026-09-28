@@ -43,6 +43,7 @@ window.App = window.App || {};
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
   const record = (epId, key) => App.review.get(epId, key);
+  const KEY = (epId, key) => epId + '::' + key;
 
   function stage(ep, su) {
     if (su.status === 'approved') return 'done';
@@ -80,6 +81,62 @@ window.App = window.App || {};
     return out;
   }
 
+  /* ------------------------------------------------------------ priority
+     The order the queue should be worked in, set by hand: a Producer drags a
+     review up or down and everyone sees the same order, which is the point —
+     it's how the Producer tells the Director what to watch first. Stored as
+     data.reviewPriority, a list of "episodeId::taskKey". A review that isn't
+     on the list yet (just sent) goes after the ranked ones, soonest due first. */
+  const priorityOf = () => (App.state.data.reviewPriority || []);
+  function byPriority(list) {
+    const rank = {}; priorityOf().forEach((k, i) => { rank[k] = i; });
+    const r = (x) => { const k = KEY(x.ep.id, x.su.key); return k in rank ? rank[k] : Infinity; };
+    return list.sort((a, b) => (r(a) - r(b)) || (a.su.due < b.su.due ? -1 : a.su.due > b.su.due ? 1 : 0));
+  }
+
+  /* `shown` is the new order of the reviews on screen. The filters can hide
+     part of the queue, so the hidden reviews keep their places: the slots
+     the shown ones held in the old order are refilled with the new order.
+     Anything no longer waiting for review drops off the list. */
+  function setPriority(shown) {
+    if (!App.canPrioritiseReviews(App.state.role)) { App.toast('Only Producers can set the review order', true); return; }
+    const live = new Set(collect(App.activeEpisodes()).filter(x => x.stage !== 'done').map(x => KEY(x.ep.id, x.su.key)));
+    const vis = new Set(shown);
+    const combined = priorityOf().filter(k => live.has(k));
+    shown.forEach(k => { if (!combined.includes(k)) combined.push(k); });
+    let n = 0;
+    const next = combined.map(k => (vis.has(k) ? shown[n++] : k));
+    App.mutate(d => { d.reviewPriority = next; }, 'the review order');
+    App.track.audit('review.priority', { order: shown.slice(0, 10).join(', ') });
+  }
+
+  function priorityList(items) {
+    const canDrag = App.canPrioritiseReviews(App.state.role);
+    const open = byPriority(items.filter(x => x.stage !== 'done'));
+    const done = items.filter(x => x.stage === 'done');
+    const out = el('div');
+    const list = el('.rvq-ep.rvq-prio');
+    open.forEach((x, i) => list.appendChild(taskRow(x, { rank: i + 1, grip: canDrag && open.length > 1, n: open.length })));
+    if (open.length) out.appendChild(list);
+    if (canDrag && open.length > 1) {
+      App.dragReorder(list, {
+        rows: () => [...list.querySelectorAll('.rvq-row.ranked')], grip: '.rvq-grip', lifted: 'rvq-lifted',
+        onStart: () => App.reviews.closeNote(),
+        onDrop: (from, to) => {
+          const keys = open.map(x => KEY(x.ep.id, x.su.key));
+          keys.splice(to, 0, keys.splice(from, 1)[0]);
+          setPriority(keys);
+        }
+      });
+    }
+    if (done.length) {
+      const blk = el('.rvq-ep', null, el('.rvq-ep-head', null, el('span.rvq-ep-title', null, 'Completed')));
+      done.forEach(x => blk.appendChild(taskRow(x, { rank: null })));
+      out.appendChild(blk);
+    }
+    return out;
+  }
+
   /* -------------------------------------------------------------- render */
   App.reviews = {
     render(episodes) {
@@ -89,6 +146,13 @@ window.App = window.App || {};
       const items = collect(episodes);
       if (!items.length) {
         wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' Nothing is waiting for review right now.']));
+        return wrap;
+      }
+
+      /* Priority: one ranked list across every show, since what to watch
+         first doesn't stop at an episode's edge. */
+      if (App.prefs.get('reviewSort', 'priority') === 'priority') {
+        wrap.appendChild(priorityList(items));
         return wrap;
       }
 
@@ -127,7 +191,7 @@ window.App = window.App || {};
       due: byDue,
       dept: (a, b) => App.dept(a.su.dept).label.localeCompare(App.dept(b.su.dept).label) || byDue(a, b)
     };
-    list.sort(sorters[App.prefs.get('reviewSort', 'due')] || byDue);
+    list.sort(sorters[App.prefs.get('reviewSort', 'priority')] || byDue);
 
     const show = App.show(ep.showId);
     const block = el('.rvq-ep', null, [
@@ -140,7 +204,10 @@ window.App = window.App || {};
     return block;
   }
 
-  function taskRow(x) {
+  /* `prio` is set in the Priority list: a rank (null for a completed row) and
+     whether this viewer gets the grip. There the row also names its episode,
+     since the list isn't grouped by one. */
+  function taskRow(x, prio) {
     const { ep, su } = x;
     const dep = App.dept(su.dept);
     const person = su.assignee ? App.person(su.assignee) : null;
@@ -148,11 +215,26 @@ window.App = window.App || {};
     const st = STAGES[x.stage];
     const overdue = x.stage !== 'done' && su.due && su.due < App.isoDate(App.today());
 
-    const row = el('.rvq-row' + (x.stage === 'done' ? '.done' : ''), null, [
+    const show = App.show(ep.showId);
+    const row = el('.rvq-row' + (x.stage === 'done' ? '.done' : '') + (prio ? '.in-prio' : '') + (prio && prio.rank ? '.ranked' : ''), null, [
+      // 0. its place in the priority order, and the grip that changes it
+      prio ? el('.rvq-cell.rvq-rank', null, prio.rank ? [
+        prio.grip ? el('button.rvq-grip', {
+          type: 'button', title: 'Drag to change the order — or use the arrow keys',
+          'aria-label': 'Reorder ' + su.name + ' (position ' + prio.rank + ' of ' + prio.n + ')',
+          onkeydown: (e) => {
+            if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+            e.preventDefault();
+            moveBy(e.currentTarget, e.key === 'ArrowUp' ? -1 : 1);
+          }
+        }, '⠿') : null,
+        el('span.rvq-rank-n', null, prio.rank)
+      ] : null) : null,
       // 1. the task
       el('.rvq-cell.rvq-task', null, [
         el('.rvq-task-name', null, su.name),
         el('.rvq-task-sub', null, [
+          prio ? el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color) }, title: show.name + ' · ' + (ep.title || '') }, ep.code) : null,
           el('span.dept-chip', null, [el('span.dot', { style: { background: dep.color } }), dep.label]),
           person ? el('span.rvq-who', null, person.name) : null
         ])
@@ -170,7 +252,24 @@ window.App = window.App || {};
       // 6 + 7, and the decision itself
       el('.rvq-cell.rvq-acts', null, actions(x, link))
     ]);
+    row.dataset.key = KEY(ep.id, su.key);
     return row;
+  }
+
+  // the grip stays keyboard-operable, like the pipeline editor's
+  function moveBy(grip, delta) {
+    const list = grip.closest('.rvq-prio');
+    const rows = [...list.querySelectorAll('.rvq-row.ranked')];
+    const from = rows.indexOf(grip.closest('.rvq-row'));
+    const to = Math.max(0, Math.min(rows.length - 1, from + delta));
+    if (to === from) return;
+    const keys = rows.map(r => r.dataset.key);
+    keys.splice(to, 0, keys.splice(from, 1)[0]);
+    setPriority(keys);
+    requestAnimationFrame(() => {
+      const g = document.querySelectorAll('.rvq-prio .rvq-row.ranked .rvq-grip')[to];
+      if (g) g.focus();
+    });
   }
 
   /* Read-only, and it can afford to be: nothing reaches this tab until Post
