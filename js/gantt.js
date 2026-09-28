@@ -388,8 +388,6 @@ window.App = window.App || {};
       // transpose problem); hidden in Portrait rather than half-drawn.
       const singleShow = App.singleShowFilter();
       if (singleShow && !portrait) this.producerNotesLane(body, singleShow, startIso, dw, xOf);
-      // every episode's Director reviews on one lane, just under the notes
-      if (!portrait) this.directorReviewsLane(body, episodes, xOf, axis);
 
       const byStart = (a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1;
       // All shows: the executive view — departments and the two dates that
@@ -1435,8 +1433,7 @@ window.App = window.App || {};
 
       /* Revisions still ahead of an open task: the time the schedule holds in
          reserve in case it's sent back, drawn as striped V2, V3… bars after
-         it (the gaps between are the Director's review days — see the
-         Director Reviews row). Not part of `su.due`; the first one becomes
+         it (the gaps between are the Director's review days). Not part of `su.due`; the first one becomes
          real when a revision is actually requested. */
       App.plannedRevisions(ep, su).revs.forEach(rv => {
         const rStyle = {};
@@ -1478,8 +1475,7 @@ window.App = window.App || {};
     /* Holidays on the timeline, in red. A whole-production day off — a
        national holiday or production time off — is painted through every row
        of the show; a department's own time off only through that
-       department's rows ('role:director' asks for the Director's, on the
-       Director Reviews row). Weekends aren't painted: they're either hidden
+       department's rows. Weekends aren't painted: they're either hidden
        columns or simply not working days. Spans are worked out once per
        show/department per render. */
     holSpans(showId, dept) {
@@ -1532,82 +1528,6 @@ window.App = window.App || {};
           style, title: sp.label + ' · ' + (sp.start === sp.end ? App.fmtDate(sp.start) : App.fmtRange(sp.start, sp.end))
         }), track.firstChild);
       }));
-    },
-
-    /* Director Reviews: every review day still ahead for the episodes in view
-       (App.plannedRevisions) — one after each pass of a task that has
-       revisions. Reviews landing on the same day stack onto extra lines, which
-       is itself worth seeing: that's a day the Director has more than one
-       thing to look at. Nothing to review, no row. */
-    reviewItems(eps) {
-      const items = [];
-      eps.forEach(ep => App.subsView(ep).forEach(su => {
-        App.plannedRevisions(ep, su).reviews.forEach(rv => items.push({ ep, su, rv }));
-      }));
-      return items;
-    },
-    reviewDay(it, xOf, axis, withCode) {
-      const { ep, su, rv } = it;
-      const style = {};
-      setBarPos(style, axis, xOf, rv.start, rv.due);
-      const b = el('.review-day', {
-        title: 'Director review — ' + (withCode ? ep.code + ' · ' : '') + su.name + ' ' + rv.label + ' · ' +
-               App.fmtRange(rv.start, rv.due) + ' — approved, or sent back for the next revision',
-        style
-      });
-      b.style.setProperty('--rv-c', App.dept(su.dept).color);
-      return b;
-    },
-
-    /* Director Reviews lane — every episode in view combined, sitting under
-       Producer Notes. Minimised by default: the header alone still marks each
-       review day along its track, so the Director's busy days read at a
-       glance; opening it stacks them out, one line per clash. */
-    directorReviewsLane(body, eps, xOf, axis) {
-      const items = this.reviewItems(eps);
-      if (!items.length) return;
-      const open = App.state.reviewsOpen === true;          // default minimised
-      const head = el('.g-row.pn-head.rv-head');
-      head.appendChild(el('.g-label.pn-label', {
-        title: open ? 'Minimise Director reviews' : 'Show every Director review, one line per clash',
-        onclick: () => { App.state.reviewsOpen = !open; App.render(); }
-      }, el('.l-title', null, [
-        el('span.chev' + (open ? '.open' : ''), null, '▶'),
-        el('span.review-dot'),
-        el('span', null, 'DIRECTOR REVIEWS'),
-        el('span.pn-count', null, String(items.length))
-      ])));
-      const track = el('.g-track');
-      if (!open) {
-        this.holWash(track, [...new Set(eps.map(e => e.showId))], 'role:director', xOf, axis);
-        items.forEach(it => track.appendChild(this.reviewDay(it, xOf, axis, true)));
-      }
-      head.appendChild(track);
-      body.appendChild(head);
-      if (open) this.reviewRows(body, eps, xOf, axis, true, items);
-    },
-
-    reviewRows(body, eps, xOf, axis, withCode, given) {
-      const items = given || this.reviewItems(eps);
-      if (!items.length) return;
-      items.sort((a, b) => a.rv.start < b.rv.start ? -1 : 1);
-      const levels = [];
-      items.forEach(it => {
-        const lvl = levels.find(l => it.rv.start > l.lastDue);
-        if (lvl) { lvl.lastDue = it.rv.due; lvl.items.push(it); }
-        else levels.push({ lastDue: it.rv.due, items: [it] });
-      });
-      levels.forEach((lvl, li) => {
-        const row = el('.g-row.sub.review-row');
-        row.appendChild(el('.g-label', { title: 'Director Reviews' },
-          el('.l-title', { style: { fontWeight: '700', fontSize: '10.5px' } },
-            given ? [] : li === 0 ? [el('span.review-dot'), el('span', null, 'Director Reviews')] : [])));
-        const track = el('.g-track');
-        this.holWash(track, [...new Set(eps.map(e => e.showId))], 'role:director', xOf, axis);
-        lvl.items.forEach(it => track.appendChild(this.reviewDay(it, xOf, axis, withCode)));
-        row.appendChild(track);
-        body.appendChild(row);
-      });
     },
 
     // ---- shared building blocks for the two "many episodes on one line"
