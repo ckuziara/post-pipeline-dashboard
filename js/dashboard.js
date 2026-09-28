@@ -57,7 +57,8 @@ window.App = window.App || {};
     deptLoad:  { minW: 3, maxW: 12, minH: 90,  maxH: 500, itemPx: 27, headPx: 45 },
     upcoming:  { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
     teamLoad:  { minW: 3, maxW: 12, minH: 100, maxH: 700, itemPx: 36, headPx: 45 },
-    reviewUploads: { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 }
+    reviewUploads: { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
+    directorCal: { minW: 3, maxW: 12, minH: 260, maxH: 900, itemPx: 22, headPx: 120 }
   };
   // how many data rows this widget shows at this height — grows continuously
   // rather than at three breakpoints; widgets without itemPx aren't scaled
@@ -111,10 +112,12 @@ window.App = window.App || {};
       { id: 'delivered', col: 6, row: 644, w: 6, h: 150 }
     ],
     review: [
-      { id: 'atRisk',    col: 0, row: 0,   w: 6, h: 430 },
-      { id: 'journal',   col: 6, row: 0,   w: 6, h: 420 },
-      { id: 'upcoming',  col: 0, row: 442, w: 6, h: 400 },
-      { id: 'delivered', col: 6, row: 442, w: 6, h: 150 }
+      // Priority across the top; At Risk over Upcoming on the left, Journal over Delivered on the right
+      { id: 'directorCal', col: 0, row: 0,   w: 12, h: 346 },
+      { id: 'atRisk',      col: 0, row: 358, w: 6,  h: 400 },
+      { id: 'journal',     col: 6, row: 358, w: 6,  h: 396 },
+      { id: 'delivered',   col: 6, row: 766, w: 3,  h: 120 },
+      { id: 'upcoming',    col: 0, row: 770, w: 6,  h: 400 }
     ],
     dept: [
       { id: 'priority',  col: 0, row: 0,   w: 6, h: 250 },
@@ -131,7 +134,9 @@ window.App = window.App || {};
      else is doing this job, and a queue on someone's dashboard that isn't
      theirs to clear is just noise. */
   const WIDGET_WHEN = {
-    reviewUploads: () => App.roleDept(App.state.role) === 'ops'
+    reviewUploads: () => App.roleDept(App.state.role) === 'ops',
+    // the Director's own to-dos are the Kick Offs they run
+    directorCal: () => App.canSetKickOff(App.state.role)
   };
   const widgetFor = (list) => list.filter(t => !WIDGET_WHEN[t.id] || WIDGET_WHEN[t.id]());
   // the placeholder a popped-out widget leaves behind names it without having
@@ -139,7 +144,7 @@ window.App = window.App || {};
   const WIDGET_TITLE = {
     priority: 'Priority', atRisk: 'At Risk', journal: 'Journal', delivered: 'Delivered Episodes',
     pipeline: 'Pipeline Status', deptLoad: 'Department Workload', upcoming: 'Upcoming Deliveries',
-    teamLoad: 'Team Workload', reviewUploads: 'Review Uploads'
+    teamLoad: 'Team Workload', reviewUploads: 'Review Uploads', directorCal: 'Priority'
   };
 
   function layoutKind(role) {
@@ -824,6 +829,93 @@ window.App = window.App || {};
         box.appendChild(rows);
       }
       return box;
+    },
+
+    /* The Director's Priority — the same job as a department's Priority list,
+       drawn as a month calendar because a Director's to-dos are meetings. Each
+       chip is one department's Kick Off on one episode (App.koItems), on the
+       day that department's first chosen task starts. Anything whose day has
+       passed without its KO done sits in the Overdue strip instead. Narrow
+       tiles get an agenda list rather than an unreadable 7-column grid. */
+    directorCal(m, t) {
+      const items = App.koItems(m.episodes);
+      const todayIso = App.isoDate(App.today());
+      const overdue = items.filter(x => x.date < todayIso);
+      const ahead = items.filter(x => x.date >= todayIso);
+      const pad = n => String(n).padStart(2, '0');
+
+      const chip = (x, withDate) => {
+        const dep = App.dept(x.dept);
+        const n = x.open.length;
+        return el('.kocal-chip', {
+          style: { borderLeftColor: dep.color },
+          title: x.ep.code + ' — ' + x.ep.title + '\n' + dep.label + ' Kick Off · ' + App.fmtDate(x.date) + '\n' +
+            x.open.map(su => '• ' + su.name).join('\n'),
+          onclick: (e) => { e.stopPropagation(); App.editTask.open(x.ep.id, x.open[0].key); }
+        }, [
+          el('span.kocal-code', null, x.ep.code),
+          el('span.kocal-dept', null, dep.label + (n > 1 ? ' · ' + n : '')),
+          withDate ? el('span.kocal-date', null, App.fmtDate(x.date)) : null,
+          el('button.kocal-tick', {
+            type: 'button', title: 'Mark this Kick Off done',
+            onclick: (e) => { e.stopPropagation(); App.setKoDone(x.ep.id, x.open.map(su => su.key), true); App.toast(x.ep.code + ' ' + dep.label + ' Kick Off done'); }
+          }, '✓')
+        ]);
+      };
+
+      const parts = [];
+      if (overdue.length) {
+        parts.push(el('.pr-group.kocal-overdue', { style: { borderLeftColor: '#ff5b6e' } }, [
+          el('.pr-head', null, [el('span.pr-label', null, 'Overdue'),
+            (t.w <= 4 ? null : el('span.pr-sub', null, 'Past its due date, not done')),
+            el('span.pr-count', { style: { color: '#ff5b6e' } }, String(overdue.length))]),
+          el('.kocal-strip', null, overdue.map(x => chip(x, true)))
+        ]));
+      }
+
+      if (t.w <= 4) {
+        const cap = capOf('directorCal', t.h);
+        parts.push(ahead.length
+          ? el('.kocal-agenda', null, ahead.slice(0, cap).map(x => chip(x, true))
+              .concat(ahead.length > cap ? [el('.pr-more', null, '+' + (ahead.length - cap) + ' more')] : []))
+          : el('.dw-calm', null, 'No Kick Offs coming up.'));
+      } else {
+        const now = App.today();
+        // one working week at a time, so each day has room for a long list
+        const monday = (d) => App.addDays(d, -((d.getDay() + 6) % 7));
+        const saved = App.prefs.get('dashKoWeek', null);
+        const wk = saved ? App.parseDate(saved) : monday(now);
+        const setWeek = (d) => { App.prefs.set('dashKoWeek', d ? App.isoDate(d) : null); App.render(); };
+        const byDay = {};
+        // working week only: a KO due on a weekend sits on the Friday before it
+        const workday = (iso) => { const d = App.parseDate(iso), w = d.getDay(); return w === 6 ? App.isoDate(App.addDays(d, -1)) : w === 0 ? App.isoDate(App.addDays(d, -2)) : iso; };
+        ahead.forEach(x => { const k = workday(x.date); (byDay[k] = byDay[k] || []).push(x); });
+
+        const grid = el('.kocal-grid.week');
+        for (let i = 0; i < 5; i++) {
+          const day = App.addDays(wk, i), iso = App.isoDate(day);
+          const list = byDay[iso] || [];
+          grid.appendChild(el('.kocal-day' + (iso === todayIso ? '.today' : '') + (iso < todayIso ? '.past' : ''), null, [
+            el('.kocal-num', null, day.toLocaleDateString(undefined, { weekday: 'short' }) + ' ' + day.getDate()),
+            ...(list.length ? list.map(x => chip(x, false)) : [el('.kocal-empty', null, '—')])
+          ]));
+        }
+        const fri = App.addDays(wk, 4);
+        parts.push(el('.kocal-nav', null, [
+          el('button.btn-mini', { type: 'button', title: 'Previous week', onclick: () => setWeek(App.addDays(wk, -7)) }, '‹'),
+          el('span.kocal-month', null, App.fmtDate(App.isoDate(wk)) + ' – ' + App.fmtDate(App.isoDate(fri))),
+          el('button.btn-mini', { type: 'button', title: 'Next week', onclick: () => setWeek(App.addDays(wk, 7)) }, '›'),
+          el('button.btn-mini', { type: 'button', onclick: () => setWeek(null) }, 'This week')
+        ]));
+        parts.push(grid);
+      }
+
+      return {
+        title: 'Priority',
+        sub: 'Kick Offs · ' + items.length + ' to run' + (overdue.length ? ' · ' + overdue.length + ' overdue' : ''),
+        body: items.length || t.w > 4 ? el('.kocal', null, parts)
+          : el('.dw-calm', null, 'No Kick Offs to run — choose them from an episode on the Board.')
+      };
     },
 
     /* Post Operations' send-for-review queue. Thin on purpose: the queue, the

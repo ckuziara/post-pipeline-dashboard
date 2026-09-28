@@ -141,9 +141,9 @@ window.App = window.App || {};
      Operations also owns scheduling (across every department, since that's the
      coordinating job), so it carries editSchedule without editAll. */
   App.ROLES = [
-    { key: 'producer',  label: 'Producer',        ico: 'clapper', approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, hint: 'Full access — all tasks, shows & admin' },
+    { key: 'producer',  label: 'Producer',        ico: 'clapper', approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, hint: 'Full access — all tasks, shows & admin' },
     { key: 'manager',   label: 'Manager',         ico: 'compass', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, hint: 'Oversight, approvals & admin' },
-    { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, reviewQueue: true, hint: 'Review & approve cuts' },
+    { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, reviewQueue: true, kickOff: true, hint: 'Review & approve cuts' },
     { key: 'creative',  label: 'Creative',        ico: 'pencil', dept: 'creative',  hint: 'Creative department tasks' },
     { key: 'music',     label: 'Music',           ico: 'music', dept: 'music',     hint: 'Music department tasks' },
     { key: 'animation', label: 'Animation',       ico: 'film', dept: 'animation', hint: 'Animation department tasks' },
@@ -226,6 +226,8 @@ window.App = window.App || {};
   App.canEditTaskName = (k) => App.rolePerm(k, 'editName', App.role(k).editName);
   App.canRemoveTask   = (k) => App.rolePerm(k, 'removeTask', App.role(k).removeTask);
   App.canEditSchedule = (k) => App.rolePerm(k, 'editSchedule', App.role(k).editSchedule);
+  // choosing which tasks need a Kick Off, and ticking them done — Producer and Director by default
+  App.canSetKickOff   = (k) => App.rolePerm(k, 'kickOff', App.role(k).kickOff);
   // status choices a role may set (non-approvers can't choose Approved)
   App.statusOptionsFor = (k) => App.canApprove(k) ? App.STATUS_ORDER : App.STATUS_ORDER.filter(s => s !== 'approved');
 
@@ -882,6 +884,51 @@ window.App = window.App || {};
     });
   };
   App.subitem = function (ep, key) { return App.subitems(ep).find(s => s.key === key); };
+
+  /* ---- Kick Offs (KO) ----
+     The Director's in-person/call briefing of a department before its work on
+     an episode starts. The show carries the usual list (show.koTasks); an
+     episode follows it until someone changes that episode's own list, when it
+     is snapshotted into ep.ko = { tasks, done: { key: {by, at} } } and stops
+     following. Departments aren't stored — a department "needs a KO" when any
+     of its tasks does. Keys for tasks since removed are simply ignored. */
+  App.epKoTasks = function (ep) {
+    const list = ep.ko ? ep.ko.tasks : ((App.show(ep.showId) || {}).koTasks || []);
+    const live = App.subitems(ep).map(s => s.key);
+    return (list || []).filter(k => live.includes(k));
+  };
+  App.koState = function (ep, key) {
+    if (!App.epKoTasks(ep).includes(key)) return null;
+    return ep.ko && ep.ko.done && ep.ko.done[key] ? 'done' : 'needed';
+  };
+  /* A Kick Off is due on its task's start date and overdue once that date has
+     passed without it being done. One definition, used by the Board, Edit Task
+     and the Director's calendar alike — a warning, never a block. */
+  App.koOverdue = function (ep, su) {
+    return App.koState(ep, su.key) === 'needed' && su.start < App.isoDate(App.today());
+  };
+  /* One calendar item per (episode, department) briefing that still has an
+     outstanding task, dated on the earliest start among those outstanding
+     tasks — the day the briefing is due. */
+  App.koItems = function (eps) {
+    const out = [];
+    eps.forEach(ep => {
+      const keys = App.epKoTasks(ep); if (!keys.length) return;
+      const byDept = {};
+      App.subitems(ep).forEach(su => {
+        if (!keys.includes(su.key)) return;
+        (byDept[su.dept] = byDept[su.dept] || []).push(su);
+      });
+      Object.keys(byDept).forEach(dept => {
+        const subs = byDept[dept];
+        const open = subs.filter(su => App.koState(ep, su.key) === 'needed');
+        if (!open.length) return;
+        const date = open.map(su => su.start).sort()[0];
+        out.push({ ep, dept, subs, open, date });
+      });
+    });
+    return out.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  };
 
   // a subitem is blocked if any (non-removed) dependency isn't approved yet
   App.isBlocked = function (ep, key) {

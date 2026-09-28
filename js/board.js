@@ -137,6 +137,41 @@ window.App = window.App || {};
       return grp;
     },
 
+    /* the KO column: an open ring where a task needs a Kick Off, a green tick
+       once it's done, nothing where it doesn't need one. Red ring when the
+       Kick Off is overdue (App.koOverdue). */
+    koTag(ep, su) {
+      const st = App.koState(ep, su.key); if (!st) return null;
+      const can = App.canSetKickOff(App.state.role);
+      if (st === 'done') {
+        const d = ep.ko.done[su.key];
+        return el('span.ko-tick', {
+          title: 'Kick Off done' + (d && d.by ? ' — ' + d.by : '') + (d && d.at ? ', ' + App.fmtDate(d.at.slice(0, 10)) : '') + (can ? '\nClick to undo' : '')
+        }, '✓');
+      }
+      const due = App.koOverdue(ep, su);
+      return el('span.ko-ring' + (due ? '.due' : ''), {
+        title: (due ? 'Kick Off overdue — was due ' : 'Kick Off due ') + App.fmtDate(su.start) + (can ? '\nClick to mark it done' : '')
+      });
+    },
+
+    // right-click a Kick Off: take the task off this episode's KO list
+    koMenu(e, ep, su) {
+      e.preventDefault(); e.stopPropagation();
+      const close = () => { menu.remove(); document.removeEventListener('mousedown', off, true); document.removeEventListener('keydown', esc, true); };
+      const off = (ev) => { if (!menu.contains(ev.target)) close(); };
+      const esc = (ev) => { if (ev.key === 'Escape') close(); };
+      const menu = el('.ctx-menu', null, [
+        el('button.ctx-item', { type: 'button', onclick: () => {
+          close(); App.setEpisodeKo(ep.id, App.epKoTasks(ep).filter(k => k !== su.key));
+        } }, [el('span.ctx-item-lbl', null, 'Remove Kick Off'), el('span.ctx-item-sub', null, su.name)])
+      ]);
+      document.body.appendChild(menu);
+      menu.style.top = Math.min(e.clientY + 2, window.innerHeight - menu.offsetHeight - 8) + 'px';
+      menu.style.left = Math.min(e.clientX + 2, window.innerWidth - menu.offsetWidth - 8) + 'px';
+      setTimeout(() => { document.addEventListener('mousedown', off, true); document.addEventListener('keydown', esc, true); }, 0);
+    },
+
     subtable(ep) {
       const box = el('.subtable');
       const grid = el('.subgrid');
@@ -152,6 +187,7 @@ window.App = window.App || {};
         title: cs.key ? 'Back to pipeline order' : 'Pipeline order',
         onclick: (e) => { e.stopPropagation(); if (cs.key) { App.prefs.set('boardColSort', null); App.render(); } }
       }, '#');
+      const koHead = el('.cell.c-ko', { title: 'Kick Off — click a cell to add one, click again to mark it done, right-click to remove' }, 'KO');
       grid.appendChild(el('.subrow.head', null, [numHead].concat(cols.map(([k, label]) => {
         const on = cs.key === k;
         return el('.cell.sortable' + (on ? '.sorted' : ''), {
@@ -162,7 +198,7 @@ window.App = window.App || {};
             App.render();
           }
         }, [label, el('span.sort-ind', null, on ? (cs.dir === 'asc' ? '↑' : '↓') : '↕')]);
-      })).concat([el('.cell', null, 'Dependency')])));
+      })).concat([el('.cell', null, 'Dependency')]).reduce((a, c, i) => a.concat(i === 4 ? [koHead, c] : [c]), [])));
       const todayIso = App.isoDate(App.today());
       const view = App.subsView(ep);
       const pos = {}; App.subitems(ep).forEach((su, i) => { pos[su.key] = i; });
@@ -201,6 +237,19 @@ window.App = window.App || {};
           el('.cell.c-assignee', null, person
             ? el('span.avatar', { style: { background: person.color }, title: person.name }, App.initials(person.name))
             : el('span.avatar.avatar-none', { title: 'Unassigned' }, '?')),
+          // none → click to add a Kick Off; needed → click to mark it done; done → click to undo (Producer / Director)
+          (() => {
+            const st = App.koState(ep, su.key), can = App.canSetKickOff(App.state.role);
+            return el('.cell.c-ko' + (can ? '.can' : ''), can ? {
+              title: st ? null : 'Add a Kick Off for this task',
+              onclick: (e) => {
+                e.stopPropagation();
+                if (st) App.setKoDone(ep.id, su.key, st !== 'done');
+                else App.setEpisodeKo(ep.id, App.epKoTasks(ep).concat(su.key));
+              },
+              oncontextmenu: st ? (e) => this.koMenu(e, ep, su) : null
+            } : null, this.koTag(ep, su));
+          })(),
           // status cell — solid colour, click to change
           el('.cell.c-status', null, el('.status-cell', {
             style: { background: st.color, color: st.ink },
