@@ -637,6 +637,13 @@ window.App = window.App || {};
 
       const hoverHandler = (e) => {
         if (this._drag) return;
+        /* A planned version (V2, V3…): only its end moves — it always starts
+           the day after the version before it — so the whole bar drags its end. */
+        const revEl = e.target.closest('.rev-plan.adjustable');
+        if (revEl) {
+          revEl.style.cursor = (this._axis && this._axis.portrait) ? 'ns-resize' : 'ew-resize';
+          return;
+        }
         const noteEl = e.target.closest('.pn-note.editable');
         if (noteEl) {
           if (this._hoverBar && this._hoverBar !== noteEl) { this._hoverBar.style.cursor = ''; this._hoverBar.classList.remove('adjustable'); }
@@ -684,6 +691,27 @@ window.App = window.App || {};
           e.preventDefault();
           this.closeNoteEditor();
           this.startNoteDraw(e, drawTrack);
+          return;
+        }
+
+        // a planned version: drag its end to change how many days it runs
+        const revEl = e.target.closest('.rev-plan.adjustable');
+        if (revEl && !e.shiftKey && App.canEditSchedule(App.state.role)) {
+          const ep = App.state.data.episodes.find(x => x.id === revEl.dataset.episodeId);
+          const su = ep && App.subitem(ep, revEl.dataset.suKey);
+          const rv = su && App.plannedRevisions(ep, su).revs.find(x => String(x.idx) === revEl.dataset.rev);
+          if (!rv) return;
+          e.preventDefault();
+          hideTip();
+          this._drag = {
+            kind: 'rev', el: revEl, epId: ep.id, suKey: su.key, r: rv.idx, label: rv.label,
+            cal: App.showCalendar(ep.showId), who: { dept: su.dept, person: su.assignee },
+            startClientX: e.clientX, startClientY: e.clientY, startedAt: Date.now(), moved: false,
+            origStart: rv.start, origDue: rv.due, curDue: rv.due
+          };
+          revEl.classList.add('dragging');
+          document.body.classList.add('gantt-dragging');
+          document.body.style.cursor = (this._axis && this._axis.portrait) ? 'ns-resize' : 'ew-resize';
           return;
         }
 
@@ -973,9 +1001,25 @@ window.App = window.App || {};
         return;
       }
 
+      const portrait = !!(this._axis && this._axis.portrait);
+      if (d.kind === 'rev') {
+        const mainDelta = portrait ? (e.clientY - d.startClientY) : (e.clientX - d.startClientX);
+        if (Math.abs(mainDelta) > DRAG_SLOP) d.moved = true;
+        let nd = App.addVisibleDays(d.origDue, Math.round(mainDelta / dw), hw);
+        if (nd < d.origStart) nd = d.origStart;
+        d.curDue = nd;
+        if (portrait) d.el.style.height = xOf.width(d.origStart, nd) + 'px';
+        else d.el.style.width = xOf.width(d.origStart, nd) + 'px';
+        d.days = this.versionDays(d, nd);
+        const tip = dragTipEl(); tip.innerHTML = '';
+        tip.appendChild(el('span.tip-dot', { style: { background: '#5fb0f0' } }));
+        tip.appendChild(document.createTextNode(d.label + ' · ' + d.days + ' day' + (d.days === 1 ? '' : 's') + ' · ' + App.fmtRange(d.origStart, nd)));
+        tip.style.display = 'flex'; tip.style.left = e.clientX + 'px'; tip.style.top = (e.clientY - 38) + 'px';
+        return;
+      }
+
       // the only branch that can be Portrait — notes (handled above) never
       // render there, so this is where clientY actually gets read
-      const portrait = !!(this._axis && this._axis.portrait);
       const mainDelta = portrait ? (e.clientY - d.startClientY) : (e.clientX - d.startClientX);
       const colDelta = Math.round(mainDelta / dw);
       if (Math.abs(mainDelta) > DRAG_SLOP) d.moved = true;
@@ -1069,6 +1113,13 @@ window.App = window.App || {};
       const wasGesture = !!d.moved || held;
       if (wasGesture) this.suppressNextClick();
 
+      if (d.kind === 'rev') {
+        d.el.classList.remove('dragging');
+        if (d.curDue !== d.origDue) App.setVersionDays(d.epId, d.suKey, d.r, d.days);
+        else App.render();
+        return;
+      }
+
       if (d.kind === 'note') {
         d.el.classList.remove('dragging');
         if (d.moved && (d.curStart !== d.origStart || d.curDue !== d.origDue)) {
@@ -1084,6 +1135,15 @@ window.App = window.App || {};
         App.track.feature('timeline.dragReschedule');
         App.moveTask(d.epId, d.suKey, d.curStart, d.curDue);
       }
+    },
+
+    /* How long a version dragged to end on `due` runs: its people's working
+       days when the show keeps a calendar (what App.revisionSteps counts),
+       otherwise every day of the span. */
+    versionDays(d, due) {
+      let n = 0, x = d.origStart, g = 0;
+      while (x <= due && g++ < 2000) { if (!d.cal || !d.cal.isOff(x, d.who)) n++; x = App.shiftIso(x, 1); }
+      return Math.max(1, n);
     },
 
     /* The `click` that follows a drag's mouseup has to be dropped, or releasing
@@ -1438,11 +1498,16 @@ window.App = window.App || {};
       App.plannedRevisions(ep, su).revs.forEach(rv => {
         const rStyle = {};
         setBarPos(rStyle, axis, xOf, rv.start, rv.due);
-        const rbar = el('.rev-plan' + (bare ? '.bare' : ''), {
-          title: su.name + ' ' + rv.label + ' — planned revision, ' + App.fmtRange(rv.start, rv.due) + ' · only used if it’s sent back',
+        const canAdjust = App.canEditSchedule(App.state.role);
+        const rbar = el('.rev-plan' + (bare ? '.bare' : '') + (canAdjust ? '.adjustable' : ''), {
+          title: su.name + ' ' + rv.label + ' — planned revision, ' + App.fmtRange(rv.start, rv.due) + ' · only used if it’s sent back' +
+                 (canAdjust ? '\nDrag its end to change how long it runs' : ''),
           style: rStyle
         }, bare ? null : el('span', null, rv.label));
         rbar.style.setProperty('--rp-c', bg);
+        rbar.dataset.episodeId = ep.id;
+        rbar.dataset.suKey = su.key;
+        rbar.dataset.rev = rv.idx;
         track.appendChild(rbar);
       });
 

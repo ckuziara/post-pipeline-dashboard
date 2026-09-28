@@ -309,7 +309,7 @@ window.App = window.App || {};
     const down = new Set([key]);
     order.forEach(k => { const t = byKey[k]; if (t && subs[k] && t.deps.some(d => down.has(d))) down.add(k); });
     const doneOf = (k) => {
-      const t = byKey[k], su = subs[k];
+      const t = App.revTask(ep, k), su = subs[k];
       if (!t || !t.maxRev || su.status === 'approved') return dates[k].due;
       return App.revisionSteps(t, dates[k].due, cal, { dept: su.dept, person: su.assignee }, App.revisionsUsed(ep, k)).end;
     };
@@ -489,7 +489,7 @@ window.App = window.App || {};
     // when the show keeps a calendar
     const cal = App.showCalendar(g.ep.showId);
     const newDue = cal
-      ? App.revisionSteps(App.pTask(g.ep, key), g.su.due, cal, { dept: g.su.dept, person: g.su.assignee }, used).revs[0].due
+      ? App.revisionSteps(App.revTask(g.ep, key), g.su.due, cal, { dept: g.su.dept, person: g.su.assignee }, used).revs[0].due
       : App.shiftIso(g.su.due, App.REVIEW_DAYS + revDays);
     const impact = App.scheduleImpact(g.ep, key, g.su.start, newDue);
     if (impact.deny) { App.toast(impact.deny.text + ' — nothing changed', true); return; }
@@ -524,6 +524,33 @@ window.App = window.App || {};
     const leftNow = left - 1;
     App.toast('Revision ' + (used + 1) + ' of ' + max + ' requested for “' + g.su.name + '” — due ' + App.fmtDate(newDue) +
       (leftNow > 0 ? ' · ' + leftNow + ' left' : ' · none left'));
+  };
+
+  /* Change how long one planned version (V2, V3…) runs, for this episode
+     only — the Timeline's drag on a striped version bar. `r` is the
+     revision's index (0 is V2). Versions run back to back, so the later
+     ones simply follow on from the new end; nothing else is moved, but a
+     version that now runs into a task waiting on it is called out. */
+  App.setVersionDays = function (epId, key, r, days) {
+    const g = guardSchedule(epId, key); if (!g) return;
+    const { max, days: cur } = App.taskRevisions(g.ep, key);
+    days = Math.max(1, Math.round(days));
+    if (r < 0 || r >= max || cur[r] === days) { App.render(); return; }
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.revDays = e.revDays || {};
+      const own = (e.revDays[key] || []).slice();
+      own[r] = days;
+      e.revDays[key] = own;
+    }, 'the version length');
+    const ep = App.state.data.episodes.find(x => x.id === epId);
+    const su = App.subitem(ep, key);
+    const end = App.plannedRevisions(ep, su).end;
+    const hit = App.pipelineFor(ep).filter(t => t.deps.includes(key))
+      .map(t => App.subitem(ep, t.key)).filter(s => s && s.start <= end);
+    App.track.audit('task.versionDays', { episode: ep.code, task: su.name, version: 'V' + (r + 2), days: (cur[r] || 1) + '→' + days });
+    App.toast(su.name + ' V' + (r + 2) + ' — ' + days + ' day' + (days === 1 ? '' : 's') +
+      (hit.length ? ' · now runs into ' + hit.map(s => s.name).join(', ') : ''), hit.length > 0);
   };
 
   /* Dismiss the grey "unused revisions" mark a task leaves on the timeline
@@ -1169,12 +1196,14 @@ window.App = window.App || {};
      stored on the show and also decides who each episode's tasks open against:
      a department with a team draws from it — the lead first — instead of from
      every staff member in the studio who happens to hold that role. */
-  App.createShow = function ({ name, code, type, brand, series, epNames, pipeline, startIso, cadence, scale, epStarts, epLives, team, calendar }) {
+  App.createShow = function ({ name, code, type, brand, series, epNames, pipeline, startIso, cadence, scale, epStarts, epLives, team, calendar, startNum }) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
     type = type || 'animation';
     pipeline = pipeline || App.defaultPipelineFor(type);
     startIso = startIso || App.isoDate(App.today());
     cadence = cadence == null ? 14 : cadence;
+    // a show picked up mid-production numbers on from its first episode here
+    const firstNum = Math.max(1, parseInt(startNum, 10) || 1);
     let newShowId = null;
     App.mutate(d => {
       const showId = newShowId = code.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + App.uid().slice(0, 3);
@@ -1204,7 +1233,7 @@ window.App = window.App || {};
         const assignees = {};
         pipeline.forEach(t => { const pool = byDept[t.dept] || []; if (pool.length) assignees[t.key] = pool[i % pool.length]; });
         const ep = {
-          id: App.uid(), showId, code: code + '-' + (i + 1), title, index: d.episodes.length,
+          id: App.uid(), showId, code: code + '-' + (firstNum + i), title, index: d.episodes.length,
           shiftDays: 0, dates: sch.dates,
           statuses: App.deriveStatusesFromDates(pipeline, sch.dates, assignees), assignees
         };
@@ -1996,8 +2025,8 @@ window.App = window.App || {};
           ])
         ],
         review: () => [
-          segRow('Order tasks by', 'reviewSort', 'due',
-            [{ v: 'due', label: 'Review due' }, { v: 'dept', label: 'Dept' }]),
+          segRow('Order tasks by', 'reviewSort', 'priority',
+            [{ v: 'priority', label: 'Priority' }, { v: 'due', label: 'Review due' }, { v: 'dept', label: 'Dept' }]),
           prefRow('Show completed reviews', 'reviewShowDone', true, () => App.render())
         ]
       };

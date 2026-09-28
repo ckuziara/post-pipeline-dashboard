@@ -245,6 +245,8 @@ window.App = window.App || {};
     { title: 'Pipeline Oversight', desc: 'High-level access to shows and scheduling.', items: [
       { title: 'Reviews Tab', desc: 'Can open the Reviews tab — the queue of every task waiting for review, across all shows in view.',
         get: k => App.rolePermOf(k, 'reviewQueue', App.role(k).reviewQueue), set: (k, v) => App.setRolePerm(k, 'reviewQueue', v, 'Reviews Tab') },
+      { title: 'Review Order', desc: 'Can set the order reviews should be worked in, by dragging them up or down on the Reviews tab. Everyone sees the same order.',
+        get: k => App.rolePermOf(k, 'reviewPriority', App.role(k).reviewPriority), set: (k, v) => App.setRolePerm(k, 'reviewPriority', v, 'Review Order') },
       { title: 'Change the Schedule', desc: 'Can move task dates — in the Edit Task dialog and by dragging bars on the Timeline — for every department, not just their own.',
         get: k => App.rolePermOf(k, 'editSchedule', App.role(k).editSchedule), set: (k, v) => App.setRolePerm(k, 'editSchedule', v, 'Change the Schedule') },
       { title: 'Kick Offs', desc: 'Can choose which departments and tasks need a Kick Off on each episode, set a show’s usual list, and mark Kick Offs done.',

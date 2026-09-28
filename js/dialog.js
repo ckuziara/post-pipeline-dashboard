@@ -1632,84 +1632,18 @@ window.App = window.App || {};
 
     /* ---- drag to reorder ----
        Replaces a pair of ▲▼ buttons, which made moving a task five rows up a
-       five-click job. Grab the grip and the row lifts under the cursor while
-       the rest slide apart to open a gap where it will land — the phone
-       home-screen gesture. Nothing is re-rendered mid-drag: the rows are moved
-       with transforms only, and the pipeline array is spliced once on drop, so
-       the animation can't fight a rebuild.
-
-       Rows are measured at pick-up rather than per frame; the list doesn't
-       reflow during a drag, so those measurements stay true, and it keeps the
-       move handler to arithmetic. */
-    let dragState = null;
-
+       five-click job. The gesture itself is App.dragReorder (state.js), shared
+       with the Reviews queue; the pipeline array is spliced once on drop. */
     const rowEls = () => [...pipeList.querySelectorAll('.pipe-row:not(.milestone)')];
-
-    function beginDrag(e, grip) {
-      const row = grip.closest('.pipe-row');
-      const rows = rowEls();
-      const from = rows.indexOf(row);
-      if (from < 0 || rows.length < 2) return;
-      e.preventDefault();
-      closeDepMenu();
-
-      const gap = parseFloat(getComputedStyle(pipeList).rowGap) || 0;
-      const box = rows.map(r => ({ el: r, top: r.offsetTop, h: r.offsetHeight }));
-      dragState = {
-        row, rows: box, from, to: from, y: e.clientY, gap,
-        // how far a displaced row has to travel to clear the one being dragged
-        step: box[from].h + gap
-      };
-      pipeList.classList.add('reordering');
-      row.classList.add('pipe-dragging');
-      row.style.width = row.offsetWidth + 'px';      // pin the width; it leaves the flow visually
-      try { grip.setPointerCapture(e.pointerId); } catch (err) {}
-    }
-
-    function moveDrag(e) {
-      const d = dragState; if (!d) return;
-      const dy = e.clientY - d.y;
-      d.row.style.transform = 'translateY(' + dy + 'px)';
-
-      // where the dragged row's own middle now sits, against everyone else's
-      const mid = d.rows[d.from].top + d.rows[d.from].h / 2 + dy;
-      let to = d.from;
-      d.rows.forEach((r, i) => {
-        if (i === d.from) return;
-        const rMid = r.top + r.h / 2;
-        if (i < d.from && mid < rMid) to = Math.min(to, i);
-        if (i > d.from && mid > rMid) to = Math.max(to, i);
-      });
-      if (to !== d.to) {
-        d.to = to;
-        d.rows.forEach((r, i) => {
-          if (i === d.from) return;
-          const shift = (i > d.from && i <= to) ? -d.step : (i < d.from && i >= to) ? d.step : 0;
-          r.el.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
-        });
+    App.dragReorder(pipeList, {
+      rows: rowEls, grip: '.pipe-grip', lifted: 'pipe-dragging',
+      onStart: closeDepMenu,
+      onDrop: (from, to) => {
+        snapshot();
+        pipe.splice(to, 0, pipe.splice(from, 1)[0]);
+        renderPipe(); onChange();
       }
-    }
-
-    function endDrag() {
-      const d = dragState; if (!d) return;
-      dragState = null;
-      pipeList.classList.remove('reordering');
-      d.row.classList.remove('pipe-dragging');
-      d.row.style.transform = ''; d.row.style.width = '';
-      d.rows.forEach(r => { r.el.style.transform = ''; });
-      if (d.to === d.from) return;
-      snapshot();
-      pipe.splice(d.to, 0, pipe.splice(d.from, 1)[0]);
-      renderPipe(); onChange();
-    }
-
-    pipeList.addEventListener('pointerdown', (e) => {
-      const grip = e.target.closest('.pipe-grip');
-      if (grip) beginDrag(e, grip);
     });
-    pipeList.addEventListener('pointermove', moveDrag);
-    pipeList.addEventListener('pointerup', endDrag);
-    pipeList.addEventListener('pointercancel', endDrag);
 
     // the grip stays keyboard-operable — the arrow buttons it replaced were the
     // only way to reorder without a pointer
@@ -2587,11 +2521,21 @@ window.App = window.App || {};
          the plan when the start, cadence or pipeline changes. */
       const epNameVals = (d0.epNames || []).slice(), epLive = (d0.epLive || []).slice();
       const epCountBadge = el('span.count-badge');
+      /* Advanced → Set start episode number: a show picked up mid-production
+         numbers its episodes on from there (start at 14 and they're LA-14,
+         LA-15…). New shows only — an existing show's codes are already set. */
+      const startNumInput = selectOnFocus(el('input.fld', { type: 'number', value: String(d0.startNum || 1), min: '1', max: '9999' }));
+      const startNum = () => (editShow ? 1 : Math.max(1, Math.min(9999, parseInt(startNumInput.value, 10) || 1)));
+      const defaultEpName = (i, sn) => 'Episode ' + ((sn == null ? startNum() : sn) + i);
+      let shownStart = startNum();                  // the start number the rows on screen were drawn with
       const rebuildEps = () => {
         const n = Math.max(1, Math.min(EP_MAX, parseInt(countInput.value) || 1));
         [...epList.querySelectorAll('.ep-name-row')].forEach((row, i) => {
-          epNameVals[i] = row.querySelector('.ep-name-fld').value;
+          const v = row.querySelector('.ep-name-fld').value;
+          // a name still at its default follows the start number; a typed one stays
+          epNameVals[i] = v === defaultEpName(i, shownStart) ? '' : v;
         });
+        shownStart = startNum();
         epList.innerHTML = '';
         for (let i = 0; i < n; i++) {
           const idx = i;
@@ -2601,7 +2545,7 @@ window.App = window.App || {};
             liveDirty[idx] = true;
             updateSchedule();
           });
-          const nameInput = el('input.fld.ep-name-fld', { type: 'text', value: epNameVals[i] || ('Episode ' + (i + 1)), placeholder: 'Episode ' + (i + 1) });
+          const nameInput = el('input.fld.ep-name-fld', { type: 'text', value: epNameVals[i] || defaultEpName(i), placeholder: defaultEpName(i) });
           const inProd = editShow && editEps[i] && App.inProduction(editEps[i]);
           const locked = inProd && epLocked[i];
           nameInput.disabled = liveInput.disabled = !!locked;
@@ -2613,7 +2557,8 @@ window.App = window.App || {};
             onclick: () => { epLocked[idx] = !epLocked[idx]; rebuildEps(); updateSchedule(); }
           }, App.icon('lock')) : null;
           epList.appendChild(el('.ep-name-row' + (locked ? '.locked' : ''), null, [
-            el('span.ep-name-num', null, '#' + (i + 1)),
+            // an existing episode shows its own number (a show started mid-production doesn't begin at 1)
+            el('span.ep-name-num', null, '#' + ((editEps[i] && /-(\d+)$/.exec(editEps[i].code || '') || [])[1] || (startNum() + i))),
             nameInput,
             // editing keeps the tag and padlock slots on every row, filled or
             // not, so the live dates line up down the list
@@ -2990,6 +2935,7 @@ window.App = window.App || {};
         end: endInput.value, targetTouched: targetTouched,
         epNames: [...epList.querySelectorAll('.ep-name-fld')].map(i => i.value),
         epLive: epLive.slice(),
+        startNum: startNum(),
         pipe: pipe,
         team: team.read()
       });
@@ -3000,9 +2946,10 @@ window.App = window.App || {};
         const s = snapshot();
         if (s.name.trim() || s.code.trim() || s.brand.trim() || s.series.trim() || s.targetTouched) return true;
         if (s.epLive.some(Boolean)) return true;
+        if (s.startNum !== 1) return true;
         if (Object.keys(s.team).length) return true;      // staffing is real work too
         if (normPipe(s.pipe) !== normPipe(App.defaultPipelineFor(s.type))) return true;
-        return s.epNames.some((n, i) => n.trim() && n.trim() !== 'Episode ' + (i + 1));
+        return s.epNames.some((n, i) => n.trim() && n.trim() !== defaultEpName(i));
       };
       const keepDraft = () => {
         if (editShow) return;
@@ -3096,6 +3043,27 @@ window.App = window.App || {};
         title: 'Count Saturdays and Sundays as working days. Also on the Working Days & Holidays page.'
       }, [weekendCb, el('span', null, 'Include working weekends')]);
 
+      /* Advanced — settings most shows never touch, folded away under a small
+         toggle of their own so they don't cost the form any height. Not one
+         of the accordion panels below: opening it leaves those as they are. */
+      startNumInput.addEventListener('input', () => { rebuildEps(); keepDraft(); });
+      const advBody = el('.as-adv-body', { style: { display: 'none' } }, [
+        weekendChk,
+        // one line, like the checkbox beside it; the explanation is the tooltip
+        editShow ? null : el('label.as-adv-num', {
+          title: 'To pick a show up mid-production — episodes are numbered on from here'
+        }, [el('span', null, 'Start episode number'), startNumInput])
+      ]);
+      const advChev = el('span.chev', null, '▶');
+      const advOpen = d0.startNum > 1;               // a restored draft with a start number shows it
+      const setAdv = (v) => { advBody.style.display = v ? '' : 'none'; advChev.classList.toggle('open', v); };
+      const advanced = el('.as-adv', null, [
+        el('button.as-adv-toggle', { type: 'button', onclick: () => setAdv(advBody.style.display === 'none') },
+          [advChev, el('span', null, 'Advanced')]),
+        advBody
+      ]);
+      setAdv(advOpen);
+
       const sections = [
         (restored ? el('.draft-note', null, [
           el('span', null, [App.icon('save'), ' Picking up where you left off — nothing was lost.']),
@@ -3127,12 +3095,13 @@ window.App = window.App || {};
           ]),
           el('.plan-grid.two.end-row', null, [
             field('Project End Date', endInput, 'Pull it earlier to squeeze the pipeline, push it later to extend'),
-            el('.field.end-btn-slot', null, [useRecBtn, weekendChk])
+            el('.field.end-btn-slot', null, [useRecBtn])
           ]),
           recPill,
           endFeedback,
           archNote,
-          iterBox
+          iterBox,
+          advanced
         ]),
         epPanel.head,
         epPanel.body,
@@ -3361,7 +3330,7 @@ window.App = window.App || {};
             if (!validateStep1()) { goStep(1); return; }
             const name = nameInput.value.trim(), code = codeInput.value.trim().toUpperCase();
             const { start, cadence, epCount } = readPlan();
-            const epNames = [...epList.querySelectorAll('.ep-name-fld')].map((inp, idx) => inp.value.trim() || ('Episode ' + (idx + 1))).slice(0, epCount);
+            const epNames = [...epList.querySelectorAll('.ep-name-fld')].map((inp, idx) => inp.value.trim() || defaultEpName(idx)).slice(0, epCount);
             const rec = App.scheduleShow(pipe, start, epCount, cadence, 1, schedOpts);
             const target = endInput.value || rec.end;
             const scale = target === rec.end ? 1 : App.solveScale(pipe, start, epCount, cadence, target, schedOpts).scale;
@@ -3383,7 +3352,7 @@ window.App = window.App || {};
             });
             const teamOut = team.read();
             App.createShow({ name, code, type: typeSel.value, brand: brandInput.value, series: seriesInput.value,
-              epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives, team: teamOut,
+              epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives, team: teamOut, startNum: startNum(),
               calendar: App.calIsEmpty(calState) ? null : calState });
             App.track.flowDone('Create show', true, { episodes: epNames.length, departmentsStaffed: Object.keys(teamOut).length });
             created = true;                       // the draft has served its purpose
@@ -3448,7 +3417,7 @@ window.App = window.App || {};
       const draftSnap = () => {
         const { epCount } = readPlan();
         const plan = episodePlan();
-        const names = [...epList.querySelectorAll('.ep-name-fld')].map((inp, i) => inp.value.trim() || ('Episode ' + (i + 1)));
+        const names = [...epList.querySelectorAll('.ep-name-fld')].map((inp, i) => inp.value.trim() || defaultEpName(i));
         const code = codeInput.value.trim().toUpperCase();
         return {
           id: editId, isNew: !editShow, unsaved: true,
@@ -3460,7 +3429,7 @@ window.App = window.App || {};
             const ex = editEps[i];
             const live = ex && App.epMilestone(ex, App.LIVE_KEY);
             return {
-              code: ex ? ex.code : (code ? code + '-' + (i + 1) : '#' + (i + 1)), title: names[i],
+              code: ex ? ex.code : (code ? code + '-' + (startNum() + i) : '#' + (startNum() + i)), title: names[i],
               // an episode this edit leaves alone keeps the start it really has
               start: ex && (epLocked[i] || (!schedDirty && !liveDirty[i])) ? App.epStart(ex) : p.start,
               live: p.live, liveSet: true,

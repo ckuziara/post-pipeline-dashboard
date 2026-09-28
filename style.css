@@ -788,6 +788,9 @@ button.ghost:disabled:hover { background: transparent; }
 }
 .g-row.sub .rev-plan { height: 12px; border-radius: 3px; font-size: 8px; }
 .rev-plan.bare { padding: 0; min-width: 2px; }
+/* its end drags to change how long that version runs (see gantt.js) */
+.rev-plan.adjustable:hover { box-shadow: inset 0 0 0 1px var(--rp-c), 0 0 0 1px var(--rp-c); }
+.rev-plan.dragging { z-index: 5; box-shadow: inset 0 0 0 2px var(--rp-c); }
 /* Director Reviews row: each review day as a small orange block, ringed in
    the colour of the department whose work is being reviewed */
 .rev-ghost:hover { border-color: rgba(255,255,255,.4); }
@@ -2503,6 +2506,18 @@ select.fld { cursor: pointer; }
 .end-btn-slot { display: flex; align-items: center; gap: 16px; padding-top: 24px; min-height: 66px; }
 .sched-weekends { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); cursor: pointer; white-space: nowrap; }
 .sched-weekends input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+/* Add Show → Advanced: a small fold at the foot of the Schedule box */
+.as-adv { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 6px; }
+.as-adv-toggle {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 0;
+  background: none; border: 0; color: var(--text-3); font-size: 11.5px; font-weight: 600; cursor: pointer;
+}
+.as-adv-toggle:hover { color: var(--text); }
+.as-adv-toggle .chev { font-size: 8px; transition: transform .12s; }
+.as-adv-toggle .chev.open { transform: rotate(90deg); }
+.as-adv-body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; padding: 6px 0 0; }
+.as-adv-num { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
+.as-adv-num .fld { width: 64px; height: 28px; padding: 3px 8px; font-size: 12.5px; }
 
 .rec-pill {
   display: flex; align-items: center; gap: 8px; margin: 12px 0 0;
@@ -4347,6 +4362,28 @@ select.fld { cursor: pointer; }
 .rvq-ep .rvq-row:first-of-type { border-top: 0; }
 .rvq-row:hover { background: var(--hover); }
 .rvq-row.done { opacity: .62; }
+/* Priority order: one ranked list, a rank (and, for a Producer, a grip) in
+   front of each row. The drag itself is App.dragReorder, like the pipeline
+   editor's, so the lifted row and the gliding ones mirror .pipe-dragging. */
+.rvq-row.in-prio { grid-template-columns: 44px minmax(160px, 1.5fr) minmax(150px, 1.1fr) 132px 96px auto; }
+.rvq-rank { display: flex; align-items: center; gap: 4px; }
+.rvq-rank-n { font-size: 12px; font-weight: 700; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.rvq-grip {
+  flex: none; width: 18px; padding: 0; background: none; border: 0;
+  color: var(--text-3); font-size: 12px; line-height: 1; cursor: grab; touch-action: none; user-select: none;
+}
+.rvq-grip:hover { color: var(--text); }
+.rvq-grip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 5px; }
+.rvq-prio { overflow: visible; }
+.rvq-prio.reordering { cursor: grabbing; }
+.rvq-prio.reordering .rvq-row { transition: transform .18s cubic-bezier(.2,.8,.2,1); }
+.rvq-prio.reordering .rvq-row:hover { background: none; }
+.rvq-row.rvq-lifted {
+  transition: none !important; position: relative; z-index: 3;
+  background: var(--surface-2); outline: 1px solid var(--accent); border-radius: 6px;
+  box-shadow: 0 10px 24px rgba(0,0,0,.45); cursor: grabbing;
+}
+.rvq-row.rvq-lifted .rvq-grip { cursor: grabbing; color: var(--text); }
 .rvq-cell { min-width: 0; }
 
 .rvq-task-name { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -4412,6 +4449,10 @@ select.fld { cursor: pointer; }
 @media (max-width: 900px) {
   .rvq-row { grid-template-columns: 1fr 1fr; }
   .rvq-acts { grid-column: 1 / -1; justify-content: flex-start; }
+  /* the rank keeps its own narrow column down the row's left edge */
+  .rvq-row.in-prio { grid-template-columns: 40px 1fr 1fr; }
+  .rvq-row.in-prio .rvq-rank { grid-row: 1 / span 3; align-self: start; }
+  .rvq-row.in-prio .rvq-acts { grid-column: 2 / -1; }
 }
 
 /* ---- Add Show / Edit Pipeline · step 3: working days & holidays ---- */
