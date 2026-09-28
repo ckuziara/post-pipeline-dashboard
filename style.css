@@ -4723,3 +4723,14 @@ select.fld { cursor: pointer; }
 .kocal-grid.week .kocal-dept { white-space: normal; flex-basis: 100%; order: 3; }
 .kocal-empty { color: var(--text-3); font-size: 11px; padding-left: 2px; }
 .kocal-nav .btn-mini { white-space: nowrap; }
+
+/* pipeline editor: V1 · V2 · … ＋ = total */
+.pipe-vers { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pipe-ver { display: flex; align-items: center; gap: 5px; }
+.pipe-ver .fld-num { width: 56px; padding: 4px 6px; font-size: 11px; }
+.pipe-ver-lbl { font-size: 10.5px; font-weight: 700; color: var(--text-3); }
+.pipe-ver-x { border: 0; background: transparent; color: var(--text-3); cursor: pointer; font-size: 10px; padding: 2px 4px; border-radius: 4px; }
+.pipe-ver-x:hover { color: #ff5b6e; background: rgba(255,91,110,.12); }
+.pipe-ver-add { border: 1px dashed var(--border-2, var(--border)); background: transparent; color: var(--text-2); cursor: pointer; border-radius: 6px; width: 26px; height: 24px; font-size: 13px; }
+.pipe-ver-add:hover { color: var(--text); border-color: var(--accent); }
+.pipe-vers-total { margin-left: 4px; font-size: 11.5px; font-weight: 700; color: var(--text); white-space: nowrap; }

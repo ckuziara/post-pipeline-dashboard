@@ -538,28 +538,24 @@ window.App = window.App || {};
   };
   App.hasHolidayClash = (ep, su) => App.holidayClashes(ep.showId, ep.id + '::' + su.key).length > 0;
 
-  /* The review days and revisions that follow a task's pass ending `due`:
-     review · V(n+1) · review · … — each review a working day for the
-     Director, each revision working days for the task's own people. `used`
-     revisions are already inside the pass. Returns { reviews, revs, end }. */
+  /* The revisions that can follow a task's pass ending `due`: V(n+1), V(n+2)…
+     back to back, each its task's own people's working days. The Director's
+     review sits between versions but takes no scheduled time of its own — the
+     next version only starts once the Director sends the task back for it
+     (App.requestRevision). `used` revisions are already inside the pass.
+     Returns { reviews, revs, end }; `reviews` is always empty now and kept so
+     older callers stay safe. */
   App.revisionSteps = function (t, due, cal, who, used) {
     const out = { reviews: [], revs: [], end: due };
     const max = (t && t.maxRev) || 0;
     if (!max) return out;
-    const R = App.REVIEW_DAYS, rwho = { review: true };
     let at = due;
-    const span = (n, w) => {
-      if (cal) { const s0 = cal.nextWork(App.shiftIso(at, 1), w); const e0 = cal.addWork(s0, n, w); return [s0, e0]; }
-      return [App.shiftIso(at, 1), App.shiftIso(at, n)];
-    };
-    const review = (label) => { const [s0, e0] = span(R, rwho); out.reviews.push({ start: s0, due: e0, label }); at = e0; };
-    const u = used || 0;
-    review('V' + (u + 1));
-    for (let r = u; r < max; r++) {
-      const [s0, e0] = span(Math.max(1, (t.revDays || [])[r] || 1), who);
+    for (let r = used || 0; r < max; r++) {
+      const n = Math.max(1, (t.revDays || [])[r] || 1);
+      const s0 = cal ? cal.nextWork(App.shiftIso(at, 1), who) : App.shiftIso(at, 1);
+      const e0 = cal ? cal.addWork(s0, n, who) : App.shiftIso(at, n);
       out.revs.push({ start: s0, due: e0, label: 'V' + (r + 2) });
       at = e0;
-      review('V' + (r + 2));
     }
     out.end = at;
     return out;
@@ -590,20 +586,17 @@ window.App = window.App || {};
   // waiting period is expressed (Live Date sits 4 weeks past QC). The lag is a
   // commitment to an outside party, so squeeze/stretch never scales it.
   //
-  // Every pass of a task with a revision budget is followed by a review
-  // (App.REVIEW_DAYS — Post Operations hands it to the Director, who approves
-  // it or sends it back); a task with no revisions gets no review,
-  // and shows are planned for the worst case: every task is assumed to spend
-  // its whole revision budget. So a task runs
-  //     V1 · review · V2 · review · … · last revision · review
-  // and its dependents wait for that final review, not the first pass.
+  // Shows are planned for the worst case: every task is assumed to spend its
+  // whole revision budget, versions back to back with no gap for the review
+  // between them (App.REVIEW_DAYS is 0). So a task runs
+  //     V1 · V2 · … · last version
+  // and its dependents wait for the last version, not the first pass.
   // `dates[k].due` is still the first pass — the date the work is due for
   // review — and everything between it and `done[k]` is held in reserve.
   // Sending a task back (App.requestRevision) stretches its due date into
   // that reserve, so it never pushes a dependent and never counts the same
-  // days twice. opts.withRevisions: false leaves the revisions out (the first
-  // review stays).
-  App.REVIEW_DAYS = 1;
+  // days twice. opts.withRevisions: false leaves the revisions out.
+  App.REVIEW_DAYS = 0;
   App.schedulePipeline = function (pipeline, startIso, scale, opts) {
     const order = App.topoSort(pipeline); if (!order) return null;
     const withRev = !(opts && opts.withRevisions === false);
@@ -638,12 +631,9 @@ window.App = window.App || {};
       if (cal) s = cal.nextWork(s, who);           // work can't begin on a day off
       const dur = App.taskDuration(t, scale);
       const due = cal ? cal.addWork(s, dur, who) : App.shiftIso(s, dur - 1);
-      // only a task that can be sent back goes to the Director — one with no
-      // revision budget has nothing to review for, so it gets no review day.
-      // Worst case: every revision spent, each followed by its review; with
-      // revisions left out, just the first review.
-      const steps = t.maxRev > 0 ? App.revisionSteps(t, due, cal, who, 0) : null;
-      done[k] = !steps ? due : withRev ? steps.end : steps.reviews[0].due;
+      // worst case: every revision spent, back to back after the first pass
+      const steps = t.maxRev > 0 && withRev ? App.revisionSteps(t, due, cal, who, 0) : null;
+      done[k] = steps ? steps.end : due;
       dates[k] = { start: s, due };
       if (done[k] > end) end = done[k];
     });

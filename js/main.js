@@ -484,9 +484,9 @@ window.App = window.App || {};
     }
 
     const revDays = days[used] || 1;
-    // the review that sent it back took its day, then the revision's own days
-    // — exactly the slot the schedule reserved (see App.schedulePipeline)
-    // (working days, when the show keeps a calendar)
+    // the next version starts straight after the current one — exactly the
+    // slot the schedule reserved (see App.schedulePipeline), in working days
+    // when the show keeps a calendar
     const cal = App.showCalendar(g.ep.showId);
     const newDue = cal
       ? App.revisionSteps(App.pTask(g.ep, key), g.su.due, cal, { dept: g.su.dept, person: g.su.assignee }, used).revs[0].due
