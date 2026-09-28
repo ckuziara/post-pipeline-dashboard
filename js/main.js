@@ -309,7 +309,7 @@ window.App = window.App || {};
     const down = new Set([key]);
     order.forEach(k => { const t = byKey[k]; if (t && subs[k] && t.deps.some(d => down.has(d))) down.add(k); });
     const doneOf = (k) => {
-      const t = byKey[k], su = subs[k];
+      const t = App.revTask(ep, k), su = subs[k];
       if (!t || !t.maxRev || su.status === 'approved') return dates[k].due;
       return App.revisionSteps(t, dates[k].due, cal, { dept: su.dept, person: su.assignee }, App.revisionsUsed(ep, k)).end;
     };
@@ -489,7 +489,7 @@ window.App = window.App || {};
     // when the show keeps a calendar
     const cal = App.showCalendar(g.ep.showId);
     const newDue = cal
-      ? App.revisionSteps(App.pTask(g.ep, key), g.su.due, cal, { dept: g.su.dept, person: g.su.assignee }, used).revs[0].due
+      ? App.revisionSteps(App.revTask(g.ep, key), g.su.due, cal, { dept: g.su.dept, person: g.su.assignee }, used).revs[0].due
       : App.shiftIso(g.su.due, App.REVIEW_DAYS + revDays);
     const impact = App.scheduleImpact(g.ep, key, g.su.start, newDue);
     if (impact.deny) { App.toast(impact.deny.text + ' — nothing changed', true); return; }
@@ -524,6 +524,33 @@ window.App = window.App || {};
     const leftNow = left - 1;
     App.toast('Revision ' + (used + 1) + ' of ' + max + ' requested for “' + g.su.name + '” — due ' + App.fmtDate(newDue) +
       (leftNow > 0 ? ' · ' + leftNow + ' left' : ' · none left'));
+  };
+
+  /* Change how long one planned version (V2, V3…) runs, for this episode
+     only — the Timeline's drag on a striped version bar. `r` is the
+     revision's index (0 is V2). Versions run back to back, so the later
+     ones simply follow on from the new end; nothing else is moved, but a
+     version that now runs into a task waiting on it is called out. */
+  App.setVersionDays = function (epId, key, r, days) {
+    const g = guardSchedule(epId, key); if (!g) return;
+    const { max, days: cur } = App.taskRevisions(g.ep, key);
+    days = Math.max(1, Math.round(days));
+    if (r < 0 || r >= max || cur[r] === days) { App.render(); return; }
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.revDays = e.revDays || {};
+      const own = (e.revDays[key] || []).slice();
+      own[r] = days;
+      e.revDays[key] = own;
+    }, 'the version length');
+    const ep = App.state.data.episodes.find(x => x.id === epId);
+    const su = App.subitem(ep, key);
+    const end = App.plannedRevisions(ep, su).end;
+    const hit = App.pipelineFor(ep).filter(t => t.deps.includes(key))
+      .map(t => App.subitem(ep, t.key)).filter(s => s && s.start <= end);
+    App.track.audit('task.versionDays', { episode: ep.code, task: su.name, version: 'V' + (r + 2), days: (cur[r] || 1) + '→' + days });
+    App.toast(su.name + ' V' + (r + 2) + ' — ' + days + ' day' + (days === 1 ? '' : 's') +
+      (hit.length ? ' · now runs into ' + hit.map(s => s.name).join(', ') : ''), hit.length > 0);
   };
 
   /* Dismiss the grey "unused revisions" mark a task leaves on the timeline
