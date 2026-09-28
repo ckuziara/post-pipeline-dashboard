@@ -1632,84 +1632,18 @@ window.App = window.App || {};
 
     /* ---- drag to reorder ----
        Replaces a pair of ▲▼ buttons, which made moving a task five rows up a
-       five-click job. Grab the grip and the row lifts under the cursor while
-       the rest slide apart to open a gap where it will land — the phone
-       home-screen gesture. Nothing is re-rendered mid-drag: the rows are moved
-       with transforms only, and the pipeline array is spliced once on drop, so
-       the animation can't fight a rebuild.
-
-       Rows are measured at pick-up rather than per frame; the list doesn't
-       reflow during a drag, so those measurements stay true, and it keeps the
-       move handler to arithmetic. */
-    let dragState = null;
-
+       five-click job. The gesture itself is App.dragReorder (state.js), shared
+       with the Reviews queue; the pipeline array is spliced once on drop. */
     const rowEls = () => [...pipeList.querySelectorAll('.pipe-row:not(.milestone)')];
-
-    function beginDrag(e, grip) {
-      const row = grip.closest('.pipe-row');
-      const rows = rowEls();
-      const from = rows.indexOf(row);
-      if (from < 0 || rows.length < 2) return;
-      e.preventDefault();
-      closeDepMenu();
-
-      const gap = parseFloat(getComputedStyle(pipeList).rowGap) || 0;
-      const box = rows.map(r => ({ el: r, top: r.offsetTop, h: r.offsetHeight }));
-      dragState = {
-        row, rows: box, from, to: from, y: e.clientY, gap,
-        // how far a displaced row has to travel to clear the one being dragged
-        step: box[from].h + gap
-      };
-      pipeList.classList.add('reordering');
-      row.classList.add('pipe-dragging');
-      row.style.width = row.offsetWidth + 'px';      // pin the width; it leaves the flow visually
-      try { grip.setPointerCapture(e.pointerId); } catch (err) {}
-    }
-
-    function moveDrag(e) {
-      const d = dragState; if (!d) return;
-      const dy = e.clientY - d.y;
-      d.row.style.transform = 'translateY(' + dy + 'px)';
-
-      // where the dragged row's own middle now sits, against everyone else's
-      const mid = d.rows[d.from].top + d.rows[d.from].h / 2 + dy;
-      let to = d.from;
-      d.rows.forEach((r, i) => {
-        if (i === d.from) return;
-        const rMid = r.top + r.h / 2;
-        if (i < d.from && mid < rMid) to = Math.min(to, i);
-        if (i > d.from && mid > rMid) to = Math.max(to, i);
-      });
-      if (to !== d.to) {
-        d.to = to;
-        d.rows.forEach((r, i) => {
-          if (i === d.from) return;
-          const shift = (i > d.from && i <= to) ? -d.step : (i < d.from && i >= to) ? d.step : 0;
-          r.el.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
-        });
+    App.dragReorder(pipeList, {
+      rows: rowEls, grip: '.pipe-grip', lifted: 'pipe-dragging',
+      onStart: closeDepMenu,
+      onDrop: (from, to) => {
+        snapshot();
+        pipe.splice(to, 0, pipe.splice(from, 1)[0]);
+        renderPipe(); onChange();
       }
-    }
-
-    function endDrag() {
-      const d = dragState; if (!d) return;
-      dragState = null;
-      pipeList.classList.remove('reordering');
-      d.row.classList.remove('pipe-dragging');
-      d.row.style.transform = ''; d.row.style.width = '';
-      d.rows.forEach(r => { r.el.style.transform = ''; });
-      if (d.to === d.from) return;
-      snapshot();
-      pipe.splice(d.to, 0, pipe.splice(d.from, 1)[0]);
-      renderPipe(); onChange();
-    }
-
-    pipeList.addEventListener('pointerdown', (e) => {
-      const grip = e.target.closest('.pipe-grip');
-      if (grip) beginDrag(e, grip);
     });
-    pipeList.addEventListener('pointermove', moveDrag);
-    pipeList.addEventListener('pointerup', endDrag);
-    pipeList.addEventListener('pointercancel', endDrag);
 
     // the grip stays keyboard-operable — the arrow buttons it replaced were the
     // only way to reorder without a pointer

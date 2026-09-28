@@ -141,7 +141,7 @@ window.App = window.App || {};
      Operations also owns scheduling (across every department, since that's the
      coordinating job), so it carries editSchedule without editAll. */
   App.ROLES = [
-    { key: 'producer',  label: 'Producer',        ico: 'clapper', approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, hint: 'Full access — all tasks, shows & admin' },
+    { key: 'producer',  label: 'Producer',        ico: 'clapper', approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, hint: 'Full access — all tasks, shows & admin' },
     { key: 'manager',   label: 'Manager',         ico: 'compass', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, hint: 'Oversight, approvals & admin' },
     { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, reviewQueue: true, kickOff: true, hint: 'Review & approve cuts' },
     { key: 'creative',  label: 'Creative',        ico: 'pencil', dept: 'creative',  hint: 'Creative department tasks' },
@@ -190,9 +190,10 @@ window.App = window.App || {};
   };
   App.canApprove = (k) => App.rolePerm(k, 'approve', App.role(k).approve);
   App.isAdminRole = (k) => App.rolePerm(k, 'admin', App.role(k).admin);
-  // The Reviews tab (the ready-for-review queue). Director-only by default,
-  // which is how it was hardcoded before this became a real permission.
+  // The Reviews tab (the ready-for-review queue). Director and Producer by default.
   App.canSeeReviewQueue = (k) => App.rolePerm(k, 'reviewQueue', App.role(k).reviewQueue);
+  // setting the queue's priority order by hand (drag a review up or down) — Producer by default
+  App.canPrioritiseReviews = (k) => App.rolePerm(k, 'reviewPriority', App.role(k).reviewPriority);
   App.canManageShows = (k) => App.rolePerm(k, 'manageShows', App.role(k).manageShows);
   // Which roles may assign task owners — selectable in the Admin panel and
   // persisted in data.assignPriv. Until an admin changes it, the approver
@@ -2031,6 +2032,78 @@ window.App = window.App || {};
     // armed on the next tick so the press that opened the menu can't close it
     const t = setTimeout(() => document.addEventListener('pointerdown', h, true), 0);
     return () => { clearTimeout(t); document.removeEventListener('pointerdown', h, true); };
+  };
+
+  /* Drag to reorder a list — the pipeline editor's gesture, shared so every
+     reorderable list behaves the same. Grab a row's grip and it lifts under
+     the cursor while the rest slide apart to open a gap where it will land.
+     Nothing is re-rendered mid-drag: rows move by transform only, and the
+     caller's onDrop(from, to) is told once, on release, so the animation
+     can't fight a rebuild.
+
+     Rows are measured at pick-up rather than per frame; the list doesn't
+     reflow during a drag, so those measurements stay true, and it keeps the
+     move handler to arithmetic.
+
+       rows()    the rows that take part, in order
+       grip      selector for the grab point (only the grip starts a drag)
+       lifted    class for the row being carried
+       onStart() optional, called at pick-up
+       onDrop(from, to)  indexes into rows(); only called when it moved */
+  App.dragReorder = function (listEl, opts) {
+    let d = null;
+    const lifted = opts.lifted || 'reorder-lifted';
+    listEl.addEventListener('pointerdown', (e) => {
+      const grip = e.target.closest(opts.grip);
+      if (!grip || !listEl.contains(grip)) return;
+      const rows = opts.rows();
+      const row = rows.find(r => r.contains(grip));
+      const from = rows.indexOf(row);
+      if (from < 0 || rows.length < 2) return;
+      e.preventDefault();
+      if (opts.onStart) opts.onStart();
+      const gap = parseFloat(getComputedStyle(row.parentNode).rowGap) || 0;
+      // offsetTop is measured against the offset parent, so every row has to
+      // share one; getBoundingClientRect doesn't care
+      const box = rows.map(r => { const b = r.getBoundingClientRect(); return { el: r, top: b.top, h: b.height }; });
+      d = { row, rows: box, from, to: from, y: e.clientY, step: box[from].h + gap };
+      listEl.classList.add('reordering');
+      row.classList.add(lifted);
+      row.style.width = row.offsetWidth + 'px';      // pin the width; it leaves the flow visually
+      try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    listEl.addEventListener('pointermove', (e) => {
+      if (!d) return;
+      const dy = e.clientY - d.y;
+      d.row.style.transform = 'translateY(' + dy + 'px)';
+      // where the carried row's own middle now sits, against everyone else's
+      const mid = d.rows[d.from].top + d.rows[d.from].h / 2 + dy;
+      let to = d.from;
+      d.rows.forEach((r, i) => {
+        if (i === d.from) return;
+        const rMid = r.top + r.h / 2;
+        if (i < d.from && mid < rMid) to = Math.min(to, i);
+        if (i > d.from && mid > rMid) to = Math.max(to, i);
+      });
+      if (to === d.to) return;
+      d.to = to;
+      d.rows.forEach((r, i) => {
+        if (i === d.from) return;
+        const shift = (i > d.from && i <= to) ? -d.step : (i < d.from && i >= to) ? d.step : 0;
+        r.el.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+      });
+    });
+    const end = () => {
+      if (!d) return;
+      const x = d; d = null;
+      listEl.classList.remove('reordering');
+      x.row.classList.remove(lifted);
+      x.row.style.transform = ''; x.row.style.width = '';
+      x.rows.forEach(r => { r.el.style.transform = ''; });
+      if (x.to !== x.from) opts.onDrop(x.from, x.to);
+    };
+    listEl.addEventListener('pointerup', end);
+    listEl.addEventListener('pointercancel', end);
   };
 
   App.el = function (sel, props, children) {

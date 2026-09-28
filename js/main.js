@@ -2023,8 +2023,8 @@ window.App = window.App || {};
           ])
         ],
         review: () => [
-          segRow('Order tasks by', 'reviewSort', 'due',
-            [{ v: 'due', label: 'Review due' }, { v: 'dept', label: 'Dept' }]),
+          segRow('Order tasks by', 'reviewSort', 'priority',
+            [{ v: 'priority', label: 'Priority' }, { v: 'due', label: 'Review due' }, { v: 'dept', label: 'Dept' }]),
           prefRow('Show completed reviews', 'reviewShowDone', true, () => App.render())
         ]
       };

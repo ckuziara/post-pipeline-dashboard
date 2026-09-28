@@ -4360,6 +4360,28 @@ select.fld { cursor: pointer; }
 .rvq-ep .rvq-row:first-of-type { border-top: 0; }
 .rvq-row:hover { background: var(--hover); }
 .rvq-row.done { opacity: .62; }
+/* Priority order: one ranked list, a rank (and, for a Producer, a grip) in
+   front of each row. The drag itself is App.dragReorder, like the pipeline
+   editor's, so the lifted row and the gliding ones mirror .pipe-dragging. */
+.rvq-row.in-prio { grid-template-columns: 44px minmax(160px, 1.5fr) minmax(150px, 1.1fr) 132px 96px auto; }
+.rvq-rank { display: flex; align-items: center; gap: 4px; }
+.rvq-rank-n { font-size: 12px; font-weight: 700; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.rvq-grip {
+  flex: none; width: 18px; padding: 0; background: none; border: 0;
+  color: var(--text-3); font-size: 12px; line-height: 1; cursor: grab; touch-action: none; user-select: none;
+}
+.rvq-grip:hover { color: var(--text); }
+.rvq-grip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 5px; }
+.rvq-prio { overflow: visible; }
+.rvq-prio.reordering { cursor: grabbing; }
+.rvq-prio.reordering .rvq-row { transition: transform .18s cubic-bezier(.2,.8,.2,1); }
+.rvq-prio.reordering .rvq-row:hover { background: none; }
+.rvq-row.rvq-lifted {
+  transition: none !important; position: relative; z-index: 3;
+  background: var(--surface-2); outline: 1px solid var(--accent); border-radius: 6px;
+  box-shadow: 0 10px 24px rgba(0,0,0,.45); cursor: grabbing;
+}
+.rvq-row.rvq-lifted .rvq-grip { cursor: grabbing; color: var(--text); }
 .rvq-cell { min-width: 0; }
 
 .rvq-task-name { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -4425,6 +4447,10 @@ select.fld { cursor: pointer; }
 @media (max-width: 900px) {
   .rvq-row { grid-template-columns: 1fr 1fr; }
   .rvq-acts { grid-column: 1 / -1; justify-content: flex-start; }
+  /* the rank keeps its own narrow column down the row's left edge */
+  .rvq-row.in-prio { grid-template-columns: 40px 1fr 1fr; }
+  .rvq-row.in-prio .rvq-rank { grid-row: 1 / span 3; align-self: start; }
+  .rvq-row.in-prio .rvq-acts { grid-column: 2 / -1; }
 }
 
 /* ---- Add Show / Edit Pipeline · step 3: working days & holidays ---- */
