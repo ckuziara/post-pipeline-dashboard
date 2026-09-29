@@ -35,6 +35,7 @@ window.App = window.App || {};
       // button) catches Esc, a backdrop click and the ✕ alike; a successful save
       // closes its own flow first, so this only ever sees genuine drop-offs.
       this._ov.remove(); this._ov = null; document.removeEventListener('keydown', this._esc);
+      if (App.combo && App.combo._close) App.combo._close();    // a type-to-filter list left open
       App.track && App.track.abandonOpenFlows && App.track.abandonOpenFlows();
       if (onClose) onClose();
     }
@@ -332,6 +333,144 @@ window.App = window.App || {};
 
   function field(label, control, hint) {
     return el('.field', null, [el('label.fld-label', null, label), control, hint ? el('.fld-hint', null, hint) : null]);
+  }
+
+  /* Type-to-filter picker: a text box whose known values drop down below it
+     and narrow as you type, the matching part in bold. `values()` is read
+     every time the list is drawn, so a list that depends on another field is
+     always current. When what's typed isn't in the list, the list ends with
+     "＋ Create <noun> “…”" (unless opts.free is false, as for a filter), so
+     it's plain that a new one is being made. A value that only differs in
+     case offers — and on leaving the box, takes — the existing spelling, so
+     one brand never ends up split in two. onInput(text) fires on every keystroke and on a pick.
+     The list is appended to <body> so a dialog's scrolling body can't clip it. */
+  App.combo = function (opts) {
+    const inp = el('input.fld.combo-fld' + (opts.cls ? '.' + opts.cls : ''), {
+      type: 'text', value: opts.value || '', placeholder: opts.placeholder || '',
+      autocomplete: 'off', spellcheck: 'false'
+    });
+    let pop = null, rows = [], active = -1;   // rows: [{ v, create }]
+    const place = () => {
+      if (!pop) return;
+      if (!inp.isConnected) { close(); return; }
+      const r = inp.getBoundingClientRect();
+      pop.style.width = r.width + 'px'; pop.style.top = (r.bottom + 4) + 'px';
+      // at least as wide as its box, but kept on screen when that's the last column
+      pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + 'px';
+    };
+    function close() {
+      if (!pop) return;
+      if (App.combo._close === close) App.combo._close = null;
+      pop.remove(); pop = null; active = -1;
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    }
+    const changed = () => { if (opts.onInput) opts.onInput(inp.value.trim()); };
+    const pick = (row) => {
+      inp.value = row.v; close(); changed();
+      if (row.create) { if (opts.onCreate) opts.onCreate(row.v); }
+      else if (opts.onPick) opts.onPick(row.v);
+    };
+    const bold = (v, q) => {
+      const at = q ? v.toLowerCase().indexOf(q) : -1;
+      return at < 0 ? [v] : [v.slice(0, at), el('b', null, v.slice(at, at + q.length)), v.slice(at + q.length)];
+    };
+    function draw() {
+      const typed = inp.value.trim(), q = typed.toLowerCase();
+      const all = opts.values();
+      rows = (q ? all.filter(v => v.toLowerCase().includes(q)) : all).map(v => ({ v }));
+      const known = all.some(v => v.toLowerCase() === q);
+      if (typed && !known && opts.free !== false) rows.push({ v: typed, create: true });
+      // typing an existing value, in any case, lines Enter up on it
+      if (active < 0 && q) active = rows.findIndex(r => !r.create && r.v.toLowerCase() === q);
+      if (active >= rows.length) active = rows.length - 1;
+      if (!pop) {
+        // one list open at a time — a box torn down with its dialog never gets
+        // its blur, so the next one to open clears it
+        if (App.combo._close) App.combo._close();
+        App.combo._close = close;
+        // mousedown would blur the box before the click lands on a row
+        pop = el('.combo-pop', { onmousedown: (e) => e.preventDefault() });
+        document.body.appendChild(pop);
+        window.addEventListener('scroll', place, true);
+        window.addEventListener('resize', place);
+      }
+      pop.innerHTML = '';
+      rows.forEach((r, i) => {
+        const on = !r.create && r.v === typed;
+        pop.appendChild(el('.combo-row' + (r.create ? '.create' : '') + (i === active ? '.active' : '') + (on ? '.on' : ''), {
+          title: r.create ? 'Add “' + r.v + '” as a new ' + (opts.noun || 'value') : null,
+          onclick: () => pick(r), onmouseenter: () => { active = i; paintActive(); }
+        }, r.create
+          ? [el('span.combo-check', null, '＋'), el('span.combo-txt', null, ['Create ' + (opts.noun ? opts.noun + ' ' : ''), el('b', null, '“' + r.v + '”')])]
+          : [el('span.combo-check', null, on ? '✓' : ''), el('span.combo-txt', null, bold(r.v, q))]));
+      });
+      if (!rows.length) {
+        pop.appendChild(el('.combo-empty', null, typed ? 'No matches'
+          : (opts.emptyText || (opts.free === false ? 'Nothing to pick yet' : 'None yet — type a name to create one'))));
+      }
+      place();
+    }
+    const paintActive = () => {
+      if (!pop) return;
+      [...pop.querySelectorAll('.combo-row')].forEach((r, i) => r.classList.toggle('active', i === active));
+      const a = pop.querySelectorAll('.combo-row')[active];
+      if (a) a.scrollIntoView({ block: 'nearest' });
+    };
+    inp.addEventListener('focus', draw);
+    inp.addEventListener('click', () => { if (!pop) draw(); });
+    inp.addEventListener('input', () => { active = -1; draw(); changed(); });
+    inp.addEventListener('blur', () => {
+      setTimeout(close, 0);
+      if (opts.free === false) return;
+      const q = inp.value.trim().toLowerCase();
+      const same = q && opts.values().find(v => v.toLowerCase() === q);
+      if (same && same !== inp.value) { inp.value = same; changed(); }
+    });
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!pop) { draw(); return; }
+        if (!rows.length) return;
+        active = e.key === 'ArrowDown' ? (active + 1) % rows.length : (active <= 0 ? rows.length - 1 : active - 1);
+        paintActive();
+      } else if (e.key === 'Enter' && pop && rows[active]) {
+        e.preventDefault(); pick(rows[active]);
+      } else if (e.key === 'Escape' && pop) {
+        e.stopPropagation(); close();            // the list closes first, not the dialog
+      } else if (e.key === 'Tab') close();
+    });
+    return { input: inp, set: (v) => { inp.value = v || ''; }, get: () => inp.value.trim(), close };
+  };
+
+  /* Brand › Show › Series › Season, as four combos (App.SHOW_LEVELS). Each
+     level's list narrows to what the board has under the levels filled in
+     above it, and picking a value fills any blank level above it that only
+     has one possible answer — pick "Emmie Wonder Wardrobe" and Brand and
+     Show follow. `initial` is { brand, franchise, seriesName, series }. */
+  function showLevelFields(initial, hints) {
+    const combos = App.SHOW_LEVELS.map((lv, i) => App.combo({
+      value: (initial && initial[lv.key]) || '', placeholder: lv.ph, noun: lv.label.toLowerCase(),
+      values: () => App.showLevelValues(i, read()),
+      onPick: (v) => fillAbove(i, v)
+    }));
+    function read() {
+      const o = {};
+      App.SHOW_LEVELS.forEach((lv, i) => { o[lv.key] = combos[i].get(); });
+      return o;
+    }
+    function fillAbove(i, v) {
+      const key = App.SHOW_LEVELS[i].key;
+      const under = App.state.data.shows.filter(s => s[key] === v);
+      for (let j = 0; j < i; j++) {
+        if (combos[j].get()) continue;
+        const k = App.SHOW_LEVELS[j].key;
+        const vals = [...new Set(under.map(s => s[k]).filter(Boolean))];
+        if (vals.length === 1) combos[j].set(vals[0]);
+      }
+    }
+    const fields = App.SHOW_LEVELS.map((lv, i) => field(lv.label, combos[i].input, hints && hints[i]));
+    return { fields, read, combos };
   }
 
   /* Compact click-to-edit row (settings-menu style): shows a read-only value
@@ -2398,7 +2537,8 @@ window.App = window.App || {};
          actually created — see App.draft. */
       const DRAFT = 'addShow';
       const fromShow = (s) => ({
-        name: s.name, code: s.prefix || '', brand: s.brand || '', series: s.series || '',
+        name: s.name, code: s.prefix || '',
+        brand: s.brand || '', franchise: s.franchise || '', seriesName: s.seriesName || '', series: s.series || '',
         type: s.type || 'animation', preset: '',
         start: editStarts[0] || App.isoDate(App.today()),
         epCount: Math.max(1, editEps.length),
@@ -2477,10 +2617,10 @@ window.App = window.App || {};
       // ---------- show details ----------
       const nameInput = el('input.fld', { type: 'text', placeholder: 'e.g. Show Name', value: d0.name || '' });
       const codeInput = el('input.fld', { type: 'text', placeholder: 'e.g. ABC', maxlength: '6', value: d0.code || '' });
-      // brand and season are what the Shows browser groups and filters on, so a
-      // new show gets asked for them here rather than only in the editor
-      const brandInput = el('input.fld', { type: 'text', placeholder: 'e.g. Studio or brand', value: d0.brand || '' });
-      const seriesInput = el('input.fld', { type: 'text', placeholder: 'e.g. Season 1', value: d0.series || '' });
+      // Brand › Show › Series › Season are what the Shows browser groups and
+      // filters on, so a new show gets asked for them here rather than only in
+      // the editor
+      const levels = showLevelFields(d0);
       const typeSel = el('select.fld', {
         onchange: () => { rebuildPresetOptions(); loadPipeline(); }
       });
@@ -2928,7 +3068,7 @@ window.App = window.App || {};
          per keystroke, so it can never drift from what's on screen. */
       const snapshot = () => ({
         name: nameInput.value, code: codeInput.value,
-        brand: brandInput.value, series: seriesInput.value,
+        ...levels.read(),
         type: typeSel.value, preset: presetSel.value,
         start: startInput.value, epCount: countInput.value,
         rateN: rateNum.value, rateUnit: rateUnitVal,
@@ -2944,7 +3084,7 @@ window.App = window.App || {};
          a form nobody filled in. */
       const worthKeeping = () => {
         const s = snapshot();
-        if (s.name.trim() || s.code.trim() || s.brand.trim() || s.series.trim() || s.targetTouched) return true;
+        if (s.name.trim() || s.code.trim() || App.SHOW_LEVELS.some(l => s[l.key]) || s.targetTouched) return true;
         if (s.epLive.some(Boolean)) return true;
         if (s.startNum !== 1) return true;
         if (Object.keys(s.team).length) return true;      // staffing is real work too
@@ -3077,10 +3217,10 @@ window.App = window.App || {};
           field('Show Name', nameInput, 'The full title of the series'),
           field('Content Code', codeInput, 'Prefix for episode codes (LA → LA-1)'),
           field('Show Type', typeSel, 'Sets the default pipeline for this show'),
-          field('Brand', brandInput, 'Optional — groups shows in the Shows browser'),
-          field('Series / Season', seriesInput, 'Optional — which run of the show this is'),
           field('Pipeline', presetSel, 'The standard pipeline, or a preset saved in Admin → Workflow')
         ]),
+        el('.fld-label.show-levels-lbl', null, 'Where it sits — optional, groups shows in the Shows browser'),
+        el('.plan-grid.four', null, levels.fields),
         (editShow ? el('.field', { style: { marginTop: '12px' } }, [el('label.fld-label', null, 'Show Colour'), swatches]) : null),
         el('.modal-section-title', null, 'Schedule'),
         el('.sched-box', null, [
@@ -3351,7 +3491,7 @@ window.App = window.App || {};
               return o;
             });
             const teamOut = team.read();
-            App.createShow({ name, code, type: typeSel.value, brand: brandInput.value, series: seriesInput.value,
+            App.createShow({ name, code, type: typeSel.value, ...levels.read(),
               epNames, pipeline, startIso: start, cadence, scale, epStarts, epLives, team: teamOut, startNum: startNum(),
               calendar: App.calIsEmpty(calState) ? null : calState });
             App.track.flowDone('Create show', true, { episodes: epNames.length, departmentsStaffed: Object.keys(teamOut).length });
@@ -3366,8 +3506,7 @@ window.App = window.App || {};
       function saveEdit() {
         if (!validateStep1()) { goStep(1); return; }
         if (!App.updateShow(editId, {
-          name: nameInput.value, code: codeInput.value, color: color,
-          brand: brandInput.value, series: seriesInput.value
+          name: nameInput.value, code: codeInput.value, color: color, ...levels.read()
         })) { goStep(1); return; }
         const { epCount } = readPlan();
         const lockedDrop = editEps.slice(epCount).filter((e, j) => epLocked[epCount + j]);
@@ -3421,7 +3560,7 @@ window.App = window.App || {};
         const code = codeInput.value.trim().toUpperCase();
         return {
           id: editId, isNew: !editShow, unsaved: true,
-          name: nameInput.value.trim(), code, brand: brandInput.value.trim(), series: seriesInput.value.trim(),
+          name: nameInput.value.trim(), code, ...levels.read(),
           type: typeSel.value, color: color || null,
           pipeline: pipe, team: team.read(), calendar: App.calIsEmpty(calState) ? null : calState,
           iterations: editShow ? (editShow.iterations || []) : [],
@@ -3441,7 +3580,7 @@ window.App = window.App || {};
         };
       };
       // an edit only counts as unsaved once something differs from how it opened
-      const snapKey = (s) => JSON.stringify([s.name, s.code, s.brand, s.series, s.type, s.color, s.pipeline, s.team, s.calendar,
+      const snapKey = (s) => JSON.stringify([s.name, s.code, s.brand, s.franchise, s.seriesName, s.series, s.type, s.color, s.pipeline, s.team, s.calendar,
         s.episodes.map(e => [e.title, e.start, e.live, e.locked])]);
       let baseKey = null;
       theCard._exportCtx = () => {
@@ -3675,12 +3814,13 @@ window.App = window.App || {};
         return ordered.map(App.person).filter(Boolean);
       };
 
-      const f = { name: '', brand: '', series: '', producer: '', code: '' };
+      const f = { brand: '', franchise: '', seriesName: '', series: '', producer: '', code: '' };
 
-      /* Brand, season and producer are picked from what the board actually has
-         — a free-text box for a field with eight distinct values means typing
-         to find out you spelled it differently. Name and content code stay
-         typed: those are searches, not choices. */
+      /* Brand › Show › Series › Season are typed to filter, with the values the
+         board actually has dropping down underneath and narrowing as you type
+         — each level's list only what sits under the levels filled in above
+         it. Producer is picked from a list; content code stays a plain
+         search. */
       const optionsFor = (get) => {
         const seen = {};
         shows().forEach(s => (get(s) || []).forEach(v => { if (v) seen[v] = 1; }));
@@ -3704,9 +3844,25 @@ window.App = window.App || {};
         return { wrap: el('.shows-filter', null, [el('label.shows-filter-lbl', null, label), sel]), sel: sel };
       };
 
-      const nameF = textFilter('name', 'Name', 'Search shows…');
-      const brandF = pickFilter('brand', 'Brand', optionsFor(s => [s.brand]), 'Any brand');
-      const seriesF = pickFilter('series', 'Series / Season', optionsFor(s => [s.series]), 'Any season');
+      // a level's filter matches any part of the value, so "wonder" finds
+      // "Emmie Wonder Wardrobe" without picking it
+      const levelHit = (s, key) => !f[key] || String(s[key] || '').toLowerCase().includes(f[key]);
+      const levelF = App.SHOW_LEVELS.map((lv, i) => {
+        const c = App.combo({
+          cls: 'shows-filter-fld', placeholder: lv.any,
+          values: () => {
+            const seen = {};
+            shows().forEach(s => {
+              for (let j = 0; j < i; j++) if (!levelHit(s, App.SHOW_LEVELS[j].key)) return;
+              if (s[lv.key]) seen[s[lv.key]] = 1;
+            });
+            return Object.keys(seen).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+          },
+          emptyText: 'No show has a ' + lv.label.toLowerCase() + ' set yet', free: false,
+          onInput: (v) => { f[lv.key] = v.toLowerCase(); draw(); }
+        });
+        return { c, wrap: el('.shows-filter', null, [el('label.shows-filter-lbl', null, lv.label), c.input]) };
+      });
       const producerF = pickFilter('producer', 'Producer', optionsFor(s => producersOf(s).map(p => p.name)), 'Any producer');
       const codeF = textFilter('code', 'Content Code', 'e.g. ABC');
 
@@ -3715,20 +3871,19 @@ window.App = window.App || {};
         onclick: () => {
           Object.keys(f).forEach(k => { f[k] = ''; });
           [...filterRow.querySelectorAll('input.shows-filter-fld')].forEach(i => { i.value = ''; });
-          [brandF.sel, seriesF.sel, producerF.sel].forEach(sl => { sl.value = ''; });
+          producerF.sel.value = '';
           draw();
         }
       }, 'Clear');
 
       const filterRow = el('.shows-filters', null, [
-        nameF, brandF.wrap, seriesF.wrap, producerF.wrap, codeF, clearBtn
+        // the catalogue path on the first row, the searches under it
+        ...levelF.map(x => x.wrap), producerF.wrap, codeF, clearBtn
       ]);
 
       const matches = (s) => {
         const prods = producersOf(s);
-        if (f.name && !s.name.toLowerCase().includes(f.name)) return false;
-        if (f.brand && (s.brand || '') !== f.brand) return false;
-        if (f.series && (s.series || '') !== f.series) return false;
+        if (!App.SHOW_LEVELS.every(lv => levelHit(s, lv.key))) return false;
         if (f.producer && !prods.some(p => p.name === f.producer)) return false;
         if (f.code && !String(s.prefix || '').toLowerCase().includes(f.code)) return false;
         return true;
@@ -3738,7 +3893,7 @@ window.App = window.App || {};
         const n = eps.filter(e => e.showId === s.id && !e.archived).length;
         const crew = App.showTeamSize(s);
         const prods = producersOf(s);
-        const meta = [s.brand, s.series].filter(Boolean).join(' · ');
+        const meta = App.showPath(s);
         return el('button.show-card', {
           type: 'button',
           title: 'Open “' + s.name + '” to rename, recolour or restaff it',
@@ -3752,7 +3907,7 @@ window.App = window.App || {};
               el('span.show-card-code', { style: { background: s.color, color: App.pickInkFor(s.color) } }, s.prefix || '—'),
               el('span.show-card-name', null, s.name)
             ]),
-            meta ? el('.show-card-meta', null, meta) : el('.show-card-meta.none', null, 'No brand or season set'),
+            meta ? el('.show-card-meta', { title: meta }, meta) : el('.show-card-meta.none', null, 'No brand, show, series or season set'),
             el('.show-card-foot', null, [
               el('span.show-card-stat', null, n + ' episode' + (n === 1 ? '' : 's')),
               el('span.show-card-sep', null, '·'),
@@ -3808,7 +3963,8 @@ window.App = window.App || {};
       const browser = card('clapper', 'Shows', 'Open a show to edit it, or start a new one', sections, footer, 'wide');
       // ⌘P exports what the filters leave listed, and says which filters did it
       browser._exportCtx = () => {
-        const note = [f.name && 'name “' + f.name + '”', f.brand, f.series, f.producer && 'producer ' + f.producer,
+        const note = [
+          ...App.SHOW_LEVELS.map(lv => f[lv.key] && lv.label.toLowerCase() + ' “' + f[lv.key] + '”'), f.producer && 'producer ' + f.producer,
           f.code && 'code “' + f.code + '”'].filter(Boolean);
         return App.exportShowsCtx(shows().filter(matches), note.length ? 'Filtered by ' + note.join(', ') : null);
       };
@@ -3840,24 +3996,12 @@ window.App = window.App || {};
       const epCount = App.state.data.episodes.filter(e => e.showId === showId && !e.archived).length;
       const nameInput = el('input.fld', { type: 'text', value: show.name });
       const codeInput = el('input.fld', { type: 'text', maxlength: '6', value: show.prefix || '' });
-      /* Brand and season are what the Shows browser filters on, so this is
-         where they get filled in. Free text with a datalist of what the board
-         already uses: a new brand has to be typeable, but a second spelling of
-         an existing one splits its filter in two. */
-      const listId = 'show-brands-' + showId;
-      const seriesListId = 'show-series-' + showId;
-      const knownValues = (get) => {
-        const seen = {};
-        App.state.data.shows.forEach(x => { const v = get(x); if (v) seen[v] = 1; });
-        return Object.keys(seen).sort((a, b) => a.localeCompare(b));
-      };
-      const datalist = (id, values) => {
-        const dl = document.createElement('datalist'); dl.id = id;
-        values.forEach(v => { const o = document.createElement('option'); o.value = v; dl.appendChild(o); });
-        return dl;
-      };
-      const brandInput = el('input.fld', { type: 'text', value: show.brand || '', list: listId, placeholder: 'e.g. Studio or brand' });
-      const seriesInput = el('input.fld', { type: 'text', value: show.series || '', list: seriesListId, placeholder: 'e.g. Season 3' });
+      /* Brand › Show › Series › Season are what the Shows browser filters on,
+         so this is where they get filled in. Each is typed, with what the
+         board already uses dropping down underneath: a new brand has to be
+         typeable, but a second spelling of an existing one splits its filter
+         in two. */
+      const levels = showLevelFields(show);
       let color = show.color;
 
       /* Colour is picked, not typed: the palette is what every show chip, bar
@@ -3886,12 +4030,8 @@ window.App = window.App || {};
           field('Show Name', nameInput, 'The full title of the series'),
           field('Content Code', codeInput, 'Renaming it renames every episode code with it (LA-1 → NEW-1)')
         ]),
-        el('.plan-grid.two', null, [
-          field('Brand', brandInput, 'Groups shows in the Shows browser'),
-          field('Series / Season', seriesInput, 'Which run of the show this is')
-        ]),
-        datalist(listId, knownValues(x => x.brand)),
-        datalist(seriesListId, knownValues(x => x.series)),
+        el('.fld-label.show-levels-lbl', null, 'Where it sits — groups shows in the Shows browser'),
+        el('.plan-grid.four', null, levels.fields),
         el('.field', null, [
           el('label.fld-label', null, 'Show Colour'),
           swatches
@@ -3939,8 +4079,7 @@ window.App = window.App || {};
             // a rejected save (blank name, a code another show holds) leaves the
             // dialog up with what was typed still in it
             if (App.updateShow(showId, {
-              name: nameInput.value, code: codeInput.value, color: color,
-              brand: brandInput.value, series: seriesInput.value
+              name: nameInput.value, code: codeInput.value, color: color, ...levels.read()
             })) goBack();
           }
         }, 'Save Show')
@@ -3950,10 +4089,9 @@ window.App = window.App || {};
       // the show as saved, with whatever's been typed here over the top
       editCard._exportCtx = () => App.exportShowCtx(() => {
         const s = App.exportShowSnap(show);
-        const typed = { name: nameInput.value.trim(), code: codeInput.value.trim().toUpperCase(),
-          brand: brandInput.value.trim(), series: seriesInput.value.trim(), color: color };
-        s.unsaved = typed.name !== s.name || typed.code !== s.code || typed.brand !== s.brand ||
-          typed.series !== s.series || typed.color !== s.color;
+        const typed = Object.assign({ name: nameInput.value.trim(), code: codeInput.value.trim().toUpperCase(), color: color },
+          levels.read());
+        s.unsaved = Object.keys(typed).some(k => typed[k] !== (s[k] || ''));
         return Object.assign(s, typed);
       }, 'Edit Show');
       App.modal.open(editCard, { onClose: () => { if (!nav && back) back(); } });
