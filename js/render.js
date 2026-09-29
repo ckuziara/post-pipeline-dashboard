@@ -79,6 +79,11 @@ window.App = window.App || {};
       App.filterHas(f.show, ep.showId) &&
       (f.q === '' || (ep.title + ' ' + ep.code).toLowerCase().includes(f.q.toLowerCase())));
     if (f.person.length) eps = eps.filter(ep => Object.values(ep.assignees || {}).some(a => f.person.includes(a)));
+    // Timeline and Board each have their own "Hide completed episodes" preference
+    const v = App.state.view;
+    if ((v === 'timeline' || v === 'board') && App.prefs.get(v === 'board' ? 'hideDoneBoard' : 'hideDoneTimeline', false)) {
+      eps = eps.filter(ep => !App.isDelivered(ep));
+    }
     return eps;
   };
 
