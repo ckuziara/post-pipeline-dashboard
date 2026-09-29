@@ -1216,6 +1216,10 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 .subrow.head { background: var(--bg-2); position: sticky; top: 0; }
 .subrow.head .cell { font-size: 10px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; padding: 9px 12px; }
 .subrow:not(.head):hover { background: var(--hover); }
+/* a Board task in the shared selection (Shift+click) — the Timeline's accent, as a row tint */
+.subrow.selected { background: rgba(91,108,255,.14); box-shadow: inset 3px 0 0 var(--accent); }
+.subrow.selected:hover { background: rgba(91,108,255,.2); }
+body.gantt-shift .subrow:not(.head) { cursor: pointer; user-select: none; }
 .subrow .cell { padding: 8px 12px; min-width: 0; }
 .cell.c-name { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; overflow: hidden; }
 /* Truncate the task name text inside the name cell — not the number or edit icon */

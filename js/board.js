@@ -8,6 +8,7 @@ window.App = window.App || {};
 
   App.board = {
     render(episodes) {
+      this._episodes = episodes;       // what "all" means for the Opt shortcuts
       const wrap = el('.board');
       if (App.canManageShows(App.state.role)) wrap.appendChild(this.showManager());
       if (!episodes.length) { wrap.appendChild(el('.empty', null, 'No episodes match the current filters.')); return wrap; }
@@ -94,7 +95,16 @@ window.App = window.App || {};
       const progLabel = s.myDept ? App.dept(s.myDept).label + ' tasks' : 'complete';
 
       const grp = el('.ep-group');
-      const head = el('.ep-row', { onclick: () => { App.state.expanded[ep.id] = !open; App.render(); } }, [
+      /* The Timeline's modifiers, on the Board's episode rows: Opt opens or
+         closes every episode with this one; Opt+Shift takes all of this
+         episode's tasks into the selection (the Timeline's selection — one
+         set, whichever view it was made in). */
+      const head = el('.ep-row', { onclick: (e) => {
+        if (e.altKey && e.shiftKey) { this.selectItems(App.subsView(ep).map(su => ({ ep, su }))); return; }
+        if (e.altKey) (this._episodes || [ep]).forEach(x => { if (open) delete App.state.expanded[x.id]; else App.state.expanded[x.id] = true; });
+        else App.state.expanded[ep.id] = !open;
+        App.render();
+      } }, [
         el('.ep-accent', { style: { background: show.color } }),
         el('span.chev' + (open ? '.open' : ''), null, '▶'),
         el('.ep-headline', null, [
@@ -153,6 +163,60 @@ window.App = window.App || {};
       return el('span.ko-ring' + (due ? '.due' : ''), {
         title: (due ? 'Kick Off overdue — was due ' : 'Kick Off due ') + App.fmtDate(su.start) + (can ? '\nClick to mark it done' : '')
       });
+    },
+
+    /* Shift-selection on the Board — the Timeline's rules for picking:
+       Shift+click a task row to add or remove it, Opt+Shift+click for that task
+       on every episode on the board. Taken in the capture phase so the cell
+       under the cursor (a status, a Kick Off) doesn't also act on the press.
+       What a selection is for here is Batch Set Dates, from a right-click. */
+    wireRowSelect(row, ep, su) {
+      if (!App.canSelectTasks(App.state.role)) return;
+      row.addEventListener('mousedown', (e) => { if (e.shiftKey) e.preventDefault(); }, true);   // no text selection
+      row.addEventListener('click', (e) => {
+        if (!e.shiftKey) return;
+        e.preventDefault(); e.stopPropagation();
+        if (e.altKey) {
+          this.selectItems((this._episodes || []).map(x => {
+            const s = App.subsView(x).find(t => t.key === su.key);
+            return s ? { ep: x, su: s } : null;
+          }).filter(Boolean));
+          return;
+        }
+        App.ganttSelection.toggle(ep.id, su.key);
+        App.render();
+      }, true);
+      row.addEventListener('contextmenu', (e) => {
+        if (!App.ganttSelection.resolved().length) return;
+        this.selMenu(e);
+      });
+    },
+
+    // Opt+Shift: one press adds the lot, or drops it if it's all picked already
+    selectItems(items) {
+      if (!App.canSelectTasks(App.state.role) || !items.length) return;
+      const adding = App.ganttSelection.all(items);
+      App.render();
+      App.toast((adding ? 'Selected ' : 'Dropped ') + items.length + ' task' + (items.length === 1 ? '' : 's') +
+        ' · ' + App.ganttSelection.resolved().length + ' selected');
+    },
+
+    selMenu(e) {
+      e.preventDefault(); e.stopPropagation();
+      const n = App.ganttSelection.resolved().length;
+      const close = () => { menu.remove(); document.removeEventListener('mousedown', off, true); document.removeEventListener('keydown', esc, true); };
+      const off = (ev) => { if (!menu.contains(ev.target)) close(); };
+      const esc = (ev) => { if (ev.key === 'Escape') close(); };
+      const item = (label, sub, fn) => el('button.ctx-item', { type: 'button', onclick: () => { close(); fn(); } },
+        [el('span.ctx-item-lbl', null, label), sub ? el('span.ctx-item-sub', null, sub) : null]);
+      const menu = el('.ctx-menu', null, [
+        n > 1 ? item('Batch Set Dates…', n + ' selected', () => App.batchDates.open()) : null,
+        item('Clear selection', 'Esc', () => { App.ganttSelection.clear(); App.render(); })
+      ]);
+      document.body.appendChild(menu);
+      menu.style.top = Math.min(e.clientY + 2, window.innerHeight - menu.offsetHeight - 8) + 'px';
+      menu.style.left = Math.min(e.clientX + 2, window.innerWidth - menu.offsetWidth - 8) + 'px';
+      setTimeout(() => { document.addEventListener('mousedown', off, true); document.addEventListener('keydown', esc, true); }, 0);
     },
 
     // right-click a Kick Off: take the task off this episode's KO list
@@ -225,7 +289,7 @@ window.App = window.App || {};
         const blocked = App.isRiskBlocked(ep, su.key);
         const overdue = su.status !== 'approved' && su.due < todayIso;
 
-        grid.appendChild(el('.subrow', null, [
+        const row = el('.subrow' + (App.ganttSelection.has(ep.id, su.key) ? '.selected' : ''), null, [
           el('.cell.c-num', null, i + 1),
           el('.cell.c-name', { style: { cursor: 'pointer' }, title: 'Edit task', onclick: (e) => { e.stopPropagation(); App.editTask.open(ep.id, su.key); } }, [
             el('span', null, su.name),
@@ -268,7 +332,9 @@ window.App = window.App || {};
                   [(depDone ? '✓ ' : '◷ ') + App.taskNameFor(ep, dk)]);
               })
             : [el('span', { style: { color: 'var(--text-3)', fontSize: '11px' } }, '—')])
-        ]));
+        ]);
+        this.wireRowSelect(row, ep, su);
+        grid.appendChild(row);
       });
       box.appendChild(grid);
       return box;
