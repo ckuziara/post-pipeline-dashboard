@@ -522,20 +522,35 @@ window.App = window.App || {};
       App.subitems(ep).forEach(su => {
         if (su.status === 'approved') return;
         if (onlyKey && onlyKey !== ep.id + '::' + su.key) return;
-        // shifted to run around the time off on exactly these dates (App.shiftPastHoliday)
-        if (ep.holidayOk && ep.holidayOk[su.key] === su.start + '|' + su.due) return;
+        // time off this task has already been planned around (see App.markHolidayOk)
+        const ok = App.holidayOkRanges(ep, su.key);
         const who = { dept: su.dept, person: su.assignee };
         const days = [];
         for (let x = su.start; x <= su.due; x = App.shiftIso(x, 1)) {
           // a weekend inside a task is only a clash when the show works weekends… which
           // then isn't off at all — so weekends never count here
           if (cal.weekend(x)) continue;
-          if (cal.isOff(x, who)) days.push(x);
+          if (cal.isOff(x, who) && !ok.some(r => x >= r[0] && x <= r[1])) days.push(x);
         }
         if (days.length) out.push({ ep, su, days, reason: cal.reason(days[0], who), cal, who });
       });
     });
     return out.sort((a, b) => a.su.start < b.su.start ? -1 : 1);
+  };
+  /* Resolving a clash (a shift or a holiday split) marks the dates the task
+     then ran across as planned around. The mark is kept by date, not by the
+     task's own dates, so moving the task later doesn't raise the same
+     holiday again — only time off it hasn't been planned around yet counts.
+     Stored per task as "start|due" ranges joined by commas. */
+  App.holidayOkRanges = function (ep, key) {
+    const v = ep.holidayOk && ep.holidayOk[key];
+    return v ? String(v).split(',').map(r => r.split('|')).filter(r => r.length === 2) : [];
+  };
+  App.markHolidayOk = function (e, key, start, due) {
+    e.holidayOk = e.holidayOk || {};
+    const ranges = App.holidayOkRanges(e, key).filter(r => !(r[0] === start && r[1] === due));
+    ranges.push([start, due]);
+    e.holidayOk[key] = ranges.map(r => r.join('|')).join(',');
   };
   App.hasHolidayClash = (ep, su) => App.holidayClashes(ep.showId, ep.id + '::' + su.key).length > 0;
 

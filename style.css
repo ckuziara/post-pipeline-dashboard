@@ -4495,6 +4495,16 @@ select.fld { cursor: pointer; }
 }
 .hol-wash.prod { background: rgba(255,91,110,.28); }
 .gantt.gantt-portrait .hol-wash { left: 0; right: 0; width: auto !important; }
+/* time off inside a task bar that runs across it: greyed, a line at each end */
+.bar-hol {
+  position: absolute; top: 0; bottom: 0; pointer-events: none;
+  background: rgba(40,42,52,.72);
+  border-left: 2px solid rgba(255,255,255,.85); border-right: 2px solid rgba(255,255,255,.85);
+  box-sizing: border-box;
+}
+.gantt.gantt-portrait .bar-hol { left: 0; right: 0; top: auto; bottom: auto;
+  border: 0; border-top: 2px solid rgba(255,255,255,.85); border-bottom: 2px solid rgba(255,255,255,.85); }
+.bar > span { position: relative; z-index: 1; }
 
 /* Holiday clashes dialog */
 .hc-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
@@ -4509,6 +4519,11 @@ select.fld { cursor: pointer; }
 .hc-act { display: flex; gap: 6px; }
 .hc-sel { width: 150px; margin: 0; }
 .hc-btn { white-space: nowrap; }
+.hc-plans { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.hc-plan { padding: 9px 12px; border: 1px solid var(--border-2); border-radius: 10px; font-size: 13px; }
+.hc-plan.blocked { border-color: rgba(255,91,110,.35); background: rgba(255,91,110,.06); }
+.hc-details > summary { font-size: 12px; font-weight: 600; color: var(--text-2); cursor: pointer; margin-bottom: 8px; }
+.hc-details > summary:hover { color: var(--accent); }
 /* a task bar that runs into its people's time off */
 .bar.hol-clash { outline: 2px dashed #ff5b6e; outline-offset: 1px; }
 
