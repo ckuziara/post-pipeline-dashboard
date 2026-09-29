@@ -115,6 +115,69 @@ window.App = window.App || {};
     if (status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
   };
 
+  /* The same two changes for a whole selection at once (the Board's
+     Shift-selection), as ONE undo step. Each task meets the rules it would
+     one at a time — the role may edit it, Approved needs an approver, an
+     approved task stays put for anyone who can't approve, and Ready for
+     Review needs what App.review asks for — and a task that fails is left as
+     it is and counted, rather than stopping the rest. `items` is
+     [{ epId, suKey }]; the toast says what landed and what didn't. */
+  App.setStatusMany = function (items, status) {
+    App.board.closePop && App.board.closePop();
+    const role = App.state.role;
+    if (status === 'approved' && !App.canApprove(role)) {
+      App.toast('Only Producer, Director or Manager can approve tasks', true); return;
+    }
+    const ok = [], skipped = [];
+    items.forEach(({ epId, suKey }) => {
+      const g = findTask(epId, suKey); if (!g) return;
+      const deny = status === 'review' && g.su.status !== 'review' && App.review && App.review.denyReady(g.ep, g.su);
+      if (!App.canEditTask(role, g.su) || (g.su.status === 'approved' && !App.canApprove(role)) || deny) skipped.push(g);
+      else if (g.su.status !== status) ok.push(g);
+    });
+    if (ok.length) {
+      App.mutate(d => ok.forEach(g => {
+        const e = d.episodes.find(x => x.id === g.ep.id);
+        e.statuses[g.su.key] = status; App.refreshReadiness(e); App.syncBatch(d, e, g.su.key);
+      }), 'the status change');
+      ok.forEach(g => App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: g.su.status, to: status, bulk: ok.length }));
+      if (status === 'approved') ok.filter(g => g.su.status !== 'approved').forEach(g => App.promoteDelivered(g.ep.id, g.su.key));
+    }
+    const n = (k) => k + ' task' + (k === 1 ? '' : 's');
+    App.toast((ok.length ? n(ok.length) + ' → ' + App.status(status).label : 'Nothing to change') +
+      (skipped.length ? ' · ' + n(skipped.length) + ' left as they were (not yours to change, or not ready)' : ''), !ok.length && !!skipped.length);
+  };
+
+  /* Owners are department staff (the Edit Task rule), so a person only takes
+     the selected tasks in their own department; the rest are left and counted.
+     personId null unassigns every one. A batch task moves with its group, the
+     same as App.reassignTask. */
+  App.assignMany = function (items, personId) {
+    App.board.closePop && App.board.closePop();
+    const role = App.state.role;
+    if (!App.canAssignOwners(role)) { App.toast('Your role can’t assign owners (set in Admin → Privileges)', true); return; }
+    const p = personId ? App.person(personId) : null;
+    const dept = p ? App.roleDept(p.role) : null;
+    const ok = [], skipped = [];
+    items.forEach(({ epId, suKey }) => {
+      const g = findTask(epId, suKey); if (!g) return;
+      if (!App.canEditTask(role, g.su) || (p && g.su.dept !== dept)) skipped.push(g);
+      else if ((g.su.assignee || null) !== (personId || null)) ok.push(g);
+    });
+    if (ok.length) {
+      const put = (e, key) => { e.assignees = e.assignees || {}; if (personId) e.assignees[key] = personId; else delete e.assignees[key]; };
+      App.mutate(d => ok.forEach(g => {
+        const e = d.episodes.find(x => x.id === g.ep.id);
+        put(e, g.su.key);
+        (App.batchMates(d, e, g.su.key) || []).forEach(m => put(m, g.su.key));
+      }), 'the reassignment');
+      ok.forEach(g => App.track.audit('task.reassign', { episode: g.ep.code, task: g.su.name, to: p ? p.name : null, bulk: ok.length }));
+    }
+    const n = (k) => k + ' task' + (k === 1 ? '' : 's');
+    App.toast((ok.length ? n(ok.length) + ' → ' + (p ? p.name : 'unassigned') : 'Nothing to change') +
+      (skipped.length ? ' · ' + n(skipped.length) + ' left as they were' + (p ? ' (not ' + App.dept(dept).label + ' tasks)' : '') : ''), !ok.length && !!skipped.length);
+  };
+
   App.applyTaskEdit = function (epId, key, { name, status, start, due, assignee }, opts) {
     const g = findTask(epId, key); if (!g) return;
     const role = App.state.role;

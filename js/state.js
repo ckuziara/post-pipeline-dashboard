@@ -227,6 +227,10 @@ window.App = window.App || {};
   App.canEditTaskName = (k) => App.rolePerm(k, 'editName', App.role(k).editName);
   App.canRemoveTask   = (k) => App.rolePerm(k, 'removeTask', App.role(k).removeTask);
   App.canEditSchedule = (k) => App.rolePerm(k, 'editSchedule', App.role(k).editSchedule);
+  /* Highlighting tasks — Shift+click, the sweep, Opt+Shift, the ruler's Select
+     Tasks — is the Producer's alone. Every other shortcut only changes what's
+     on screen (open/close, filters, lists, the ruler), so it works for all. */
+  App.canSelectTasks  = (k) => k === 'producer';
   // choosing which tasks need a Kick Off, and ticking them done — Producer and Director by default
   App.canSetKickOff   = (k) => App.rolePerm(k, 'kickOff', App.role(k).kickOff);
   // status choices a role may set (non-approvers can't choose Approved)

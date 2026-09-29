@@ -993,7 +993,13 @@ window.App = window.App || {};
         return { empty: 'This window has nothing to export — close it to export the view behind.' };
       }
       const v = App.state.view;
-      if (v === 'timeline' || v === 'board' || v === 'dashboard') return productionCtx();
+      if (v === 'timeline' || v === 'board' || v === 'dashboard') {
+        const ctx = productionCtx();
+        // a ruler on the Timeline is what's being looked at — export those dates
+        const r = v === 'timeline' && App.state.ganttRuler;
+        if (r && !ctx.empty) ctx.range = { from: r.from, to: r.to };
+        return ctx;
+      }
       return { empty: 'Print / Export works from the Timeline and Board — switch to one to export a production breakdown.' };
     },
 
@@ -1019,6 +1025,8 @@ window.App = window.App || {};
         ? new Set(saved.fields.filter(k => ctx.fields.some(f => f.key === k)))
         : fieldSet(st.preset);
       Object.assign(st, rangeFor('all', ctx.span));
+      // opened for a stretch of dates (the Timeline's ruler) — start on those
+      if (ctx.range) Object.assign(st, { range: 'custom', from: ctx.range.from, to: ctx.range.to });
       Object.keys(ctx.filters || {}).forEach(k => {
         const f = ctx.filters[k];
         const all = f.options.map(x => x.id);
@@ -1063,7 +1071,14 @@ window.App = window.App || {};
           groups[g].forEach(opt => {
             const b = el('button.xp-chip' + (set.has(opt.id) ? '.on' : ''), {
               type: 'button', title: set.has(opt.id) ? 'Leave out ' + opt.label : 'Include ' + opt.label,
-              onclick: () => { if (set.has(opt.id)) set.delete(opt.id); else set.add(opt.id); paintSide(); refresh(); }
+              onclick: (e) => {
+                const mode = App.pickMode(e);
+                if (mode) {
+                  const next = App.pickApply(mode, opt.id, f.options.map(x => x.id), [...set]);
+                  set.clear(); next.forEach(id => set.add(id));
+                } else if (set.has(opt.id)) set.delete(opt.id); else set.add(opt.id);
+                paintSide(); refresh();
+              }
             }, [opt.color ? el('i.xp-chip-dot', { style: { background: opt.color } }) : null, opt.label]);
             wrap.appendChild(b);
           });
@@ -1134,7 +1149,7 @@ window.App = window.App || {};
           });
           fl.appendChild(el('label.xp-field' + (off ? '.off' : ''), { title: off ? 'PDF only' : (fd.hint || null) }, [cb, el('span', null, fd.label)]));
         });
-        side.appendChild(section('Fields', null, fl));
+        side.appendChild(section('Fields', null, App.wireCheckList(fl)));
         side.scrollTop = top;
       }
 

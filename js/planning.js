@@ -637,7 +637,7 @@ window.App = window.App || {};
         el('.pl-empty-hint', null, 'Start with an intake brief — the show, its ballpark budget, and the calendar it has to fit.')
       ]));
     } else {
-      const table = el('.pl-table');
+      const table = App.wireCheckList(el('.pl-table'));   // Opt / Cmd-click the optimizer picks
       table.appendChild(el('.pl-thead', null, [
         el('.cell', null, ''),
         el('.cell', null, 'Show'), el('.cell', null, 'Type'), el('.cell', null, 'Episodes'),

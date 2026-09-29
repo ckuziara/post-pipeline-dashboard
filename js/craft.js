@@ -395,7 +395,7 @@ window.App = window.App || {};
     }
 
     // ---- task table ----
-    const table = el('.pl-kb');
+    const table = App.wireCheckList(el('.pl-kb'));   // Opt / Cmd-click the Include boxes
     function render() {
       table.innerHTML = '';
       table.appendChild(el('.pl-craft-head', null, [

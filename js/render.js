@@ -329,27 +329,29 @@ window.App = window.App || {};
         el('button.ghost', { onclick: () => App.gantt.zoomBy(1.25), title: 'Zoom in (' + App.shortcutLabel('+') + ', or Ctrl+scroll on the chart)' }, '+'),
         el('button.ghost', { onclick: () => App.gantt.centerToday(), title: 'Scroll to today' }, '⊙ Today')
       ]));
+    }
 
-      /* Shift-selection pill. Only here while something is picked — but then
-         it has to be, because the selection otherwise lives entirely in bar
-         outlines that can be scrolled off screen, and a group you've forgotten
-         about owns your next drag. Doubles as the discoverable way out. */
-      const sel = App.ganttSelection ? App.ganttSelection.resolved() : [];
-      if (sel.length) {
-        const eps = new Set(sel.map(s => s.epId)).size;
-        bar.appendChild(el('.sel-pill', {
-          title: sel.map(s => s.ep.code + ' — ' + s.su.name).slice(0, 14).join('\n') +
-                 (sel.length > 14 ? '\n+' + (sel.length - 14) + ' more' : '')
-        }, [
-          el('span.sel-dot'),
-          el('span.sel-count', null, sel.length + ' selected'),
-          el('span.sel-sub', null, 'in ' + eps + ' episode' + (eps === 1 ? '' : 's') + ' · drag to move or resize together'),
-          el('button.sel-clear', {
-            title: 'Clear the selection (Esc)',
-            onclick: () => { App.ganttSelection.clear(); App.render(); }
-          }, '✕')
-        ]));
-      }
+    /* Shift-selection pill (Timeline and Board — one selection, shared). Only
+       here while something is picked — but then it has to be, because the
+       selection otherwise lives entirely in outlines that can be scrolled off
+       screen, and a group you've forgotten about owns your next drag. Doubles
+       as the discoverable way out. */
+    const sel = (App.state.view === 'timeline' || App.state.view === 'board') && App.ganttSelection
+      ? App.ganttSelection.resolved() : [];
+    if (sel.length) {
+      const eps = new Set(sel.map(s => s.epId)).size;
+      bar.appendChild(el('.sel-pill', {
+        title: sel.map(s => s.ep.code + ' — ' + s.su.name).slice(0, 14).join('\n') +
+               (sel.length > 14 ? '\n+' + (sel.length - 14) + ' more' : '')
+      }, [
+        el('span.sel-dot'),
+        el('span.sel-count', null, sel.length + ' selected'),
+        el('span.sel-sub', null, 'in ' + eps + ' episode' + (eps === 1 ? '' : 's') + (App.state.view === 'board' ? ' · right-click to set status, owner or dates' : ' · drag to move or resize together')),
+        el('button.sel-clear', {
+          title: 'Clear the selection (Esc)',
+          onclick: () => { App.ganttSelection.clear(); App.render(); }
+        }, '✕')
+      ]));
     }
 
     // Print / Export — the same as ⌘P: a breakdown of the episodes above
@@ -454,6 +456,52 @@ window.App = window.App || {};
     }
   };
 
+  /* ---- Picking from a list: the same modifiers everywhere ----
+       click              toggle this one
+       Opt/Alt+click      all of them
+       Cmd/Ctrl+click     only this one
+       …again             all but this one (the reverse of "only")
+     App.pickMode reads the modifier; App.pickApply turns it into the new
+     picked set, given every id and the ids picked now. Plain clicks stay with
+     each list, since what a toggle means (and what "none" means) is its own. */
+  App.pickMode = (e) => e.altKey ? 'all' : (App.isMac ? e.metaKey : e.ctrlKey) ? 'only' : null;
+  App.pickApply = function (mode, id, all, cur) {
+    if (mode === 'all') return all.slice();
+    return cur.length === 1 && cur[0] === id ? all.filter(x => x !== id) : [id];
+  };
+
+  /* The same rules for a plain list of checkboxes, without touching the list's
+     own code: a modified click on a box, or on the row/label that holds just
+     that box, is taken over here and the boxes that need to flip are flipped
+     by dispatching `change` — so every list's existing handler does the
+     saving, exactly as if each box had been clicked by hand. Clicks on the
+     row's other controls (a number field, a select) are left alone. */
+  App.wireCheckList = function (box) {
+    box.addEventListener('click', (e) => {
+      const mode = App.pickMode(e);
+      if (!mode || e.target.closest('input:not([type="checkbox"]), select, textarea, button')) return;
+      let cb = e.target.matches('input[type="checkbox"]') ? e.target : null;
+      for (let n = e.target; !cb && n && n !== box; n = n.parentElement) {
+        const inside = n.querySelectorAll('input[type="checkbox"]');
+        if (inside.length === 1) cb = inside[0];
+        else if (inside.length > 1) break;
+      }
+      if (!cb || cb.disabled) return;
+      e.preventDefault(); e.stopPropagation();
+      const boxes = [...box.querySelectorAll('input[type="checkbox"]')].filter(b => !b.disabled);
+      // a click straight on the box has already flipped it, and the browser
+      // flips it back once this handler returns (the default was prevented) —
+      // so read it as it was, and apply after that restore
+      const was = (b) => (b === cb && e.target === cb) ? !b.checked : b.checked;
+      const want = App.pickApply(mode, cb, boxes, boxes.filter(was));
+      setTimeout(() => boxes.forEach(b => {
+        const on = want.includes(b);
+        if (b.checked !== on) { b.checked = on; b.dispatchEvent(new Event('change', { bubbles: true })); }
+      }), 0);
+    }, true);
+    return box;
+  };
+
   function multiSelectEl(key, options, selected, allLabel, onChange) {
     // 0 selected -> allLabel; 1 -> its name; 2+ -> first two names + a count,
     // the same truncation shape the KPI tooltips already use for long lists.
@@ -487,6 +535,16 @@ window.App = window.App || {};
         cb.checked = selected.includes(v);
         pop.appendChild(el('.filter-pop-row', {
           onclick: (e) => {
+            // nothing picked means everything shows, so that's the "current" set here —
+            // and a result that picks everything is written back as nothing
+            const mode = App.pickMode(e);
+            if (mode) {
+              e.preventDefault();
+              const all = options.map(o => o[0]);
+              const next = App.pickApply(mode, v, all, selected.length ? selected : all);
+              onChange(next.length === all.length ? [] : next);
+              return;
+            }
             if (e.target !== cb) cb.checked = !cb.checked;
             onChange(cb.checked ? selected.concat([v]) : selected.filter(x => x !== v));
           }

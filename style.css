@@ -896,11 +896,19 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
   border: 1.5px dashed rgba(255,255,255,.85); border-radius: 4px;
   background: rgba(91,108,255,.16);
 }
-/* Toolbar pill — the selection's only presence outside the chart itself */
+/* started on a selected bar: this band takes what it touches out */
+.g-marquee.removing { border-color: rgba(255,91,110,.9); background: rgba(255,91,110,.12); }
+/* Selection pill — the selection's only presence outside the chart itself.
+   Built with the toolbar but floated out of it: a pill that joined the
+   toolbar's row wrapped it onto a second line, pushing the whole timeline down
+   the moment anything was selected. Bottom-left keeps it clear of toasts
+   (bottom-centre) and the assistant button (bottom-right). */
 .sel-pill {
+  position: fixed; left: 20px; bottom: 20px; z-index: 300;
   display: inline-flex; align-items: center; gap: 8px; padding: 5px 6px 5px 11px;
-  border-radius: 999px; background: rgba(91,108,255,.14);
-  border: 1px solid rgba(91,108,255,.45); white-space: nowrap;
+  border-radius: 999px; white-space: nowrap;
+  background: linear-gradient(rgba(91,108,255,.14), rgba(91,108,255,.14)), var(--surface-2);
+  border: 1px solid rgba(91,108,255,.45); box-shadow: var(--shadow);
 }
 .sel-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
 .sel-count { font-size: 11.5px; font-weight: 700; }
@@ -1216,6 +1224,14 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 .subrow.head { background: var(--bg-2); position: sticky; top: 0; }
 .subrow.head .cell { font-size: 10px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; padding: 9px 12px; }
 .subrow:not(.head):hover { background: var(--hover); }
+/* a Board task in the shared selection (Shift+click) — the Timeline's accent, as a row tint */
+.subrow.selected { background: rgba(91,108,255,.14); box-shadow: inset 3px 0 0 var(--accent); }
+.subrow.selected:hover { background: rgba(91,108,255,.2); }
+/* a Shift+drag range, before it's let go — adding, or (from a selected row) dropping */
+.subrow.in-range { background: rgba(91,108,255,.22); box-shadow: inset 3px 0 0 var(--accent); }
+.subrow.out-range { background: rgba(255,91,110,.14); box-shadow: inset 3px 0 0 #ff5b6e; }
+body.board-ranging, body.board-ranging * { cursor: ns-resize !important; user-select: none; }
+body.gantt-shift .subrow:not(.head) { cursor: pointer; user-select: none; }
 .subrow .cell { padding: 8px 12px; min-width: 0; }
 .cell.c-name { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; overflow: hidden; }
 /* Truncate the task name text inside the name cell — not the number or edit icon */
@@ -1254,6 +1270,20 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 }
 .status-opt:hover { filter: brightness(1.1); outline: 2px solid rgba(255,255,255,.28); }
 .pop-note { font-size: 10px; color: var(--text-3); padding: 4px 6px 2px; border-top: 1px solid var(--border); margin-top: 2px; }
+/* owner picker — the status picker's shell, a person per row */
+.owner-pop { width: 220px; max-height: min(420px, 70vh); overflow-y: auto; gap: 2px; }
+.owner-dept { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px; padding: 6px 6px 2px; }
+.owner-dept .dot { width: 7px; height: 7px; border-radius: 50%; }
+.owner-opt {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: 0;
+  color: var(--text); font: inherit; font-size: 12px; padding: 5px 6px; border-radius: 6px; cursor: pointer;
+}
+.owner-opt:hover { background: var(--hover); }
+.owner-opt.on { background: rgba(91,108,255,.16); font-weight: 700; }
+.owner-av { width: 20px; height: 20px; font-size: 9px; flex: none; }
+.pop-sep { height: 1px; background: var(--border); margin: 3px 2px; }
+.c-assignee.can { cursor: pointer; }
+.c-assignee.can:hover .avatar { outline: 2px solid var(--accent); outline-offset: 1px; }
 .byok-body { min-width: 320px; }
 .byok-status { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--text); margin: 10px 0; }
 .byok-status .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
@@ -4795,3 +4825,36 @@ select.fld { cursor: pointer; }
 .pipe-ver-add { border: 1px dashed var(--border-2, var(--border)); background: transparent; color: var(--text-2); cursor: pointer; border-radius: 6px; width: 26px; height: 24px; font-size: 13px; }
 .pipe-ver-add:hover { color: var(--text); border-color: var(--accent); }
 .pipe-vers-total { margin-left: 4px; font-size: 11.5px; font-weight: 700; color: var(--text); white-space: nowrap; }
+
+/* ---- Timeline ruler ----
+   Drawn from the date header (see App.gantt.paintRuler): the header half is
+   a capped line on its own strip above the dates, with the day count sitting
+   on it; the body half is a band over the same dates. Neither takes the
+   pointer, so bars under the band still drag and click. */
+.th-cols { position: relative; cursor: text; }
+body.gantt-ruling, body.gantt-ruling * { cursor: col-resize !important; }
+.ruler-strip { position: relative; height: 24px; border-bottom: 1px solid var(--border); }
+.ruler-head { position: absolute; top: 0; bottom: 0; z-index: 2; pointer-events: none; }
+/* the line, with a cap at each end — measured edge to edge of the range */
+.ruler-line {
+  position: absolute; left: 1px; right: 1px; top: 50%; height: 2px; margin-top: -1px;
+  border-radius: 1px; background: var(--accent);
+}
+.ruler-line::before, .ruler-line::after {
+  content: ''; position: absolute; top: -5px; width: 2px; height: 12px; border-radius: 1px; background: var(--accent);
+}
+.ruler-line::before { left: -1px; }
+.ruler-line::after { right: -1px; }
+.ruler-lbl {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: baseline; gap: 5px; white-space: nowrap;
+  padding: 2px 8px; border-radius: 999px; font-size: 10.5px; line-height: 1.3;
+  background: var(--accent); color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+.ruler-lbl span { font-size: 9.5px; opacity: .8; }
+.ruler-band {
+  position: absolute; top: 0; bottom: 0; z-index: 2; pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border-left: 1px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+  border-right: 1px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+}
