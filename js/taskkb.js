@@ -287,7 +287,7 @@ window.App = window.App || {};
       ]));
     }
 
-    const table = el('.pl-kb');
+    const table = App.wireCheckList(el('.pl-kb'));   // Opt / Cmd-click the on/off boxes
     function render() {
       table.innerHTML = '';
       table.appendChild(el('.pl-kb-head', null, [

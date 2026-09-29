@@ -143,13 +143,14 @@ window.App = window.App || {};
       return su ? { epId, suKey, ep, su } : null;
     }).filter(Boolean);
   }
-  App.ganttSelection = { has: selHas, clear: selClear, resolved: selResolved };
+  App.ganttSelection = { has: selHas, clear: selClear, resolved: selResolved, toggle: selToggle, add: selAdd };
 
   /* Opt means "all". Opt+Shift on a row label takes every task that row stands
      for — an episode, a department, a show, one task across episodes — so each
      label row carries its own {ep, su} list, rebuilt with the row on every
      render. Built from the data rather than the drawn bars, so an episode left
      collapsed still gives up its tasks. */
+  App.ganttSelection.all = (items) => selAll(items);
   const selRow = (row, items) => { row._selItems = items; return row; };
   const epItems = (ep) => App.subsView(ep).map(su => ({ ep, su }));
   // one press adds the lot, unless the lot is already picked — then it drops it
@@ -653,7 +654,7 @@ window.App = window.App || {};
     // and a bar's menu when that bar sits inside the range
     rulerItems(item) {
       const r = App.state.ganttRuler, out = [];
-      if (App.canEditSchedule(App.state.role)) out.push(item('Select Tasks', App.fmtRange(r.from, r.to), () => this.selectRulerTasks()));
+      if (App.canSelectTasks(App.state.role)) out.push(item('Select Tasks', App.fmtRange(r.from, r.to), () => this.selectRulerTasks()));
       out.push(item('Print / Export Selection…', null, () => this.exportRuler()));
       out.push(item('Clear ruler', 'Esc', () => { App.state.ganttRuler = null; this.paintRuler(); }));
       return out;
@@ -883,7 +884,7 @@ window.App = window.App || {};
         /* Opt+Shift on a row label → every task that row stands for. */
         if (e.shiftKey && e.altKey && !bar && e.target.closest('.g-label')) {
           const lrow = e.target.closest('.g-row');
-          if (lrow && lrow._selItems && lrow._selItems.length && App.canEditSchedule(App.state.role)) {
+          if (lrow && lrow._selItems && lrow._selItems.length && App.canSelectTasks(App.state.role)) {
             e.preventDefault();
             hideTip();
             const adding = selAll(lrow._selItems);
@@ -895,13 +896,11 @@ window.App = window.App || {};
           }
         }
 
-        /* Shift on empty grid → marquee. Starting the band on a bar would take
-           the shift+click-to-toggle gesture away, and dragging out from a bar
-           you've just added is the natural way to extend a selection, so the
-           band only ever starts in open space. */
+        /* Shift on empty grid → marquee. (Shift on a bar sweeps too, once it
+           moves — see below — so a band can start anywhere on the chart.) */
         if (e.shiftKey && !bar) {
           const track = e.target.closest('.g-row.sub .g-track');
-          if (track && App.canEditSchedule(App.state.role)) {
+          if (track && App.canSelectTasks(App.state.role)) {
             e.preventDefault();
             hideTip();
             this.startMarquee(e);
@@ -917,12 +916,15 @@ window.App = window.App || {};
         if (!epId || !suKey) return;
         const ep = App.state.data.episodes.find(x => x.id === epId);
         const su = ep && App.subitem(ep, suKey);
-        if (!su || !App.canEditSchedule(App.state.role)) return;   // a plain click still opens the dialog, which explains the lock
+        if (!su) return;
 
         /* Shift on a bar → toggle it in the selection, and nothing else. No
-           drag starts and no dialog opens: the whole point of holding shift is
-           that this press is about choosing, not about moving or inspecting. */
+           move starts and no dialog opens: the whole point of holding shift is
+           that this press is about choosing, not about moving or inspecting.
+           Dragging from it sweeps a box, the same as from open grid; the
+           toggle happens on release if the press never moved (see onDragEnd). */
         if (e.shiftKey) {
+          if (!App.canSelectTasks(App.state.role)) return;
           e.preventDefault();
           hideTip();
           /* Opt+Shift → this task on every episode the timeline is showing,
@@ -932,14 +934,15 @@ window.App = window.App || {};
               const s = App.subsView(x).find(t => t.key === suKey);
               return s ? { ep: x, su: s } : null;
             }).filter(Boolean));
-          } else {
-            selToggle(epId, suKey);
+            this.suppressNextClick();
+            App.render();
+            return;
           }
-          this.suppressNextClick();
-          App.render();
+          this.startMarquee(e, { epId, suKey });
           return;
         }
 
+        if (!App.canEditSchedule(App.state.role)) return;   // a plain click still opens the dialog, which explains the lock
         e.preventDefault();
         hideTip();
         const zone = this.dragZone(bar, e, this._axis);
@@ -1044,7 +1047,8 @@ window.App = window.App || {};
 
        Hit-tested once on release rather than per mouse move: one pass over the
        bars beats one per pixel, and the band's outline is feedback enough. */
-    startMarquee(e) {
+    // `toggle` — the bar the press started on, picked or dropped if it never moves
+    startMarquee(e, toggle) {
       const ghost = el('.g-marquee', {
         style: { left: e.clientX + 'px', top: e.clientY + 'px', width: '0px', height: '0px' }
       });
@@ -1052,9 +1056,13 @@ window.App = window.App || {};
       this._drag = {
         kind: 'marquee', ghost,
         startClientX: e.clientX, startClientY: e.clientY, startedAt: Date.now(), moved: false,
-        // shift is held, so this extends whatever was already picked
-        additive: true
+        // shift is held, so this extends whatever was already picked — unless
+        // the press started on a bar that's already picked: then the band takes
+        // what it touches back out (the Board's Shift+drag works the same way)
+        additive: true, toggle: toggle || null,
+        removing: !!(toggle && selHas(toggle.epId, toggle.suKey))
       };
+      if (this._drag.removing) ghost.classList.add('removing');
       document.body.classList.add('gantt-dragging');
     },
 
@@ -1249,7 +1257,10 @@ window.App = window.App || {};
         const box = d.ghost.getBoundingClientRect();
         d.ghost.remove();
         this.suppressNextClick();
-        if (!d.moved) return;                        // a shift-click on open grid: nothing to sweep
+        if (!d.moved) {                              // a shift-click: a bar toggles, open grid does nothing
+          if (d.toggle) { selToggle(d.toggle.epId, d.toggle.suKey); App.render(); }
+          return;
+        }
         if (!d.additive) selClear();
         let added = 0;
         this._scrollEl.querySelectorAll('.g-row.sub:not(.phase) .bar').forEach(b => {
@@ -1260,11 +1271,13 @@ window.App = window.App || {};
           const epId = b.dataset.episodeId || row.dataset.episodeId;
           const suKey = b.dataset.suKey || row.dataset.suKey;
           if (!epId || !suKey) return;
+          if (d.removing) { if (selHas(epId, suKey)) { selToggle(epId, suKey); added++; } return; }
           if (!selHas(epId, suKey)) added++;
           selAdd(epId, suKey);
         });
         App.render();
         const total = selList().length;
+        if (d.removing) { App.toast(added + ' task' + (added === 1 ? '' : 's') + ' dropped · ' + total + ' selected'); return; }
         App.toast(added
           ? added + ' task' + (added === 1 ? '' : 's') + ' added · ' + total + ' selected'
           : 'Nothing new in that sweep · ' + total + ' selected');
