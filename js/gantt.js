@@ -480,6 +480,7 @@ window.App = window.App || {};
         if ((e.shiftKey || !canV) && canH && e.deltaY !== 0) { scroll.scrollLeft += e.deltaY; e.preventDefault(); }
       }, { passive: false });
 
+      fitBarLabels(wrap);
       return wrap;
     },
 
@@ -1674,7 +1675,7 @@ window.App = window.App || {};
                (clash ? '\n⚠ Runs into ' + clash.reason + ' — right-click to reassign or shift' : ''),
         style
       }, bare ? null : [
-        el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, labelText || su.name),
+        el('span.bar-label', { style: { overflow: 'hidden', textOverflow: 'ellipsis' }, 'data-abbr': labelText ? null : abbreviate(su.name) || null }, labelText || su.name),
         (App.isRiskBlocked(ep, su.key) ? App.icon('blocked', { cls: 'blk', title: 'In progress while a dependency is unapproved' }) : null)
       ]);
       sbar.dataset.episodeId = ep.id;
@@ -1848,11 +1849,25 @@ window.App = window.App || {};
       return el('span.dot', { style: { background: dep.color, width: '7px', height: '7px', borderRadius: '50%', flex: 'none' } });
     },
 
-    // Faint span header marking where a department's work starts and ends.
-    phaseRow(body, dep, items, xOf, note, axis) {
+    // The span itself — where a department's work starts and ends. `cls`
+    // '.phase-line' draws it as a hairline along the top of a task row.
+    phaseBar(dep, items, xOf, note, axis, cls) {
       const gStart = items.reduce((m, x) => x.su.start < m ? x.su.start : m, items[0].su.start);
       const gDue = items.reduce((m, x) => x.su.due > m ? x.su.due : m, items[0].su.due);
       const [r, g, b] = hexToRgb(dep.color);
+      const pStyle = {
+        background: 'rgba(' + r + ',' + g + ',' + b + (cls ? ',.7)' : ',.15)'),
+        borderColor: 'rgba(' + r + ',' + g + ',' + b + ',.55)'
+      };
+      setBarPos(pStyle, axis, xOf, gStart, gDue);
+      return el('.phase-bar' + (cls || ''), {
+        title: dep.label + ' — ' + App.fmtRange(gStart, gDue) + (note ? ' · ' + note : ''),
+        style: pStyle
+      });
+    },
+
+    // Faint span header row marking where a department's work starts and ends.
+    phaseRow(body, dep, items, xOf, note, axis) {
       const portrait = !!(axis && axis.portrait);
       const hrow = selRow(el('.g-row.sub.phase', { style: { background: this.deptWash(dep) } }), items);
       // Portrait gives the phase span a spine's width, so its name would clip
@@ -1867,16 +1882,8 @@ window.App = window.App || {};
         ])
       ]));
       const ht = el('.g-track');
-      const pStyle = {
-        background: 'rgba(' + r + ',' + g + ',' + b + ',.15)',
-        borderColor: 'rgba(' + r + ',' + g + ',' + b + ',.55)'
-      };
-      setBarPos(pStyle, axis, xOf, gStart, gDue);
       this.holWash(ht, [...new Set(items.map(x => x.ep.showId))], items[0].su.dept, xOf, axis);
-      ht.appendChild(el('.phase-bar', {
-        title: dep.label + ' — ' + App.fmtRange(gStart, gDue) + (note ? ' · ' + note : ''),
-        style: pStyle
-      }));
+      ht.appendChild(this.phaseBar(dep, items, xOf, note, axis));
       hrow.appendChild(ht);
       body.appendChild(hrow);
     },
@@ -1935,8 +1942,11 @@ window.App = window.App || {};
       if (!sorted.length) return;
       const multi = sorted.length > 1;
 
-      // phase-span header — only worth it for a multi-task department
-      if (multi) this.phaseRow(body, dep, sorted, xOf, sorted.length + ' tasks', axis);
+      // phase span — only worth it for a multi-task department. Landscape
+      // draws it as a hairline over the first task line rather than a row of
+      // its own; Portrait keeps its own column, where there's no room above.
+      const portrait = !!(axis && axis.portrait);
+      if (multi && portrait) this.phaseRow(body, dep, sorted, xOf, sorted.length + ' tasks', axis);
 
       // interval-stack: a task shares a line unless it overlaps the last one
       // (planned revisions included, so a V2 never lands on the next task)
@@ -1949,12 +1959,12 @@ window.App = window.App || {};
       });
 
       const wash = this.deptWash(dep);
-      levels.forEach(lvl => {
+      levels.forEach((lvl, li) => {
         const srow = selRow(el('.g-row.sub', { style: { background: wash } }), sorted);
         srow.appendChild(el('.g-label', { title: dep.label, style: { background: deptLabelBg(dep.color) } },
           el('.l-title', { style: { fontWeight: '600', fontSize: '10.5px' } },
-            multi
-              ? []                       // the phase header above already names it
+            multi && (portrait || li > 0)
+              ? []                       // the phase header / first line already names it
               : [this.deptDot(dep),
                  el('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, dep.label)]
           )
@@ -1963,6 +1973,18 @@ window.App = window.App || {};
         this.holWash(st, [...new Set(lvl.items.map(it => it.ep.showId))], dep.key || lvl.items[0].su.dept, xOf, axis);
         // identity lives on each bar, not the row: one line can hold many episodes
         lvl.items.forEach(it => this.taskBar(st, it.ep, it.su, dep, xOf, dw, barLabel && barLabel(it), null, axis));
+        if (multi && !portrait && li === 0) {
+          // a long gap between tasks breaks the line, so idle stretches don't read as work
+          const runs = [];
+          sorted.forEach(it => {
+            const end = App.plannedRevisions(it.ep, it.su).end;
+            const run = runs[runs.length - 1];
+            if (run && App.diffDays(it.su.start, run.end) <= PHASE_GAP_DAYS) { run.items.push(it); if (end > run.end) run.end = end; }
+            else runs.push({ end, items: [it] });
+          });
+          runs.forEach(run => st.appendChild(this.phaseBar(dep, run.items, xOf,
+            run.items.length + (run.items.length === 1 ? ' task' : ' tasks'), axis, '.phase-line')));
+        }
         srow.appendChild(st);
         body.appendChild(srow);
       });
@@ -2585,6 +2607,28 @@ window.App = window.App || {};
       else s.scrollTo({ left: Math.max(0, parseFloat(t.style.left) - s.clientWidth * 0.38), behavior: 'smooth' });
     }
   };
+
+  /* A task name too long for its bar at this zoom falls back to its
+     initials — "Storyboard & Animatic" → "S&A" — before it ellipsises. Runs
+     after every render, which is also what a zoom does, so zooming back in
+     brings the full name back. The full name is always in the tooltip. */
+  // days of nothing between a department's tasks before its phase line breaks
+  const PHASE_GAP_DAYS = 14;
+
+  function abbreviate(name) {
+    const words = String(name).split(/\s+/).filter(Boolean);
+    if (words.length < 2) return '';
+    // symbols, versions and acronyms stay whole: "Animatic V2" → "AV2", "VO Comps" → "VOC"
+    return words.map(w => /^[&+\/-]$/.test(w) || /\d/.test(w) || /^[A-Z]{2,}$/.test(w) ? w : w[0].toUpperCase()).join('');
+  }
+  // waits for this chart to be in the page and laid out before measuring
+  function fitBarLabels(root, tries = 0) {
+    requestAnimationFrame(() => {
+      if (!root.isConnected) { if (tries < 10) fitBarLabels(root, tries + 1); return; }
+      const ls = root.querySelectorAll('.bar-label[data-abbr]');
+      ls.forEach(sp => { if (sp.scrollWidth > sp.clientWidth + 1) sp.textContent = sp.dataset.abbr; });
+    });
+  }
 
   function attachBar(bar, st, dot) {
     if (dot !== false) bar.appendChild(el('span.bar-dot', { style: { background: st.color } }));
