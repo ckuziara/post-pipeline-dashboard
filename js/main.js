@@ -243,11 +243,8 @@ window.App = window.App || {};
          the time off, so its dates still span those days — remember that
          these exact dates were planned around it, so it isn't flagged again.
          Any later move changes the dates and the mark no longer applies. */
-      const ack = App._holidayAck;
-      if (ack && ack.epId === epId && ack.key === key && ack.start === newStart && ack.due === newDue) {
-        e.holidayOk = e.holidayOk || {};
-        e.holidayOk[key] = newStart + '|' + newDue;
-        App._holidayAck = null;
+      if (App.takeHolidayAck(epId, key, newStart, newDue)) {
+        App.markHolidayOk(e, key, newStart, newDue);
       }
       if (shiftDelivery) {
         e.milestones = e.milestones || {};
@@ -429,9 +426,8 @@ window.App = window.App || {};
         const e = d.episodes.find(x => x.id === ep.id); if (!e) return;
         e.dates = e.dates || {};
         e.dates[move.suKey] = { start: move.start, due: move.due };
-        const ack = App._holidayAck;           // see moveTask
-        if (ack && ack.epId === e.id && ack.key === move.suKey && ack.start === move.start && ack.due === move.due) {
-          e.holidayOk = e.holidayOk || {}; e.holidayOk[move.suKey] = move.start + '|' + move.due; App._holidayAck = null;
+        if (App.takeHolidayAck(e.id, move.suKey, move.start, move.due)) {   // see moveTask
+          App.markHolidayOk(e, move.suKey, move.start, move.due);
         }
         App.syncBatch(d, e, move.suKey);
         touched[e.id] = e;
@@ -983,8 +979,66 @@ window.App = window.App || {};
     const plan = App.shiftPlanFor(ep, su); if (!plan) return;
     // marked as planned around the time off once the move lands — possibly
     // later, after moveTask has asked about dependents (see moveTask)
-    App._holidayAck = { epId, key, start: plan.start, due: plan.due };
+    App._holidayAcks = [{ epId, key, start: plan.start, due: plan.due }];
     App.moveTask(epId, key, plan.start, plan.due);
+  };
+  /* Moves waiting to be marked as planned around time off. Each is used up
+     by the move that lands on exactly its dates. */
+  App._holidayAcks = [];
+  App.takeHolidayAck = function (epId, key, start, due) {
+    const i = App._holidayAcks.findIndex(a => a.epId === epId && a.key === key && a.start === start && a.due === due);
+    if (i < 0) return false;
+    App._holidayAcks.splice(i, 1);
+    return true;
+  };
+
+  /* Split an episode around its time off: work before the first clashing day
+     stays put, and everything from that day on moves later by the working
+     days lost. A task that runs into the time off keeps its start and gets
+     its end pushed out; a task that starts on or after it moves whole. The
+     order of the pipeline is kept, because every task on the far side of the
+     split moves by the same amount. Returns one plan per episode that has a
+     clash: { ep, splitIso, days, moves }. */
+  App.holidaySplitPlan = function (showId) {
+    const cal = App.showCalendar(showId); if (!cal) return [];
+    const byEp = {};
+    App.holidayClashes(showId).forEach(c => { (byEp[c.ep.id] = byEp[c.ep.id] || { ep: c.ep, clashes: [] }).clashes.push(c); });
+    return Object.values(byEp).map(({ ep, clashes }) => {
+      const off = new Set(); clashes.forEach(c => c.days.forEach(d => off.add(d)));
+      const splitIso = [...off].sort()[0];
+      /* The delay is the time off's length on the calendar: the unbroken run
+         of days off from the split (a weekend inside it doesn't break it).
+         Every task past the split moves by the same number of calendar days,
+         so the gaps between them are kept exactly, whatever days they sit on. */
+      let last = splitIso;
+      for (let x = splitIso; ; x = App.shiftIso(x, 1)) {
+        if (cal.weekend(x)) continue;
+        if (!off.has(x)) break;
+        last = x;
+      }
+      const days = App.diffDays(last, splitIso) + 1;
+      const moves = [];
+      App.subitems(ep).forEach(su => {
+        if (su.status === 'approved' || su.due < splitIso) return;
+        const start = su.start < splitIso ? su.start : App.shiftIso(su.start, days);
+        moves.push({ epId: ep.id, suKey: su.key, start, due: App.shiftIso(su.due, days), name: su.name, from: su.start });
+      });
+      // the live date is a hard line (see App.scheduleImpact), so a split
+      // that would cross it is flagged here rather than refused later
+      const also = {}; moves.forEach(m => { also[m.suKey] = { start: m.start, due: m.due }; });
+      let blocked = null;
+      moves.some(m => { const imp = App.scheduleImpact(ep, m.suKey, m.start, m.due, also); if (imp.deny) blocked = imp.deny.text; return !!blocked; });
+      return { ep, splitIso, days, moves, blocked };
+    }).filter(p => p.days && p.moves.length);
+  };
+  App.splitForHoliday = function (showId) {
+    const plans = App.holidaySplitPlan(showId).filter(p => !p.blocked);
+    const moves = [].concat(...plans.map(p => p.moves));
+    if (!moves.length) return;
+    // a task stretched across the time off now spans it on purpose
+    App._holidayAcks = moves.filter(m => m.start === m.from).map(m => ({ epId: m.epId, key: m.suKey, start: m.start, due: m.due }));
+    App.track.feature('holiday.splitEpisode');
+    App.moveTasks(moves.map(({ epId, suKey, start, due }) => ({ epId, suKey, start, due })), { pushed: true });
   };
   // where the shift would put it: its working days (whole-production days
   // off don't count), restarted on the first day its people are all in

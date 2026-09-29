@@ -3536,13 +3536,39 @@ window.App = window.App || {};
           ])
         ]));
       });
+      /* The main decision is one of two: leave the schedule as it is, or split
+         each episode at its time off and push the second half back by the
+         days lost. Handling tasks one by one is still there, but folded away,
+         because a single holiday can touch a long chain of tasks. */
+      const plans = opts.onlyKey ? [] : App.holidaySplitPlan(showId);
+      const splitCount = plans.reduce((n, p) => n + (p.blocked ? 0 : p.moves.length), 0);
       const sections = [
         el('.fld-hint', { style: { marginBottom: '10px' } },
           clashes.length + ' task' + (clashes.length === 1 ? ' runs' : 's run') + ' into time off for the people doing ' +
-          (clashes.length === 1 ? 'it' : 'them') + '. Reassign to someone who’s in, or shift so no one loses working days.'),
-        list
+          (clashes.length === 1 ? 'it' : 'them') + '.' +
+          (plans.length ? ' Leave the schedule as it is, or split the episode at the time off and delay the second half.' :
+            ' Reassign to someone who’s in, or shift so no one loses working days.'))
       ];
-      const footer = [el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Leave for now')];
+      if (plans.length) {
+        sections.push(el('.hc-plans', null, plans.map(p => el('.hc-plan' + (p.blocked ? '.blocked' : ''), null, [
+          el('span.hc-task', null, p.ep.code),
+          el('span.hc-ep', null, ' Split at ' + App.fmtDate(p.splitIso) + ' · ' + p.moves.length + ' task' + (p.moves.length === 1 ? '' : 's') +
+            ' delayed ' + p.days + ' day' + (p.days === 1 ? '' : 's')),
+          p.blocked ? el('.hc-why', null, [App.icon('warn'), ' Can’t split: ' + p.blocked + '. Handle its tasks individually below, or move the live date first.']) : null
+        ]))));
+        const det = el('details.hc-details', null, [el('summary', null, 'Individual tasks (' + clashes.length + ')'), list]);
+        sections.push(det);
+      } else {
+        sections.push(list);
+      }
+      const footer = [el('button.btn-ghost', { onclick: () => App.modal.close() }, plans.length ? 'Leave as is' : 'Leave for now')];
+      if (splitCount) {
+        footer.push(el('button.btn-primary', {
+          type: 'button', disabled: canMove ? null : 'disabled',
+          title: canMove ? 'Keep the work before the time off, and move everything from it on later by the days lost' : 'Your role can’t change the schedule',
+          onclick: () => { nav = true; App.splitForHoliday(showId); reopen(); }
+        }, 'Split & delay ' + splitCount + ' task' + (splitCount === 1 ? '' : 's')));
+      }
       App.modal.open(card('warn', 'Holiday clashes', show.name, sections, footer, 'wide'),
         { onClose: () => { if (!nav && back) setTimeout(back, 0); nav = false; } });
     }

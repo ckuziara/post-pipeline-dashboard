@@ -22,6 +22,19 @@ window.App = window.App || {};
      drawn on — only which CSS property they land in changes. Centralizes what
      used to be nine separate `{ left: xOf(s)+'px', width: ... }` literals so
      Portrait didn't mean writing a tenth, eleventh, ... variant by hand. */
+  /* A bar's time-off pauses (.bar-hol) belong to the calendar, not the
+     task: while a bar is dragged or stretched they stay on the holiday's own
+     dates, clipped to whatever part of the bar still covers them. */
+  function placePauses(bar, portrait) {
+    const pauses = bar.querySelectorAll('.bar-hol'); if (!pauses.length) return;
+    const p0 = portrait ? 'top' : 'left', sz = portrait ? 'height' : 'width';
+    const pos = parseFloat(bar.style[p0]) || 0, size = parseFloat(bar.style[sz]) || 0;
+    pauses.forEach(pz => {
+      const a = Math.max(+pz.dataset.at - pos, 0), b = Math.min(+pz.dataset.at + +pz.dataset.len - pos, size);
+      pz.style.display = b > a ? '' : 'none';
+      pz.style[p0] = a + 'px'; pz.style[sz] = Math.max(0, b - a) + 'px';
+    });
+  }
   function setBarPos(style, axis, xOf, s, d) {
     if (axis && axis.portrait) { style.top = xOf(s) + 'px'; style.height = xOf.width(s, d) + 'px'; }
     else { style.left = xOf(s) + 'px'; style.width = xOf.width(s, d) + 'px'; }
@@ -968,6 +981,7 @@ window.App = window.App || {};
           if (m.el) {
             if (portraitG) { m.el.style.top = xOf(ns) + 'px'; m.el.style.height = xOf.width(ns, nd) + 'px'; }
             else { m.el.style.left = xOf(ns) + 'px'; m.el.style.width = xOf.width(ns, nd) + 'px'; }
+            placePauses(m.el, portraitG);
           }
         });
 
@@ -1039,6 +1053,7 @@ window.App = window.App || {};
 
       if (portrait) { d.bar.style.top = xOf(newStart) + 'px'; d.bar.style.height = xOf.width(newStart, newDue) + 'px'; }
       else { d.bar.style.left = xOf(newStart) + 'px'; d.bar.style.width = xOf.width(newStart, newDue) + 'px'; }
+      placePauses(d.bar, portrait);
 
       const broken = d.deps.some(dep => newStart <= dep.due) || d.dependents.some(dep => dep.start <= newDue);
       d.bar.classList.toggle('warn', broken);
@@ -1488,8 +1503,27 @@ window.App = window.App || {};
       ]);
       sbar.dataset.episodeId = ep.id;
       sbar.dataset.suKey = su.key;
-      attachBar(sbar, { color: st.color, label: st.label }, false);
       track.appendChild(sbar);
+
+      /* A task that runs across time off — typically one stretched by a
+         holiday split — shows the time off inside its bar: greyed, with a
+         line at each end, so it reads as work paused rather than one long
+         run. Positioned relative to the bar, so it moves with it. */
+      if (!bare) {
+        const p0 = axis && axis.portrait ? 'top' : 'left', sz = axis && axis.portrait ? 'height' : 'width';
+        const at0 = xOf(su.start);
+        this.holSpans(ep.showId, su.dept).forEach(sp => {
+          const a = sp.start < su.start ? su.start : sp.start, b = sp.end > su.due ? su.due : sp.end;
+          if (a > b || (a === su.start && b === su.due)) return;   // outside it, or the whole bar
+          const pause = el('.bar-hol');
+          // where the time off sits on the track, so a drag can keep it there
+          pause.dataset.at = xOf(a); pause.dataset.len = xOf.width(a, b);
+          pause.style[p0] = (xOf(a) - at0) + 'px';
+          pause.style[sz] = xOf.width(a, b) + 'px';
+          sbar.appendChild(pause);
+        });
+      }
+      attachBar(sbar, { color: st.color, label: st.label }, false);
 
       /* Revisions still ahead of an open task: the time the schedule holds in
          reserve in case it's sent back, drawn as striped V2, V3… bars after
