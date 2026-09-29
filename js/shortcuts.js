@@ -102,9 +102,12 @@ window.App = window.App || {};
       ['Board & Dashboard', [
         [kbd(OPT(), 'click'), 'On an episode (Board) or a group (Dashboard): open or close them all'],
         [kbd(SHIFT(), 'click'), 'On a Board task: add or remove it from the selection'],
+        [kbd(SHIFT(), 'drag'), 'Down Board task rows: select every row in between'],
+        [kbd(SHIFT(), 'drag'), 'From a task that’s already selected: unselect the range (Board rows or a Timeline sweep)'],
         [kbd(OPT(), SHIFT(), 'click'), 'On a Board task: that task on every episode'],
         [kbd(OPT(), SHIFT(), 'click'), 'On a Board episode: all of its tasks'],
-        [kbd('right-click'), 'On a selected Board task: Batch Set Dates']
+        [kbd('click'), 'The status or owner of a selected Board task: change every selected task'],
+        [kbd('right-click'), 'On a selected Board task: Set status, Assign owner, Batch Set Dates']
       ]],
       ['Lists & filters', [
         [kbd('click'), 'Tick or untick one'],
@@ -114,7 +117,7 @@ window.App = window.App || {};
       ]],
       ['Selecting', [
         [kbd(SHIFT(), 'click'), 'Add or remove a task'],
-        [kbd(SHIFT(), 'drag'), 'Sweep a box over tasks'],
+        [kbd(SHIFT(), 'drag'), 'Sweep a box over tasks — from open grid or from a bar'],
         [kbd(OPT(), SHIFT(), 'click'), 'On a task: that task on every episode'],
         [kbd(OPT(), SHIFT(), 'click'), 'On an episode name: all of that episode’s tasks'],
         [kbd(OPT(), SHIFT(), 'click'), 'On a department row: all of that department’s tasks']

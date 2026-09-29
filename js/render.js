@@ -341,7 +341,7 @@ window.App = window.App || {};
       }, [
         el('span.sel-dot'),
         el('span.sel-count', null, sel.length + ' selected'),
-        el('span.sel-sub', null, 'in ' + eps + ' episode' + (eps === 1 ? '' : 's') + (App.state.view === 'board' ? ' · right-click for Batch Set Dates' : ' · drag to move or resize together')),
+        el('span.sel-sub', null, 'in ' + eps + ' episode' + (eps === 1 ? '' : 's') + (App.state.view === 'board' ? ' · right-click to set status, owner or dates' : ' · drag to move or resize together')),
         el('button.sel-clear', {
           title: 'Clear the selection (Esc)',
           onclick: () => { App.ganttSelection.clear(); App.render(); }

@@ -896,10 +896,8 @@ window.App = window.App || {};
           }
         }
 
-        /* Shift on empty grid → marquee. Starting the band on a bar would take
-           the shift+click-to-toggle gesture away, and dragging out from a bar
-           you've just added is the natural way to extend a selection, so the
-           band only ever starts in open space. */
+        /* Shift on empty grid → marquee. (Shift on a bar sweeps too, once it
+           moves — see below — so a band can start anywhere on the chart.) */
         if (e.shiftKey && !bar) {
           const track = e.target.closest('.g-row.sub .g-track');
           if (track && App.canSelectTasks(App.state.role)) {
@@ -921,8 +919,10 @@ window.App = window.App || {};
         if (!su) return;
 
         /* Shift on a bar → toggle it in the selection, and nothing else. No
-           drag starts and no dialog opens: the whole point of holding shift is
-           that this press is about choosing, not about moving or inspecting. */
+           move starts and no dialog opens: the whole point of holding shift is
+           that this press is about choosing, not about moving or inspecting.
+           Dragging from it sweeps a box, the same as from open grid; the
+           toggle happens on release if the press never moved (see onDragEnd). */
         if (e.shiftKey) {
           if (!App.canSelectTasks(App.state.role)) return;
           e.preventDefault();
@@ -934,11 +934,11 @@ window.App = window.App || {};
               const s = App.subsView(x).find(t => t.key === suKey);
               return s ? { ep: x, su: s } : null;
             }).filter(Boolean));
-          } else {
-            selToggle(epId, suKey);
+            this.suppressNextClick();
+            App.render();
+            return;
           }
-          this.suppressNextClick();
-          App.render();
+          this.startMarquee(e, { epId, suKey });
           return;
         }
 
@@ -1047,7 +1047,8 @@ window.App = window.App || {};
 
        Hit-tested once on release rather than per mouse move: one pass over the
        bars beats one per pixel, and the band's outline is feedback enough. */
-    startMarquee(e) {
+    // `toggle` — the bar the press started on, picked or dropped if it never moves
+    startMarquee(e, toggle) {
       const ghost = el('.g-marquee', {
         style: { left: e.clientX + 'px', top: e.clientY + 'px', width: '0px', height: '0px' }
       });
@@ -1055,9 +1056,13 @@ window.App = window.App || {};
       this._drag = {
         kind: 'marquee', ghost,
         startClientX: e.clientX, startClientY: e.clientY, startedAt: Date.now(), moved: false,
-        // shift is held, so this extends whatever was already picked
-        additive: true
+        // shift is held, so this extends whatever was already picked — unless
+        // the press started on a bar that's already picked: then the band takes
+        // what it touches back out (the Board's Shift+drag works the same way)
+        additive: true, toggle: toggle || null,
+        removing: !!(toggle && selHas(toggle.epId, toggle.suKey))
       };
+      if (this._drag.removing) ghost.classList.add('removing');
       document.body.classList.add('gantt-dragging');
     },
 
@@ -1252,7 +1257,10 @@ window.App = window.App || {};
         const box = d.ghost.getBoundingClientRect();
         d.ghost.remove();
         this.suppressNextClick();
-        if (!d.moved) return;                        // a shift-click on open grid: nothing to sweep
+        if (!d.moved) {                              // a shift-click: a bar toggles, open grid does nothing
+          if (d.toggle) { selToggle(d.toggle.epId, d.toggle.suKey); App.render(); }
+          return;
+        }
         if (!d.additive) selClear();
         let added = 0;
         this._scrollEl.querySelectorAll('.g-row.sub:not(.phase) .bar').forEach(b => {
@@ -1263,11 +1271,13 @@ window.App = window.App || {};
           const epId = b.dataset.episodeId || row.dataset.episodeId;
           const suKey = b.dataset.suKey || row.dataset.suKey;
           if (!epId || !suKey) return;
+          if (d.removing) { if (selHas(epId, suKey)) { selToggle(epId, suKey); added++; } return; }
           if (!selHas(epId, suKey)) added++;
           selAdd(epId, suKey);
         });
         App.render();
         const total = selList().length;
+        if (d.removing) { App.toast(added + ' task' + (added === 1 ? '' : 's') + ' dropped · ' + total + ' selected'); return; }
         App.toast(added
           ? added + ' task' + (added === 1 ? '' : 's') + ' added · ' + total + ' selected'
           : 'Nothing new in that sweep · ' + total + ' selected');

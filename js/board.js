@@ -172,10 +172,16 @@ window.App = window.App || {};
        What a selection is for here is Batch Set Dates, from a right-click. */
     wireRowSelect(row, ep, su) {
       if (!App.canSelectTasks(App.state.role)) return;
-      row.addEventListener('mousedown', (e) => { if (e.shiftKey) e.preventDefault(); }, true);   // no text selection
+      row.dataset.epId = ep.id; row.dataset.suKey = su.key;
+      row.addEventListener('mousedown', (e) => {
+        if (!e.shiftKey || e.button !== 0) return;
+        e.preventDefault();                          // no text selection
+        if (!e.altKey) this.startRangeDrag(e, row);
+      }, true);
       row.addEventListener('click', (e) => {
         if (!e.shiftKey) return;
         e.preventDefault(); e.stopPropagation();
+        if (this._rangeJustEnded) return;            // that press was a drag across rows, already applied
         if (e.altKey) {
           this.selectItems((this._episodes || []).map(x => {
             const s = App.subsView(x).find(t => t.key === su.key);
@@ -190,6 +196,50 @@ window.App = window.App || {};
         if (!App.ganttSelection.resolved().length) return;
         this.selMenu(e);
       });
+    },
+
+    /* Shift+drag down (or up) the task rows → every row between the one
+       pressed and the one under the cursor, across episodes too, in the order
+       they're drawn. Rows light up as the range grows; letting go adds them to
+       the selection — or, when the row pressed was already selected, takes
+       them out of it. A press that never leaves its row is an ordinary
+       Shift+click (the toggle above). */
+    startRangeDrag(e, row) {
+      const rows = [...document.querySelectorAll('.board .subrow[data-su-key]')];
+      const from = rows.indexOf(row);
+      if (from === -1) return;
+      const removing = App.ganttSelection.has(row.dataset.epId, row.dataset.suKey);
+      const cls = removing ? 'out-range' : 'in-range';
+      let to = from;
+      const paint = () => {
+        const a = Math.min(from, to), b = Math.max(from, to);
+        rows.forEach((r, i) => r.classList.toggle(cls, to !== from && i >= a && i <= b));
+      };
+      const move = (ev) => {
+        const hit = document.elementFromPoint(ev.clientX, ev.clientY);
+        const over = hit && hit.closest('.board .subrow[data-su-key]');
+        const i = over ? rows.indexOf(over) : -1;
+        if (i !== -1 && i !== to) { to = i; paint(); }
+      };
+      const up = () => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        document.body.classList.remove('board-ranging');
+        if (to === from) return;
+        const a = Math.min(from, to), b = Math.max(from, to);
+        rows.slice(a, b + 1).forEach(r => {
+          const { epId, suKey } = r.dataset;
+          if (!removing) App.ganttSelection.add(epId, suKey);
+          else if (App.ganttSelection.has(epId, suKey)) App.ganttSelection.toggle(epId, suKey);
+        });
+        // the click that follows this mouseup isn't a toggle
+        this._rangeJustEnded = true; setTimeout(() => { this._rangeJustEnded = false; }, 0);
+        App.render();
+        App.toast((b - a + 1) + ' tasks ' + (removing ? 'dropped' : 'added') + ' · ' + App.ganttSelection.resolved().length + ' selected');
+      };
+      document.body.classList.add('board-ranging');
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
     },
 
     // Opt+Shift: one press adds the lot, or drops it if it's all picked already
@@ -207,10 +257,17 @@ window.App = window.App || {};
       const close = () => { menu.remove(); document.removeEventListener('mousedown', off, true); document.removeEventListener('keydown', esc, true); };
       const off = (ev) => { if (!menu.contains(ev.target)) close(); };
       const esc = (ev) => { if (ev.key === 'Escape') close(); };
-      const item = (label, sub, fn) => el('button.ctx-item', { type: 'button', onclick: () => { close(); fn(); } },
+      // stopped here, or the page's own click-away would close the picker it opens
+      const item = (label, sub, fn) => el('button.ctx-item', { type: 'button', onclick: (ev) => { ev.stopPropagation(); close(); fn(); } },
         [el('span.ctx-item-lbl', null, label), sub ? el('span.ctx-item-sub', null, sub) : null]);
+      // the pickers open where the menu was, and act on the whole selection
+      const at = { getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY }) };
+      const first = App.ganttSelection.resolved()[0];
       const menu = el('.ctx-menu', null, [
-        n > 1 ? item('Batch Set Dates…', n + ' selected', () => App.batchDates.open()) : null,
+        item('Set status…', n + ' selected', () => this.openStatusPop(at, first.ep, first.suKey)),
+        App.canAssignOwners(App.state.role) ? item('Assign owner…', n + ' selected', () => this.openOwnerPop(at, first.ep, first.suKey)) : null,
+        n > 1 && App.canEditSchedule(App.state.role) ? item('Batch Set Dates…', n + ' selected', () => App.batchDates.open()) : null,
+        el('.ctx-sep'),
         item('Clear selection', 'Esc', () => { App.ganttSelection.clear(); App.render(); })
       ]);
       document.body.appendChild(menu);
@@ -298,7 +355,9 @@ window.App = window.App || {};
           el('.cell.c-dept', null, el('span.dept-chip', null, [
             el('span.dot', { style: { background: dep.color } }), dep.label
           ])),
-          el('.cell.c-assignee', null, person
+          el('.cell.c-assignee' + (App.canAssignOwners(App.state.role) ? '.can' : ''), App.canAssignOwners(App.state.role) ? {
+            onclick: (e) => { e.stopPropagation(); App.board.openOwnerPop(e.currentTarget, ep, su.key); }
+          } : null, person
             ? el('span.avatar', { style: { background: person.color }, title: person.name }, App.initials(person.name))
             : el('span.avatar.avatar-none', { title: 'Unassigned' }, '?')),
           // none → click to add a Kick Off; needed → click to mark it done; done → click to undo (Producer / Director)
@@ -342,9 +401,30 @@ window.App = window.App || {};
 
     // ---- status picker popup ----
     closePop() { if (this._pop) { this._pop.remove(); this._pop = null; } },
+    /* A task that's part of a selection of two or more speaks for the whole
+       selection: its status and owner pickers change every selected task. */
+    selTargets(ep, key) {
+      const sel = App.ganttSelection.resolved();
+      return sel.length > 1 && App.ganttSelection.has(ep.id, key) ? sel : null;
+    },
+
     openStatusPop(cell, ep, key) {
       this.closePop();
       const su = App.subitem(ep, key);
+      const many = this.selTargets(ep, key);
+      if (many) {
+        const pop = el('.status-pop');
+        App.statusOptionsFor(App.state.role).forEach(sk => {
+          const s = App.STATUSES[sk];
+          pop.appendChild(el('button.status-opt', {
+            style: { background: s.color, color: s.ink },
+            onclick: (e) => { e.stopPropagation(); App.setStatusMany(many, sk); }
+          }, s.label));
+        });
+        pop.appendChild(el('.pop-note', null, 'Sets all ' + many.length + ' selected tasks'));
+        this.placePop(pop, cell.getBoundingClientRect());
+        return;
+      }
       if (!App.canEditTask(App.state.role, su)) {
         const d = App.roleDept(App.state.role);
         App.toast('Your role can only edit ' + (d ? App.dept(d).label : 'permitted') + ' tasks', true); return;
@@ -366,6 +446,39 @@ window.App = window.App || {};
       pop.appendChild(el('.pop-note', null,
         blocked ? 'Waiting on: ' + (App.pTask(ep, key) || { deps: [] }).deps.filter(d => (ep.statuses[d] || 'not_started') !== 'approved').map(d => App.taskNameFor(ep, d)).join(', ')
         : startable ? '✓ All dependencies approved — ready to start' : 'Dependencies approved'));
+      this.placePop(pop, r);
+    },
+
+    /* Owner picker. Owners are staff of the task's own department (the Edit
+       Task rule). For a selection, one list per department the selection
+       covers — picking someone assigns them the selected tasks in their
+       department — plus Unassigned for all of them. */
+    openOwnerPop(cell, ep, key) {
+      this.closePop();
+      if (!App.canAssignOwners(App.state.role)) { App.toast('Your role can’t assign owners (set in Admin → Privileges)', true); return; }
+      const many = this.selTargets(ep, key);
+      const items = many || [{ epId: ep.id, suKey: key, ep, su: App.subitem(ep, key) }];
+      const counts = {};
+      items.forEach(x => { counts[x.su.dept] = (counts[x.su.dept] || 0) + 1; });
+      const current = !many ? items[0].su.assignee : null;
+      const pop = el('.status-pop.owner-pop');
+      const opt = (label, color, on, fn) => el('button.owner-opt' + (on ? '.on' : ''), {
+        type: 'button', onclick: (e) => { e.stopPropagation(); fn(); }
+      }, [color ? el('span.avatar.owner-av', { style: { background: color } }, App.initials(label)) : el('span.avatar.avatar-none.owner-av', null, '–'), el('span', null, label)]);
+      Object.keys(App.DEPARTMENTS).filter(d => counts[d]).forEach(d => {
+        if (many) pop.appendChild(el('.owner-dept', null, [el('span.dot', { style: { background: App.dept(d).color } }),
+          App.dept(d).label + ' · ' + counts[d] + ' task' + (counts[d] === 1 ? '' : 's')]));
+        const staff = App.state.data.people.filter(p => App.roleDept(p.role) === d);
+        if (!staff.length) pop.appendChild(el('.pop-note', null, 'No ' + App.dept(d).label + ' staff in the directory'));
+        staff.forEach(p => pop.appendChild(opt(p.name, p.color, p.id === current, () => App.assignMany(items, p.id))));
+      });
+      pop.appendChild(el('.pop-sep'));
+      pop.appendChild(opt('Unassigned', null, !many && !current, () => App.assignMany(items, null)));
+      if (many) pop.appendChild(el('.pop-note', null, 'Assigns the ' + many.length + ' selected tasks'));
+      this.placePop(pop, cell.getBoundingClientRect());
+    },
+
+    placePop(pop, r) {
       document.body.appendChild(pop);
       // Position after paint so offsetHeight/offsetWidth are real.
       // Flip upward if too close to the bottom edge; clamp to viewport edges.
