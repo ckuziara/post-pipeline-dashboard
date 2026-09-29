@@ -614,15 +614,18 @@ window.App = window.App || {};
       return Math.max(0, Math.min(n - 1, Math.floor((clientX - r.left) / this._dw)));
     },
 
-    startRuler(e) {
+    // `grip` is 'from' or 'to' when an end's handle was grabbed: that end
+    // follows the pointer and the other one is the anchor, like Shift+drag.
+    startRuler(e, grip) {
       const cur = App.state.ganttRuler;
       let anchor = this.rulerColAt(e.clientX);
-      if (e.shiftKey && cur) {
-        const colOf = (iso) => this._xOf(iso) / this._dw;
+      const extend = !!cur && (e.shiftKey || !!grip);
+      if (extend) {
+        const colOf = (iso) => Math.round(this._xOf(iso) / this._dw);
         const a = colOf(cur.from), b = colOf(cur.to);
-        anchor = Math.abs(anchor - a) < Math.abs(anchor - b) ? b : a;
+        anchor = grip ? (grip === 'from' ? b : a) : Math.abs(anchor - a) < Math.abs(anchor - b) ? b : a;
       }
-      this._drag = { kind: 'ruler', anchor, startClientX: e.clientX, moved: !!(e.shiftKey && cur) };
+      this._drag = { kind: 'ruler', anchor, startClientX: e.clientX, moved: extend };
       if (this._drag.moved) this.onDragMove(e);
       document.body.classList.add('gantt-dragging', 'gantt-ruling');
     },
@@ -648,6 +651,8 @@ window.App = window.App || {};
       const lbl = head.querySelector('.ruler-lbl');
       lbl.innerHTML = '';
       lbl.appendChild(el('b', null, days + ' day' + (days === 1 ? '' : 's')));
+      // past a month, weeks read easier than a day count — to one decimal unless exact
+      if (days > 31) { const wk = Math.round(days / 7 * 10) / 10; lbl.appendChild(el('span', null, wk + ' weeks')); }
       if (work !== days) lbl.appendChild(el('span', null, work + ' working'));
     },
 
@@ -826,7 +831,8 @@ window.App = window.App || {};
         if (rulerCols) {
           e.preventDefault();
           hideTip();
-          this.startRuler(e);
+          const grip = e.target.closest('.ruler-grip');
+          this.startRuler(e, grip && grip.dataset.end);
           return;
         }
 
@@ -1413,7 +1419,10 @@ window.App = window.App || {};
       // the ruler's header half, on a strip of its own above the dates — a
       // capped line over the measured range with the day count sitting on it.
       // The strip is always there so the header never changes height mid-drag.
-      this._rulerHead = el('.ruler-head', null, [el('.ruler-line'), el('.ruler-lbl')]);
+      // a grip at each end: drag one to move that edge, the other stays put
+      this._rulerHead = el('.ruler-head', null, [el('.ruler-line'), el('.ruler-lbl'),
+        el('.ruler-grip', { 'data-end': 'from', title: 'Drag to move this end' }),
+        el('.ruler-grip', { 'data-end': 'to', title: 'Drag to move this end' })]);
       cols.appendChild(el('.ruler-strip', null, this._rulerHead));
       cols.appendChild(buildSegRow(ctx, tier.primary, 'primary'));
       cols.appendChild(buildSegRow(ctx, tier.secondary, 'secondary'));

@@ -4857,6 +4857,17 @@ body.gantt-ruling, body.gantt-ruling * { cursor: col-resize !important; }
   background: var(--accent); color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.35);
 }
 .ruler-lbl span { font-size: 9.5px; opacity: .8; }
+/* the ends take the pointer (the rest of the head doesn't), so they can be dragged */
+.ruler-grip {
+  position: absolute; top: 0; bottom: 0; width: 12px; pointer-events: auto; cursor: col-resize; z-index: 1;
+}
+.ruler-grip[data-end="from"] { left: -6px; }
+.ruler-grip[data-end="to"] { right: -6px; }
+.ruler-grip::after {
+  content: ''; position: absolute; left: 50%; top: 50%; width: 8px; height: 14px; margin: -7px 0 0 -4px;
+  border-radius: 3px; background: var(--accent); opacity: 0; transition: opacity .12s;
+}
+.ruler-head:hover .ruler-grip::after, .ruler-grip:hover::after { opacity: 1; }
 .ruler-band {
   position: absolute; top: 0; bottom: 0; z-index: 2; pointer-events: none;
   background: color-mix(in srgb, var(--accent) 7%, transparent);
