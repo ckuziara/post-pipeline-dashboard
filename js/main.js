@@ -525,27 +525,37 @@ window.App = window.App || {};
   /* Change how long one planned version (V2, V3…) runs, for this episode
      only — the Timeline's drag on a striped version bar. `r` is the
      revision's index (0 is V2). Versions run back to back, so the later
-     ones simply follow on from the new end; nothing else is moved, but a
-     version that now runs into a task waiting on it is called out. */
+     ones simply follow on from the new end, and whatever waits on the task
+     is pushed back just far enough to stay clear of its last version (the
+     same rule as Push Schedule — App.pushPlan), in the same undo step. Work
+     already under way, in review or approved isn't moved; if the new end
+     runs into one of those, that's called out instead. */
   App.setVersionDays = function (epId, key, r, days) {
     const g = guardSchedule(epId, key); if (!g) return;
     const { max, days: cur } = App.taskRevisions(g.ep, key);
     days = Math.max(1, Math.round(days));
     if (r < 0 || r >= max || cur[r] === days) { App.render(); return; }
+    const own = ((g.ep.revDays && g.ep.revDays[key]) || []).slice();
+    own[r] = days;
+    // plan the push against the episode as it will be, before anything changes
+    const after = Object.assign({}, g.ep, { revDays: Object.assign({}, g.ep.revDays, { [key]: own }) });
+    const pushed = App.pushPlan(after, key, g.su.start, g.su.due).slice(1);
     App.mutate(d => {
       const e = d.episodes.find(x => x.id === epId);
-      e.revDays = e.revDays || {};
-      const own = (e.revDays[key] || []).slice();
-      own[r] = days;
-      e.revDays[key] = own;
+      e.revDays = Object.assign({}, e.revDays, { [key]: own });
+      e.dates = e.dates || {};
+      pushed.forEach(m => { e.dates[m.suKey] = { start: m.start, due: m.due }; });
+      pushed.forEach(m => App.syncBatch(d, e, m.suKey));
+      App.refreshReadiness(e);
     }, 'the version length');
     const ep = App.state.data.episodes.find(x => x.id === epId);
     const su = App.subitem(ep, key);
     const end = App.plannedRevisions(ep, su).end;
     const hit = App.pipelineFor(ep).filter(t => t.deps.includes(key))
       .map(t => App.subitem(ep, t.key)).filter(s => s && s.start <= end);
-    App.track.audit('task.versionDays', { episode: ep.code, task: su.name, version: 'V' + (r + 2), days: (cur[r] || 1) + '→' + days });
+    App.track.audit('task.versionDays', { episode: ep.code, task: su.name, version: 'V' + (r + 2), days: (cur[r] || 1) + '→' + days, pushed: pushed.length });
     App.toast(su.name + ' V' + (r + 2) + ' — ' + days + ' day' + (days === 1 ? '' : 's') +
+      (pushed.length ? ' · ' + pushed.length + ' task' + (pushed.length === 1 ? '' : 's') + ' after it pushed back' : '') +
       (hit.length ? ' · now runs into ' + hit.map(s => s.name).join(', ') : ''), hit.length > 0);
   };
 
@@ -1250,7 +1260,7 @@ window.App = window.App || {};
      stored on the show and also decides who each episode's tasks open against:
      a department with a team draws from it — the lead first — instead of from
      every staff member in the studio who happens to hold that role. */
-  App.createShow = function ({ name, code, type, brand, series, epNames, pipeline, startIso, cadence, scale, epStarts, epLives, team, calendar, startNum }) {
+  App.createShow = function ({ name, code, type, brand, franchise, seriesName, series, epNames, pipeline, startIso, cadence, scale, epStarts, epLives, team, calendar, startNum }) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
     type = type || 'animation';
     pipeline = pipeline || App.defaultPipelineFor(type);
@@ -1262,8 +1272,9 @@ window.App = window.App || {};
     App.mutate(d => {
       const showId = newShowId = code.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + App.uid().slice(0, 3);
       const show = { id: showId, name, prefix: code, type, color: SHOW_PALETTE[d.shows.length % SHOW_PALETTE.length], pipeline };
-      if (brand) show.brand = String(brand).trim();
-      if (series) show.series = String(series).trim();
+      // Brand › Show › Series › Season (App.SHOW_LEVELS) — blank ones left off
+      const lv = { brand, franchise, seriesName, series };
+      App.SHOW_LEVELS.forEach(l => { const v = String(lv[l.key] || '').trim(); if (v) show[l.key] = v; });
       if (team && Object.keys(team).length) show.team = team;
       // working days & holidays — scheduled by below, and by every later re-plan
       if (calendar && !App.calIsEmpty(calendar)) show.calendar = App.normCal(calendar);
@@ -1547,7 +1558,8 @@ window.App = window.App || {};
     return true;
   };
 
-  App.updateShow = function (showId, { name, code, color, brand, series }) {
+  App.updateShow = function (showId, fields) {
+    let { name, code, color } = fields;
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change shows', true); return false; }
     const s = App.state.data.shows.find(x => x.id === showId);
     if (!s) { App.toast('That show no longer exists', true); return false; }
@@ -1562,20 +1574,20 @@ window.App = window.App || {};
     const recoded = oldCode && oldCode !== code
       ? App.state.data.episodes.filter(e => e.showId === showId && e.code.indexOf(oldCode + '-') === 0).length
       : 0;
-    brand = String(brand == null ? (s.brand || '') : brand).trim();
-    series = String(series == null ? (s.series || '') : series).trim();
+    // Brand › Show › Series › Season; a level left out of `fields` keeps its value
+    const lv = {};
+    App.SHOW_LEVELS.forEach(l => { lv[l.key] = String(fields[l.key] == null ? (s[l.key] || '') : fields[l.key]).trim(); });
+    const { brand, series } = lv;
     if (name === s.name && code === oldCode && color === s.color &&
-        brand === (s.brand || '') && series === (s.series || '')) return true;   // nothing to save
+        App.SHOW_LEVELS.every(l => lv[l.key] === (s[l.key] || ''))) return true;   // nothing to save
 
     App.mutate(d => {
       const t = d.shows.find(x => x.id === showId);
       t.name = name; t.prefix = code;
       if (color) t.color = color;
       // blank means "not set" rather than an empty string on every show — the
-      // Shows browser builds its Brand and Season pickers from the values that
-      // are actually there
-      if (brand) t.brand = brand; else delete t.brand;
-      if (series) t.series = series; else delete t.series;
+      // Shows browser builds its pickers from the values that are actually there
+      App.SHOW_LEVELS.forEach(l => { if (lv[l.key]) t[l.key] = lv[l.key]; else delete t[l.key]; });
       if (oldCode && oldCode !== code) {
         d.episodes.forEach(e => {
           if (e.showId !== showId) return;
@@ -1584,7 +1596,8 @@ window.App = window.App || {};
       }
     }, 'editing the show');
 
-    App.track.audit('show.update', { show: name, code: code, brand: brand || undefined, series: series || undefined,
+    App.track.audit('show.update', { show: name, code: code, brand: brand || undefined, franchise: lv.franchise || undefined,
+      seriesName: lv.seriesName || undefined, series: series || undefined,
       renamedFrom: s.name !== name ? s.name : undefined,
       recodedFrom: oldCode !== code ? oldCode : undefined, episodesRecoded: recoded });
     App.toast('Saved “' + name + '”' + (recoded ? ' — ' + recoded + ' episode code' + (recoded === 1 ? '' : 's') + ' renamed' : ''));
@@ -1664,8 +1677,7 @@ window.App = window.App || {};
         color: src.color || SHOW_PALETTE[d.shows.length % SHOW_PALETTE.length],
         pipeline: pipeline
       };
-      if (src.brand) show.brand = src.brand;
-      if (src.series) show.series = src.series;
+      App.SHOW_LEVELS.forEach(l => { if (src[l.key]) show[l.key] = src[l.key]; });
       if (Object.keys(team).length) show.team = team;
       d.shows.push(show);
       eps.forEach((ep, i) => { ep.index = d.episodes.length + i; d.episodes.push(ep); });

@@ -1275,6 +1275,32 @@ window.App = window.App || {};
   // their data but vanish from every view until restored. An episode is
   // archived either directly or by its whole show being archived.
   App.activeShows = () => App.state.data.shows.filter(s => !s.archived);
+
+  /* Where a show sits in the catalogue, broadest first:
+       Brand › Show › Series › Season   (Little Angels › Emmie › Emmie Wonder Wardrobe › Season 1)
+     All four are optional labels on the show record, separate from its own
+     name. `series` has always held the season ("Season 3"), so it keeps that
+     job and the Show and Series levels are keys of their own. */
+  App.SHOW_LEVELS = [
+    { key: 'brand', label: 'Brand', any: 'Any brand', ph: 'e.g. Little Angels' },
+    { key: 'franchise', label: 'Show', any: 'Any show', ph: 'e.g. Emmie' },
+    { key: 'seriesName', label: 'Series', any: 'Any series', ph: 'e.g. Emmie Wonder Wardrobe' },
+    { key: 'series', label: 'Season', any: 'Any season', ph: 'e.g. Season 1' }
+  ];
+  App.showPath = (s) => App.SHOW_LEVELS.map(l => s[l.key]).filter(Boolean).join(' › ');
+  /* The values in use at level `i`, among `shows` that sit under `above`
+     ({ brand: 'Little Angels', … } — blank levels don't narrow). */
+  App.showLevelValues = function (i, above, shows) {
+    const key = App.SHOW_LEVELS[i].key, seen = {};
+    (shows || App.state.data.shows).forEach(s => {
+      for (let j = 0; j < i; j++) {
+        const k = App.SHOW_LEVELS[j].key, want = above && above[k];
+        if (want && (s[k] || '') !== want) return;
+      }
+      if (s[key]) seen[s[key]] = 1;
+    });
+    return Object.keys(seen).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  };
   App.isEpArchived = (ep) => !!ep.archived || !!App.show(ep.showId).archived;
   App.activeEpisodes = () => App.state.data.episodes.filter(ep => !App.isEpArchived(ep));
 

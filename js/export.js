@@ -332,7 +332,9 @@ window.App = window.App || {};
       },
       fields: [
         { key: 'brand', label: 'Brand', simple: true, adv: true },
-        { key: 'series', label: 'Series / Season', simple: true, adv: true },
+        { key: 'franchise', label: 'Show (under the brand)', adv: true },
+        { key: 'seriesName', label: 'Series', adv: true },
+        { key: 'series', label: 'Season', simple: true, adv: true },
         { key: 'producer', label: 'Producer', simple: true, adv: true },
         { key: 'episodes', label: 'Episodes', simple: true, adv: true },
         { key: 'start', label: 'Starts', simple: true, adv: true },
@@ -353,7 +355,8 @@ window.App = window.App || {};
           overlaps(i.start, i.live || i.finish, o.from, o.to));
         const cols = [
           { key: 'code', label: 'Code' }, { key: 'name', label: 'Show', w: 'wide' },
-          F.brand && { key: 'brand', label: 'Brand' }, F.series && { key: 'series', label: 'Season' },
+          F.brand && { key: 'brand', label: 'Brand' }, F.franchise && { key: 'franchise', label: 'Show line' },
+          F.seriesName && { key: 'seriesName', label: 'Series' }, F.series && { key: 'series', label: 'Season' },
           F.producer && { key: 'producer', label: 'Producer' }, F.episodes && { key: 'episodes', label: 'Eps', align: 'r' },
           F.crew && { key: 'crew', label: 'Crew', align: 'r' }, F.depts && { key: 'depts', label: 'Departments', w: 'wide' },
           F.start && { key: 'start', label: 'Starts', nowrap: true }, F.next && { key: 'next', label: 'Next live', nowrap: true },
@@ -367,7 +370,7 @@ window.App = window.App || {};
           return { cells: {
             code: cell(s.prefix || '', pill(s.prefix || '—', s.color)),
             name: cell(s.name, '<b>' + esc(s.name) + '</b>'),
-            brand: cell(s.brand || ''), series: cell(s.series || ''),
+            brand: cell(s.brand || ''), franchise: cell(s.franchise || ''), seriesName: cell(s.seriesName || ''), series: cell(s.series || ''),
             producer: cell(i.producers.map(p => p.name).join(', ') || '', i.producers.length ? esc(i.producers.map(p => p.name).join(', ')) : '<span class="muted">None</span>'),
             episodes: cell(i.eps.length), crew: cell(i.crew),
             depts: cell(App.showDepts(s).map(d => App.dept(d).label).join(', ')),
@@ -416,7 +419,7 @@ window.App = window.App || {};
      `snap` is a plain description of the show as it stands in the dialog —
      saved or still a draft — so an unsaved plan exports as what's on screen,
      and what isn't filled in yet is listed rather than silently missing.
-       { id, isNew, unsaved, name, code, brand, series, type, color,
+       { id, isNew, unsaved, name, code, brand, franchise, seriesName, series, type, color,
          pipeline, team, calendar,
          episodes: [{ code, title, start, live, liveSet, state, statusLabel,
                       progress, locked, slip, ep }],
@@ -426,7 +429,8 @@ window.App = window.App || {};
       .sort((a, b) => (a.index || 0) - (b.index || 0));
     return {
       id: show.id, isNew: false, unsaved: false,
-      name: show.name, code: show.prefix || '', brand: show.brand || '', series: show.series || '',
+      name: show.name, code: show.prefix || '',
+      brand: show.brand || '', franchise: show.franchise || '', seriesName: show.seriesName || '', series: show.series || '',
       type: show.type || 'animation', color: show.color,
       pipeline: show.pipeline || App.defaultPipelineFor(show.type),
       team: show.team || {}, calendar: show.calendar || null, iterations: show.iterations || [],
@@ -531,7 +535,8 @@ window.App = window.App || {};
 
     blocks.push({ kind: 'kv', title: 'Overview', rows: [
       ['Show', snap.name || '— not named yet —'], ['Content code', snap.code || '—'],
-      ['Brand', snap.brand || '—'], ['Series / season', snap.series || '—'],
+      ['Brand', snap.brand || '—'], ['Show (under the brand)', snap.franchise || '—'],
+      ['Series', snap.seriesName || '—'], ['Season', snap.series || '—'],
       ['Type', snap.type === 'live_action' ? 'Live action' : 'Animation'],
       ['Episodes', snap.episodes.length + (done ? ' · ' + done + ' delivered' : '')],
       ['Schedule', span ? range(span.from, span.to) : '—'],
