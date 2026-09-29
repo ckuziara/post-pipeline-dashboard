@@ -993,7 +993,13 @@ window.App = window.App || {};
         return { empty: 'This window has nothing to export — close it to export the view behind.' };
       }
       const v = App.state.view;
-      if (v === 'timeline' || v === 'board' || v === 'dashboard') return productionCtx();
+      if (v === 'timeline' || v === 'board' || v === 'dashboard') {
+        const ctx = productionCtx();
+        // a ruler on the Timeline is what's being looked at — export those dates
+        const r = v === 'timeline' && App.state.ganttRuler;
+        if (r && !ctx.empty) ctx.range = { from: r.from, to: r.to };
+        return ctx;
+      }
       return { empty: 'Print / Export works from the Timeline and Board — switch to one to export a production breakdown.' };
     },
 
@@ -1019,6 +1025,8 @@ window.App = window.App || {};
         ? new Set(saved.fields.filter(k => ctx.fields.some(f => f.key === k)))
         : fieldSet(st.preset);
       Object.assign(st, rangeFor('all', ctx.span));
+      // opened for a stretch of dates (the Timeline's ruler) — start on those
+      if (ctx.range) Object.assign(st, { range: 'custom', from: ctx.range.from, to: ctx.range.to });
       Object.keys(ctx.filters || {}).forEach(k => {
         const f = ctx.filters[k];
         const all = f.options.map(x => x.id);

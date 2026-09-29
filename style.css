@@ -4795,3 +4795,36 @@ select.fld { cursor: pointer; }
 .pipe-ver-add { border: 1px dashed var(--border-2, var(--border)); background: transparent; color: var(--text-2); cursor: pointer; border-radius: 6px; width: 26px; height: 24px; font-size: 13px; }
 .pipe-ver-add:hover { color: var(--text); border-color: var(--accent); }
 .pipe-vers-total { margin-left: 4px; font-size: 11.5px; font-weight: 700; color: var(--text); white-space: nowrap; }
+
+/* ---- Timeline ruler ----
+   Drawn from the date header (see App.gantt.paintRuler): the header half is
+   a capped line on its own strip above the dates, with the day count sitting
+   on it; the body half is a band over the same dates. Neither takes the
+   pointer, so bars under the band still drag and click. */
+.th-cols { position: relative; cursor: text; }
+body.gantt-ruling, body.gantt-ruling * { cursor: col-resize !important; }
+.ruler-strip { position: relative; height: 24px; border-bottom: 1px solid var(--border); }
+.ruler-head { position: absolute; top: 0; bottom: 0; z-index: 2; pointer-events: none; }
+/* the line, with a cap at each end — measured edge to edge of the range */
+.ruler-line {
+  position: absolute; left: 1px; right: 1px; top: 50%; height: 2px; margin-top: -1px;
+  border-radius: 1px; background: var(--accent);
+}
+.ruler-line::before, .ruler-line::after {
+  content: ''; position: absolute; top: -5px; width: 2px; height: 12px; border-radius: 1px; background: var(--accent);
+}
+.ruler-line::before { left: -1px; }
+.ruler-line::after { right: -1px; }
+.ruler-lbl {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: baseline; gap: 5px; white-space: nowrap;
+  padding: 2px 8px; border-radius: 999px; font-size: 10.5px; line-height: 1.3;
+  background: var(--accent); color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+.ruler-lbl span { font-size: 9.5px; opacity: .8; }
+.ruler-band {
+  position: absolute; top: 0; bottom: 0; z-index: 2; pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border-left: 1px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+  border-right: 1px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+}
