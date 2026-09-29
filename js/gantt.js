@@ -394,6 +394,13 @@ window.App = window.App || {};
         body.appendChild(el('.today-line', { style }));
       }
 
+      // the ruler's body half — a band down the whole chart over the measured
+      // dates. Landscape only: the header it's drawn from is Landscape's.
+      this._rulerHead = portrait ? null : this._rulerHead;
+      this._rulerBand = portrait ? null : el('.ruler-band');
+      if (this._rulerBand) body.appendChild(this._rulerBand);
+      this.paintRuler();
+
       // Producer Notes swimlane — per-show annotations, only meaningful when a
       // single show is in view (nonsensical mixed across shows on "All shows").
       // Not yet given a Portrait transpose (it has its own unrelated .portrait
@@ -563,7 +570,15 @@ window.App = window.App || {};
       const handleContext = (e) => {
         const bar = e.target.closest('.bar');
         const row = bar && bar.closest('.g-row.sub');
-        if (!bar || !row || row.classList.contains('phase')) return;
+        if (!bar || !row || row.classList.contains('phase')) {
+          // open chart or the header inside the measured range → the ruler's menu
+          if (self.rulerHit(e) && (e.target.closest('.g-track') || e.target.closest('.th-cols'))) {
+            e.preventDefault();
+            hideTip();
+            self.openRulerMenu(e);
+          }
+          return;
+        }
         const epId = bar.dataset.episodeId || row.dataset.episodeId;
         const suKey = bar.dataset.suKey || row.dataset.suKey;
         if (!epId || !suKey) return;
@@ -580,6 +595,105 @@ window.App = window.App || {};
       this._ctxHandler = handleContext;
       this._scrollEl.addEventListener('click', handleClick);
       this._scrollEl.addEventListener('contextmenu', handleContext);
+    },
+
+    /* ---- Ruler ----
+       Drag along the date header to measure a stretch of the schedule: a
+       capped line above the dates with the day count on it, and a band down the
+       chart over the same dates. Right-click inside it to select the tasks
+       that run in it, or print/export just those dates. Held in App.state for
+       the session so a re-render (a filter, a zoom) keeps it — never saved or
+       synced; it's a way of looking, not part of the board. A click on the
+       header without a drag, or Escape, puts it away. Shift+drag extends the
+       one already there from its far end. */
+    rulerColAt(clientX) {
+      const r = this._rulerCols.getBoundingClientRect();
+      const n = Math.round(r.width / this._dw);
+      return Math.max(0, Math.min(n - 1, Math.floor((clientX - r.left) / this._dw)));
+    },
+
+    startRuler(e) {
+      const cur = App.state.ganttRuler;
+      let anchor = this.rulerColAt(e.clientX);
+      if (e.shiftKey && cur) {
+        const colOf = (iso) => this._xOf(iso) / this._dw;
+        const a = colOf(cur.from), b = colOf(cur.to);
+        anchor = Math.abs(anchor - a) < Math.abs(anchor - b) ? b : a;
+      }
+      this._drag = { kind: 'ruler', anchor, startClientX: e.clientX, moved: !!(e.shiftKey && cur) };
+      if (this._drag.moved) this.onDragMove(e);
+      document.body.classList.add('gantt-dragging', 'gantt-ruling');
+    },
+
+    // is this event over the measured dates? (Landscape; any row, or the header)
+    rulerHit(e) {
+      const r = App.state.ganttRuler;
+      if (!r || !this._rulerCols || (this._axis && this._axis.portrait)) return false;
+      const box = this._rulerCols.getBoundingClientRect();
+      const x = e.clientX - box.left;
+      return x >= this._xOf(r.from) && x < this._xOf(r.from) + this._xOf.width(r.from, r.to);
+    },
+
+    paintRuler() {
+      const r = App.state.ganttRuler, head = this._rulerHead, band = this._rulerBand;
+      if (!head || !band) return;
+      head.style.display = band.style.display = r ? '' : 'none';
+      if (!r) return;
+      const left = this._xOf(r.from), w = this._xOf.width(r.from, r.to);
+      head.style.left = left + 'px'; head.style.width = w + 'px';
+      band.style.left = (LABEL_W + left) + 'px'; band.style.width = w + 'px';
+      const days = App.diffDays(r.to, r.from) + 1, work = App.visibleDayCount(r.from, r.to, true);
+      const lbl = head.querySelector('.ruler-lbl');
+      lbl.innerHTML = '';
+      lbl.appendChild(el('b', null, days + ' day' + (days === 1 ? '' : 's')));
+      if (work !== days) lbl.appendChild(el('span', null, work + ' working'));
+    },
+
+    // Select Tasks / Print-Export Selection — shared by the ruler's own menu
+    // and a bar's menu when that bar sits inside the range
+    rulerItems(item) {
+      const r = App.state.ganttRuler, out = [];
+      if (App.canEditSchedule(App.state.role)) out.push(item('Select Tasks', App.fmtRange(r.from, r.to), () => this.selectRulerTasks()));
+      out.push(item('Print / Export Selection…', null, () => this.exportRuler()));
+      out.push(item('Clear ruler', 'Esc', () => { App.state.ganttRuler = null; this.paintRuler(); }));
+      return out;
+    },
+
+    openRulerMenu(e) {
+      this.closeBarMenu();
+      const menu = el('.ctx-menu');
+      const item = (label, sub, fn) => el('button.ctx-item', {
+        type: 'button',
+        onclick: () => { this.closeBarMenu(); fn(); }
+      }, [el('span.ctx-item-lbl', null, label), sub ? el('span.ctx-item-sub', null, sub) : null]);
+      this.rulerItems(item).forEach(n => menu.appendChild(n));
+      this.placeMenu(e, menu);
+    },
+
+    /* Every task on the timeline that runs on any of the measured days —
+       touched, not enclosed, the same rule as the shift-sweep. Built from the
+       data rather than the drawn bars, so a collapsed episode's tasks count;
+       those episodes are opened so the selection can be seen. Replaces the
+       current selection rather than adding to it. */
+    selectRulerTasks() {
+      const r = App.state.ganttRuler; if (!r) return;
+      const items = [];
+      (this._episodes || []).forEach(ep => App.subsView(ep).forEach(su => {
+        if (su.start <= r.to && su.due >= r.from) items.push({ ep, su });
+      }));
+      if (!items.length) { App.toast('No tasks run ' + App.fmtRange(r.from, r.to), true); return; }
+      selClear();
+      items.forEach(({ ep, su }) => { selAdd(ep.id, su.key); App.state.ganttExpanded[ep.id] = true; });
+      App.render();
+      const eps = new Set(items.map(x => x.ep.id)).size;
+      App.toast(items.length + ' task' + (items.length === 1 ? '' : 's') + ' selected across ' +
+        eps + ' episode' + (eps === 1 ? '' : 's') + ' · ' + App.fmtRange(r.from, r.to));
+    },
+
+    // the production breakdown — App.exporter.context() gives it the ruler's
+    // dates as its range, the same as the Export button and ⌘P do
+    exportRuler() {
+      if (App.state.ganttRuler) App.exporter.open();
     },
 
     closeBarMenu() {
@@ -610,7 +724,14 @@ window.App = window.App || {};
       if (sel.length) {
         menu.appendChild(item('Clear selection', 'Esc', () => { selClear(); App.render(); }));
       }
+      // a bar inside the measured range still offers what the range can do
+      if (this.rulerHit(e)) { menu.appendChild(el('.ctx-sep')); this.rulerItems(item).forEach(n => menu.appendChild(n)); }
 
+      this.placeMenu(e, menu);
+    },
+
+    // pin a context menu at the cursor; closed by any press outside it
+    placeMenu(e, menu) {
       document.body.appendChild(menu);
       // flipped up or left when it would otherwise run off the edge — the
       // cursor can be anywhere, including the last few pixels of the window
@@ -698,6 +819,15 @@ window.App = window.App || {};
       scroll.addEventListener('mousemove', hoverHandler);
 
       const downHandler = (e) => {
+        // ruler — a press on the date header measures a range (see paintRuler)
+        const rulerCols = e.button === 0 && !(this._axis && this._axis.portrait) && e.target.closest('.time-head .th-cols');
+        if (rulerCols) {
+          e.preventDefault();
+          hideTip();
+          this.startRuler(e);
+          return;
+        }
+
         // producer notes — DRAWING: empty grid cell in a notes row → draw a new note
         const drawTrack = e.target.closest('.g-row.pn-row .g-track.pn-drawable');
         if (drawTrack && !e.target.closest('.pn-note') && App.canEditNotes()) {
@@ -859,6 +989,12 @@ window.App = window.App || {};
         document.addEventListener('keyup', shiftState);
         document.addEventListener('mousemove', shiftState);
         window.addEventListener('blur', () => document.body.classList.remove('gantt-shift'));
+        document.addEventListener('keydown', (e) => {
+          if (e.key !== 'Escape' || !App.state.ganttRuler || (App.modal && App.modal._ov)) return;
+          if (this._barMenu) return;                 // the first Escape closes the menu
+          App.state.ganttRuler = null;
+          this.paintRuler();
+        });
         this._dragBound = true;
       }
     },
@@ -929,6 +1065,19 @@ window.App = window.App || {};
       // hidden entirely in Portrait — see render()), so their delta always
       // reads clientX. Only the bar-drag branch below ever reads clientY.
       const colDeltaX = Math.round((e.clientX - d.startClientX) / dw);
+
+      if (d.kind === 'ruler') {
+        if (Math.abs(e.clientX - d.startClientX) > DRAG_SLOP) d.moved = true;
+        if (!d.moved) return;
+        const c = this.rulerColAt(e.clientX);
+        const a = Math.min(d.anchor, c), b = Math.max(d.anchor, c);
+        App.state.ganttRuler = {
+          from: App.addVisibleDays(this._startIso, a, hw),
+          to: App.addVisibleDays(this._startIso, b, hw)
+        };
+        this.paintRuler();
+        return;
+      }
 
       if (d.kind === 'note-draw') {
         // notes are Landscape-only, so the drawn range always reads clientX
@@ -1072,6 +1221,14 @@ window.App = window.App || {};
       document.body.classList.remove('gantt-dragging');
       document.body.style.cursor = '';
       hideDragTip();
+
+      if (d.kind === 'ruler') {
+        document.body.classList.remove('gantt-ruling');
+        this.suppressNextClick();
+        // a click without a drag puts the ruler away
+        if (!d.moved) { App.state.ganttRuler = null; this.paintRuler(); }
+        return;
+      }
 
       if (d.kind === 'note-draw') {
         d.ghost.remove();
@@ -1238,9 +1395,15 @@ window.App = window.App || {};
                  background: 'var(--bg-2)', borderRight: '1px solid var(--border-2)', display: 'flex',
                  alignItems: 'center', padding: '0 14px', fontSize: '11px', fontWeight: '700', color: 'var(--text-3)' }
       }, { show: 'SHOW / TASK', department: 'DEPARTMENT / TASK' }[App.timelineGrouping()] || 'EPISODE / SUBITEM'));
-      const cols = el('', { style: { width: (ctx.totalCols * ctx.dw) + 'px' } });
+      const cols = el('.th-cols', { title: 'Drag along the dates to measure a range', style: { width: (ctx.totalCols * ctx.dw) + 'px' } });
+      // the ruler's header half, on a strip of its own above the dates — a
+      // capped line over the measured range with the day count sitting on it.
+      // The strip is always there so the header never changes height mid-drag.
+      this._rulerHead = el('.ruler-head', null, [el('.ruler-line'), el('.ruler-lbl')]);
+      cols.appendChild(el('.ruler-strip', null, this._rulerHead));
       cols.appendChild(buildSegRow(ctx, tier.primary, 'primary'));
       cols.appendChild(buildSegRow(ctx, tier.secondary, 'secondary'));
+      this._rulerCols = cols;
       row.appendChild(cols);
       head.appendChild(row);
       return head;
