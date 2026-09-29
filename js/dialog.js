@@ -3328,7 +3328,7 @@ window.App = window.App || {};
             list.appendChild(el('label.hol-nat', null, [box, el('span.hol-nat-name', null, h.name), el('span.hol-nat-date', null, longDate(h.date))]));
           });
           if (!list.children.length) list.appendChild(el('.fld-hint', null, 'No national holidays fall inside this show’s schedule.'));
-          holBody.appendChild(list);
+          holBody.appendChild(App.wireCheckList(list));
         }
 
         // time off

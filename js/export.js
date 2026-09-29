@@ -1071,7 +1071,14 @@ window.App = window.App || {};
           groups[g].forEach(opt => {
             const b = el('button.xp-chip' + (set.has(opt.id) ? '.on' : ''), {
               type: 'button', title: set.has(opt.id) ? 'Leave out ' + opt.label : 'Include ' + opt.label,
-              onclick: () => { if (set.has(opt.id)) set.delete(opt.id); else set.add(opt.id); paintSide(); refresh(); }
+              onclick: (e) => {
+                const mode = App.pickMode(e);
+                if (mode) {
+                  const next = App.pickApply(mode, opt.id, f.options.map(x => x.id), [...set]);
+                  set.clear(); next.forEach(id => set.add(id));
+                } else if (set.has(opt.id)) set.delete(opt.id); else set.add(opt.id);
+                paintSide(); refresh();
+              }
             }, [opt.color ? el('i.xp-chip-dot', { style: { background: opt.color } }) : null, opt.label]);
             wrap.appendChild(b);
           });
@@ -1142,7 +1149,7 @@ window.App = window.App || {};
           });
           fl.appendChild(el('label.xp-field' + (off ? '.off' : ''), { title: off ? 'PDF only' : (fd.hint || null) }, [cb, el('span', null, fd.label)]));
         });
-        side.appendChild(section('Fields', null, fl));
+        side.appendChild(section('Fields', null, App.wireCheckList(fl)));
         side.scrollTop = top;
       }
 

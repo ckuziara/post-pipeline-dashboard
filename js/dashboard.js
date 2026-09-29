@@ -801,7 +801,11 @@ window.App = window.App || {};
 
       box.appendChild(el('button.pr-head', {
         type: 'button',
-        onclick: () => { App.prefs.set(pkey, !open); App.render(); }
+        // Opt: every group on the card opens or closes with this one
+        onclick: (e) => {
+          (e.altKey ? PRIORITY_GROUPS : [g]).forEach(x => App.prefs.set('dashPri:' + x.key, !open));
+          App.render();
+        }
       }, [
         el('span.chev' + (open ? '.open' : ''), null, '▶'),
         el('span.pr-label', null, g.label),
