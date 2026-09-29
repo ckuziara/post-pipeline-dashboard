@@ -896,11 +896,17 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
   border: 1.5px dashed rgba(255,255,255,.85); border-radius: 4px;
   background: rgba(91,108,255,.16);
 }
-/* Toolbar pill — the selection's only presence outside the chart itself */
+/* Selection pill — the selection's only presence outside the chart itself.
+   Built with the toolbar but floated out of it: a pill that joined the
+   toolbar's row wrapped it onto a second line, pushing the whole timeline down
+   the moment anything was selected. Bottom-left keeps it clear of toasts
+   (bottom-centre) and the assistant button (bottom-right). */
 .sel-pill {
+  position: fixed; left: 20px; bottom: 20px; z-index: 300;
   display: inline-flex; align-items: center; gap: 8px; padding: 5px 6px 5px 11px;
-  border-radius: 999px; background: rgba(91,108,255,.14);
-  border: 1px solid rgba(91,108,255,.45); white-space: nowrap;
+  border-radius: 999px; white-space: nowrap;
+  background: linear-gradient(rgba(91,108,255,.14), rgba(91,108,255,.14)), var(--surface-2);
+  border: 1px solid rgba(91,108,255,.45); box-shadow: var(--shadow);
 }
 .sel-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
 .sel-count { font-size: 11.5px; font-weight: 700; }
