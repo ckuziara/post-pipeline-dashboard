@@ -2069,6 +2069,7 @@ window.App = window.App || {};
         timeline: () => [
           prefRow('Latch scrolling', 'latchScroll', false, () => App.render()),
           prefRow('Hide weekends', 'hideWeekends', true, () => App.render()),
+          prefRow('Hide completed episodes', 'hideDoneTimeline', false, () => App.render()),
           // Time running top-to-bottom instead of left-to-right — Department
           // sort only for now (js/gantt.js render()); picking Portrait while
           // sorted by Episode or Show just has no effect yet, quietly, until
@@ -2077,10 +2078,8 @@ window.App = window.App || {};
             [{ v: 'landscape', label: 'Landscape' }, { v: 'portrait', label: 'Portrait' }])
         ],
         board: () => [
-          actionRow('All episode groups', [
-            { label: 'Expand', run: () => App.visibleEpisodes().forEach(ep => { App.state.expanded[ep.id] = true; }) },
-            { label: 'Collapse', run: () => { App.state.expanded = {}; } }
-          ])
+          // expanding / collapsing every group is on the keyboard shortcuts now
+          prefRow('Hide completed episodes', 'hideDoneBoard', false, () => App.render())
         ],
         dashboard: () => [
           actionRow('Widget layout', [

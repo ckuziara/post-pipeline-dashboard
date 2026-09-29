@@ -94,7 +94,12 @@ window.App = window.App || {};
       const progLabel = s.myDept ? App.dept(s.myDept).label + ' tasks' : 'complete';
 
       const grp = el('.ep-group');
-      const head = el('.ep-row', { onclick: () => { App.state.expanded[ep.id] = !open; App.render(); } }, [
+      // ⌥-click opens or closes every episode on the board, like the Timeline
+      const head = el('.ep-row', { onclick: (e) => {
+        if (e.altKey) App.visibleEpisodes().forEach(x => { App.state.expanded[x.id] = !open; });
+        else App.state.expanded[ep.id] = !open;
+        App.render();
+      } }, [
         el('.ep-accent', { style: { background: show.color } }),
         el('span.chev' + (open ? '.open' : ''), null, '▶'),
         el('.ep-headline', null, [

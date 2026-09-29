@@ -772,10 +772,10 @@ window.App = window.App || {};
     pipeline.forEach(t => {
       const d = dates[t.key];
       if (!d) { status[t.key] = 'not_started'; return; }
-      const start = App.parseDate(d.start), due = App.parseDate(d.due);
-      if (due < App.addDays(today, -3)) status[t.key] = 'approved';
-      else if (start <= today) status[t.key] = 'in_progress';
-      else status[t.key] = 'not_started';
+      /* Dates in the past don't say the work happened: a show entered with
+         a start behind today is still the producer's to mark up, so nothing
+         is set approved or under way from the calendar alone. */
+      status[t.key] = 'not_started';
     });
     for (let pass = 0; pass < 4; pass++) {
       pipeline.forEach(t => {

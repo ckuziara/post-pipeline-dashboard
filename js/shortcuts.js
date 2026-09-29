@@ -151,6 +151,12 @@ window.App = window.App || {};
       if (tabFor(v)) list.push({ kind: 'Page', label: 'Go to ' + label, hint, run: () => goView(v) });
     });
     if (tabFor('timeline')) list.push({ kind: 'Action', label: 'Jump to today', hint: 'T', run: jumpToday });
+    if (App.state.view === 'board') {
+      list.push({ kind: 'Action', label: 'Open every episode', hint: OPT() + ' click', run: () => {
+        App.visibleEpisodes().forEach(ep => { App.state.expanded[ep.id] = true; }); App.render();
+      } });
+      list.push({ kind: 'Action', label: 'Close every episode', hint: OPT() + ' click', run: () => { App.state.expanded = {}; App.render(); } });
+    }
     if (onTimeline) {
       list.push({ kind: 'Action', label: 'Zoom in', hint: CMD() + '+', run: () => App.gantt.zoomBy(1.25) });
       list.push({ kind: 'Action', label: 'Zoom out', hint: CMD() + '−', run: () => App.gantt.zoomBy(0.8) });
