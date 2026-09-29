@@ -1032,6 +1032,8 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
   position: absolute; top: 50%; transform: translateY(-50%); height: 8px;
   border: 1px solid; border-radius: 5px; cursor: default;
 }
+/* Landscape: the same span as a hairline in the gap above the first task line */
+.phase-bar.phase-line { top: 1px; transform: none; height: 3px; border-width: 0; border-radius: 2px; pointer-events: none; }
 .bar .blk { margin-left: 5px; }
 
 /* vertical day grid + weekend shading drawn behind bars */
@@ -1591,8 +1593,11 @@ body.gantt-shift .subrow:not(.head) { cursor: pointer; user-select: none; }
 .role-dd option { background: var(--surface-2); color: var(--text); }
 
 /* ----------------------------------------------------------------- timeline bar dot + tooltip */
-.bar-dot { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 1.5px rgba(0,0,0,.28); pointer-events: none; }
+.bar > .bar-dot { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 1.5px rgba(0,0,0,.28); pointer-events: none; }
 .g-row.sub .bar-dot { width: 7px; height: 7px; right: 3px; }
+/* keep the label and icons clear of the dot, so a long name ellipsises before it */
+.bar:has(> .bar-dot) { padding-right: 18px; }
+.g-row.sub .bar:has(> .bar-dot) { padding-right: 14px; }
 .bar-tip { position: fixed; z-index: 300; transform: translateX(-50%); background: #0b0c10; color: #fff; border: 1px solid var(--border-2); padding: 5px 12px; border-radius: 9px; font-size: 11.5px; font-weight: 600; display: flex; align-items: center; gap: 7px; pointer-events: none; box-shadow: var(--shadow); white-space: nowrap; }
 .bar-tip .tip-dot { width: 9px; height: 9px; border-radius: 50%; }
 .bar-tip::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: #0b0c10; }
