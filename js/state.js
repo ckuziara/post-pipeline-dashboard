@@ -580,14 +580,24 @@ window.App = window.App || {};
      review sits between versions but takes no scheduled time of its own — the
      next version only starts once the Director sends the task back for it
      (App.requestRevision). `used` revisions are already inside the pass.
+     A pipeline can also hold a version back: t.revGaps[r] is the days planned
+     for review before revision r starts (0 or missing = straight after the
+     one before, as always). Set by dragging a revision in the Add Show
+     preview. opts.now: the first version is being started now — the review
+     has happened, so its gap no longer applies.
      Returns { revs, end }. */
-  App.revisionSteps = function (t, due, cal, who, used) {
+  App.hasRevGaps = (t) => !!(t && Array.isArray(t.revGaps) && t.revGaps.slice(0, t.maxRev || 0).some(n => n > 0));
+  App.revGap = (t, r) => Math.max(0, Math.round((t && t.revGaps && t.revGaps[r]) || 0));
+  App.revisionSteps = function (t, due, cal, who, used, opts) {
     const out = { revs: [], end: due };
     const max = (t && t.maxRev) || 0;
     if (!max) return out;
     let at = due;
     for (let r = used || 0; r < max; r++) {
       const n = Math.max(1, (t.revDays || [])[r] || 1);
+      const gap = opts && opts.now && r === (used || 0) ? 0 : App.revGap(t, r);
+      // the gap is counted in the same days as the work — working days on a calendar
+      if (gap) at = cal ? cal.addWork(cal.nextWork(App.shiftIso(at, 1), who), gap, who) : App.shiftIso(at, gap);
       const s0 = cal ? cal.nextWork(App.shiftIso(at, 1), who) : App.shiftIso(at, 1);
       const e0 = cal ? cal.addWork(s0, n, who) : App.shiftIso(at, n);
       out.revs.push({ start: s0, due: e0, label: 'V' + (r + 2), idx: r });
