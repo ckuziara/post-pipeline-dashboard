@@ -334,8 +334,8 @@ window.App = window.App || {};
             style: { left: (X(s0) + 1) + 'px', top: top + 'px', width: w + 'px', height: BAR_H + 'px', color: ink },
             onclick: () => { if (!justDragged) onSelect(it.t.ko && it.t.koFor ? it.t.koFor : it.t.key); },
             oncontextmenu: (e) => openMenu(e, it.t.key),
-            onmouseenter: () => { hovered = it.t.key; applyFocus(); },
-            onmouseleave: () => { if (hovered === it.t.key) { hovered = null; applyFocus(); } }
+            onmouseenter: () => { if (drag) return; hovered = it.t.key; applyFocus(); },
+            onmouseleave: () => { if (drag) return; if (hovered === it.t.key) { hovered = null; applyFocus(); } }
           });
           it.segs.forEach((sg, i) => {
             // each pass at its own days: back to back it reads as one bar, and a
@@ -343,7 +343,7 @@ window.App = window.App || {};
             const a = wd(s0, sg.s) / total * 100, z = wd(s0, sg.e) / total * 100;
             // in visible columns, so a weekend the show doesn't work isn't a gap
             const gapL = i > 0 && wd(it.segs[i - 1].e, sg.s) > 0, gapR = i < lastSi && wd(sg.e, it.segs[i + 1].s) > 0;
-            const part = el('span.pv-part' + (sg.rev ? '.rev' : '') + (i && !gapL ? '.div' : '') + (gapL ? '.gap-l' : '') + (gapR ? '.gap-r' : ''),
+            const part = el('span.pv-part' + (sg.rev ? '.rev' : '') + (i && !gapL ? '.div' : '') + (gapL ? '.gap-l' : '') + (gapR ? '.gap-r' : '') + (drag && drag.t.key === it.t.key && drag.si === i ? '.dragging' : ''),
               { style: { left: a + '%', width: (z - a) + '%' } },
               // V1 carries the task's name too, while there's room for it
               wd(sg.s, sg.e) * px > 11 ? el('span.pv-part-txt' + (wd(sg.s, sg.e) * px < 28 ? '.short' : ''), { style: sg.rev ? null : { color: ink } },
@@ -385,8 +385,8 @@ window.App = window.App || {};
             },
             onclick: () => { if (!justDragged) onSelect(it.t.ko && it.t.koFor ? it.t.koFor : it.t.key); },
             oncontextmenu: (e) => openMenu(e, it.t.key),
-            onmouseenter: () => { hovered = it.t.key; applyFocus(); },
-            onmouseleave: () => { if (hovered === it.t.key) { hovered = null; applyFocus(); } }
+            onmouseenter: () => { if (drag) return; hovered = it.t.key; applyFocus(); },
+            onmouseleave: () => { if (drag) return; if (hovered === it.t.key) { hovered = null; applyFocus(); } }
           }, [
             batch ? el('span.pv-batch-tag', null, 'BATCH') : null,
             w > (it.t.ko ? 16 : 24) ? el('span.pv-pill-txt', null, text) : null
@@ -488,6 +488,10 @@ window.App = window.App || {};
       if (e.button !== 0) return;
       e.preventDefault(); e.stopPropagation();
       drag = { t, si, x: e.clientX, from: segDays(t, si), now: segDays(t, si), minDays: t.minDays };
+      // light this handle now — the repaint that would mark it only comes once the edge moves a day
+      const own = e.currentTarget.parentElement;
+      own.classList.add('dragging');
+      if (own.classList.contains('pv-part')) own.closest('.pv-pill').classList.add('dragging');
       root.classList.add('resizing');
       document.body.appendChild(badge);
       moveBadge(e);

@@ -4942,7 +4942,7 @@ body.gantt-ruling, body.gantt-ruling * { cursor: col-resize !important; }
 .pv-pill.combo .pv-part.gap-l { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
 .pv-pill.combo .pv-part.gap-r { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
 .pv-pill.combo .pv-part .pv-grip { right: -5px; }
-.pv-pill.combo .pv-part:hover > .pv-grip::after, .pv-pill.combo.dragging .pv-part > .pv-grip::after { opacity: 1; transform: translate(50%, -50%) scaleX(1.15); }
+.pv-pill.combo .pv-part:hover > .pv-grip::after { opacity: 1; transform: translate(50%, -50%) scaleX(1.15); }
 .pv-pill.combo:hover .pv-part:not(:hover) > .pv-grip::after { opacity: 0; }
 .pv-pill.rev.editable { cursor: grab; }
 /* each pass's V number, inside its own part (the grip sits outside it) */
@@ -4953,3 +4953,11 @@ body.gantt-ruling, body.gantt-ruling * { cursor: col-resize !important; }
 /* a narrow pass: just its number, centred, never cut down to "V." */
 .pv-pill.combo .pv-part-txt.short { padding: 0; text-align: center; text-overflow: clip; letter-spacing: -.2px; }
 .pv-pill.combo .pv-part.rev .pv-part-txt { text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+/* Mid-drag every repaint rebuilds the bars, so nothing may fade in or follow
+   :hover (a new node isn't hovered until the pointer moves again): the one
+   handle being used shows solid, every other handle stays hidden. */
+/* !important: these win over the :hover rules above for the whole gesture */
+.pv.resizing .pv-grip::after { transition: none !important; opacity: 0 !important; }
+.pv.resizing .pv-pill.dragging:not(.combo) > .pv-grip::after,
+.pv.resizing:not(.moving) .pv-pill.combo .pv-part.dragging > .pv-grip::after { opacity: 1 !important; transform: translate(50%, -50%) scaleX(1.15); }
+.pv.resizing .pv-pill { transition: none; }
