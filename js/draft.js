@@ -16,6 +16,9 @@
    Keys: Enter saves, Esc discards (Esc closes an open menu first). Both only
    when no dialog is up and nothing is being typed into.
 
+   Named App.timelineDraft, not App.draft: App.draft is the dialog-draft
+   store in state.js (Add Show keeps its unfinished form there).
+
    The draft is this person's alone and lives only in memory; it's never
    synced to teammates. */
 window.App = window.App || {};
@@ -24,7 +27,7 @@ window.App = window.App || {};
   const el = (s, p, c) => App.el(s, p, c);
   const keyOf = (epId, suKey) => epId + '::' + suKey;
 
-  App.draft = {
+  App.timelineDraft = {
     moves: {},          // 'epId::taskKey' -> { epId, suKey, start, due }
     suspended: false,   // true while reading the committed schedule (flags, saving)
     saved: null,        // after a save: { n, flags } — the list shown in the bar
@@ -200,7 +203,7 @@ window.App = window.App || {};
   document.addEventListener('keydown', (e) => {
     if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
     if (e.key !== 'Enter' && e.key !== 'Escape') return;
-    const d = App.draft;
+    const d = App.timelineDraft;
     if (!d.count() && !d.saved) return;
     if (d._saving || busy(e)) return;
     // Enter on a focused button is that button's own click
@@ -212,6 +215,6 @@ window.App = window.App || {};
 
   // leaving with unsaved changes asks first
   window.addEventListener('beforeunload', (e) => {
-    if (App.draft.count()) { e.preventDefault(); e.returnValue = ''; }
+    if (App.timelineDraft.count()) { e.preventDefault(); e.returnValue = ''; }
   });
 })();

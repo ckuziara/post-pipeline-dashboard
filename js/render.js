@@ -114,7 +114,7 @@ window.App = window.App || {};
        can itself hand back 'timeline', which still needs catching here. */
     if (App.isPhone() && ['timeline', 'planning', 'review'].includes(App.state.view)) App.state.view = 'dashboard';
 
-    App.draft && App.draft.sync();   // the unsaved-changes bar
+    App.timelineDraft && App.timelineDraft.sync();   // the unsaved-changes bar
     renderBrandMark();
     renderViewTabs();
     renderRoleSelect();

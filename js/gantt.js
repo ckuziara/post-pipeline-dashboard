@@ -754,7 +754,7 @@ window.App = window.App || {};
     // ---- drag-to-reschedule a task bar ----
     // Middle = move (keeps duration); either edge = resize (keeps the other
     // edge fixed). Both are clamped live to the task's minDays. A drop goes
-    // into the unsaved draft (App.draft.stage); dependencies and the
+    // into the unsaved draft (App.timelineDraft.stage); dependencies and the
     // delivery/live dates are checked when the draft is saved.
     // `axis` picks which physical edge is being measured — the zone names
     // ('resize-left'/'resize-right') keep their Landscape meaning either way
@@ -1295,7 +1295,7 @@ window.App = window.App || {};
         this.suppressNextClick();                    // the mouseup's click isn't "open Edit Task"
         const changed = d.members.filter(m => m.curStart !== m.origStart || m.curDue !== m.origDue);
         if (!changed.length) { App.render(); return; }
-        App.draft.stage(changed.map(m => ({ epId: m.epId, suKey: m.suKey, start: m.curStart, due: m.curDue })));
+        App.timelineDraft.stage(changed.map(m => ({ epId: m.epId, suKey: m.suKey, start: m.curStart, due: m.curDue })));
         return;
       }
 
@@ -1324,7 +1324,7 @@ window.App = window.App || {};
       d.bar.classList.remove('dragging', 'warn');
       if (d.curStart !== d.origStart || d.curDue !== d.origDue) {
         App.track.feature('timeline.dragReschedule');
-        App.draft.stage([{ epId: d.epId, suKey: d.suKey, start: d.curStart, due: d.curDue }]);
+        App.timelineDraft.stage([{ epId: d.epId, suKey: d.suKey, start: d.curStart, due: d.curDue }]);
       }
     },
 
@@ -2603,7 +2603,7 @@ window.App = window.App || {};
         });
       }
       App.track.feature(cascade ? 'timeline.keyNudgeCascade' : 'timeline.keyNudge');
-      App.draft.stage([...moves.values()]);
+      App.timelineDraft.stage([...moves.values()]);
     },
 
     centerToday() {
