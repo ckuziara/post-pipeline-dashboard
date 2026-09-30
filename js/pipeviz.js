@@ -508,9 +508,11 @@ window.App = window.App || {};
       g[si - 1] = n;
       if (g.some(x => x > 0)) t.revGaps = g; else delete t.revGaps;
     };
+    let endPendingMove = null;   // a press whose release never arrived — cleared by the next one
     function beginMove(e, t, si) {
       if (e.button !== 0) return;
       e.preventDefault(); e.stopPropagation();
+      if (endPendingMove) endPendingMove();
       const from = segGap(t, si), gaps0 = t.revGaps ? t.revGaps.slice() : null;
       const x0 = e.clientX;
       let live = false;
@@ -527,12 +529,17 @@ window.App = window.App || {};
         if (n !== drag.now) { drag.now = n; setGap(t, si, n); repaint(); }
         moveBadge(ev);
       };
-      const up = () => {
+      const detach = () => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
         window.removeEventListener('pointercancel', up);
+        endPendingMove = null;
+      };
+      const up = () => {
+        detach();
         if (!live) return;
         const d = drag; drag = null;
+        if (!d) return;
         root.classList.remove('resizing', 'moving');
         badge.remove();
         justDragged = true; setTimeout(() => { justDragged = false; }, 0);
@@ -543,6 +550,11 @@ window.App = window.App || {};
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
       window.addEventListener('pointercancel', up);
+      // abandoned: drop it without committing, and put the task back
+      endPendingMove = () => {
+        detach();
+        if (live) { drag = null; root.classList.remove('resizing', 'moving'); badge.remove(); restore(); repaint(); }
+      };
     }
 
     function moveBadge(e) {
