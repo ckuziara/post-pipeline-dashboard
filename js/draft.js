@@ -13,6 +13,9 @@
    is still a decision put to the producer. Plain dependency clashes are
    accepted on save, then listed in the bar so nothing lands unseen.
 
+   Keys: Enter saves, Esc discards (Esc closes an open menu first). Both only
+   when no dialog is up and nothing is being typed into.
+
    The draft is this person's alone and lives only in memory; it's never
    synced to teammates. */
 window.App = window.App || {};
@@ -123,6 +126,8 @@ window.App = window.App || {};
       });
     },
 
+    dismiss() { clearTimeout(this._t); this.saved = null; this._open = false; this.sync(); },
+
     discard() {
       const n = this.count(); if (!n) return;
       this.moves = {}; this.saved = null; this._open = false;
@@ -169,14 +174,41 @@ window.App = window.App || {};
           [App.icon(ic), String(f[k].length)]))));
       }
       if (this.saved) {
-        row.appendChild(el('button.btn-ghost.draft-btn', { type: 'button', onclick: () => { this.saved = null; this._open = false; this.sync(); } }, 'Close'));
+        row.appendChild(el('button.btn-ghost.draft-btn', { type: 'button', title: 'Close (Esc)', onclick: () => this.dismiss() }, 'Close'));
       } else {
-        row.appendChild(el('button.btn-ghost.draft-btn', { type: 'button', onclick: () => this.discard() }, 'Discard'));
-        row.appendChild(el('button.btn-primary.draft-btn', { type: 'button', onclick: () => this.save() }, [App.icon('save'), ' Save']));
+        row.appendChild(el('button.btn-ghost.draft-btn', { type: 'button', title: 'Discard the changes (Esc)', onclick: () => this.discard() },
+          ['Discard', el('kbd.draft-kbd', null, 'Esc')]));
+        row.appendChild(el('button.btn-primary.draft-btn', { type: 'button', title: 'Save the changes (Enter)', onclick: () => this.save() },
+          [App.icon('save'), ' Save', el('kbd.draft-kbd', null, '↵')]));
       }
       bar.appendChild(row);
     }
   };
+
+  /* Enter / Esc. Capture phase, so Esc reaches the draft before it's used to
+     clear a shift-selection — while there are unsaved changes, Esc means
+     "undo what I just did". Anything else that's open gets the key first:
+     a dialog, a text field, a menu, or a drag still in progress. */
+  const busy = (e) => {
+    const t = e.target;
+    if (App.modal && App.modal._ov) return true;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return true;
+    if ((App.board && App.board._pop) || (App.gantt && (App.gantt._barMenu || App.gantt._drag)) || (App.prefsMenu && App.prefsMenu._pop)) return true;
+    if (document.querySelector('.ctx-menu, .filter-pop')) return true;
+    return false;
+  };
+  document.addEventListener('keydown', (e) => {
+    if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+    if (e.key !== 'Enter' && e.key !== 'Escape') return;
+    const d = App.draft;
+    if (!d.count() && !d.saved) return;
+    if (d._saving || busy(e)) return;
+    // Enter on a focused button is that button's own click
+    if (e.key === 'Enter' && e.target && (e.target.tagName === 'BUTTON' || e.target.tagName === 'A') && !d._bar.contains(e.target)) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (d.saved) { d.dismiss(); return; }
+    if (e.key === 'Enter') d.save(); else d.discard();
+  }, true);
 
   // leaving with unsaved changes asks first
   window.addEventListener('beforeunload', (e) => {
