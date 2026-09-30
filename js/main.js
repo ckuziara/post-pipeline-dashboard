@@ -656,8 +656,25 @@ window.App = window.App || {};
       const ko = koOf(e);
       ko.tasks = taskKeys.slice();
       Object.keys(ko.done || {}).forEach(k => { if (!taskKeys.includes(k)) delete ko.done[k]; });
+      Object.keys(ko.dates || {}).forEach(k => { if (!taskKeys.includes(k)) delete ko.dates[k]; });
     }, 'the Kick Offs');
     App.track.audit('episode.kickoff', { episode: ep.code, tasks: taskKeys.length, depts: koDepts(ep, taskKeys) });
+  };
+
+  // Add one task's Kick Off, booked for a given day — the Board's + in the KO column
+  App.addKickoff = function (epId, key, iso) {
+    if (!App.canSetKickOff(App.state.role)) return koDeny();
+    const ep = App.state.data.episodes.find(x => x.id === epId); if (!ep) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) { App.toast('Pick a date for the Kick Off', true); return; }
+    const su = App.subitem(ep, key); if (!su) return;
+    App.mutate(d => {
+      const ko = koOf(d.episodes.find(x => x.id === epId));
+      if (!ko.tasks.includes(key)) ko.tasks.push(key);
+      ko.dates = Object.assign({}, ko.dates, { [key]: iso });
+    }, 'the Kick Off');
+    App.track.audit('episode.kickoff', { episode: ep.code, task: su.name, date: iso, depts: koDepts(ep, [key]) });
+    App.toast('Kick Off for ' + su.name + ' booked ' + App.fmtDate(iso) +
+      (iso > su.start ? ' — after the task starts (' + App.fmtDate(su.start) + ')' : ''), iso > su.start);
   };
 
   App.setKoDone = function (epId, taskKeys, done) {

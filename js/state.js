@@ -924,11 +924,14 @@ window.App = window.App || {};
     if (!App.epKoTasks(ep).includes(key)) return null;
     return ep.ko && ep.ko.done && ep.ko.done[key] ? 'done' : 'needed';
   };
-  /* A Kick Off is due on its task's start date and overdue once that date has
+  /* A Kick Off is due on its booked day (App.koDate) and overdue once that day has
      passed without it being done. One definition, used by the Board, Edit Task
      and the Director's calendar alike — a warning, never a block. */
+  /* The day a Kick Off is booked for: a date picked when it was added
+     (ep.ko.dates, for a last-minute unscheduled KO), otherwise the task's start. */
+  App.koDate = (ep, su) => (ep.ko && ep.ko.dates && ep.ko.dates[su.key]) || su.start;
   App.koOverdue = function (ep, su) {
-    return App.koState(ep, su.key) === 'needed' && su.start < App.isoDate(App.today());
+    return App.koState(ep, su.key) === 'needed' && App.koDate(ep, su) < App.isoDate(App.today());
   };
   /* One calendar item per (episode, department) briefing that still has an
      outstanding task, dated on the earliest start among those outstanding
@@ -946,7 +949,7 @@ window.App = window.App || {};
         const subs = byDept[dept];
         const open = subs.filter(su => App.koState(ep, su.key) === 'needed');
         if (!open.length) return;
-        const date = open.map(su => su.start).sort()[0];
+        const date = open.map(su => App.koDate(ep, su)).sort()[0];
         out.push({ ep, dept, subs, open, date });
       });
     });

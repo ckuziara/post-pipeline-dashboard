@@ -161,7 +161,7 @@ window.App = window.App || {};
       }
       const due = App.koOverdue(ep, su);
       return el('span.ko-ring' + (due ? '.due' : ''), {
-        title: (due ? 'Kick Off overdue — was due ' : 'Kick Off due ') + App.fmtDate(su.start) + (can ? '\nClick to mark it done' : '')
+        title: (due ? 'Kick Off overdue — was due ' : 'Kick Off due ') + App.fmtDate(App.koDate(ep, su)) + (can ? '\nClick to mark it done' : '')
       });
     },
 
@@ -368,7 +368,7 @@ window.App = window.App || {};
               onclick: (e) => {
                 e.stopPropagation();
                 if (st) App.setKoDone(ep.id, su.key, st !== 'done');
-                else App.setEpisodeKo(ep.id, App.epKoTasks(ep).concat(su.key));
+                else this.openKoDatePop(e.currentTarget, ep, su);
               },
               oncontextmenu: st ? (e) => this.koMenu(e, ep, su) : null
             } : null, this.koTag(ep, su));
@@ -475,6 +475,66 @@ window.App = window.App || {};
       pop.appendChild(el('.pop-sep'));
       pop.appendChild(opt('Unassigned', null, !many && !current, () => App.assignMany(items, null)));
       if (many) pop.appendChild(el('.pop-note', null, 'Assigns the ' + many.length + ' selected tasks'));
+      this.placePop(pop, cell.getBoundingClientRect());
+    },
+
+    /* Add a Kick Off: a month calendar to book the day, with the task's own
+       run (start → due) marked so a last-minute KO lands where it's needed.
+       Weekends can be shown or hidden; the choice is kept on this device. */
+    openKoDatePop(cell, ep, su) {
+      this.closePop();
+      const parse = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
+      const todayIso = App.isoDate(App.today());
+      // Continuous weeks from the week of today (or the task's start, if that's
+      // earlier) through the week it's due — so today and the task's whole run
+      // are on screen together. ‹ › shift by four weeks.
+      const monday = (dt) => { const m = new Date(dt); m.setDate(m.getDate() - ((m.getDay() + 6) % 7)); return m; };
+      let from = monday(parse(todayIso < su.start ? todayIso : su.start));
+      const span = Math.min(10, Math.max(5, Math.ceil((App.diffDays(su.due, App.isoDate(from)) + 1) / 7)));
+      const pop = el('.status-pop.ko-pop', { onclick: (e) => e.stopPropagation() });
+      const draw = () => {
+        pop.innerHTML = '';
+        const weekends = !!App.prefs.get('koPickWeekends', false);
+        const to = new Date(from); to.setDate(to.getDate() + span * 7 - (weekends ? 1 : 3));   // last day shown
+        const mo = (dt) => dt.toLocaleDateString(undefined, { month: 'short' });
+        pop.appendChild(el('.ko-pop-head', null, [
+          el('.ko-pop-title', null, 'Kick Off · ' + su.name),
+          el('.ko-pop-sub', null, 'Task runs ' + App.fmtRange(su.start, su.due))
+        ]));
+        const shift = (weeks) => { from.setDate(from.getDate() + weeks * 7); draw(); };
+        pop.appendChild(el('.ko-pop-nav', null, [
+          el('button.btn-mini', { type: 'button', title: 'Earlier', onclick: () => shift(-4) }, '‹'),
+          el('span.ko-pop-month', null, mo(from) === mo(to) && from.getFullYear() === to.getFullYear()
+            ? from.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+            : mo(from) + ' – ' + mo(to) + ' ' + to.getFullYear()),
+          el('button.btn-mini', { type: 'button', title: 'Later', onclick: () => shift(4) }, '›')
+        ]));
+        const cols = weekends ? [1, 2, 3, 4, 5, 6, 0] : [1, 2, 3, 4, 5];
+        const grid = el('.ko-cal' + (weekends ? '.wk' : ''));
+        cols.forEach(c => grid.appendChild(el('.ko-cal-dow', null, 'SMTWTFS'[c])));
+        for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+          if (!cols.includes(d.getDay())) continue;
+          const iso = App.isoDate(d);
+          const inRun = iso >= su.start && iso <= su.due;
+          const cls = '.ko-day' + (iso < todayIso ? '.past' : '') + (inRun ? '.run' : '') +
+            (iso === su.start ? '.run-start' : '') + (iso === su.due ? '.run-end' : '') + (iso === todayIso ? '.today' : '');
+          // the 1st of a month carries its name, so a range across months still reads
+          const label = d.getDate() === 1 ? [el('span.ko-day-mo', null, mo(d)), ' 1'] : String(d.getDate());
+          grid.appendChild(el('button' + cls, {
+            type: 'button',
+            title: App.fmtDate(iso) + (iso === su.start ? ' — task starts' : iso === su.due ? ' — task due' : inRun ? ' — task running' : '') + (iso === todayIso ? ' (today)' : ''),
+            onclick: () => { this.closePop(); App.addKickoff(ep.id, su.key, iso); }
+          }, label));
+        }
+        pop.appendChild(grid);
+        const wk = el('input', { type: 'checkbox' }); wk.checked = weekends;
+        wk.addEventListener('change', () => { App.prefs.set('koPickWeekends', wk.checked); draw(); });
+        pop.appendChild(el('.ko-pop-foot', null, [
+          el('label.ko-pop-wk', null, [wk, el('span', null, 'Show weekends')]),
+          el('span.ko-pop-key', null, [el('span.ko-key-run'), 'Task', el('span.ko-key-today'), 'Today'])
+        ]));
+      };
+      draw();
       this.placePop(pop, cell.getBoundingClientRect());
     },
 
