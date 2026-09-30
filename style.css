@@ -4945,3 +4945,11 @@ body.gantt-ruling, body.gantt-ruling * { cursor: col-resize !important; }
 .pv-pill.combo .pv-part:hover > .pv-grip::after, .pv-pill.combo.dragging .pv-part > .pv-grip::after { opacity: 1; transform: translate(50%, -50%) scaleX(1.15); }
 .pv-pill.combo:hover .pv-part:not(:hover) > .pv-grip::after { opacity: 0; }
 .pv-pill.rev.editable { cursor: grab; }
+/* each pass's V number, inside its own part (the grip sits outside it) */
+.pv-pill.combo .pv-part-txt {
+  display: block; padding: 0 5px; line-height: 12px; font-size: 9px; font-weight: 700;
+  color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+}
+/* a narrow pass: just its number, centred, never cut down to "V." */
+.pv-pill.combo .pv-part-txt.short { padding: 0; text-align: center; text-overflow: clip; letter-spacing: -.2px; }
+.pv-pill.combo .pv-part.rev .pv-part-txt { text-shadow: 0 1px 2px rgba(0,0,0,.6); }

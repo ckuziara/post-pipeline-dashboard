@@ -313,14 +313,15 @@ window.App = window.App || {};
         // the timeline's own ink rule, so a bar reads the same in both places
         const ink = App.pickInk ? App.pickInk(dep.color) : '#fff';
         const top = it.lane.y + 4 + it.sub * ROW_H + (ROW_H - BAR_H) / 2;
-        /* Zoomed out, a task's passes (V1 · V2 · V3, back to back)
-           shrink to slivers that overlap. Then they're drawn as one bar with a
-           line between each pass: the first pass solid, revisions striped,
-           the right edge still stretching the last one. */
+        /* A task with revisions is always one bar: its passes (V1 · V2 · V3)
+           each at their own days, the first solid and the revisions striped,
+           a line between passes that touch and a gap where a revision is held
+           back for review. Selecting or hovering lights the whole bar, and
+           every pass keeps its V number wherever it fits. */
         const segW = (sg) => (X(sg.e) - X(sg.s)) - 2;
         const wd = (a, b) => C(b) - C(a);     // working days between two offsets
         let merged = false;
-        if (!it.t.ko && it.segs.length > 1 && it.segs.some((sg, i) => segW(sg) < 16 || (i && (X(sg.s) - X(it.segs[i - 1].e)) < 5))) {
+        if (!it.t.ko && it.segs.length > 1) {
           const s0 = it.segs[0].s, e0 = it.segs[it.segs.length - 1].e, total = wd(s0, e0) || 1;
           const w = Math.max(4, total * px - 2);
           const name = it.t.name || 'Untitled';
@@ -343,7 +344,10 @@ window.App = window.App || {};
             // in visible columns, so a weekend the show doesn't work isn't a gap
             const gapL = i > 0 && wd(it.segs[i - 1].e, sg.s) > 0, gapR = i < lastSi && wd(sg.e, it.segs[i + 1].s) > 0;
             const part = el('span.pv-part' + (sg.rev ? '.rev' : '') + (i && !gapL ? '.div' : '') + (gapL ? '.gap-l' : '') + (gapR ? '.gap-r' : ''),
-              { style: { left: a + '%', width: (z - a) + '%' } });
+              { style: { left: a + '%', width: (z - a) + '%' } },
+              // V1 carries the task's name too, while there's room for it
+              wd(sg.s, sg.e) * px > 11 ? el('span.pv-part-txt' + (wd(sg.s, sg.e) * px < 28 ? '.short' : ''), { style: sg.rev ? null : { color: ink } },
+                i === 0 && wd(sg.s, sg.e) * px > 60 ? name + ' · ' + sg.label : sg.label) : null);
             if (update) {
               if (sg.rev) {
                 part.title = name + ' ' + sg.label + ' — drag to move it, drag its right edge to resize';
@@ -354,7 +358,6 @@ window.App = window.App || {};
             pill.appendChild(part);
           });
           if (batch) pill.appendChild(el('span.pv-batch-tag', null, 'BATCH'));
-          if (w > 24) pill.appendChild(el('span.pv-pill-txt', null, name));
           pill.style.setProperty('--pv-c', dep.color);
           if (update) {
             pill.classList.add('editable');
@@ -400,10 +403,6 @@ window.App = window.App || {};
             pill.classList.add('editable');
             // the one being stretched keeps its handle lit through the repaints
             if (drag && drag.t.key === it.t.key && drag.si === si) pill.classList.add('dragging');
-            if (sg.rev) {
-              pill.title = tip + '\nDrag to move it, drag its right edge to resize';
-              pill.addEventListener('pointerdown', (e) => beginMove(e, it.t, si));
-            }
             pill.appendChild(el('span.pv-grip', {
               onpointerdown: (e) => beginResize(e, it.t, si)
             }));
