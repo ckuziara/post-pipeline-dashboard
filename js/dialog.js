@@ -1854,7 +1854,7 @@ window.App = window.App || {};
     }, '⠿');
 
     // a task's versions: V1 is t.days, V2… are t.revDays (one per budgeted revision)
-    const taskTotal = (t) => (t.days || 0) + (t.revDays || []).slice(0, t.maxRev || 0).reduce((a, n) => a + (n || 0), 0);
+    const taskTotal = (t) => (t.days || 0) + (t.revDays || []).slice(0, t.maxRev || 0).reduce((a, n, r) => a + (n || 0) + App.revGap(t, r), 0);
     const versionTip = (t) => [t.days].concat((t.revDays || []).slice(0, t.maxRev || 0))
       .map((d, vi) => 'V' + (vi + 1) + ': ' + d + 'd').join(' · ') + ' — ' + taskTotal(t) + ' days in total';
 
@@ -1937,7 +1937,7 @@ window.App = window.App || {};
       const versBox = el('.pipe-vers');
       const totalLbl = el('span.pipe-vers-total');
       const paintTotal = () => { totalLbl.textContent = '= ' + taskTotal(t) + ' day' + (taskTotal(t) === 1 ? '' : 's'); };
-      const setVersions = (arr) => { snapshot(); t.revDays = arr; t.maxRev = arr.length; renderPipe(); onChange(); };
+      const setVersions = (arr) => { snapshot(); t.revDays = arr; t.maxRev = arr.length; if (t.revGaps) { t.revGaps = t.revGaps.slice(0, arr.length); if (!App.hasRevGaps(t)) delete t.revGaps; } renderPipe(); onChange(); };
       const v1 = numFld(t, 'days', 1);
       v1.addEventListener('input', paintTotal); v1.addEventListener('change', paintTotal);
       versBox.appendChild(el('.pipe-ver', null, [el('span.pipe-ver-lbl', null, 'V1'), v1]));
@@ -3063,7 +3063,7 @@ window.App = window.App || {};
       const normPipe = (p) => JSON.stringify((p || []).map(t => ({
         key: t.key, name: (t.name || '').trim(), dept: t.dept,
         days: t.days, minDays: t.minDays, deps: t.deps.slice().sort(),
-        lag: t.lag || 0, vc: !!t.vc, batch: App.batchCfg(t), maxRev: t.maxRev || 0, revDays: (t.revDays || []).slice(),
+        lag: t.lag || 0, vc: !!t.vc, batch: App.batchCfg(t), maxRev: t.maxRev || 0, revDays: (t.revDays || []).slice(), revGaps: App.hasRevGaps(t) ? t.revGaps.slice(0, t.maxRev) : [],
         ko: !!t.ko, koFor: t.koFor || null, koDay: t.koDay != null ? t.koDay : null, koWeeks: t.koWeeks || 0
       })));
       const baselinePipe = () => {
@@ -3578,7 +3578,7 @@ window.App = window.App || {};
               if (t.vc) o.vc = true;
               if (t.ko) { o.ko = true; if (t.koFor) o.koFor = t.koFor; if (t.koDay != null) o.koDay = t.koDay; if (t.koWeeks > 0) o.koWeeks = t.koWeeks; }
               if (App.batchCfg(t)) o.batch = App.batchCfg(t);
-              if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); }
+              if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); if (App.hasRevGaps(t)) o.revGaps = t.revGaps.slice(0, t.maxRev); }
               return o;
             });
             const teamOut = team.read();

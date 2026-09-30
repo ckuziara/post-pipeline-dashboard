@@ -4933,3 +4933,31 @@ body.gantt-ruling, body.gantt-ruling * { cursor: col-resize !important; }
 /* in a group the pair share the one outline — no ring on each pill */
 .pv-pill.sel.grouped { box-shadow: none; }
 .pv-pill.ko.sel.grouped { box-shadow: 0 0 0 1.5px #fff inset; }
+
+/* Episode preview: revisions can be moved (a review gap before them) and each
+   pass resized on its own right edge */
+.pv-pill.combo.editable .pv-part { pointer-events: auto; }
+.pv-pill.combo.editable .pv-part.rev { cursor: grab; }
+.pv.moving, .pv.moving * { cursor: grabbing !important; }
+.pv-pill.combo .pv-part.gap-l { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
+.pv-pill.combo .pv-part.gap-r { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+.pv-pill.combo .pv-part .pv-grip { right: -5px; }
+.pv-pill.combo .pv-part:hover > .pv-grip::after { opacity: 1; transform: translate(50%, -50%) scaleX(1.15); }
+.pv-pill.combo:hover .pv-part:not(:hover) > .pv-grip::after { opacity: 0; }
+.pv-pill.rev.editable { cursor: grab; }
+/* each pass's V number, inside its own part (the grip sits outside it) */
+.pv-pill.combo .pv-part-txt {
+  display: block; padding: 0 5px; line-height: 12px; font-size: 9px; font-weight: 700;
+  color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+}
+/* a narrow pass: just its number, centred, never cut down to "V." */
+.pv-pill.combo .pv-part-txt.short { padding: 0; text-align: center; text-overflow: clip; letter-spacing: -.2px; }
+.pv-pill.combo .pv-part.rev .pv-part-txt { text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+/* Mid-drag every repaint rebuilds the bars, so nothing may fade in or follow
+   :hover (a new node isn't hovered until the pointer moves again): the one
+   handle being used shows solid, every other handle stays hidden. */
+/* !important: these win over the :hover rules above for the whole gesture */
+.pv.resizing .pv-grip::after { transition: none !important; opacity: 0 !important; }
+.pv.resizing .pv-pill.dragging:not(.combo) > .pv-grip::after,
+.pv.resizing:not(.moving) .pv-pill.combo .pv-part.dragging > .pv-grip::after { opacity: 1 !important; transform: translate(50%, -50%) scaleX(1.15); }
+.pv.resizing .pv-pill { transition: none; }

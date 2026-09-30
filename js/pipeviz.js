@@ -313,14 +313,15 @@ window.App = window.App || {};
         // the timeline's own ink rule, so a bar reads the same in both places
         const ink = App.pickInk ? App.pickInk(dep.color) : '#fff';
         const top = it.lane.y + 4 + it.sub * ROW_H + (ROW_H - BAR_H) / 2;
-        /* Zoomed out, a task's passes (V1 · V2 · V3, back to back)
-           shrink to slivers that overlap. Then they're drawn as one bar with a
-           line between each pass: the first pass solid, revisions striped,
-           the right edge still stretching the last one. */
+        /* A task with revisions is always one bar: its passes (V1 · V2 · V3)
+           each at their own days, the first solid and the revisions striped,
+           a line between passes that touch and a gap where a revision is held
+           back for review. Selecting or hovering lights the whole bar, and
+           every pass keeps its V number wherever it fits. */
         const segW = (sg) => (X(sg.e) - X(sg.s)) - 2;
         const wd = (a, b) => C(b) - C(a);     // working days between two offsets
         let merged = false;
-        if (!it.t.ko && it.segs.length > 1 && it.segs.some((sg, i) => segW(sg) < 16 || (i && (X(sg.s) - X(it.segs[i - 1].e)) < 5))) {
+        if (!it.t.ko && it.segs.length > 1) {
           const s0 = it.segs[0].s, e0 = it.segs[it.segs.length - 1].e, total = wd(s0, e0) || 1;
           const w = Math.max(4, total * px - 2);
           const name = it.t.name || 'Untitled';
@@ -333,21 +334,34 @@ window.App = window.App || {};
             style: { left: (X(s0) + 1) + 'px', top: top + 'px', width: w + 'px', height: BAR_H + 'px', color: ink },
             onclick: () => { if (!justDragged) onSelect(it.t.ko && it.t.koFor ? it.t.koFor : it.t.key); },
             oncontextmenu: (e) => openMenu(e, it.t.key),
-            onmouseenter: () => { hovered = it.t.key; applyFocus(); },
-            onmouseleave: () => { if (hovered === it.t.key) { hovered = null; applyFocus(); } }
+            onmouseenter: () => { if (drag) return; hovered = it.t.key; applyFocus(); },
+            onmouseleave: () => { if (drag) return; if (hovered === it.t.key) { hovered = null; applyFocus(); } }
           });
           it.segs.forEach((sg, i) => {
-            // each pass runs on to where the next begins, so the bar is continuous
-            const a = wd(s0, sg.s) / total * 100, z = wd(s0, i < lastSi ? it.segs[i + 1].s : e0) / total * 100;
-            pill.appendChild(el('span.pv-part' + (sg.rev ? '.rev' : '') + (i ? '.div' : ''), { style: { left: a + '%', width: (z - a) + '%' } }));
+            // each pass at its own days: back to back it reads as one bar, and a
+            // revision held back for review leaves a gap before it
+            const a = wd(s0, sg.s) / total * 100, z = wd(s0, sg.e) / total * 100;
+            // in visible columns, so a weekend the show doesn't work isn't a gap
+            const gapL = i > 0 && wd(it.segs[i - 1].e, sg.s) > 0, gapR = i < lastSi && wd(sg.e, it.segs[i + 1].s) > 0;
+            const part = el('span.pv-part' + (sg.rev ? '.rev' : '') + (i && !gapL ? '.div' : '') + (gapL ? '.gap-l' : '') + (gapR ? '.gap-r' : '') + (drag && drag.t.key === it.t.key && drag.si === i ? '.dragging' : ''),
+              { style: { left: a + '%', width: (z - a) + '%' } },
+              // V1 carries the task's name too, while there's room for it
+              wd(sg.s, sg.e) * px > 11 ? el('span.pv-part-txt' + (wd(sg.s, sg.e) * px < 28 ? '.short' : ''), { style: sg.rev ? null : { color: ink } },
+                i === 0 && wd(sg.s, sg.e) * px > 60 ? name + ' · ' + sg.label : sg.label) : null);
+            if (update) {
+              if (sg.rev) {
+                part.title = name + ' ' + sg.label + ' — drag to move it, drag its right edge to resize';
+                part.addEventListener('pointerdown', (e) => beginMove(e, it.t, i));
+              }
+              part.appendChild(el('span.pv-grip', { onpointerdown: (e) => beginResize(e, it.t, i) }));
+            }
+            pill.appendChild(part);
           });
           if (batch) pill.appendChild(el('span.pv-batch-tag', null, 'BATCH'));
-          if (w > 24) pill.appendChild(el('span.pv-pill-txt', null, name));
           pill.style.setProperty('--pv-c', dep.color);
           if (update) {
             pill.classList.add('editable');
             if (drag && drag.t.key === it.t.key) pill.classList.add('dragging');
-            pill.appendChild(el('span.pv-grip', { onpointerdown: (e) => beginResize(e, it.t, lastSi) }));
           }
           canvas.appendChild(pill);
           merged = true;                 // drawn — skip the per-pass bars below
@@ -371,8 +385,8 @@ window.App = window.App || {};
             },
             onclick: () => { if (!justDragged) onSelect(it.t.ko && it.t.koFor ? it.t.koFor : it.t.key); },
             oncontextmenu: (e) => openMenu(e, it.t.key),
-            onmouseenter: () => { hovered = it.t.key; applyFocus(); },
-            onmouseleave: () => { if (hovered === it.t.key) { hovered = null; applyFocus(); } }
+            onmouseenter: () => { if (drag) return; hovered = it.t.key; applyFocus(); },
+            onmouseleave: () => { if (drag) return; if (hovered === it.t.key) { hovered = null; applyFocus(); } }
           }, [
             batch ? el('span.pv-batch-tag', null, 'BATCH') : null,
             w > (it.t.ko ? 16 : 24) ? el('span.pv-pill-txt', null, text) : null
@@ -474,6 +488,10 @@ window.App = window.App || {};
       if (e.button !== 0) return;
       e.preventDefault(); e.stopPropagation();
       drag = { t, si, x: e.clientX, from: segDays(t, si), now: segDays(t, si), minDays: t.minDays };
+      // light this handle now — the repaint that would mark it only comes once the edge moves a day
+      const own = e.currentTarget.parentElement;
+      own.classList.add('dragging');
+      if (own.classList.contains('pv-part')) own.closest('.pv-pill').classList.add('dragging');
       root.classList.add('resizing');
       document.body.appendChild(badge);
       moveBadge(e);
@@ -481,8 +499,76 @@ window.App = window.App || {};
       window.addEventListener('pointerup', endResize);
       window.addEventListener('pointercancel', endResize);
     }
+    /* ---- drag a revision to spread it out ----
+       Moves revision `si` later (or back) by the days of review planned before
+       it (t.revGaps). Later versions keep their own gaps, so they travel with
+       it. It can't go earlier than straight after the version before. A press
+       without movement is still a click (selects the task). */
+    const segGap = (t, si) => App.revGap(t, si - 1);
+    const setGap = (t, si, n) => {
+      const g = (t.revGaps || []).slice(0, t.maxRev || 0);
+      while (g.length < (t.maxRev || 0)) g.push(0);
+      g[si - 1] = n;
+      if (g.some(x => x > 0)) t.revGaps = g; else delete t.revGaps;
+    };
+    let endPendingMove = null;   // a press whose release never arrived — cleared by the next one
+    function beginMove(e, t, si) {
+      if (e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      if (endPendingMove) endPendingMove();
+      const from = segGap(t, si), gaps0 = t.revGaps ? t.revGaps.slice() : null;
+      const x0 = e.clientX;
+      let live = false;
+      const restore = () => { if (gaps0) t.revGaps = gaps0.slice(); else delete t.revGaps; };
+      const move = (ev) => {
+        if (!live) {
+          if (Math.abs(ev.clientX - x0) < 3) return;
+          live = true;
+          drag = { t, si, move: true, from, now: from };
+          root.classList.add('resizing', 'moving');
+          document.body.appendChild(badge);
+        }
+        const n = Math.max(0, Math.min(365, from + Math.round((ev.clientX - x0) / currentPx)));
+        if (n !== drag.now) { drag.now = n; setGap(t, si, n); repaint(); }
+        moveBadge(ev);
+      };
+      const detach = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+        endPendingMove = null;
+      };
+      const up = () => {
+        detach();
+        if (!live) return;
+        const d = drag; drag = null;
+        if (!d) return;
+        root.classList.remove('resizing', 'moving');
+        badge.remove();
+        justDragged = true; setTimeout(() => { justDragged = false; }, 0);
+        restore();
+        if (d.now === d.from) { repaint(); return; }
+        update(t.key, (tt) => setGap(tt, si, d.now));
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
+      // abandoned: drop it without committing, and put the task back
+      endPendingMove = () => {
+        detach();
+        if (live) { drag = null; root.classList.remove('resizing', 'moving'); badge.remove(); restore(); repaint(); }
+      };
+    }
+
     function moveBadge(e) {
       const d = drag; if (!d) return;
+      if (d.move) {
+        const prev = d.si === 1 ? 'V1' : 'V' + d.si;
+        badge.textContent = 'V' + (d.si + 1) + ' · ' + (d.now ? d.now + ' day' + (d.now === 1 ? '' : 's') + ' of review after ' + prev : 'straight after ' + prev);
+        badge.style.left = (e.clientX + 14) + 'px';
+        badge.style.top = (e.clientY - 30) + 'px';
+        return;
+      }
       badge.textContent = (d.si === 0 ? (d.t.name || 'Task') : 'V' + (d.si + 1)) + ' · ' + d.now + ' day' + (d.now === 1 ? '' : 's') +
         (d.now !== d.from ? ' (' + (d.now > d.from ? '+' : '−') + Math.abs(d.now - d.from) + ')' : '');
       badge.style.left = (e.clientX + 14) + 'px';
