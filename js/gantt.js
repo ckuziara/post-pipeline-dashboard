@@ -753,9 +753,9 @@ window.App = window.App || {};
 
     // ---- drag-to-reschedule a task bar ----
     // Middle = move (keeps duration); either edge = resize (keeps the other
-    // edge fixed). Both are clamped live to the task's minDays; dependency
-    // ordering is checked live for a warning outline and confirmed again in
-    // App.moveTask on drop (which applies the change regardless and toasts).
+    // edge fixed). Both are clamped live to the task's minDays. A drop goes
+    // into the unsaved draft (App.draft.stage); dependencies and the
+    // delivery/live dates are checked when the draft is saved.
     // `axis` picks which physical edge is being measured — the zone names
     // ('resize-left'/'resize-right') keep their Landscape meaning either way
     // (the task's START edge / DUE edge), since onDragMove already reads them
@@ -1219,12 +1219,11 @@ window.App = window.App || {};
       else { d.bar.style.left = xOf(newStart) + 'px'; d.bar.style.width = xOf.width(newStart, newDue) + 'px'; }
       placePauses(d.bar, portrait);
 
-      const broken = d.deps.some(dep => newStart <= dep.due) || d.dependents.some(dep => dep.start <= newDue);
-      d.bar.classList.toggle('warn', broken);
-
+      // no flags mid-adjustment — what the change sets off shows in the
+      // unsaved-changes bar once it's dropped (js/draft.js)
       const tip = dragTipEl(); tip.innerHTML = '';
-      tip.appendChild(el('span.tip-dot', { style: { background: broken ? '#ff5b6e' : '#5fb0f0' } }));
-      tip.appendChild(document.createTextNode(App.fmtRange(newStart, newDue) + (broken ? ' — breaks a dependency' : '')));
+      tip.appendChild(el('span.tip-dot', { style: { background: '#5fb0f0' } }));
+      tip.appendChild(document.createTextNode(App.fmtRange(newStart, newDue)));
       tip.style.display = 'flex';
       tip.style.left = e.clientX + 'px';
       tip.style.top = (e.clientY - 38) + 'px';
@@ -1296,7 +1295,7 @@ window.App = window.App || {};
         this.suppressNextClick();                    // the mouseup's click isn't "open Edit Task"
         const changed = d.members.filter(m => m.curStart !== m.origStart || m.curDue !== m.origDue);
         if (!changed.length) { App.render(); return; }
-        App.moveTasks(changed.map(m => ({ epId: m.epId, suKey: m.suKey, start: m.curStart, due: m.curDue })));
+        App.draft.stage(changed.map(m => ({ epId: m.epId, suKey: m.suKey, start: m.curStart, due: m.curDue })));
         return;
       }
 
@@ -1325,7 +1324,7 @@ window.App = window.App || {};
       d.bar.classList.remove('dragging', 'warn');
       if (d.curStart !== d.origStart || d.curDue !== d.origDue) {
         App.track.feature('timeline.dragReschedule');
-        App.moveTask(d.epId, d.suKey, d.curStart, d.curDue);
+        App.draft.stage([{ epId: d.epId, suKey: d.suKey, start: d.curStart, due: d.curDue }]);
       }
     },
 
@@ -2604,7 +2603,7 @@ window.App = window.App || {};
         });
       }
       App.track.feature(cascade ? 'timeline.keyNudgeCascade' : 'timeline.keyNudge');
-      App.moveTasks([...moves.values()]);
+      App.draft.stage([...moves.values()]);
     },
 
     centerToday() {
