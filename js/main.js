@@ -266,8 +266,16 @@ window.App = window.App || {};
      top of one is held and put to the producer as a decision, with the old and
      new schedule drawn over each other. Confirming re-enters with
      opts.confirmed so the same call applies for real. */
+  /* opts.onApplied / opts.onAbort: told whether the move was written in the
+     end (after any question it had to ask) — how the unsaved-changes draft
+     knows when to clear (js/draft.js). */
+  const applied = (opts) => { if (opts && opts.onApplied) opts.onApplied(); };
+  const aborted = (opts) => { if (opts && opts.onAbort) opts.onAbort(); };
+  // opts.quiet: the caller reports the result itself, so no toast
+  const cbs = (opts) => ({ onApplied: opts && opts.onApplied, onAbort: opts && opts.onAbort, quiet: !!(opts && opts.quiet) });
+
   App.moveTask = function (epId, key, newStart, newDue, opts) {
-    const g = guardSchedule(epId, key); if (!g) return;
+    const g = guardSchedule(epId, key); if (!g) { aborted(opts); return; }
     const pipe = App.pipelineFor(g.ep);
     const task = pipe.find(t => t.key === key);
     const minDays = (task && task.minDays) || 1;
@@ -275,6 +283,7 @@ window.App = window.App || {};
     const span = App.visibleDayCount(newStart, newDue, hideWeekends);
     if (span < minDays) {
       App.toast('“' + g.su.name + '” needs at least ' + minDays + ' day' + (minDays === 1 ? '' : 's') + ' — adjustment ignored', true);
+      aborted(opts);
       return;
     }
 
@@ -282,16 +291,17 @@ window.App = window.App || {};
     if (impact.deny) {
       App.toast(impact.deny.text + ' — nothing moved', true);
       App.render();                            // snap the dropped bar back
+      aborted(opts);
       return;
     }
     if ((impact.clashes.length || impact.delivery) && !(opts && opts.confirmed) && App.impactDialog) {
       App.impactDialog.open(g.ep, key, impact, {
         onConfirm: (shiftDelivery) => App.moveTask(epId, key, newStart, newDue,
-          { confirmed: true, shiftDelivery: shiftDelivery }),
-        onPush: () => App.pushSchedule(epId, key, newStart, newDue),
+          Object.assign(cbs(opts), { confirmed: true, shiftDelivery: shiftDelivery })),
+        onPush: () => App.pushSchedule(epId, key, newStart, newDue, cbs(opts)),
         // the dragged bar is still sitting where it was dropped; a re-render
         // rebuilds it from the unchanged data, snapping it back
-        onCancel: () => App.render()
+        onCancel: () => { App.render(); aborted(opts); }
       });
       return;
     }
@@ -324,7 +334,9 @@ window.App = window.App || {};
         deliveryDate: shiftDelivery ? impact.delivery.ms.date + '→' + impact.delivery.suggest : null
       });
     }
-    if (shiftDelivery) {
+    if (opts && opts.quiet) {
+      // reported by the caller
+    } else if (shiftDelivery) {
       App.toast('“' + g.su.name + '” moved — delivery date now ' + App.fmtDate(impact.delivery.suggest), true);
     } else if (impact.delivery) {
       App.toast('“' + g.su.name + '” moved — the delivery date (' +
@@ -335,6 +347,7 @@ window.App = window.App || {};
     } else {
       App.toast('“' + g.su.name + '” → ' + App.fmtRange(newStart, newDue));
     }
+    applied(opts);
   };
 
   /* Reschedule a whole shift-selected group in one go.
@@ -400,20 +413,20 @@ window.App = window.App || {};
     return moves;
   };
   App.pushSchedule = function (epId, key, newStart, newDue, opts) {
-    const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
+    const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) { aborted(opts); return; }
     const moves = App.pushPlan(ep, key, newStart, newDue);
     // everything that gets pushed is shown before anything moves
     if (!(opts && opts.confirmed) && App.pushConfirmDialog) {
       App.pushConfirmDialog.open(ep, moves, {
-        onConfirm: () => App.pushSchedule(epId, key, newStart, newDue, { confirmed: true }),
-        onCancel: () => App.render()
+        onConfirm: () => App.pushSchedule(epId, key, newStart, newDue, Object.assign(cbs(opts), { confirmed: true })),
+        onCancel: () => { App.render(); aborted(opts); }
       });
       return;
     }
     App.track.feature('timeline.pushSchedule');
     // through moveTasks: the live date still refuses, and a pushed delivery
     // date is still asked about
-    App.moveTasks(moves, { pushed: true });
+    App.moveTasks(moves, Object.assign(cbs(opts), { pushed: true }));
   };
 
   App.moveTasks = function (moves, opts) {
@@ -421,7 +434,7 @@ window.App = window.App || {};
       App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
     }
     moves = (moves || []).filter(m => m && m.epId && m.suKey);
-    if (!moves.length) return;
+    if (!moves.length) { aborted(opts); return; }
     if (moves.length === 1) {                    // no group ceremony for a group of one
       const m = moves[0];
       App.moveTask(m.epId, m.suKey, m.start, m.due, opts);
@@ -459,14 +472,15 @@ window.App = window.App || {};
       App.toast(denies[0].text +
         (denies.length > 1 ? ' (and ' + (denies.length - 1) + ' more)' : '') + ' — nothing moved', true);
       App.render();
+      aborted(opts);
       return;
     }
-    if (!rows.length) return;
+    if (!rows.length) { aborted(opts); return; }
 
     if ((deliveries.length || clashes.length) && !(opts && opts.confirmed) && App.bulkMoveDialog) {
       App.bulkMoveDialog.open({ rows, clashes, deliveries }, {
-        onConfirm: (shiftDelivery) => App.moveTasks(moves, { confirmed: true, shiftDelivery, pushed: !!(opts && opts.pushed) }),
-        onCancel: () => App.render()
+        onConfirm: (shiftDelivery) => App.moveTasks(moves, Object.assign(cbs(opts), { confirmed: true, shiftDelivery, pushed: !!(opts && opts.pushed) })),
+        onCancel: () => { App.render(); aborted(opts); }
       });
       return;
     }
@@ -520,7 +534,8 @@ window.App = window.App || {};
       extra.push('delivery dates left standing');
     }
     if (clashes.length) extra.push(clashes.length + ' dependency clash' + (clashes.length === 1 ? '' : 'es') + ' accepted');
-    App.toast(n + ' rescheduled' + (extra.length ? ' — ' + extra.join(' · ') : ''), extra.length > 0);
+    if (!(opts && opts.quiet)) App.toast(n + ' rescheduled' + (extra.length ? ' — ' + extra.join(' · ') : ''), extra.length > 0);
+    applied(opts);
   };
 
   /* "Request Revision" — the Reviews tab's replacement for Send Back. A task

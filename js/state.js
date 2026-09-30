@@ -922,6 +922,9 @@ window.App = window.App || {};
       if (dOv) { start = dOv.start; due = dOv.due; }
       else if (tpl) { start = App.shiftIso(tpl.start, ep.shiftDays || 0); due = App.shiftIso(tpl.due, ep.shiftDays || 0); }
       else { start = App.isoDate(App.today()); due = App.shiftIso(start, (t.days || 1) - 1); }
+      // unsaved Timeline changes show as if made (see js/draft.js)
+      const dr = App.draft && App.draft.dates(ep.id, t.key);
+      if (dr) { start = dr.start; due = dr.due; }
       return {
         key: t.key,
         name: (ep.names && ep.names[t.key]) || t.name,
