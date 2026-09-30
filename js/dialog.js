@@ -2637,7 +2637,7 @@ window.App = window.App || {};
         cadence: editStarts.length > 1 ? Math.max(1, App.diffDays(editStarts[1], editStarts[0])) : 14,
         epNames: editEps.map(e => e.title),
         epLive: editEps.map(e => (e.milestones && e.milestones[App.LIVE_KEY]) || null),
-        pipe: s.pipeline || App.defaultPipelineFor(s.type),
+        pipe: App.showPipeline(s),
         team: s.team,
         // its working days & holidays — a copy, edited here until Save
         calendar: s.calendar ? JSON.parse(JSON.stringify(s.calendar)) : null
@@ -3823,7 +3823,7 @@ window.App = window.App || {};
       let nav = false;
       const goBack = () => { if (!back) { App.modal.close(); return; } nav = true; back(); };
 
-      const pipeline = show.pipeline || App.defaultPipelineFor(show.type);
+      const pipeline = App.showPipeline(show);
       const team = App.teamEditor(pipeline, show.team, { showId: showId });
 
       const sections = [

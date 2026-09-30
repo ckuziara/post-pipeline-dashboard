@@ -1195,37 +1195,68 @@ window.App = window.App || {};
   // Named, reusable pipelines per show type. Add Show offers them alongside
   // the built-in defaults; a created show always takes its own deep copy, so
   // editing or deleting a preset never touches existing shows.
+  // carry the optional flags the editor can set — dropping them here
+  // silently discarded a task's lag, its version-control toggle and
+  // its revision budget
+  const cleanPipeline = (pipeline) => pipeline.map(t => {
+    const o = { key: t.key, name: (t.name || '').trim() || t.key, dept: t.dept,
+                days: t.days, minDays: t.minDays, deps: t.deps.slice() };
+    if (t.lag) o.lag = t.lag;
+    if (t.vc) o.vc = true;
+    if (t.ko) { o.ko = true; if (t.koFor) o.koFor = t.koFor; if (t.koDay != null) o.koDay = t.koDay; if (t.koWeeks > 0) o.koWeeks = t.koWeeks; }
+    if (App.batchCfg(t)) o.batch = App.batchCfg(t);
+    if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); }
+    return o;
+  });
+  const pipelineValid = (pipeline) => {
+    if (!pipeline.length) { App.toast('The pipeline needs at least one task', true); return false; }
+    if (!App.topoSort(pipeline)) { App.toast('The pipeline has a dependency cycle', true); return false; }
+    return true;
+  };
+  const TYPE_LABEL = { animation: 'Animation', live_action: 'Live Action' };
+
   App.savePipelinePreset = function (preset) {
     if (!guardAdmin()) return false;
     const name = (preset.name || '').trim();
     if (!name) { App.toast('Give the pipeline a name', true); return false; }
-    if (!preset.pipeline.length) { App.toast('The pipeline needs at least one task', true); return false; }
-    if (!App.topoSort(preset.pipeline)) { App.toast('The pipeline has a dependency cycle', true); return false; }
+    if (!pipelineValid(preset.pipeline)) return false;
     App.mutate(d => {
       d.pipelinePresets = d.pipelinePresets || [];
       const clean = {
         id: preset.id || App.uid(),
         name,
         type: preset.type === 'live_action' ? 'live_action' : 'animation',
-        // carry the optional flags the editor can set — dropping them here
-        // silently discarded a task's lag, its version-control toggle and
-        // its revision budget
-        pipeline: preset.pipeline.map(t => {
-          const o = { key: t.key, name: (t.name || '').trim() || t.key, dept: t.dept,
-                      days: t.days, minDays: t.minDays, deps: t.deps.slice() };
-          if (t.lag) o.lag = t.lag;
-          if (t.vc) o.vc = true;
-          if (t.ko) { o.ko = true; if (t.koFor) o.koFor = t.koFor; if (t.koDay != null) o.koDay = t.koDay; if (t.koWeeks > 0) o.koWeeks = t.koWeeks; }
-          if (App.batchCfg(t)) o.batch = App.batchCfg(t);
-          if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); }
-          return o;
-        })
+        pipeline: cleanPipeline(preset.pipeline)
       };
       const i = d.pipelinePresets.findIndex(x => x.id === clean.id);
       if (i >= 0) d.pipelinePresets[i] = clean; else d.pipelinePresets.push(clean);
     });
     App.toast('Saved pipeline “' + name + '”');
     return true;
+  };
+
+  /* Default pipelines — what Add Show (and a new preset) starts from for each
+     show type. Only new shows pick up a change: existing shows keep their
+     own copy, or the built-in pipeline they already run on. */
+  App.saveDefaultPipeline = function (type, pipeline) {
+    if (!guardAdmin()) return false;
+    if (!TYPE_LABEL[type] || !pipelineValid(pipeline)) return false;
+    App.mutate(d => {
+      d.defaultPipelines = d.defaultPipelines || {};
+      d.defaultPipelines[type] = cleanPipeline(pipeline);
+    });
+    App.track.audit('pipeline.default.save', { type, tasks: pipeline.length });
+    App.toast('Saved the default ' + TYPE_LABEL[type] + ' pipeline');
+    return true;
+  };
+
+  App.resetDefaultPipeline = function (type) {
+    if (!guardAdmin() || !App.isDefaultPipelineCustom(type)) return;
+    App.confirm('Put the default ' + TYPE_LABEL[type] + ' pipeline back to the standard one? Existing shows aren’t affected.', () => {
+      App.mutate(d => { if (d.defaultPipelines) delete d.defaultPipelines[type]; });
+      App.track.audit('pipeline.default.reset', { type });
+      App.toast('Default ' + TYPE_LABEL[type] + ' pipeline reset to standard');
+    }, { title: 'Reset default pipeline', yesLabel: 'Reset' });
   };
 
   App.duplicatePipelinePreset = function (id) {
@@ -1290,9 +1321,9 @@ window.App = window.App || {};
     App.mutate(d => {
       const s = d.shows.find(x => x.id === showId); if (!s) return;
       // materialize the template before splicing — a legacy show with no
-      // stored pipeline reads App.defaultPipelineFor's fallback, but writing
+      // stored pipeline reads App.showPipeline's built-in fallback, but writing
       // needs a real array to push onto, not the shared default object
-      const pipe = (s.pipeline || App.defaultPipelineFor(s.type)).map(t => ({ ...t, deps: t.deps.slice() }));
+      const pipe = App.showPipeline(s).map(t => ({ ...t, deps: t.deps.slice() }));
       pipe.push({ key, name, dept, days: Math.max(1, duration + 1), minDays: 1, deps: [] });
       s.pipeline = pipe;
       d.episodes.filter(e => e.showId === showId).forEach(e => {
@@ -1443,7 +1474,7 @@ window.App = window.App || {};
 
     // what the pipeline edit touched, then everything that waits on it
     const old = {};
-    (show.pipeline || App.defaultPipelineFor(show.type)).forEach(t => { old[t.key] = t; });
+    App.showPipeline(show).forEach(t => { old[t.key] = t; });
     const sig = (t) => JSON.stringify([t.days, t.deps.slice().sort(), t.lag || 0, App.batchCfg(t), t.maxRev || 0, (t.revDays || []).slice(), t.ko ? [t.koDay, t.koWeeks || 0] : null]);
     // touched against a given starting pipeline — the show's, or the one an
     // episode was frozen on by an earlier locked edit
@@ -1457,7 +1488,7 @@ window.App = window.App || {};
       return set;
     };
     const touched = touchedFrom(old);
-    const oldPipe = show.pipeline || App.defaultPipelineFor(show.type);
+    const oldPipe = App.showPipeline(show);
     const pipeSig = (p) => JSON.stringify(p.map(t => [t.key, (t.name || '').trim(), t.dept, sig(t)]));
     const pipeChanged = pipeSig(oldPipe) !== pipeSig(clean);
     // the calendar from now on, and whether it changed
@@ -1696,7 +1727,7 @@ window.App = window.App || {};
     const showId = code.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + App.uid().slice(0, 3);
 
     const pipeline = Array.isArray(src.pipeline) && src.pipeline.length
-      ? clone(src.pipeline) : App.defaultPipelineFor(src.type);
+      ? clone(src.pipeline) : App.builtinPipelineFor(src.type);
 
     // team, minus anyone this board has never heard of
     const team = {};
@@ -1788,7 +1819,7 @@ window.App = window.App || {};
     const show = App.state.data.shows.find(s => s.id === showId); if (!show) return;
     code = (code || '').trim(); title = (title || '').trim();
     if (!code || !title) { App.toast('Give the episode a code and a title', true); return; }
-    const pipeline = show.pipeline || App.defaultPipelineFor(show.type);
+    const pipeline = App.showPipeline(show);
     startIso = startIso || App.isoDate(App.today());
     const sch = App.schedulePipeline(pipeline, startIso, 1);
     if (!sch) { App.toast('The pipeline has a dependency cycle', true); return; }

@@ -306,10 +306,27 @@ window.App = window.App || {};
     { key: 'deliverys',      name: 'Deliverys',       dept: 'ops',      days: 2, minDays: 1, deps: ['online_conform', 'subtitle'] },
     { key: 'qc',             name: 'QC',              dept: 'qc',       days: 2, minDays: 1, deps: ['deliverys'] }
   ];
-  App.defaultPipelineFor = function (type) {
+  // The pipeline each show type ships with, before any Admin change.
+  App.builtinPipelineFor = function (type) {
     if (type === 'live_action') return App.LIVE_PIPELINE.map(t => ({ ...t, deps: t.deps.slice() }));
     return App.defaultPipeline();
   };
+  /* The pipeline a NEW show of this type starts from: the Admin's version from
+     Admin → Workflow → Pipelines when one is saved, otherwise the built-in one.
+     Always a deep copy. Existing shows with no stored pipeline keep running on
+     the built-in one (App.showPipeline), so changing a default never replans
+     a show that is already underway. */
+  App.defaultPipelineFor = function (type) {
+    const t = type === 'live_action' ? 'live_action' : 'animation';
+    const custom = App.state.data && App.state.data.defaultPipelines && App.state.data.defaultPipelines[t];
+    return Array.isArray(custom) && custom.length ? JSON.parse(JSON.stringify(custom)) : App.builtinPipelineFor(t);
+  };
+  App.isDefaultPipelineCustom = (type) => {
+    const d = App.state.data && App.state.data.defaultPipelines;
+    return !!(d && Array.isArray(d[type]) && d[type].length);
+  };
+  // An existing show's pipeline: its own copy, or the built-in one it has always run on.
+  App.showPipeline = (show) => show.pipeline || App.builtinPipelineFor(show.type);
 
   App.pipelineFor = function (ep) {
     const show = ep && App.state.data && App.state.data.shows.find(s => s.id === ep.showId);
@@ -1602,6 +1619,7 @@ window.App = window.App || {};
     }) : pipe;
     (data.shows || []).forEach(s => { if (s.pipeline) s.pipeline = drop(s.pipeline); });
     (data.pipelinePresets || []).forEach(p => { if (p.pipeline) p.pipeline = drop(p.pipeline); });
+    if (data.defaultPipelines) Object.keys(data.defaultPipelines).forEach(k => { data.defaultPipelines[k] = drop(data.defaultPipelines[k]); });
     (data.episodes || []).forEach(ep => {
       ['dates', 'statuses', 'names', 'assignees'].forEach(f => {
         if (ep[f]) App.MILESTONES.forEach(m => { delete ep[f][m.key]; });
