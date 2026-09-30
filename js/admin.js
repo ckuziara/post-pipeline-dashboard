@@ -55,7 +55,7 @@ window.App = window.App || {};
         desc: 'Configure what each role can do — approving tasks, assigning owners, managing shows and admin access.',
         btn: 'Configure Roles', onclick: () => go('roles') },
       { ic: 'folderOpen', tint: 'green', title: 'Workflow & Status Settings',
-        desc: 'Rename and recolour task statuses and departments across the whole tracker. Pipelines themselves are customised per show when it’s created.',
+        desc: 'Rename and recolour task statuses and departments across the whole tracker. Set the default pipeline each show type starts from, and save reusable presets.',
         btn: 'Configure Workflow', onclick: () => go('workflow') },
       { ic: 'scroll', tint: 'amber', title: 'Audit & Event Logs',
         desc: 'A timestamped record of every change made across the tracker, plus which features each role actually uses.',
@@ -777,7 +777,10 @@ window.App = window.App || {};
     const draft = App.state.admin.presetDraft;
     if (draft) return presetEditor(draft);
 
+    const wrap = el('div', { style: { display: 'grid', gap: '16px' } });
+    wrap.appendChild(defaultPipelinesCard());
     const cardEl = el('.adm-permcard');
+    wrap.appendChild(cardEl);
     cardEl.appendChild(el('.adm-permcard-head', null, [
       el('.adm-permcard-title', null, 'Pipeline presets'),
       el('.adm-permcard-desc', null, 'Reusable task pipelines for Animation or Live Action shows. When adding a show, pick a preset instead of the standard pipeline.')
@@ -820,6 +823,36 @@ window.App = window.App || {};
     };
     nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') create(); });
     cardEl.appendChild(el('.wf-add', null, [nameInput, typeSel, el('button.btn-primary', { onclick: create }, '＋ New pipeline')]));
+    return wrap;
+  }
+
+  /* The pipeline Add Show starts from for each show type. Editing reuses the
+     preset editor with a draft flagged `defaultFor`, so there's one editor. */
+  function defaultPipelinesCard() {
+    const cardEl = el('.adm-permcard');
+    cardEl.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'Default pipelines'),
+      el('.adm-permcard-desc', null, 'What every new show of each type starts from in Add Show, and the starting point for new presets. Changes apply to shows created afterwards — existing shows keep the pipeline they have.')
+    ]));
+    const list = el('.wf-list');
+    [['animation', 'Animation'], ['live_action', 'Live Action']].forEach(([type, label]) => {
+      const pipe = App.defaultPipelineFor(type);
+      const custom = App.isDefaultPipelineCustom(type);
+      list.appendChild(el('.preset-row', null, [
+        el('span.preset-type.' + type, null, label),
+        el('div', { style: { minWidth: 0 } }, [
+          el('.adm-name', null, 'Default ' + label + (custom ? ' · customised' : ' · standard')),
+          el('.adm-name-sub', null, pipe.length + ' tasks · ' +
+            [...new Set(pipe.map(t => t.dept))].map(d => App.dept(d).label).join(', '))
+        ]),
+        el('.preset-actions', null, [
+          el('button.btn-mini', { title: 'Edit the default ' + label + ' pipeline',
+            onclick: () => { App.state.admin.presetDraft = { defaultFor: type, name: 'Default ' + label, type, pipeline: pipe }; App.render(); } }, App.icon('pencil')),
+          custom ? el('button.btn-mini', { title: 'Reset to the standard pipeline', onclick: () => App.resetDefaultPipeline(type) }, '↺') : null
+        ].filter(Boolean))
+      ]));
+    });
+    cardEl.appendChild(list);
     return cardEl;
   }
 
@@ -835,14 +868,17 @@ window.App = window.App || {};
       if (v === draft.type) o.selected = true; typeSel.appendChild(o);
     });
 
+    const isDefault = !!draft.defaultFor;
     const cardEl = el('.adm-permcard');
     cardEl.appendChild(el('.adm-permcard-head.preset-edit-head', null, [
       el('div', null, [
-        el('.adm-permcard-title', null, draft.id ? 'Edit pipeline' : 'New pipeline'),
-        el('.adm-permcard-desc', null, 'Add, remove, reorder and re-time tasks; set dependencies. Shows made from this preset take their own copy.')
+        el('.adm-permcard-title', null, isDefault ? 'Edit ' + draft.name + ' pipeline' : draft.id ? 'Edit pipeline' : 'New pipeline'),
+        el('.adm-permcard-desc', null, isDefault
+          ? 'Add, remove, reorder and re-time tasks; set dependencies. New shows of this type start from it; existing shows are unchanged.'
+          : 'Add, remove, reorder and re-time tasks; set dependencies. Shows made from this preset take their own copy.')
       ]),
-      el('.preset-edit-flds', null, [nameInput, typeSel])
-    ]));
+      isDefault ? null : el('.preset-edit-flds', null, [nameInput, typeSel])
+    ].filter(Boolean)));
 
     cardEl.appendChild(el('.preset-pipe-bar', null, [
       el('span.pipe-toggle-lbl', null, 'Pipeline tasks'),
@@ -860,7 +896,8 @@ window.App = window.App || {};
       el('button.btn-primary', {
         onclick: () => {
           editor.closeMenus();
-          if (App.savePipelinePreset(draft)) { App.state.admin.presetDraft = null; App.render(); }
+          const ok = isDefault ? App.saveDefaultPipeline(draft.defaultFor, draft.pipeline) : App.savePipelinePreset(draft);
+          if (ok) { App.state.admin.presetDraft = null; App.render(); }
         }
       }, [App.icon('save'), ' Save pipeline'])
     ]));
