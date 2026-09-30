@@ -4933,3 +4933,15 @@ body.gantt-ruling, body.gantt-ruling * { cursor: col-resize !important; }
 /* in a group the pair share the one outline — no ring on each pill */
 .pv-pill.sel.grouped { box-shadow: none; }
 .pv-pill.ko.sel.grouped { box-shadow: 0 0 0 1.5px #fff inset; }
+
+/* Episode preview: revisions can be moved (a review gap before them) and each
+   pass resized on its own right edge */
+.pv-pill.combo.editable .pv-part { pointer-events: auto; }
+.pv-pill.combo.editable .pv-part.rev { cursor: grab; }
+.pv.moving, .pv.moving * { cursor: grabbing !important; }
+.pv-pill.combo .pv-part.gap-l { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
+.pv-pill.combo .pv-part.gap-r { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+.pv-pill.combo .pv-part .pv-grip { right: -5px; }
+.pv-pill.combo .pv-part:hover > .pv-grip::after, .pv-pill.combo.dragging .pv-part > .pv-grip::after { opacity: 1; transform: translate(50%, -50%) scaleX(1.15); }
+.pv-pill.combo:hover .pv-part:not(:hover) > .pv-grip::after { opacity: 0; }
+.pv-pill.rev.editable { cursor: grab; }

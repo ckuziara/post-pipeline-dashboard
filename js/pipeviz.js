@@ -337,9 +337,21 @@ window.App = window.App || {};
             onmouseleave: () => { if (hovered === it.t.key) { hovered = null; applyFocus(); } }
           });
           it.segs.forEach((sg, i) => {
-            // each pass runs on to where the next begins, so the bar is continuous
-            const a = wd(s0, sg.s) / total * 100, z = wd(s0, i < lastSi ? it.segs[i + 1].s : e0) / total * 100;
-            pill.appendChild(el('span.pv-part' + (sg.rev ? '.rev' : '') + (i ? '.div' : ''), { style: { left: a + '%', width: (z - a) + '%' } }));
+            // each pass at its own days: back to back it reads as one bar, and a
+            // revision held back for review leaves a gap before it
+            const a = wd(s0, sg.s) / total * 100, z = wd(s0, sg.e) / total * 100;
+            // in visible columns, so a weekend the show doesn't work isn't a gap
+            const gapL = i > 0 && wd(it.segs[i - 1].e, sg.s) > 0, gapR = i < lastSi && wd(sg.e, it.segs[i + 1].s) > 0;
+            const part = el('span.pv-part' + (sg.rev ? '.rev' : '') + (i && !gapL ? '.div' : '') + (gapL ? '.gap-l' : '') + (gapR ? '.gap-r' : ''),
+              { style: { left: a + '%', width: (z - a) + '%' } });
+            if (update) {
+              if (sg.rev) {
+                part.title = name + ' ' + sg.label + ' — drag to move it, drag its right edge to resize';
+                part.addEventListener('pointerdown', (e) => beginMove(e, it.t, i));
+              }
+              part.appendChild(el('span.pv-grip', { onpointerdown: (e) => beginResize(e, it.t, i) }));
+            }
+            pill.appendChild(part);
           });
           if (batch) pill.appendChild(el('span.pv-batch-tag', null, 'BATCH'));
           if (w > 24) pill.appendChild(el('span.pv-pill-txt', null, name));
@@ -347,7 +359,6 @@ window.App = window.App || {};
           if (update) {
             pill.classList.add('editable');
             if (drag && drag.t.key === it.t.key) pill.classList.add('dragging');
-            pill.appendChild(el('span.pv-grip', { onpointerdown: (e) => beginResize(e, it.t, lastSi) }));
           }
           canvas.appendChild(pill);
           merged = true;                 // drawn — skip the per-pass bars below
@@ -389,6 +400,10 @@ window.App = window.App || {};
             pill.classList.add('editable');
             // the one being stretched keeps its handle lit through the repaints
             if (drag && drag.t.key === it.t.key && drag.si === si) pill.classList.add('dragging');
+            if (sg.rev) {
+              pill.title = tip + '\nDrag to move it, drag its right edge to resize';
+              pill.addEventListener('pointerdown', (e) => beginMove(e, it.t, si));
+            }
             pill.appendChild(el('span.pv-grip', {
               onpointerdown: (e) => beginResize(e, it.t, si)
             }));
@@ -481,8 +496,64 @@ window.App = window.App || {};
       window.addEventListener('pointerup', endResize);
       window.addEventListener('pointercancel', endResize);
     }
+    /* ---- drag a revision to spread it out ----
+       Moves revision `si` later (or back) by the days of review planned before
+       it (t.revGaps). Later versions keep their own gaps, so they travel with
+       it. It can't go earlier than straight after the version before. A press
+       without movement is still a click (selects the task). */
+    const segGap = (t, si) => App.revGap(t, si - 1);
+    const setGap = (t, si, n) => {
+      const g = (t.revGaps || []).slice(0, t.maxRev || 0);
+      while (g.length < (t.maxRev || 0)) g.push(0);
+      g[si - 1] = n;
+      if (g.some(x => x > 0)) t.revGaps = g; else delete t.revGaps;
+    };
+    function beginMove(e, t, si) {
+      if (e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      const from = segGap(t, si), gaps0 = t.revGaps ? t.revGaps.slice() : null;
+      const x0 = e.clientX;
+      let live = false;
+      const restore = () => { if (gaps0) t.revGaps = gaps0.slice(); else delete t.revGaps; };
+      const move = (ev) => {
+        if (!live) {
+          if (Math.abs(ev.clientX - x0) < 3) return;
+          live = true;
+          drag = { t, si, move: true, from, now: from };
+          root.classList.add('resizing', 'moving');
+          document.body.appendChild(badge);
+        }
+        const n = Math.max(0, Math.min(365, from + Math.round((ev.clientX - x0) / currentPx)));
+        if (n !== drag.now) { drag.now = n; setGap(t, si, n); repaint(); }
+        moveBadge(ev);
+      };
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+        if (!live) return;
+        const d = drag; drag = null;
+        root.classList.remove('resizing', 'moving');
+        badge.remove();
+        justDragged = true; setTimeout(() => { justDragged = false; }, 0);
+        restore();
+        if (d.now === d.from) { repaint(); return; }
+        update(t.key, (tt) => setGap(tt, si, d.now));
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
+    }
+
     function moveBadge(e) {
       const d = drag; if (!d) return;
+      if (d.move) {
+        const prev = d.si === 1 ? 'V1' : 'V' + d.si;
+        badge.textContent = 'V' + (d.si + 1) + ' · ' + (d.now ? d.now + ' day' + (d.now === 1 ? '' : 's') + ' of review after ' + prev : 'straight after ' + prev);
+        badge.style.left = (e.clientX + 14) + 'px';
+        badge.style.top = (e.clientY - 30) + 'px';
+        return;
+      }
       badge.textContent = (d.si === 0 ? (d.t.name || 'Task') : 'V' + (d.si + 1)) + ' · ' + d.now + ' day' + (d.now === 1 ? '' : 's') +
         (d.now !== d.from ? ' (' + (d.now > d.from ? '+' : '−') + Math.abs(d.now - d.from) + ')' : '');
       badge.style.left = (e.clientX + 14) + 'px';

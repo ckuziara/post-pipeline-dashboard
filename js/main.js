@@ -548,7 +548,7 @@ window.App = window.App || {};
     // when the show keeps a calendar
     const cal = App.showCalendar(g.ep.showId);
     const newDue = cal
-      ? App.revisionSteps(App.revTask(g.ep, key), g.su.due, cal, { dept: g.su.dept, person: g.su.assignee }, used).revs[0].due
+      ? App.revisionSteps(App.revTask(g.ep, key), g.su.due, cal, { dept: g.su.dept, person: g.su.assignee }, used, { now: true }).revs[0].due
       : App.shiftIso(g.su.due, App.REVIEW_DAYS + revDays);
     const impact = App.scheduleImpact(g.ep, key, g.su.start, newDue);
     if (impact.deny) { App.toast(impact.deny.text + ' — nothing changed', true); return; }
@@ -1222,7 +1222,7 @@ window.App = window.App || {};
     if (t.vc) o.vc = true;
     if (t.ko) { o.ko = true; if (t.koFor) o.koFor = t.koFor; if (t.koDay != null) o.koDay = t.koDay; if (t.koWeeks > 0) o.koWeeks = t.koWeeks; }
     if (App.batchCfg(t)) o.batch = App.batchCfg(t);
-    if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); }
+    if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); if (App.hasRevGaps(t)) o.revGaps = t.revGaps.slice(0, t.maxRev); }
     return o;
   });
   const pipelineValid = (pipeline) => {
@@ -1484,7 +1484,7 @@ window.App = window.App || {};
       if (t.vc) o.vc = true;
       if (t.ko) { o.ko = true; if (t.koFor) o.koFor = t.koFor; if (t.koDay != null) o.koDay = t.koDay; if (t.koWeeks > 0) o.koWeeks = t.koWeeks; }
       if (App.batchCfg(t)) o.batch = App.batchCfg(t);
-      if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = (t.revDays || []).slice(); }
+      if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = (t.revDays || []).slice(); if (App.hasRevGaps(t)) o.revGaps = t.revGaps.slice(0, t.maxRev); }
       return o;
     });
     const LOCKED = ['in_progress', 'review', 'approved'];
@@ -1492,7 +1492,7 @@ window.App = window.App || {};
     // what the pipeline edit touched, then everything that waits on it
     const old = {};
     App.showPipeline(show).forEach(t => { old[t.key] = t; });
-    const sig = (t) => JSON.stringify([t.days, t.deps.slice().sort(), t.lag || 0, App.batchCfg(t), t.maxRev || 0, (t.revDays || []).slice(), t.ko ? [t.koDay, t.koWeeks || 0] : null]);
+    const sig = (t) => JSON.stringify([t.days, t.deps.slice().sort(), t.lag || 0, App.batchCfg(t), t.maxRev || 0, (t.revDays || []).slice(), App.hasRevGaps(t) ? t.revGaps.slice(0, t.maxRev) : [], t.ko ? [t.koDay, t.koWeeks || 0] : null]);
     // touched against a given starting pipeline — the show's, or the one an
     // episode was frozen on by an earlier locked edit
     const touchedFrom = (oldByKey) => {
