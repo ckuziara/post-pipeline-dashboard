@@ -616,6 +616,10 @@ window.App = window.App || {};
   // that reserve, so it never pushes a dependent and never counts the same
   // days twice. opts.withRevisions: false leaves the revisions out.
   App.REVIEW_DAYS = 0;
+  App.KO_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  // "Thursday", or "Thursday · 2 weeks on" when held back past the first one
+  App.koLabel = (t) => t.koDay == null ? 'Kick Off'
+    : App.KO_DAYS[t.koDay] + (t.koWeeks > 0 ? ' · ' + t.koWeeks + ' week' + (t.koWeeks === 1 ? '' : 's') + ' on' : '');
   App.schedulePipeline = function (pipeline, startIso, scale, opts) {
     const order = App.topoSort(pipeline); if (!order) return null;
     const withRev = !(opts && opts.withRevisions === false);
@@ -626,7 +630,7 @@ window.App = window.App || {};
     const byKey = {}; pipeline.forEach(t => { byKey[t.key] = t; });
     // `dates` is stored on episodes as-is, so `done` lives apart from it and
     // is only handed back when asked for
-    const dates = {}, done = {}; let end = startIso;
+    const dates = {}, done = {}, ready = {}; let end = startIso;
     const fixed = (opts && opts.fixed) || {};
     order.forEach(k => {
       const t = byKey[k];
@@ -648,7 +652,17 @@ window.App = window.App || {};
       // with a calendar, the task's days are its people's working days
       const who = cal ? { dept: t.dept, person: assignees[k] || null } : null;
       if (cal) s = cal.nextWork(s, who);           // work can't begin on a day off
-      const dur = App.taskDuration(t, scale);
+      /* A Kick Off is a one-day meeting held on a set weekday (t.koDay,
+         0 = Sunday … 6 = Saturday): it waits for the next one once its
+         dependencies are done. Left unset, it's simply the next working day. */
+      // t.koWeeks holds it back that many more weeks, on the same weekday
+      ready[k] = s;
+      if (t.ko && t.koDay != null) {
+        for (let i = 0; i < 7 && App.parseDate(s).getDay() !== t.koDay; i++) s = App.shiftIso(s, 1);
+        if (t.koWeeks > 0) s = App.shiftIso(s, 7 * t.koWeeks);
+        if (cal) s = cal.nextWork(s, who);
+      }
+      const dur = t.ko ? 1 : App.taskDuration(t, scale);
       const due = cal ? cal.addWork(s, dur, who) : App.shiftIso(s, dur - 1);
       // worst case: every revision spent, back to back after the first pass
       const steps = t.maxRev > 0 && withRev ? App.revisionSteps(t, due, cal, who, 0) : null;
@@ -656,7 +670,7 @@ window.App = window.App || {};
       dates[k] = { start: s, due };
       if (done[k] > end) end = done[k];
     });
-    return { dates, done, end };
+    return { dates, done, end, ready };
   };
 
   /* Batch tasks — the Timeline's Batch Set Dates rule, applied to a pipeline
@@ -1286,10 +1300,10 @@ window.App = window.App || {};
      name. `series` has always held the season ("Season 3"), so it keeps that
      job and the Show and Series levels are keys of their own. */
   App.SHOW_LEVELS = [
-    { key: 'brand', label: 'Brand', any: 'Any brand', ph: 'e.g. Little Angels' },
-    { key: 'franchise', label: 'Show', any: 'Any show', ph: 'e.g. Emmie' },
-    { key: 'seriesName', label: 'Series', any: 'Any series', ph: 'e.g. Emmie Wonder Wardrobe' },
-    { key: 'series', label: 'Season', any: 'Any season', ph: 'e.g. Season 1' }
+    { key: 'brand', label: 'Brand', any: 'Any brand' },
+    { key: 'franchise', label: 'Show', any: 'Any show' },
+    { key: 'seriesName', label: 'Series', any: 'Any series' },
+    { key: 'series', label: 'Season', any: 'Any season' }
   ];
   App.showPath = (s) => App.SHOW_LEVELS.map(l => s[l.key]).filter(Boolean).join(' › ');
   /* The values in use at level `i`, among `shows` that sit under `above`
@@ -1304,6 +1318,14 @@ window.App = window.App || {};
       if (s[key]) seen[s[key]] = 1;
     });
     return Object.keys(seen).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  };
+  /* A placeholder example taken from the board's own shows — the most
+     recently added live one that has this field set — so hints read like this
+     studio's work, not a made-up show. Blank when there's nothing stored. */
+  App.exampleOf = function (key) {
+    const shows = App.state.data.shows || [];
+    for (let i = shows.length - 1; i >= 0; i--) if (shows[i][key] && !shows[i].archived) return 'e.g. ' + shows[i][key];
+    return '';
   };
   App.isEpArchived = (ep) => !!ep.archived || !!App.show(ep.showId).archived;
   App.activeEpisodes = () => App.state.data.episodes.filter(ep => !App.isEpArchived(ep));

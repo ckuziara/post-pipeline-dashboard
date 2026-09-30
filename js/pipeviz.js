@@ -128,7 +128,8 @@ window.App = window.App || {};
         const steps = App.revisionSteps(t, d.due, cal, { dept: t.dept, person: assignees[t.key] || null }, 0);
         steps.revs.forEach(rv => segs.push({ s: off(rv.start), e: off(rv.due) + 1, label: rv.label, rev: true }));
         const at = off(steps.end) + 1;
-        return { t, s, e, end: Math.max(at, e), segs, start: d.start, due: d.due };
+        return { t, s, e, end: Math.max(at, e), segs, start: d.start, due: d.due,
+          ready: sch.ready && sch.ready[t.key] ? App.diffDays(sch.ready[t.key], startIso) : s };
       });
 
       /* Department lanes, each packed greedily into sub-rows: a task takes the
@@ -199,18 +200,41 @@ window.App = window.App || {};
         canvas.appendChild(el('.pv-empty.bad', null, [App.icon('warn'), ' The dependencies loop back on themselves — nothing can start.']));
         return;
       }
-      const px = zoom === null ? fitPx(L.totalDays) : zoom;
+      /* Days the show doesn't work (its calendar's weekends) take no width,
+         so a week is five columns wide and stretching a task across one
+         fills it. A show that works weekends keeps all seven. `C(day)` is a
+         day offset's column; everything is drawn in columns. */
+      const cal0 = opts && opts.cal;
+      const hidden = (d) => !!cal0 && cal0.weekend(App.shiftIso(startIso, d));
+      const cols = [0];
+      for (let d = 0; d < L.totalDays; d++) cols.push(cols[d] + (hidden(d) ? 0 : 1));
+      const C = (day) => cols[Math.max(0, Math.min(L.totalDays, day))];
+      const totalCols = C(L.totalDays);
+      const weekCols = C(7) || 7;
+      const px = zoom === null ? fitPx(totalCols) : zoom;
+      // the day offset under a pointer, for dragging a Kick Off to a weekday
+      dayAtX = (clientX) => {
+        const c = Math.floor((clientX - canvas.getBoundingClientRect().left - LABEL_W) / px);
+        for (let d = 0; d < L.totalDays; d++) if (!hidden(d) && cols[d] >= c) return d;
+        return L.totalDays - 1;
+      };
       currentPx = px;
       zoomOut.disabled = px <= ZOOM_MIN + 0.001;
       zoomIn.disabled = px >= ZOOM_MAX - 0.001;
       fitBtn.classList.toggle('active', zoom === null);
 
       const live = L.milestones[L.milestones.length - 1];
-      const weeksOf = (days) => Math.ceil(days / 7);
-      summary.textContent = weeksOf(L.workEnd) + ' weeks of work (' + L.workEnd + ' days)' +
+      /* Weeks are calendar weeks, Monday to Sunday: Week 1 is the one the
+         episode starts in, however far into it that is. `wk(d)` is the week a
+         day offset falls in. */
+      const lead = (App.parseDate(startIso).getDay() + 6) % 7;   // days since Monday
+      const wk = (d) => Math.floor((d + lead) / 7) + 1;
+      const weeksOf = (days) => wk(days - 1);
+      const workCols = C(L.workEnd);
+      summary.textContent = weeksOf(L.workEnd) + ' weeks of work (' + workCols + (workCols !== L.workEnd ? ' working' : '') + ' days)' +
         (live ? ' · ' + live.name + ' in week ' + weeksOf(live.day + 1) : '');
 
-      const X = (day) => LABEL_W + day * px;
+      const X = (day) => LABEL_W + C(day) * px;
       const width = X(L.totalDays);
 
       // vertical positions: axis, then each department's sub-rows
@@ -224,7 +248,7 @@ window.App = window.App || {};
 
       // ---- grid: week ticks, labelled Week 1, 2… — no calendar dates ----
       // label every week, or every other one when a week is too narrow for it
-      const labelWeeks = [1, 2, 4, 8].find(n => n * 7 * px >= 56) || 8;
+      const labelWeeks = [1, 2, 4, 8].find(n => n * weekCols * px >= 56) || 8;
       /* Zoomed in far enough, each day gets a line and its weekday initial
          under the week label — still no dates. Days the show doesn't work
          (its calendar's weekends) are the faded ones. */
@@ -235,16 +259,20 @@ window.App = window.App || {};
         const cal = opts && opts.cal;
         for (let d = 0; d < L.totalDays; d++) {
           const dow = (dow0 + d) % 7;
-          if (d % 7) canvas.appendChild(el('.pv-tick', { style: { left: X(d) + 'px', height: height + 'px' } }));
+          if (hidden(d)) continue;
+          if (dow !== 1 && d) canvas.appendChild(el('.pv-tick', { style: { left: X(d) + 'px', height: height + 'px' } }));
           // no calendar means every day is a working day (weekends included)
           const off = cal ? cal.weekend(App.shiftIso(startIso, d)) : false;
           canvas.appendChild(el('.pv-day-lbl' + (off ? '.off' : ''), { style: { left: X(d) + 'px', width: px + 'px' } }, 'SMTWTFS'[dow]));
         }
       }
-      for (let d = 0; d < L.totalDays; d += 7) {
-        const week = d / 7;
+      // a line on every Monday (and the start), labelled with its week number
+      for (let d = 0; d < L.totalDays; d = d ? d + 7 : (7 - lead) % 7 || 7) {
+        const week = wk(d) - 1;
         canvas.appendChild(el('.pv-tick.major', { style: { left: X(d) + 'px', height: height + 'px' } }));
-        if (week % labelWeeks === 0) {
+        // Week 1's label is skipped when it's too short a stub to hold one
+        const stub = !d && lead && (7 - lead) * px < 40;
+        if (week % labelWeeks === 0 && !stub) {
           canvas.appendChild(el('.pv-tick-lbl', { style: { left: (X(d) + 3) + 'px' } }, 'Week ' + (week + 1)));
         }
       }
@@ -258,6 +286,7 @@ window.App = window.App || {};
 
       // ---- days off, in red ----
       L.offDays.forEach(od => {
+        if (hidden(od.day)) return;
         const lane = od.dept && L.lanes.find(l => l.dept === od.dept);
         const top = od.prod ? AXIS_H : lane.y, h = od.prod ? height - AXIS_H : lane.h;
         canvas.appendChild(el('.pv-off' + (od.prod ? '.prod' : ''), {
@@ -276,7 +305,7 @@ window.App = window.App || {};
       // ---- bars ----
       // "Week 2" or "Weeks 2–3", from day offsets (e exclusive)
       const span = (s0, e0) => {
-        const a = Math.floor(s0 / 7) + 1, b = Math.floor((e0 - 1) / 7) + 1;
+        const a = wk(s0), b = wk(e0 - 1);
         return a === b ? 'Week ' + a : 'Weeks ' + a + '–' + b;
       };
       L.items.forEach(it => {
@@ -288,10 +317,11 @@ window.App = window.App || {};
            shrink to slivers that overlap. Then they're drawn as one bar with a
            line between each pass: the first pass solid, revisions striped,
            the right edge still stretching the last one. */
-        const segW = (sg) => (sg.e - sg.s) * px - 2;
+        const segW = (sg) => (X(sg.e) - X(sg.s)) - 2;
+        const wd = (a, b) => C(b) - C(a);     // working days between two offsets
         let merged = false;
-        if (it.segs.length > 1 && it.segs.some((sg, i) => segW(sg) < 16 || (i && (sg.s - it.segs[i - 1].e) * px < 5))) {
-          const s0 = it.segs[0].s, e0 = it.segs[it.segs.length - 1].e, total = e0 - s0;
+        if (!it.t.ko && it.segs.length > 1 && it.segs.some((sg, i) => segW(sg) < 16 || (i && (X(sg.s) - X(it.segs[i - 1].e)) < 5))) {
+          const s0 = it.segs[0].s, e0 = it.segs[it.segs.length - 1].e, total = wd(s0, e0) || 1;
           const w = Math.max(4, total * px - 2);
           const name = it.t.name || 'Untitled';
           const lastSi = it.segs.length - 1;
@@ -299,16 +329,16 @@ window.App = window.App || {};
           const pill = el('button.pv-pill.combo' + (batch ? '.batch' : ''), {
             type: 'button', 'data-key': it.t.key,
             title: name + ' — ' + dep.label + '\n' + span(it.s, it.e) + '\n' +
-              it.segs.map(sg => (sg.label || 'First pass') + ': ' + (sg.e - sg.s) + ' day' + (sg.e - sg.s === 1 ? '' : 's') + (sg.rev ? ' (planned)' : '')).join(' · '),
+              it.segs.map(sg => (sg.label || 'First pass') + ': ' + wd(sg.s, sg.e) + ' day' + (wd(sg.s, sg.e) === 1 ? '' : 's') + (sg.rev ? ' (planned)' : '')).join(' · '),
             style: { left: (X(s0) + 1) + 'px', top: top + 'px', width: w + 'px', height: BAR_H + 'px', color: ink },
-            onclick: () => { if (!justDragged) onSelect(it.t.key); },
+            onclick: () => { if (!justDragged) onSelect(it.t.ko && it.t.koFor ? it.t.koFor : it.t.key); },
             oncontextmenu: (e) => openMenu(e, it.t.key),
             onmouseenter: () => { hovered = it.t.key; applyFocus(); },
             onmouseleave: () => { if (hovered === it.t.key) { hovered = null; applyFocus(); } }
           });
           it.segs.forEach((sg, i) => {
             // each pass runs on to where the next begins, so the bar is continuous
-            const a = (sg.s - s0) / total * 100, z = ((i < lastSi ? it.segs[i + 1].s : e0) - s0) / total * 100;
+            const a = wd(s0, sg.s) / total * 100, z = wd(s0, i < lastSi ? it.segs[i + 1].s : e0) / total * 100;
             pill.appendChild(el('span.pv-part' + (sg.rev ? '.rev' : '') + (i ? '.div' : ''), { style: { left: a + '%', width: (z - a) + '%' } }));
           });
           if (batch) pill.appendChild(el('span.pv-batch-tag', null, 'BATCH'));
@@ -323,34 +353,39 @@ window.App = window.App || {};
           merged = true;                 // drawn — skip the per-pass bars below
         }
         if (!merged) it.segs.forEach((sg, si) => {
-          const w = Math.max(4, (sg.e - sg.s) * px - 2);
-          const days = sg.e - sg.s;
+          const w = Math.max(4, segW(sg));
+          const days = wd(sg.s, sg.e);
           const name = it.t.name || 'Untitled';
           // the first pass carries the task's name; a revision only its version
-          const text = si === 0 ? (it.t.maxRev ? name + ' · V1' : name) : sg.label;
+          const text = it.t.ko ? 'KO' : si === 0 ? (it.t.maxRev ? name + ' · V1' : name) : sg.label;
           const batch = si === 0 && !!App.batchCfg(it.t);
           const tip = si === 0
             ? name + ' — ' + dep.label + '\n' + span(it.s, it.e) + ' · ' + days + ' day' + (days === 1 ? '' : 's') +
               (it.t.deps.length ? '\nWaits for ' + it.t.deps.map(k => byKey[k] ? byKey[k].t.name : k).join(', ') : '\nStarts on day 1')
             : name + ' ' + sg.label + ' — ' + days + ' day' + (days === 1 ? '' : 's') + ' — planned for, in case it’s sent back';
-          const pill = el('button.pv-pill' + (sg.rev ? '.rev' : '') + (batch ? '.batch' : ''), {
+          const pill = el('button.pv-pill' + (sg.rev ? '.rev' : '') + (batch ? '.batch' : '') + (it.t.ko ? '.ko' : ''), {
             type: 'button', title: tip, 'data-key': it.t.key,
             style: {
               left: (X(sg.s) + 1) + 'px', top: top + 'px', width: w + 'px', height: BAR_H + 'px',
               color: sg.rev ? 'var(--text)' : ink
             },
-            onclick: () => { if (!justDragged) onSelect(it.t.key); },
+            onclick: () => { if (!justDragged) onSelect(it.t.ko && it.t.koFor ? it.t.koFor : it.t.key); },
             oncontextmenu: (e) => openMenu(e, it.t.key),
             onmouseenter: () => { hovered = it.t.key; applyFocus(); },
             onmouseleave: () => { if (hovered === it.t.key) { hovered = null; applyFocus(); } }
           }, [
             batch ? el('span.pv-batch-tag', null, 'BATCH') : null,
-            w > 24 ? el('span.pv-pill-txt', null, text) : null
+            w > (it.t.ko ? 16 : 24) ? el('span.pv-pill-txt', null, text) : null
           ]);
+          if (it.t.ko) {
+            pill.title = name + ' — Kick Off, ' + (it.t.koDay != null ? App.koLabel(it.t) : 'the next working day') +
+              (update ? '\nDrag to move it to another day of the week' : '');
+            if (update) pill.addEventListener('pointerdown', (e) => beginKoDrag(e, it.t, it.s, it.ready));
+          }
           pill.style.setProperty('--pv-c', dep.color);     // Object.assign can't set a custom property
           // the right edge stretches or shrinks this pass — its days, or this
           // revision's days. Narrow bars are all handle.
-          if (update) {
+          if (update && !it.t.ko) {
             pill.classList.add('editable');
             // the one being stretched keeps its handle lit through the repaints
             if (drag && drag.t.key === it.t.key && drag.si === si) pill.classList.add('dragging');
@@ -378,19 +413,39 @@ window.App = window.App || {};
        for it, and dims the rest. Done with classes on the existing nodes — a
        rebuild on hover would pull the pill out from under the cursor and take
        its tooltip with it. */
+    /* A task and its Kick Off act as one: picking or hovering either lights
+       both, and what they wait for / what waits for them is the pair's. */
+    function groupOf(key) {
+      if (!key || !last) return [];
+      const t = last.pipe.find(x => x.key === key);
+      if (!t) return [key];
+      const owner = t.ko && t.koFor ? t.koFor : key;
+      const ko = last.pipe.find(x => x.ko && x.koFor === owner);
+      return ko ? [owner, ko.key] : [owner];
+    }
     function applyFocus() {
-      const focus = hovered || selected;
-      const linked = new Set();
-      if (focus) {
-        linked.add(focus);
-        (last.pipe.find(t => t.key === focus) || { deps: [] }).deps.forEach(k => linked.add(k));
-        last.pipe.forEach(t => { if (t.deps.includes(focus)) linked.add(t.key); });
-      }
+      const focus = groupOf(hovered || selected), sel = new Set(groupOf(selected));
+      const linked = new Set(focus);
+      focus.forEach(f => {
+        (last.pipe.find(t => t.key === f) || { deps: [] }).deps.forEach(k => linked.add(k));
+        last.pipe.forEach(t => { if (t.deps.includes(f)) linked.add(t.key); });
+      });
       canvas.querySelectorAll('[data-key]').forEach(n => {
         const k = n.getAttribute('data-key');
-        n.classList.toggle('sel', k === selected);
-        n.classList.toggle('dim', !!focus && !linked.has(k));
+        n.classList.toggle('sel', sel.has(k));
+        n.classList.toggle('grouped', sel.size > 1 && sel.has(k));
+        n.classList.toggle('dim', !!focus.length && !linked.has(k));
       });
+      // one outline round the selected task and its KO, so they read as a group
+      canvas.querySelectorAll('.pv-ko-group').forEach(n => n.remove());
+      if (sel.size > 1) {
+        const pills = [...canvas.querySelectorAll('[data-key]')].filter(n => sel.has(n.getAttribute('data-key')));
+        if (pills.length) {
+          const L = Math.min(...pills.map(n => n.offsetLeft)), R = Math.max(...pills.map(n => n.offsetLeft + n.offsetWidth));
+          const T = Math.min(...pills.map(n => n.offsetTop)), B = Math.max(...pills.map(n => n.offsetTop + n.offsetHeight));
+          canvas.appendChild(el('.pv-ko-group', { style: { left: (L - 4) + 'px', top: (T - 4) + 'px', width: (R - L + 8) + 'px', height: (B - T + 8) + 'px' } }));
+        }
+      }
     }
 
     let scrollToSel = false;
@@ -406,7 +461,7 @@ window.App = window.App || {};
        redraw live, then put back and committed through update() on release —
        one undo step for the whole gesture, not one per day crossed. Listeners
        sit on the window because every redraw replaces the bar being dragged. */
-    let drag = null, justDragged = false;
+    let drag = null, justDragged = false, dayAtX = null;
     const badge = el('.pv-drag-badge');
 
     const segDays = (t, si) => si === 0 ? t.days : (t.revDays || [])[si - 1] || 1;
@@ -455,6 +510,58 @@ window.App = window.App || {};
       update(d.t.key, (t) => setSegDays(t, d.si, d.now));
     }
 
+    /* ---- drag a Kick Off to another weekday ----
+       A KO is always one day, so there's no end to stretch: the whole pill
+       moves, and where it's dropped picks the weekday it's held on. It then
+       sits on the next such day once its dependencies are done — dragging it
+       before that just picks the day, it can't jump the queue. */
+    function beginKoDrag(e, t, fromDay, readyDay) {
+      if (e.button !== 0 || !dayAtX) return;
+      e.preventDefault(); e.stopPropagation();
+      const dow0 = App.parseDate(last.startIso).getDay();
+      const dowOf = (d) => (dow0 + d) % 7;
+      /* Where it's dropped picks both: the weekday, and how many weeks past
+         the first such day after its dependencies it waits. Dropped before
+         it's ready, it takes the first one it can. */
+      const pick = (d) => {
+        const dow = dowOf(d);
+        const first = readyDay + (dow - dowOf(readyDay) + 7) % 7;
+        return { day: dow, weeks: Math.max(0, Math.round((d - first) / 7)) };
+      };
+      const orig = { day: t.koDay, weeks: t.koWeeks };
+      const start = { day: dowOf(fromDay), weeks: t.koWeeks > 0 ? t.koWeeks : 0 };
+      drag = { t, si: 0, ko: true, x: e.clientX, now: start };
+      root.classList.add('resizing');
+      document.body.appendChild(badge);
+      const show = (ev) => {
+        badge.textContent = (t.name || 'Kick Off') + ' · ' + App.koLabel({ koDay: drag.now.day, koWeeks: drag.now.weeks });
+        badge.style.left = (ev.clientX + 14) + 'px'; badge.style.top = (ev.clientY - 30) + 'px';
+      };
+      show(e);
+      const move = (ev) => {
+        if (Math.abs(ev.clientX - drag.x) < 3) return;
+        const n = pick(dayAtX(ev.clientX));
+        if (n.day !== drag.now.day || n.weeks !== drag.now.weeks) {
+          drag.now = n; t.koDay = n.day; t.koWeeks = n.weeks; repaint();
+        }
+        show(ev);
+      };
+      const end = () => {
+        const d = drag; drag = null;
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', end);
+        window.removeEventListener('pointercancel', end);
+        root.classList.remove('resizing'); badge.remove();
+        justDragged = true; setTimeout(() => { justDragged = false; }, 0);
+        t.koDay = orig.day; t.koWeeks = orig.weeks;
+        if (d.now.day === start.day && d.now.weeks === start.weeks) { repaint(); return; }
+        update(t.key, (x) => { x.koDay = d.now.day; if (d.now.weeks) x.koWeeks = d.now.weeks; else delete x.koWeeks; });
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', end);
+      window.addEventListener('pointercancel', end);
+    }
+
     /* ---- right-click menu ----
        Same look as the main Timeline's bar menu, and kept to what it names:
        each item opens a small window where the option is actually set. */
@@ -472,6 +579,9 @@ window.App = window.App || {};
       if (!update) return;
       e.preventDefault();
       closeMenu();
+      // a Kick Off has nothing of its own to set — its menu is its task's
+      const hit = last.pipe.find(x => x.key === key);
+      if (hit && hit.ko && hit.koFor) key = hit.koFor;
       const t = last.pipe.find(x => x.key === key);
       if (!t) return;
       const item = (label, sub, fn) => el('button.ctx-item', {

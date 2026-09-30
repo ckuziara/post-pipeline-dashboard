@@ -1215,6 +1215,7 @@ window.App = window.App || {};
                       days: t.days, minDays: t.minDays, deps: t.deps.slice() };
           if (t.lag) o.lag = t.lag;
           if (t.vc) o.vc = true;
+          if (t.ko) { o.ko = true; if (t.koFor) o.koFor = t.koFor; if (t.koDay != null) o.koDay = t.koDay; if (t.koWeeks > 0) o.koWeeks = t.koWeeks; }
           if (App.batchCfg(t)) o.batch = App.batchCfg(t);
           if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); }
           return o;
@@ -1433,6 +1434,7 @@ window.App = window.App || {};
       const o = { key: t.key, name: (t.name || '').trim() || t.key, dept: t.dept, days: t.days, minDays: Math.min(t.minDays || 1, t.days), deps: t.deps.slice() };
       if (t.lag) o.lag = t.lag;
       if (t.vc) o.vc = true;
+      if (t.ko) { o.ko = true; if (t.koFor) o.koFor = t.koFor; if (t.koDay != null) o.koDay = t.koDay; if (t.koWeeks > 0) o.koWeeks = t.koWeeks; }
       if (App.batchCfg(t)) o.batch = App.batchCfg(t);
       if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = (t.revDays || []).slice(); }
       return o;
@@ -1442,7 +1444,7 @@ window.App = window.App || {};
     // what the pipeline edit touched, then everything that waits on it
     const old = {};
     (show.pipeline || App.defaultPipelineFor(show.type)).forEach(t => { old[t.key] = t; });
-    const sig = (t) => JSON.stringify([t.days, t.deps.slice().sort(), t.lag || 0, App.batchCfg(t), t.maxRev || 0, (t.revDays || []).slice()]);
+    const sig = (t) => JSON.stringify([t.days, t.deps.slice().sort(), t.lag || 0, App.batchCfg(t), t.maxRev || 0, (t.revDays || []).slice(), t.ko ? [t.koDay, t.koWeeks || 0] : null]);
     // touched against a given starting pipeline — the show's, or the one an
     // episode was frozen on by an earlier locked edit
     const touchedFrom = (oldByKey) => {
