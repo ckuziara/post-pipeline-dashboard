@@ -449,11 +449,26 @@ window.App = window.App || {};
      has one possible answer — pick "Emmie Wonder Wardrobe" and Brand and
      Show follow. `initial` is { brand, franchise, seriesName, series }. */
   function showLevelFields(initial, hints) {
-    const combos = App.SHOW_LEVELS.map((lv, i) => App.combo({
-      value: (initial && initial[lv.key]) || '', placeholder: lv.ph, noun: lv.label.toLowerCase(),
+    const combos = App.SHOW_LEVELS.map((lv, i) => lv.key === 'series' ? seasonField(initial && initial.series) : App.combo({
+      value: (initial && initial[lv.key]) || '', placeholder: App.exampleOf(lv.key), noun: lv.label.toLowerCase(),
       values: () => App.showLevelValues(i, read()),
       onPick: (v) => fillAbove(i, v)
     }));
+    /* Season is a number. It's still stored as "Season 3" — what the Shows
+       browser groups and shows — so older shows and paths are unchanged;
+       only the box takes the number. Same shape as a combo (input/set/get). */
+    function seasonField(v0) {
+      const num = (v) => { const m = String(v || '').match(/\d+/); return m ? m[0] : ''; };
+      const ex = num(App.exampleOf('series'));
+      const inp = el('input.fld.fld-season', { type: 'number', min: '1', max: '99', step: '1', inputmode: 'numeric',
+        placeholder: ex ? 'e.g. ' + ex : '', value: num(v0) });
+      return {
+        input: inp,
+        set: (v) => { inp.value = num(v); },
+        get: () => { const n = parseInt(inp.value, 10); return n > 0 ? 'Season ' + n : ''; },
+        close: () => {}
+      };
+    }
     function read() {
       const o = {};
       App.SHOW_LEVELS.forEach((lv, i) => { o[lv.key] = combos[i].get(); });
@@ -1724,13 +1739,32 @@ window.App = window.App || {};
     // the list (the timeline's Dependencies popup), which renderPipe can't reach
     function openDepMenu(btn, t, after) {
       closeDepMenu();
-      const options = pipe.filter(p => p.key !== t.key && !t.deps.includes(p.key) && !dependsOn(p.key, t.key));
+      // a task with a Kick Off waits on it alone; its own dependencies live on the KO
+      const ko = koOf(t), holder = ko || t;
+      const options = pipe.filter(p => !p.ko && p.key !== t.key && !holder.deps.includes(p.key) && !dependsOn(p.key, t.key));
       depMenu = el('.dep-menu');
-      if (!options.length) depMenu.appendChild(el('.dep-menu-empty', null, 'No tasks available (self, existing deps and cycles are excluded)'));
+      /* Kick Off, always first: a one-day KO that sits on top of this task and
+         waits on what the task waited on, the task then following it. Its
+         weekday is set by dragging it in the Episode preview. */
+      if (!ko) {
+        depMenu.appendChild(el('button.dep-menu-item.dep-menu-ko', {
+          type: 'button', title: tip('Add a one-day Kick Off this task follows — drag it in the preview to pick its day'),
+          onclick: (e) => {
+            e.stopPropagation(); snapshot();
+            const k = { key: 'ko_' + App.uid().slice(0, 6), koFor: t.key, ko: true, name: '', dept: t.dept,
+              days: 1, minDays: 1, deps: t.deps.slice(), vc: false };
+            pipe.splice(pipe.indexOf(t), 0, k);
+            t.deps = [k.key];
+            closeDepMenu(); renderPipe(); onChange(); if (after) after();
+          }
+        }, [el('span.dep-ko-badge', null, 'KO'), 'Kick Off']));
+        if (options.length) depMenu.appendChild(el('.dep-menu-sep'));
+      }
+      if (!options.length && ko) depMenu.appendChild(el('.dep-menu-empty', null, 'No tasks available (self, existing deps and cycles are excluded)'));
       options.forEach(p => {
         depMenu.appendChild(el('button.dep-menu-item', {
           type: 'button',
-          onclick: (e) => { e.stopPropagation(); snapshot(); t.deps.push(p.key); closeDepMenu(); renderPipe(); onChange(); if (after) after(); }
+          onclick: (e) => { e.stopPropagation(); snapshot(); holder.deps.push(p.key); closeDepMenu(); renderPipe(); onChange(); if (after) after(); }
         }, [el('span.dot', { style: { background: App.dept(p.dept).color } }), p.name]));
       });
       document.body.appendChild(depMenu);
@@ -1779,18 +1813,29 @@ window.App = window.App || {};
       onStart: closeDepMenu,
       onDrop: (from, to) => {
         snapshot();
-        pipe.splice(to, 0, pipe.splice(from, 1)[0]);
+        reorderVisible(from, to);
         renderPipe(); onChange();
       }
     });
 
+    /* Rows are the tasks without their Kick Offs (a KO shows on its task's
+       row), so positions here count visible tasks; tidyKos() then puts each
+       KO back directly above its task. */
+    const visible = () => pipe.filter(p => !p.ko);
+    function reorderVisible(from, to) {
+      const vis = visible(), kos = pipe.filter(p => p.ko);
+      vis.splice(to, 0, vis.splice(from, 1)[0]);
+      pipe.splice(0, pipe.length, ...vis, ...kos);
+      tidyKos();
+    }
+
     // the grip stays keyboard-operable — the arrow buttons it replaced were the
     // only way to reorder without a pointer
     const moveBy = (i, delta) => {
-      const to = Math.max(0, Math.min(pipe.length - 1, i + delta));
+      const to = Math.max(0, Math.min(visible().length - 1, i + delta));
       if (to === i) return;
       snapshot();
-      pipe.splice(to, 0, pipe.splice(i, 1)[0]);
+      reorderVisible(i, to);
       renderPipe(); onChange();
       const g = rowEls()[to] && rowEls()[to].querySelector('.pipe-grip');
       if (g) g.focus();
@@ -1815,7 +1860,8 @@ window.App = window.App || {};
 
     function compactRow(t, i) {
       const dep = App.dept(t.dept);
-      const depNames = t.deps.map(dk => { const d = pipe.find(p => p.key === dk); return d ? d.name : dk; });
+      const ko = koOf(t);
+      const depNames = (ko ? ['KO'] : []).concat((ko || t).deps.map(dk => { const d = pipe.find(p => p.key === dk); return d ? d.name : dk; }));
       return el('.pipe-row.compact', {
         title: tip('Click to edit'),
         onclick: () => { editingKey = t.key; renderPipe(); }
@@ -1826,6 +1872,9 @@ window.App = window.App || {};
         (t.vc ? App.icon('lock', { cls: 'pipe-vc-tag', title: 'LucidLink version control enabled' }) : null),
         (App.batchCfg(t) ? el('span.pipe-batch-tag', { title: tip('Batch task — ' + App.batchLabel(t)) }, 'Batch') : null),
         el('span.pipe-deps-sum', { title: tip(depNames.join(', ')) }, depNames.length ? '◷ ' + depNames.join(', ') : ''),
+        (ko ? el('span.pipe-ko-inline', { title: tip('Kick Off — drag it in the Episode preview to change the day') }, [
+          el('span.pipe-ko-tag', null, 'KO'), el('span', null, App.koLabel(ko))
+        ]) : null),
         (t.maxRev ? el('span.pipe-rev', { title: tip(versionTip(t)) }, 'V1–V' + (t.maxRev + 1)) : null),
         el('span.pipe-dur', { title: tip(versionTip(t)) }, taskTotal(t) + 'd'),
         dragGrip(i, t, '.hov')
@@ -1836,14 +1885,23 @@ window.App = window.App || {};
        pick another from a list that already leaves out cycles. `after` is
        for a box shown somewhere renderPipe doesn't rebuild. */
     function depTags(t, after) {
+      const ko = koOf(t), holder = ko || t;
       return el('.dep-tags', null, [
-        ...t.deps.map(dk => {
+        // the Kick Off first; ✕ drops it and hands its dependencies back to the task
+        ko ? el('span.dep-tag.dep-tag-ko', null, [
+          el('span.dep-ko-badge', null, 'KO'), 'Kick Off',
+          el('button.dep-tag-x', {
+            type: 'button', title: tip('Remove the Kick Off'),
+            onclick: () => { snapshot(); dropKo(t); renderPipe(); onChange(); if (after) after(); }
+          }, '✕')
+        ]) : null,
+        ...holder.deps.map(dk => {
           const dep = pipe.find(p => p.key === dk);
           return el('span.dep-tag', null, [
             dep ? dep.name : dk,
             el('button.dep-tag-x', {
               type: 'button', title: tip('Remove dependency'),
-              onclick: () => { snapshot(); t.deps = t.deps.filter(k => k !== dk); renderPipe(); onChange(); if (after) after(); }
+              onclick: () => { snapshot(); holder.deps = holder.deps.filter(k => k !== dk); renderPipe(); onChange(); if (after) after(); }
             }, '✕')
           ]);
         }),
@@ -1934,11 +1992,40 @@ window.App = window.App || {};
       ]);
     }
 
+    /* ---- Kick Offs ----
+       A KO belongs to one task (koFor): it sits directly above it, carries
+       its name and department, is always one day with no revisions, and holds
+       the dependencies the task would otherwise have — the task itself waits
+       on the KO alone. tidyKos() puts all of that back after any edit. */
+    const koOf = (t) => t && !t.ko ? pipe.find(p => p.ko && p.koFor === t.key) || null : null;
+    function dropKo(t) {
+      const ko = koOf(t); if (!ko) return;
+      t.deps = ko.deps.filter(k => k !== t.key);
+      pipe.splice(pipe.indexOf(ko), 1);
+    }
+    function tidyKos() {
+      pipe.filter(p => p.ko).forEach(ko => {
+        // an older KO without an owner: the task that waits on it
+        if (!ko.koFor) { const o = pipe.find(p => !p.ko && p.deps.includes(ko.key)); if (o) ko.koFor = o.key; }
+        const owner = pipe.find(p => p.key === ko.koFor && !p.ko);
+        if (!owner) { pipe.splice(pipe.indexOf(ko), 1); return; }
+        ko.name = (owner.name || 'Task').trim() + ' KO';
+        ko.dept = owner.dept; ko.days = 1; ko.minDays = 1;
+        delete ko.maxRev; delete ko.revDays; delete ko.batch; delete ko.lag;
+        // anything else the task waited on moves onto its KO
+        owner.deps.forEach(k => { if (k !== ko.key && !ko.deps.includes(k)) ko.deps.push(k); });
+        owner.deps = [ko.key];
+        pipe.splice(pipe.indexOf(ko), 1);
+        pipe.splice(pipe.indexOf(owner), 0, ko);
+      });
+    }
+
     function renderPipe() {
       closeDepMenu();
+      tidyKos();
       pipeCount.textContent = pipe.length;
       pipeList.innerHTML = '';
-      pipe.forEach((t, i) => pipeList.appendChild(
+      visible().forEach((t, i) => pipeList.appendChild(
         t.key === confirmKey ? confirmRow(t, i)
         : t.key === editingKey ? editRow(t, i)
         : compactRow(t, i)));
@@ -1958,6 +2045,8 @@ window.App = window.App || {};
 
     function applyRemove(t, i, reconnect) {
       snapshot();
+      if (koOf(t)) dropKo(t);
+      i = pipe.indexOf(t);                // rows count visible tasks, not KOs
       const inherit = t.deps.slice();
       pipe.splice(i, 1);
       pipe.forEach(p => {
@@ -2020,7 +2109,9 @@ window.App = window.App || {};
     function addTask(at) {
       snapshot();
       const key = 'task_' + App.uid().slice(0, 6);
-      const idx = typeof at === 'number' ? Math.max(0, Math.min(at, pipe.length)) : pipe.length;
+      // `at` counts visible rows; a task's KO stays with it (tidyKos)
+      const vis = visible();
+      const idx = typeof at === 'number' && at < vis.length ? pipe.indexOf(vis[Math.max(0, at)]) : pipe.length;
       pipe.splice(idx, 0, { key, name: 'New Task', dept: 'creative', days: 5, minDays: 2, deps: [], vc: false });
       editingKey = key;
       renderPipe(); onChange();
@@ -2615,8 +2706,8 @@ window.App = window.App || {};
       };
 
       // ---------- show details ----------
-      const nameInput = el('input.fld', { type: 'text', placeholder: 'e.g. Show Name', value: d0.name || '' });
-      const codeInput = el('input.fld', { type: 'text', placeholder: 'e.g. ABC', maxlength: '6', value: d0.code || '' });
+      const nameInput = el('input.fld.fld-show-name', { type: 'text', placeholder: App.exampleOf('name'), value: d0.name || '' });
+      const codeInput = el('input.fld.fld-show-code', { type: 'text', placeholder: App.exampleOf('prefix'), maxlength: '6', value: d0.code || '' });
       // Brand › Show › Series › Season are what the Shows browser groups and
       // filters on, so a new show gets asked for them here rather than only in
       // the editor
@@ -2955,8 +3046,6 @@ window.App = window.App || {};
 
       // ---------- episodes ----------
       const epBody = el('.pipe-body', null, [
-        el('.fld-hint', { style: { margin: '8px 0' } },
-          'Name each episode and, if it matters, say when it goes live. Live dates follow the cadence unless you change one — then just that episode moves to land on its date.'),
         epList
       ]);
       const epPanel = collapsible('Episodes', [epCountBadge], epBody);
@@ -2974,7 +3063,8 @@ window.App = window.App || {};
       const normPipe = (p) => JSON.stringify((p || []).map(t => ({
         key: t.key, name: (t.name || '').trim(), dept: t.dept,
         days: t.days, minDays: t.minDays, deps: t.deps.slice().sort(),
-        lag: t.lag || 0, vc: !!t.vc, batch: App.batchCfg(t), maxRev: t.maxRev || 0, revDays: (t.revDays || []).slice()
+        lag: t.lag || 0, vc: !!t.vc, batch: App.batchCfg(t), maxRev: t.maxRev || 0, revDays: (t.revDays || []).slice(),
+        ko: !!t.ko, koFor: t.koFor || null, koDay: t.koDay != null ? t.koDay : null, koWeeks: t.koWeeks || 0
       })));
       const baselinePipe = () => {
         const preset = presetSel.value && (App.state.data.pipelinePresets || []).find(p => p.id === presetSel.value);
@@ -3039,8 +3129,6 @@ window.App = window.App || {};
       }, '＋');
 
       const pipeBody = el('.pipe-body', null, [
-        el('.fld-hint', { style: { margin: '8px 0' } },
-          '“days” is how long a task takes. Dependencies gate when a task can start. Click a task to edit it.'),
         presetBar,
         editor.list
       ]);
@@ -3213,14 +3301,16 @@ window.App = window.App || {};
           }, 'Start fresh')
         ]) : null),
         el('.modal-section-title', null, 'Show Details'),
-        el('.plan-grid', null, [
-          field('Show Name', nameInput, 'The full title of the series'),
-          field('Content Code', codeInput, 'Prefix for episode codes (LA → LA-1)'),
-          field('Show Type', typeSel, 'Sets the default pipeline for this show'),
-          field('Pipeline', presetSel, 'The standard pipeline, or a preset saved in Admin → Workflow')
-        ]),
-        el('.fld-label.show-levels-lbl', null, 'Where it sits — optional, groups shows in the Shows browser'),
-        el('.plan-grid.four', null, levels.fields),
+        // one compact grid, in reading order: name and code, where the show
+        // sits (Brand › Show › Series › Season), then its type and pipeline
+        // in a box like the Schedule below it
+        el('.sched-box', null, el('.plan-grid.four.show-details', null, [
+          field('Show Name', nameInput),
+          field('Content Code', codeInput),
+          ...levels.fields,
+          field('Show Type', typeSel),
+          field('Pipeline', presetSel)
+        ])),
         (editShow ? el('.field', { style: { marginTop: '12px' } }, [el('label.fld-label', null, 'Show Colour'), swatches]) : null),
         el('.modal-section-title', null, 'Schedule'),
         el('.sched-box', null, [
@@ -3486,6 +3576,7 @@ window.App = window.App || {};
               const o = { key: t.key, name: t.name.trim() || t.key, dept: t.dept, days: t.days, minDays: t.minDays, deps: t.deps.slice() };
               if (t.lag) o.lag = t.lag;
               if (t.vc) o.vc = true;
+              if (t.ko) { o.ko = true; if (t.koFor) o.koFor = t.koFor; if (t.koDay != null) o.koDay = t.koDay; if (t.koWeeks > 0) o.koWeeks = t.koWeeks; }
               if (App.batchCfg(t)) o.batch = App.batchCfg(t);
               if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); }
               return o;
@@ -4030,8 +4121,7 @@ window.App = window.App || {};
           field('Show Name', nameInput, 'The full title of the series'),
           field('Content Code', codeInput, 'Renaming it renames every episode code with it (LA-1 → NEW-1)')
         ]),
-        el('.fld-label.show-levels-lbl', null, 'Where it sits — groups shows in the Shows browser'),
-        el('.plan-grid.four', null, levels.fields),
+        el('.plan-grid.four.show-levels', null, levels.fields),
         el('.field', null, [
           el('label.fld-label', null, 'Show Colour'),
           swatches
