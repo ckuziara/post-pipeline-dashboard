@@ -850,7 +850,7 @@ window.App = window.App || {};
       el('span.c-ko' + (can ? '.can' : ''), can ? { onclick: () => redo(st !== 'done') } : null, App.board.koTag(ep, su)),
       el('span.ko-line-text', null, st === 'done'
         ? 'Kick Off done' + (d && d.by ? ' by ' + d.by : '') + (d && d.at ? ' on ' + App.fmtDate(d.at.slice(0, 10)) : '')
-        : (due ? 'Kick Off overdue — was due ' : 'Kick Off due ') + App.fmtDate(su.start))
+        : (due ? 'Kick Off overdue — was due ' : 'Kick Off due ') + App.fmtDate(App.koDate(ep, su)))
     ]);
   }
 
