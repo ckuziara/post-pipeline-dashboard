@@ -177,9 +177,9 @@ window.App = window.App || {};
         row.appendChild(el('button.btn-ghost.draft-btn', { type: 'button', title: 'Close (Esc)', onclick: () => this.dismiss() }, 'Close'));
       } else {
         row.appendChild(el('button.btn-ghost.draft-btn', { type: 'button', title: 'Discard the changes (Esc)', onclick: () => this.discard() },
-          ['Discard', el('kbd.draft-kbd', null, 'Esc')]));
+          'Discard'));
         row.appendChild(el('button.btn-primary.draft-btn', { type: 'button', title: 'Save the changes (Enter)', onclick: () => this.save() },
-          [App.icon('save'), ' Save', el('kbd.draft-kbd', null, '↵')]));
+          [App.icon('save'), ' Save']));
       }
       bar.appendChild(row);
     }

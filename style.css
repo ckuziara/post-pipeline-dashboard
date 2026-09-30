@@ -4965,4 +4965,3 @@ body.has-draft #toast-root { bottom: 92px; }
 .draft-item { font-size: 12px; color: var(--text-2); padding: 2px 0; }
 .draft-item b { color: var(--text); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .draft-bar { transition: opacity .15s; } .draft-dot { animation: none; } }
-.draft-kbd { margin-left: 6px; font: 600 10px/1 inherit; padding: 2px 4px; border-radius: 4px; border: 1px solid currentColor; opacity: .55; }
