@@ -141,9 +141,9 @@ window.App = window.App || {};
      Operations also owns scheduling (across every department, since that's the
      coordinating job), so it carries editSchedule without editAll. */
   App.ROLES = [
-    { key: 'producer',  label: 'Producer',        ico: 'clapper', approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, hint: 'Full access — all tasks, shows & admin' },
-    { key: 'manager',   label: 'Manager',         ico: 'compass', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, hint: 'Oversight, approvals & admin' },
-    { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, reviewQueue: true, kickOff: true, hint: 'Review & approve cuts' },
+    { key: 'producer',  label: 'Producer',        ico: 'clapper', approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, resourceView: 'all', hint: 'Full access — all tasks, shows & admin' },
+    { key: 'manager',   label: 'Manager',         ico: 'compass', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, resourceView: 'all', manageResources: true, hint: 'Oversight, approvals & admin' },
+    { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, reviewQueue: true, kickOff: true, resourceView: 'none', hint: 'Review & approve cuts' },
     { key: 'creative',  label: 'Creative',        ico: 'pencil', dept: 'creative',  hint: 'Creative department tasks' },
     { key: 'music',     label: 'Music',           ico: 'music', dept: 'music',     hint: 'Music department tasks' },
     { key: 'animation', label: 'Animation',       ico: 'film', dept: 'animation', hint: 'Animation department tasks' },
@@ -233,6 +233,86 @@ window.App = window.App || {};
   App.canSelectTasks  = (k) => k === 'producer';
   // choosing which tasks need a Kick Off, and ticking them done — Producer and Director by default
   App.canSetKickOff   = (k) => App.rolePerm(k, 'kickOff', App.role(k).kickOff);
+  /* ---- resourcing ----
+     Who sees the Resources tab, and how much of the team. Unlike the switches
+     above this is a three-way choice per role — 'none', 'team' (their own
+     department) or 'all' — kept as a string in data.rolePerms[k].resourceView.
+     Department roles default to 'team'; a role without a department can't see
+     a team, so 'team' falls back to just themselves. Managing (allocations,
+     capacity, contractors) is a plain switch, Manager by default. */
+  App.RESOURCE_VIEWS = [['none', 'None'], ['team', 'Own team'], ['all', 'All']];
+  const RV_RANK = { none: 0, team: 1, all: 2 };
+  App.resourceViewOf = function (k) {
+    const t = App.state && App.state.data && App.state.data.rolePerms;
+    const v = t && t[k] && t[k].resourceView;
+    if (v in RV_RANK) return v;
+    const r = App.role(k);
+    return r.resourceView || (r.dept ? 'team' : 'none');
+  };
+  // the widest of the base role and the viewer's sub-roles, like rolePerm
+  App.resourceView = function (k) {
+    return [k].concat(App.mySubRoles()).map(App.resourceViewOf)
+      .reduce((a, b) => RV_RANK[b] > RV_RANK[a] ? b : a, 'none');
+  };
+  App.canSeeResources = (k) => App.resourceView(k) !== 'none';
+  App.canManageResources = (k) => App.rolePerm(k, 'manageResources', App.role(k).manageResources);
+  // the Timeline's Schedule / Resources switch — this device's choice, and
+  // only Resources for a role that may see it
+  App.timelineMode = () => App.prefs.get('timelineMode', 'schedule') === 'resources' && App.canSeeResources(App.state.role) ? 'resources' : 'schedule';
+
+  /* Load for the Timeline's Resources view, in working days, for any run of
+     dates — a day, a week or a month, whichever the zoom calls for. `buckets`
+     are { key, start, end }; for each person and bucket:
+       days    — working days in the bucket (weekends never carry capacity)
+       cap     — their share of those days (days per week ÷ 5 each), less
+                 any of their own time off
+       booked  — working days in the bucket with at least one of their open
+                 (not approved) tasks. Tasks running side by side share the
+                 day — two on Monday are half a day each, not two days — so a
+                 week of overlapping tasks reads as a full week, not 2x
+       planned — their allocations: pct of their daily share over the days
+       off     — working days of time off
+       tasks   — their open tasks that touch the bucket, as { ep, su } */
+  App.mondayIso = function (iso) {
+    const d = App.parseDate(iso); const dow = (d.getDay() + 6) % 7;
+    return App.isoDate(App.addDays(d, -dow));
+  };
+  App.workdaysIn = function (start, end) {
+    const out = []; let d = App.parseDate(start); const e = App.parseDate(end);
+    while (d <= e) { const dow = d.getDay(); if (dow !== 0 && dow !== 6) out.push(App.isoDate(d)); d = App.addDays(d, 1); }
+    return out;
+  };
+  App.personCapacity = (p) => { const v = p && p.capacity && p.capacity.daysPerWeek; return typeof v === 'number' && v >= 0 ? v : 5; };
+  App.resourceLoad = function (people, buckets) {
+    const out = {};
+    const tasks = {};
+    App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
+      if (!su.assignee || su.status === 'approved') return;
+      (tasks[su.assignee] = tasks[su.assignee] || []).push({ ep, su });
+    }));
+    const allocs = (App.state.data.allocations || []);
+    // each bucket's working days, worked out once for everybody
+    const workdays = buckets.map(b => App.workdaysIn(b.start, b.end));
+    people.forEach(p => {
+      const perDay = App.personCapacity(p) / 5;
+      const mineAll = tasks[p.id] || [];
+      const myAllocs = allocs.filter(a => a.personId === p.id);
+      out[p.id] = {};
+      buckets.forEach((b, i) => {
+        const wd = workdays[i];
+        const off = wd.filter(day => (p.timeOff || []).some(t => t.start <= day && (t.end || t.start) >= day)).length;
+        // a task counts toward a bucket only on a working day — one that
+        // starts on a Saturday isn't Friday's work
+        const covers = ({ su }) => wd.some(day => su.start <= day && su.due >= day);
+        const mine = mineAll.filter(covers);
+        const booked = wd.filter(day => mine.some(({ su }) => su.start <= day && su.due >= day)).length;
+        const planned = myAllocs.reduce((n, a) => n + (+a.pct || 0) / 100 * perDay * wd.filter(day => a.start <= day && a.end >= day).length, 0);
+        out[p.id][b.key] = { days: wd.length, cap: perDay * (wd.length - off), booked, planned, off, tasks: mine };
+      });
+    });
+    return out;
+  };
+
   // status choices a role may set (non-approvers can't choose Approved)
   App.statusOptionsFor = (k) => App.canApprove(k) ? App.STATUS_ORDER : App.STATUS_ORDER.filter(s => s !== 'approved');
 
@@ -2052,7 +2132,12 @@ window.App = window.App || {};
     show(target, text, pos) {
       if (!text || !target.isConnected) return;
       const tip = this.ensure();
-      tip.textContent = text;
+      /* `text` may also be a function returning a Node, built on hover — a
+         richer tooltip (the Timeline's resource circles list their tasks)
+         in the same themed box, without building it for every cell up front. */
+      const content = typeof text === 'function' ? text() : text;
+      if (content instanceof Node) { tip.textContent = ''; tip.appendChild(content); tip.classList.add('rich'); }
+      else { tip.textContent = content; tip.classList.remove('rich'); }
       tip.classList.add('show');
       requestAnimationFrame(() => {
         if (!tip.classList.contains('show')) return;

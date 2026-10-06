@@ -316,6 +316,19 @@ window.App = window.App || {};
          sits in the toolbar with the other filters rather than two clicks deep
          in preferences. No label: three view names in a segmented control read
          as what they are. */
+      // Schedule (episodes and their tasks) or Resources (departments and
+      // people, as workload circles) — for roles with Resource Visibility
+      if (App.canSeeResources(App.state.role)) {
+        const mode = App.timelineMode();
+        bar.appendChild(el('.prefs-seg.toolbar-seg', null, [['schedule', 'Schedule'], ['resources', 'Resources']].map(([v, label]) =>
+          el('button.seg' + (mode === v ? '.active' : ''), {
+            title: v === 'resources' ? 'Workload by department and person, week by week' : 'Episodes and their tasks',
+            onclick: () => { App.prefs.set('timelineMode', v); App.render(); }
+          }, label))));
+        if (mode === 'resources' && App.canManageResources(App.state.role)) {
+          bar.appendChild(el('button.ghost', { onclick: () => App.resources.contractorDialog(), title: 'Add a freelancer or placeholder person' }, '＋ Contractor'));
+        }
+      }
       // hidden while App.TIMELINE_GROUPING is off (see above)
       const sort = App.timelineGrouping();
       if (App.TIMELINE_GROUPING) bar.appendChild(el('.prefs-seg.toolbar-seg', null,

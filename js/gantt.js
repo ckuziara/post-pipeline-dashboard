@@ -84,6 +84,14 @@ window.App = window.App || {};
     return { primary: 'years', secondary: 'quarters' };
   }
   function clampZoom(z) { return Math.max(1.4, Math.min(60, z)); }
+  /* Resources view cell size for a zoom (px per day): days once a day is wide
+     enough for a legible circle — the top of the zoom range — weeks until a
+     week gets too narrow for one, then months. */
+  const RES_DAY_MIN = 32;
+  function resourceUnit(dw) {
+    if (dw >= RES_DAY_MIN) return 'days';
+    return dw * 5 >= 18 ? 'weeks' : 'months';
+  }
 
   /* Zoomed out to quarters, the chart is read as shape rather than detail.
 
@@ -275,13 +283,18 @@ window.App = window.App || {};
     render(episodes) {
       this._episodes = episodes;       // what "all" means for the Opt shortcuts
       const sort = App.timelineGrouping();
+      // Resources mode (the toolbar's Schedule / Resources switch): the same
+      // time axis, header, zoom and today line, with departments and people
+      // as the rows instead of episodes — see resourceRows. Landscape only.
+      const resMode = App.timelineMode() === 'resources';
+      if (!resMode) this._resSnap = null;   // re-entering Resources shouldn't animate from a stale zoom
       /* Portrait (time runs top-to-bottom) applies to all three sorts. Every
          sort's rows are built from the same .g-row/.g-label/.g-track shape, so
          Portrait is the same two things everywhere: bars written along the
          other axis (setBarPos), and .gantt-body flipped to flex-row in CSS so
          a "row" lays out as a column. Grouping, ordering and interval-stacking
          are untouched and orientation-agnostic in all three. */
-      const portrait = App.prefs.get('timelineOrientation', 'landscape') === 'portrait';
+      const portrait = !resMode && App.prefs.get('timelineOrientation', 'landscape') === 'portrait';
       const axis = { portrait };
 
       const wrap = el('.gantt' + (App.prefs.get('latchScroll', false) ? '.latch' : '') + (portrait ? '.gantt-portrait' : ''));
@@ -408,12 +421,14 @@ window.App = window.App || {};
       // meaning already — narrow notes flipping to vertical text — and its own
       // transpose problem); hidden in Portrait rather than half-drawn.
       const singleShow = App.singleShowFilter();
-      if (singleShow && !portrait) this.producerNotesLane(body, singleShow, startIso, dw, xOf);
+      if (singleShow && !portrait && !resMode) this.producerNotesLane(body, singleShow, startIso, dw, xOf);
 
       const byStart = (a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1;
       // All shows: the executive view — departments and the two dates that
       // matter, no tasks (see execRows). Landscape only.
-      if (!App.state.filters.show.length && !portrait) {
+      if (resMode) {
+        this.resourceRows(body, ctx);
+      } else if (!App.state.filters.show.length && !portrait) {
         this.execRows(body, episodes.slice().sort(byStart), xOf, dw, axis);
       } else if (sort === 'show') {
         // one row per show; matching tasks across its episodes share a line
@@ -1413,7 +1428,8 @@ window.App = window.App || {};
         style: { position: 'sticky', left: '0', zIndex: '9', width: LABEL_W + 'px', minWidth: LABEL_W + 'px',
                  background: 'var(--bg-2)', borderRight: '1px solid var(--border-2)', display: 'flex',
                  alignItems: 'center', padding: '0 14px', fontSize: '11px', fontWeight: '700', color: 'var(--text-3)' }
-      }, { show: 'SHOW / TASK', department: 'DEPARTMENT / TASK' }[App.timelineGrouping()] || 'EPISODE / SUBITEM'));
+      }, App.timelineMode() === 'resources' ? 'DEPARTMENT / PERSON'
+        : { show: 'SHOW / TASK', department: 'DEPARTMENT / TASK' }[App.timelineGrouping()] || 'EPISODE / SUBITEM'));
       const cols = el('.th-cols', { title: 'Drag along the dates to measure a range', style: { width: (ctx.totalCols * ctx.dw) + 'px' } });
       // the ruler's header half, on a strip of its own above the dates — a
       // capped line over the measured range with the day count sitting on it.
@@ -2001,6 +2017,274 @@ window.App = window.App || {};
     // "Department" sort: one top row per department, spanning every episode in
     // view; expand → one line per task in that department, each line holding a
     // bar per episode running it.
+    /* ---- Resources mode ----
+       One row per department, expanding (the shared .g-label click, keyed
+       'res:<dept>') into one row per person. Each cell along the axis gets a
+       circle: the faint ring is capacity, the filled disc grows with load
+       (by area, so twice the load reads as twice the ink), and fills the ring
+       at capacity — over it, it turns red. The number is how many open tasks
+       touch the cell; hovering lists them. Load is App.resourceLoad, so a
+       cell's booked days are days with any task (side-by-side tasks share
+       the day), plus planned allocations, against capacity after time off.
+       Whose rows show is the role's Resource Visibility (Access Control).
+
+       What a cell is follows the zoom, so a circle always has room to read:
+       a DAY near full zoom, a WEEK through the middle, and a MONTH once a
+       week is too narrow for a circle. Weekends never carry capacity, so with
+       Hide weekends off their day columns stay empty. */
+    resourceRows(body, ctx) {
+      const people = App.resources.peopleInScope();
+      if (!people.length) {
+        body.appendChild(el('.empty', null, App.resourceView(App.state.role) === 'team' && !App.roleDept(App.state.role)
+          ? 'Your role isn’t in a department, so it has no team to show. An admin can open this up in Admin → Access Control.'
+          : 'Nobody in view — check the Dept and Owner filters.'));
+        return;
+      }
+      const unit = resourceUnit(ctx.dw);
+      const segs = segments(ctx, unit);
+      const lastIso = App.shiftIso(App.isoDate(ctx.start), ctx.totalCalDays - 1);
+      const buckets = segs.map((seg, i) => {
+        const start = App.isoDate(seg.day);
+        const end = unit === 'days' ? start : segs[i + 1] ? App.shiftIso(App.isoDate(segs[i + 1].day), -1) : lastIso;
+        return {
+          key: start, start, end, x: seg.colStart * ctx.dw, w: seg.colSpan * ctx.dw,
+          label: unit === 'days' ? App.fmtDate(start) : unit === 'weeks' ? seg.label + ' · ' + seg.sub : seg.label + ' ' + seg.sub
+        };
+      }).filter(b => {
+        if (unit !== 'days') return true;
+        const dow = App.parseDate(b.start).getDay();
+        return dow !== 0 && dow !== 6;
+      });
+      const load = App.resourceLoad(people, buckets);
+      // every open task per department — a department's count includes work
+      // nobody has been given yet
+      const deptTasks = {};
+      App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
+        if (su.status !== 'approved') (deptTasks[su.dept] = deptTasks[su.dept] || []).push({ ep, su });
+      }));
+      const byDept = {};
+      people.forEach(p => { const d = App.roleDept(p.role); (byDept[d] = byDept[d] || []).push(p); });
+      const todayIso = App.isoDate(App.today());
+      const isNow = (b) => b.start <= todayIso && b.end >= todayIso;
+
+      Object.keys(App.DEPARTMENTS).filter(d => byDept[d]).forEach(dk => {
+        const dep = App.dept(dk);
+        const crew = byDept[dk].sort((a, b) => a.name.localeCompare(b.name));
+        const expKey = 'res:' + dk;
+        const expanded = !!App.state.ganttExpanded[expKey];
+        const row = el('.g-row.res-lane');
+        row.dataset.episodeId = expKey;
+        row.appendChild(el('.g-label', null, [
+          el('.l-title', null, [el('span.chev' + (expanded ? '.open' : ''), null, '▶'), this.deptDot(dep), el('span', null, dep.label)]),
+          el('.l-sub', null, [el('span.code', null, crew.length + (crew.length === 1 ? ' person' : ' people'))])
+        ]));
+        const track = el('.g-track', { 'data-res-key': expKey });
+        buckets.forEach(b => {
+          const x = crew.reduce((a, p) => {
+            const l = load[p.id][b.key];
+            a.cap += l.cap; a.busy += Math.max(l.booked, l.planned); a.booked += l.booked; a.planned += l.planned;
+            return a;
+          }, { cap: 0, busy: 0, booked: 0, planned: 0 });
+          const wd = App.workdaysIn(b.start, b.end);
+          const tasks = (deptTasks[dk] || []).filter(({ su }) => wd.some(day => su.start <= day && su.due >= day));
+          track.appendChild(this.resCircle(b, x, tasks, dep, dep.label, isNow(b), false, true));
+        });
+        row.appendChild(track);
+        body.appendChild(row);
+        if (!expanded) return;
+
+        crew.forEach(p => {
+          // zoomed in to days, a person's circles give way to their actual
+          // task bars — see resPersonBars
+          if (unit === 'days') { this.resPersonBars(body, p, dep, buckets, load, ctx); return; }
+          const prow = el('.g-row.sub.res-lane.res-person');
+          prow.appendChild(this.resPersonLabel(p));
+          const ptrack = el('.g-track', { 'data-res-key': 'person:' + p.id });
+          buckets.forEach(b => {
+            const l = load[p.id][b.key];
+            ptrack.appendChild(this.resCircle(b, { cap: l.cap, busy: Math.max(l.booked, l.planned), booked: l.booked, planned: l.planned, off: l.off },
+              l.tasks, dep, p.name, isNow(b), l.days > 0 && l.off >= l.days, false));
+          });
+          prow.appendChild(ptrack);
+          body.appendChild(prow);
+        });
+      });
+      this.resAnimate(body, ctx, unit);
+    },
+
+    /* Changing cell size (day / week / month) animates instead of snapping.
+       Zooming IN, every new circle grows out of the parent it came from:
+       it starts at the parent's centre and size and glides to its own spot.
+       Zooming OUT, the old circles are pulled into their new parent and
+       shrink away (stand-ins, since the real ones are already gone), while
+       the parent swells into place. Everything is worked out from the
+       circles' dates under the CURRENT scale, so it holds however far the
+       zoom jumped. The snapshot taken here is what the next render compares
+       against. Transforms only — nothing reflows — and none of it for
+       people who ask for reduced motion. */
+    resAnimate(body, ctx, unit) {
+      const RANK = { days: 0, weeks: 1, months: 2 };
+      const centre = (start, end) => (ctx.colOf(start) + ctx.colOf(App.shiftIso(end, 1))) / 2 * ctx.dw;
+      const read = () => {
+        const rows = {};
+        body.querySelectorAll('.g-track[data-res-key]').forEach(t => {
+          rows[t.dataset.resKey] = [...t.querySelectorAll('.res-cell[data-start]')].map(c => {
+            const ring = c.querySelector('.res-ring');
+            return ring && { start: c.dataset.start, end: c.dataset.end, el: ring, size: ring.offsetWidth || parseFloat(ring.style.width),
+              disc: parseFloat(ring.firstChild.style.width), over: ring.classList.contains('over'), color: ring.style.getPropertyValue('--res-c') };
+          }).filter(Boolean);
+        });
+        return rows;
+      };
+      const prev = this._resSnap;
+      const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      requestAnimationFrame(() => {
+        const now = read();
+        this._resSnap = { unit, rows: Object.fromEntries(Object.entries(now).map(([k, v]) => [k, v.map(({ el: _, ...rest }) => rest)])) };
+        if (!prev || prev.unit === unit || reduce || !body.isConnected) return;
+        const zoomIn = RANK[unit] < RANK[prev.unit];
+        // only what's on screen (plus a margin) moves — a long board has
+        // hundreds of circles, and off-screen motion is all cost, no picture
+        const sc = this._scrollEl;
+        const lo = (sc ? sc.scrollLeft : 0) - 160, hi = (sc ? sc.scrollLeft + sc.clientWidth - LABEL_W : Infinity) + 160;
+        const seen = (x) => x >= lo && x <= hi;
+        // ease-in-out (cubic) on every leg, so motion ramps up and settles at both ends
+        const ease = 'cubic-bezier(.65,0,.35,1)', dur = 560;
+        // a person's task bars (day zoom) draw out from their start as they arrive
+        if (zoomIn) body.querySelectorAll('.res-bars .bar').forEach((bar, i) => {
+          if (!seen(parseFloat(bar.style.left))) return;
+          // .bar centres itself with translateY(-50%), so the keyframes keep it
+          bar.animate([{ transform: 'translateY(-50%) scaleX(.15)', transformOrigin: 'left center', opacity: 0 }, { transform: 'translateY(-50%)', transformOrigin: 'left center', opacity: 1 }],
+            { duration: dur, easing: ease, delay: Math.min(i % 7, 6) * 18 });
+        });
+        // the counts sit at their final spots, so they wait for the circles to land
+        body.querySelectorAll('.res-count').forEach(n => {
+          if (seen(parseFloat(n.parentNode.style.left))) n.animate([{ opacity: 0 }, { opacity: 0, offset: .6 }, { opacity: 1 }], { duration: dur + 160, easing: 'ease-in-out' });
+        });
+        body.querySelectorAll('.g-track[data-res-key]').forEach(track => {
+          const before = prev.rows[track.dataset.resKey] || [];
+          const after = now[track.dataset.resKey] || [];
+          if (zoomIn) {
+            after.forEach((c, i) => {
+              if (!seen(centre(c.start, c.end))) return;
+              const parent = before.find(p => p.start <= c.start && p.end >= c.start);
+              if (!parent) { c.el.animate([{ transform: 'scale(0)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: dur, easing: ease }); return; }
+              const dx = centre(parent.start, parent.end) - centre(c.start, c.end);
+              const k = parent.size / Math.max(1, c.size);
+              c.el.animate([
+                { transform: 'translateX(' + dx + 'px) scale(' + k + ')', opacity: .35 },
+                { transform: 'none', opacity: 1 }
+              ], { duration: dur, easing: ease, delay: Math.min(i % 7, 6) * 18 });
+            });
+          } else {
+            after.forEach(p => {
+              const pc = centre(p.start, p.end);
+              if (!seen(pc)) return;
+              const kids = before.filter(c => c.start >= p.start && c.start <= p.end && seen(centre(c.start, c.end)));
+              kids.forEach(c => {
+                const cc = centre(c.start, c.end);
+                const ghost = el('.res-cell.res-ghost', { style: { left: (cc - c.size / 2) + 'px', width: c.size + 'px' } }, [
+                  el('.res-ring' + (c.over ? '.over' : ''), { style: { width: c.size + 'px', height: c.size + 'px' } },
+                    [el('.res-disc', { style: { width: c.disc + 'px', height: c.disc + 'px' } })])
+                ]);
+                ghost.firstChild.style.setProperty('--res-c', c.color);
+                track.appendChild(ghost);
+                ghost.animate([
+                  { transform: 'none', opacity: 1 },
+                  { transform: 'translateX(' + (pc - cc) + 'px) scale(.2)', opacity: 0 }
+                ], { duration: dur, easing: ease, fill: 'forwards' }).onfinish = () => ghost.remove();
+              });
+              p.el.animate([{ transform: 'scale(.3)', opacity: 0 }, { transform: 'scale(.3)', opacity: 0, offset: .35 }, { transform: 'none', opacity: 1 }],
+                { duration: dur + 100, easing: ease });
+            });
+          }
+        });
+      });
+    },
+
+    resPersonLabel(p) {
+      return el('.g-label', { onclick: (e) => { e.stopPropagation(); App.resources.openPerson(p.id); }, title: 'Capacity, time off and allocations' }, [
+        el('.l-title', null, [
+          el('span.avatar', { style: { width: '18px', height: '18px', fontSize: '8px', background: p.color, flex: 'none' } }, App.initials(p.name)),
+          el('span', null, p.name)
+        ]),
+        el('.l-sub', null, [el('span', null, App.role(p.role).label + (p.contractor ? ' · Contractor' : '') + ' · ' +
+          (Math.round(App.personCapacity(p) * 10) / 10) + 'd/wk')])
+      ]);
+    },
+
+    /* A person at day zoom: their tasks as the Timeline's own task bars
+       (taskBar — same colours, status ring, holiday pauses, revisions, and
+       the same click-to-edit and drag, since they're .bar elements in a
+       .g-row.sub carrying the episode and task). Overlapping tasks stack
+       into lanes exactly as epTaskLines does; the first lane carries the
+       person's label, the rest are continuation rows. Days they're off are
+       hatched behind the bars, across every lane. */
+    resPersonBars(body, p, dep, buckets, load, ctx) {
+      const xOf = this._xOf;
+      const items = [];
+      App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => { if (su.assignee === p.id) items.push({ ep, su }); }));
+      items.sort((a, b) => a.su.start < b.su.start ? -1 : 1);
+      const levels = [];
+      items.forEach(it => {
+        const end = App.plannedRevisions(it.ep, it.su).end;
+        const lvl = levels.find(l => it.su.start > l.lastDue);
+        if (lvl) { lvl.lastDue = end; lvl.items.push(it); }
+        else levels.push({ lastDue: end, items: [it] });
+      });
+      if (!levels.length) levels.push({ items: [] });
+      levels.forEach((lvl, li) => {
+        const row = el('.g-row.sub.res-lane.res-person.res-bars' + (li ? '.res-cont' : ''));
+        row.appendChild(li === 0 ? this.resPersonLabel(p) : el('.g-label'));
+        const track = el('.g-track');
+        buckets.forEach(b => {
+          const l = load[p.id][b.key];
+          if (l.days && l.off >= l.days) track.appendChild(el('.res-cell.away', { style: { left: b.x + 'px', width: b.w + 'px' } }));
+        });
+        lvl.items.forEach(({ ep, su }) => this.taskBar(track, ep, su, dep, xOf, ctx.dw, ep.code + ' · ' + su.name, null, { portrait: false }));
+        row.appendChild(track);
+        body.appendChild(row);
+      });
+    },
+
+    /* One cell's circle, sized to the cell: as big as the narrower of the
+       cell and the row allows (capped so a wide day or month doesn't balloon
+       into the row's borders). The task count needs room beside the circle,
+       so on a narrow cell it moves into the tooltip only. */
+    resCircle(b, x, tasks, dep, who, now, away, isDept) {
+      const cell = el('.res-cell' + (now ? '.now' : ''), { style: { left: b.x + 'px', width: b.w + 'px' }, 'data-start': b.start, 'data-end': b.end });
+      const roomy = b.w >= 34;
+      if (away) { if (b.w >= 30) cell.appendChild(el('span.res-away', null, 'Away')); else cell.classList.add('away'); return cell; }
+      if (!tasks.length && x.busy <= 0) return cell;
+      const ratio = x.cap > 0 ? x.busy / x.cap : (x.busy > 0 ? 2 : 0);
+      const over = ratio > 1.001;
+      const ring = Math.max(6, Math.min(b.w - (roomy ? 12 : 4), isDept ? 40 : 34));
+      const disc = ring * Math.sqrt(Math.min(1, ratio));
+      const r1 = (n) => Math.round(n * 10) / 10;
+      const tip = () => {
+        const box = el('.res-tip');
+        box.appendChild(el('.res-tip-head', null, who + ' · ' + b.label));
+        box.appendChild(el('.res-tip-sub', null, r1(x.booked) + ' d booked' + (x.planned ? ' · ' + r1(x.planned) + ' d planned' : '') +
+          ' of ' + r1(x.cap) + ' d' + (x.off ? ' (' + x.off + ' d off)' : '') + ' · ' + tasks.length + (tasks.length === 1 ? ' task' : ' tasks')));
+        tasks.slice().sort((a, c) => a.su.start < c.su.start ? -1 : 1).slice(0, 12).forEach(({ ep, su }) => {
+          const owner = isDept && su.assignee ? App.person(su.assignee) : null;
+          box.appendChild(el('.res-tip-task', { style: { borderLeftColor: App.dept(su.dept).color } }, [
+            el('span.res-tip-code', null, ep.code), ' ' + su.name,
+            el('span.res-tip-meta', null, App.fmtRange(su.start, su.due) + (owner ? ' · ' + owner.name : isDept && !su.assignee ? ' · unassigned' : ''))
+          ]));
+        });
+        if (tasks.length > 12) box.appendChild(el('.res-tip-sub', null, '+ ' + (tasks.length - 12) + ' more'));
+        return box;
+      };
+      const circle = el('.res-ring' + (over ? '.over' : ''), {
+        title: tip, style: { width: ring + 'px', height: ring + 'px' }
+      }, [el('.res-disc', { style: { width: disc + 'px', height: disc + 'px' } })]);
+      circle.style.setProperty('--res-c', dep.color);
+      cell.appendChild(circle);
+      if (tasks.length && roomy) cell.appendChild(el('span.res-count', null, String(tasks.length)));
+      return cell;
+    },
+
     departmentRows(body, episodes, startIso, dw, timeW, xOf, axis) {
       const { order, byDept } = this.groupByDept(episodes);
       const portrait = !!(axis && axis.portrait);
