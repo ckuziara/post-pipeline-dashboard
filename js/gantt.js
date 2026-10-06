@@ -2152,10 +2152,11 @@ window.App = window.App || {};
         const sc = this._scrollEl;
         const lo = (sc ? sc.scrollLeft : 0) - 160, hi = (sc ? sc.scrollLeft + sc.clientWidth - LABEL_W : Infinity) + 160;
         const seen = (x) => x >= lo && x <= hi;
-        const ease = 'cubic-bezier(.2,.8,.2,1)', dur = 380;
+        // ease-in-out (cubic) on every leg, so motion ramps up and settles at both ends
+        const ease = 'cubic-bezier(.65,0,.35,1)', dur = 560;
         // the counts sit at their final spots, so they wait for the circles to land
         body.querySelectorAll('.res-count').forEach(n => {
-          if (seen(parseFloat(n.parentNode.style.left))) n.animate([{ opacity: 0 }, { opacity: 0, offset: .6 }, { opacity: 1 }], { duration: dur + 120, easing: 'ease-out' });
+          if (seen(parseFloat(n.parentNode.style.left))) n.animate([{ opacity: 0 }, { opacity: 0, offset: .6 }, { opacity: 1 }], { duration: dur + 160, easing: 'ease-in-out' });
         });
         body.querySelectorAll('.g-track[data-res-key]').forEach(track => {
           const before = prev.rows[track.dataset.resKey] || [];
@@ -2170,7 +2171,7 @@ window.App = window.App || {};
               c.el.animate([
                 { transform: 'translateX(' + dx + 'px) scale(' + k + ')', opacity: .35 },
                 { transform: 'none', opacity: 1 }
-              ], { duration: dur, easing: ease, delay: Math.min(i % 7, 6) * 12 });
+              ], { duration: dur, easing: ease, delay: Math.min(i % 7, 6) * 18 });
             });
           } else {
             after.forEach(p => {
@@ -2188,10 +2189,10 @@ window.App = window.App || {};
                 ghost.animate([
                   { transform: 'none', opacity: 1 },
                   { transform: 'translateX(' + (pc - cc) + 'px) scale(.2)', opacity: 0 }
-                ], { duration: dur - 60, easing: 'cubic-bezier(.5,0,.75,0)', fill: 'forwards' }).onfinish = () => ghost.remove();
+                ], { duration: dur, easing: ease, fill: 'forwards' }).onfinish = () => ghost.remove();
               });
               p.el.animate([{ transform: 'scale(.3)', opacity: 0 }, { transform: 'scale(.3)', opacity: 0, offset: .35 }, { transform: 'none', opacity: 1 }],
-                { duration: dur + 80, easing: ease });
+                { duration: dur + 100, easing: ease });
             });
           }
         });
