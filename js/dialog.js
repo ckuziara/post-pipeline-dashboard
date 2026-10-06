@@ -1615,7 +1615,15 @@ window.App = window.App || {};
      The compact/expandable task list shared by Add Show and Admin → Workflow →
      Pipelines. Mutates the array it's given IN PLACE (push/splice/swap), so the
      caller's reference stays valid; `onChange` fires after anything that could
-     alter scheduling (add/remove/reorder/deps/durations). */
+     alter scheduling (add/remove/reorder/deps/durations).
+
+     Optional, for Smart Import (js/smartimport.js), which reuses this list:
+       opts.extraTypes  [{ key, label, color }] offered after the departments
+                        in the department picker (Live date, Producer note…);
+                        a task given one carries that key as its `dept`
+       opts.deps        false hides the dependency chips
+       opts.versions    false hides the days-per-version block
+       opts.kickOffs    false leaves Kick Off out of the dependency menu */
   App.pipelineEditor = function (initialPipe, opts) {
     const onChange = (opts && opts.onChange) || function () {};
     /* onDraft fires on every keystroke into a name or number — for a live
@@ -1624,6 +1632,10 @@ window.App = window.App || {};
     const onDraft = (opts && opts.onDraft) || function () {};
     const onEdit = (opts && opts.onEdit) || function () {};
     const tip = (opts && opts.tooltips === false) ? () => null : (text) => text;
+    const extraTypes = (opts && opts.extraTypes) || [];
+    const showDeps = !(opts && opts.deps === false);
+    const showVersions = !(opts && opts.versions === false);
+    const deptInfo = (k) => extraTypes.find(x => x.key === k) || App.dept(k);
     let pipe = initialPipe;
     let editingKey = null;
     let confirmKey = null;      // task awaiting the inline remove confirmation
@@ -1708,7 +1720,7 @@ window.App = window.App || {};
       /* Kick Off, always first: a one-day KO that sits on top of this task and
          waits on what the task waited on, the task then following it. Its
          weekday is set by dragging it in the Episode preview. */
-      if (!ko) {
+      if (!ko && !(opts && opts.kickOffs === false)) {
         depMenu.appendChild(el('button.dep-menu-item.dep-menu-ko', {
           type: 'button', title: tip('Add a one-day Kick Off this task follows — drag it in the preview to pick its day'),
           onclick: (e) => {
@@ -1722,7 +1734,7 @@ window.App = window.App || {};
         }, [el('span.dep-ko-badge', null, 'KO'), 'Kick Off']));
         if (options.length) depMenu.appendChild(el('.dep-menu-sep'));
       }
-      if (!options.length && ko) depMenu.appendChild(el('.dep-menu-empty', null, 'No tasks available (self, existing deps and cycles are excluded)'));
+      if (!options.length && (ko || (opts && opts.kickOffs === false))) depMenu.appendChild(el('.dep-menu-empty', null, 'No tasks available (self, existing deps and cycles are excluded)'));
       options.forEach(p => {
         depMenu.appendChild(el('button.dep-menu-item', {
           type: 'button',
@@ -1821,7 +1833,7 @@ window.App = window.App || {};
       .map((d, vi) => 'V' + (vi + 1) + ': ' + d + 'd').join(' · ') + ' — ' + taskTotal(t) + ' days in total';
 
     function compactRow(t, i) {
-      const dep = App.dept(t.dept);
+      const dep = deptInfo(t.dept);
       const ko = koOf(t);
       const depNames = (ko ? ['KO'] : []).concat((ko || t).deps.map(dk => { const d = pipe.find(p => p.key === dk); return d ? d.name : dk; }));
       return el('.pipe-row.compact', {
@@ -1833,7 +1845,7 @@ window.App = window.App || {};
         el('span.pipe-name-ro', null, t.name || '—'),
         (t.vc ? App.icon('lock', { cls: 'pipe-vc-tag', title: 'LucidLink version control enabled' }) : null),
         (App.batchCfg(t) ? el('span.pipe-batch-tag', { title: tip('Batch task — ' + App.batchLabel(t)) }, 'Batch') : null),
-        el('span.pipe-deps-sum', { title: tip(depNames.join(', ')) }, depNames.length ? '◷ ' + depNames.join(', ') : ''),
+        el('span.pipe-deps-sum', { title: tip(depNames.join(', ')) }, showDeps && depNames.length ? '◷ ' + depNames.join(', ') : ''),
         (ko ? el('span.pipe-ko-inline', { title: tip('Kick Off — drag it in the Episode preview to change the day') }, [
           el('span.pipe-ko-tag', null, 'KO'), el('span', null, App.koLabel(ko))
         ]) : null),
@@ -1880,8 +1892,16 @@ window.App = window.App || {};
         const o = document.createElement('option'); o.value = dk; o.textContent = App.DEPARTMENTS[dk].label;
         if (dk === t.dept) o.selected = true; deptSel.appendChild(o);
       });
+      if (extraTypes.length) {
+        const g = document.createElement('optgroup'); g.label = 'Not a task';
+        extraTypes.forEach(x => {
+          const o = document.createElement('option'); o.value = x.key; o.textContent = x.label;
+          if (x.key === t.dept) o.selected = true; g.appendChild(o);
+        });
+        deptSel.appendChild(g);
+      }
 
-      const depsBox = depTags(t);
+      const depsBox = showDeps ? depTags(t) : el('span');
 
       // LucidLink version-control toggle — the ONLY place VC is switched on for
       // a task, and off by default. Shown only when the connector is enabled.
@@ -1936,10 +1956,10 @@ window.App = window.App || {};
         // task (it's the squeeze floor for an earlier end date) — it just
         // keeps whatever the preset or the new-task default gave it
         depsBox,
-        el('.pipe-rev-block', { style: { gridColumn: '1 / -1' } }, [
+        showVersions ? el('.pipe-rev-block', { style: { gridColumn: '1 / -1' } }, [
           el('span.pipe-rev-block-lbl', null, 'Days per version'),
           versBox
-        ]),
+        ]) : null,
         el('.pipe-actions', null, [
           vcToggle,
           el('button.btn-done', {
@@ -4003,6 +4023,10 @@ window.App = window.App || {};
           title: 'Load a show and its episodes from a back-up JSON file',
           onclick: () => { App.modal.close(); pickShowFile(); }
         }, [App.icon('upload'), ' Import show']),
+        el('button.btn-ghost', {
+          title: 'Read a show out of a production schedule spreadsheet (.xlsx) — coloured bars, dates and all',
+          onclick: () => { App.modal.close(); App.smartImport.open(); }
+        }, [App.icon('sparkle'), ' Smart import']),
         el('button.btn-primary', {
           title: 'Plan a new show, its pipeline and its team',
           onclick: () => { App.modal.close(); App.addShow.open(); }

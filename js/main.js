@@ -1900,6 +1900,8 @@ window.App = window.App || {};
       };
       App.SHOW_LEVELS.forEach(l => { if (src[l.key]) show[l.key] = src[l.key]; });
       if (Object.keys(team).length) show.team = team;
+      // producer notes come across with fresh ids
+      if (Array.isArray(src.notes) && src.notes.length) show.notes = clone(src.notes).map(n => Object.assign(n, { id: App.uid() }));
       d.shows.push(show);
       eps.forEach((ep, i) => { ep.index = d.episodes.length + i; d.episodes.push(ep); });
       if (Object.keys(attachments).length) {

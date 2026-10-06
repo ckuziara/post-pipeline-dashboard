@@ -275,6 +275,11 @@ window.App = window.App || {};
     return col;
   }
 
+  /* The Timeline's time axis, for other views that draw dates the same way
+     (Smart import's sheet and dependency views) — the same zoom tiers, header
+     cells and grid lines, so a date reads identically wherever it's drawn. */
+  App.ganttAxis = { tierFor, clampZoom, segments, buildSegRow, gridLines, mondayOf };
+
   App.gantt = {
     _wantCenter: true,
     _scrollEl: null,

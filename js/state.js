@@ -1106,14 +1106,27 @@ window.App = window.App || {};
      over it. A version dragged longer or shorter on the Timeline is stored
      per episode (ep.revDays[key][r] = days, sparse), so one episode's V2
      can run long without touching the show's pipeline. Anything not set
-     falls back to the pipeline's own days. */
+     falls back to the pipeline's own days.
+     The review time held before a version can be the episode's own too
+     (ep.revGaps[key][r], sparse; 0 is a real value) — Smart Import sets it
+     so each episode's versions land on the days its schedule had them. */
   App.revTask = function (ep, key) {
     const t = App.pTask(ep, key);
     const own = ep && ep.revDays && ep.revDays[key];
-    if (!t || !own) return t;
-    const days = (t.revDays || []).slice();
-    own.forEach((n, r) => { if (n > 0) days[r] = n; });
-    return Object.assign({}, t, { revDays: days });
+    const ownGaps = ep && ep.revGaps && ep.revGaps[key];
+    if (!t || (!own && !ownGaps)) return t;
+    const out = Object.assign({}, t);
+    if (own) {
+      const days = (t.revDays || []).slice();
+      own.forEach((n, r) => { if (n > 0) days[r] = n; });
+      out.revDays = days;
+    }
+    if (ownGaps) {
+      const gaps = (t.revGaps || []).slice();
+      ownGaps.forEach((n, r) => { if (n != null && n >= 0) gaps[r] = n; });
+      out.revGaps = gaps;
+    }
+    return out;
   };
   // how many of a task's budgeted revisions this episode has actually spent
   App.revisionsUsed = function (ep, key) { return (ep.revisions && ep.revisions[key]) || 0; };
