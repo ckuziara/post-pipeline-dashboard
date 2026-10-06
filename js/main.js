@@ -2302,7 +2302,7 @@ window.App = window.App || {};
 
       const view = App.state.view;
       const label = ({ timeline: 'Timeline', board: 'Board', dashboard: 'Dashboard',
-        review: 'Reviews', resources: 'Resources', admin: 'Admin' })[view] || 'Quick';
+        review: 'Reviews', admin: 'Admin' })[view] || 'Quick';
       const rows = viewRows[view] ? viewRows[view]() : [];
 
       // Appearance applies to the whole tracker, so it sits in its own section

@@ -254,11 +254,11 @@ window.App = window.App || {};
       { title: 'Manage Shows', danger: true, desc: 'Can create new shows — and permanently remove a show together with all of its episodes.',
         get: k => App.rolePermOf(k, 'manageShows', App.role(k).manageShows), set: (k, v) => App.setRolePerm(k, 'manageShows', v, 'Manage Shows') }
     ]},
-    { title: 'Resourcing', desc: 'Who can see the Resources tab, and who plans people’s time.', items: [
+    { title: 'Resourcing', desc: 'Who can see the Timeline’s Resources view, and who plans people’s time.', items: [
       { title: 'Resource Visibility', type: 'choice', options: () => App.RESOURCE_VIEWS,
-        desc: 'Whose workload and allocations this role can see on the Resources tab. Own team is their own department; None hides the tab.',
+        desc: 'Whose workload this role can see in the Timeline’s Resources view. Own team is their own department; None hides the Resources switch.',
         get: k => App.resourceViewOf(k), set: (k, v) => App.setResourceView(k, v) },
-      { title: 'Manage Resources', desc: 'Can allocate people to shows, set capacity and time off, add contractors, and reassign tasks from the Resources tab (reassigning also needs Assign Task Owners).',
+      { title: 'Manage Resources', desc: 'Can allocate people to shows, set capacity and time off, add contractors, and reassign tasks from a person’s panel in the Resources view (reassigning also needs Assign Task Owners).',
         get: k => App.rolePermOf(k, 'manageResources', App.role(k).manageResources), set: (k, v) => App.setRolePerm(k, 'manageResources', v, 'Manage Resources') }
     ]},
     { title: 'System Administration', desc: 'Access to this admin area and the team roster.', items: [

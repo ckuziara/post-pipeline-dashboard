@@ -256,6 +256,9 @@ window.App = window.App || {};
   };
   App.canSeeResources = (k) => App.resourceView(k) !== 'none';
   App.canManageResources = (k) => App.rolePerm(k, 'manageResources', App.role(k).manageResources);
+  // the Timeline's Schedule / Resources switch — this device's choice, and
+  // only Resources for a role that may see it
+  App.timelineMode = () => App.prefs.get('timelineMode', 'schedule') === 'resources' && App.canSeeResources(App.state.role) ? 'resources' : 'schedule';
 
   /* Weekly load for the Resources grid, in working days. For each person and
      each week (keyed by its Monday):
@@ -264,7 +267,7 @@ window.App = window.App || {};
                  (not approved) tasks. Tasks running side by side share the
                  day — two on Monday are half a day each, not two days — so a
                  week of overlapping tasks reads as a full week, not 2x
-       tasks   — how many of their open tasks touch the week
+       tasks   — their open tasks that touch the week, as { ep, su }
        planned — their allocations: pct of capacity over the days in range
        off     — working days of time off */
   App.mondayIso = function (iso) {
@@ -281,7 +284,7 @@ window.App = window.App || {};
     const tasks = {};
     App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
       if (!su.assignee || su.status === 'approved') return;
-      (tasks[su.assignee] = tasks[su.assignee] || []).push(su);
+      (tasks[su.assignee] = tasks[su.assignee] || []).push({ ep, su });
     }));
     const allocs = (App.state.data.allocations || []);
     people.forEach(p => {
@@ -291,15 +294,15 @@ window.App = window.App || {};
         const end = App.shiftIso(wk, 4);
         const off = Math.min(5, (p.timeOff || []).reduce((n, t) => n + overlapWorkdays(wk, end, t.start, t.end || t.start), 0));
         const cap = base * (5 - off) / 5;
-        const mine = (tasks[p.id] || []).filter(su => su.start <= end && su.due >= wk);
+        const mine = (tasks[p.id] || []).filter(({ su }) => su.start <= end && su.due >= wk);
         let booked = 0;
         for (let i = 0; i < 5; i++) {
           const day = App.shiftIso(wk, i);
-          if (mine.some(su => su.start <= day && su.due >= day)) booked++;
+          if (mine.some(({ su }) => su.start <= day && su.due >= day)) booked++;
         }
         const planned = allocs.filter(a => a.personId === p.id)
           .reduce((n, a) => n + (+a.pct || 0) / 100 * base * overlapWorkdays(wk, end, a.start, a.end) / 5, 0);
-        out[p.id][wk] = { cap, booked, planned, off, tasks: mine.length };
+        out[p.id][wk] = { cap, booked, planned, off, tasks: mine };
       });
     });
     return out;
@@ -2124,7 +2127,12 @@ window.App = window.App || {};
     show(target, text, pos) {
       if (!text || !target.isConnected) return;
       const tip = this.ensure();
-      tip.textContent = text;
+      /* `text` may also be a function returning a Node, built on hover — a
+         richer tooltip (the Timeline's resource circles list their tasks)
+         in the same themed box, without building it for every cell up front. */
+      const content = typeof text === 'function' ? text() : text;
+      if (content instanceof Node) { tip.textContent = ''; tip.appendChild(content); tip.classList.add('rich'); }
+      else { tip.textContent = content; tip.classList.remove('rich'); }
       tip.classList.add('show');
       requestAnimationFrame(() => {
         if (!tip.classList.contains('show')) return;

@@ -1,27 +1,17 @@
-/* Resources tab — who's working on what, week by week, against what they can do.
-
-   People down the side (grouped by department), weeks across the top. Each
-   cell is that person's week: the bar is BOOKED work (days with any open
-   task — overlapping tasks share the day), the
-   tick is PLANNED work (their allocations to shows), both measured against
-   their capacity for the week after time off. Over capacity goes red.
+/* Resourcing — the pieces behind the Timeline's Resources mode (js/gantt.js
+   resourceRows draws the circles): whose rows a viewer gets, and the person
+   panel a Manager plans from — capacity, time off, allocations to shows, and
+   reassigning their open tasks — plus adding a contractor.
 
    What a viewer sees is an Access Control setting (App.resourceView): 'all'
-   is the whole crew, 'team' is their own department. Editing — allocations,
-   capacity, time off, contractors, reassigning tasks — needs Manage
-   Resources (App.canManageResources); without it the same grid is read-only.
-   Range and scroll are this device's only; everything else is shared data. */
+   is the whole crew, 'team' is their own department. Editing needs Manage
+   Resources (App.canManageResources); without it the panel is read-only. */
 window.App = window.App || {};
 (function () {
   'use strict';
   const el = (s, p, c) => App.el(s, p, c);
-  const WEEKS = 8;
-  const st = () => {
-    App.state.resourcesUi = App.state.resourcesUi || { start: App.mondayIso(App.isoDate(App.today())) };
-    return App.state.resourcesUi;
-  };
+  const WEEKS = 8;   // how far ahead the person panel lists open tasks
   const canEdit = () => App.canManageResources(App.state.role);
-  const fmtDays = (n) => (Math.round(n * 10) / 10).toString().replace(/\.0$/, '');
 
   // whose rows this viewer gets, after the toolbar's Dept / Owner filters
   function peopleInScope() {
@@ -39,87 +29,7 @@ window.App = window.App || {};
     });
   }
 
-  function weeks() {
-    const out = []; let w = st().start;
-    for (let i = 0; i < WEEKS; i++) { out.push(w); w = App.shiftIso(w, 7); }
-    return out;
-  }
-
-  App.resources = {
-    render() {
-      const wrap = el('.res');
-      const scope = App.resourceView(App.state.role);
-      const wks = weeks();
-      const thisWeek = App.mondayIso(App.isoDate(App.today()));
-      const go = (iso) => { st().start = iso; App.render(); };
-
-      wrap.appendChild(el('.res-head', null, [
-        el('div', null, [
-          el('.res-title', null, 'Resources'),
-          el('.res-sub', null, (scope === 'all' ? 'Everyone' : 'Your team') +
-            ' · bars are days with open tasks, ticks are planned allocations, against each person’s capacity' +
-            (canEdit() ? '' : ' · view only'))
-        ]),
-        el('.res-actions', null, [
-          el('button.ghost', { onclick: () => go(App.shiftIso(st().start, -7 * 4)), title: 'Back four weeks' }, '‹'),
-          el('button.ghost', { onclick: () => go(thisWeek) }, 'This week'),
-          el('button.ghost', { onclick: () => go(App.shiftIso(st().start, 7 * 4)), title: 'On four weeks' }, '›'),
-          canEdit() ? el('button.ghost', { onclick: () => contractorDialog() }, '＋ Contractor') : null
-        ])
-      ]));
-
-      const people = peopleInScope();
-      if (!people.length) {
-        wrap.appendChild(el('.empty', null, scope === 'team' && !App.roleDept(App.state.role)
-          ? 'Your role isn’t in a department, so it has no team to show. An admin can open this up in Admin → Access Control.'
-          : 'Nobody in view — check the Dept and Owner filters.'));
-        return wrap;
-      }
-      const load = App.resourceLoad(people, wks);
-
-      const grid = el('.res-grid', { style: { gridTemplateColumns: '220px repeat(' + WEEKS + ', minmax(84px, 1fr))' } });
-      grid.appendChild(el('.res-cell.res-corner', null, 'Person'));
-      wks.forEach(w => grid.appendChild(el('.res-cell.res-wk' + (w === thisWeek ? '.now' : ''), null,
-        [el('span', null, 'w/c'), App.fmtDate(w)])));
-
-      const byDept = {};
-      people.forEach(p => { const d = App.roleDept(p.role); (byDept[d] = byDept[d] || []).push(p); });
-      Object.keys(App.DEPARTMENTS).filter(d => byDept[d]).forEach(d => {
-        const dep = App.dept(d);
-        grid.appendChild(el('.res-cell.res-dept', { style: { gridColumn: '1 / -1', borderLeftColor: dep.color } }, dep.label));
-        byDept[d].sort((a, b) => a.name.localeCompare(b.name)).forEach(p => {
-          grid.appendChild(el('.res-cell.res-person', { onclick: () => openPerson(p.id), title: 'Open ' + p.name }, [
-            el('span.avatar', { style: { width: '22px', height: '22px', fontSize: '9px', background: p.color } }, App.initials(p.name)),
-            el('span.res-name', null, p.name),
-            p.contractor ? el('span.res-tag', null, 'Contractor') : null,
-            el('span.res-capn', { title: 'Days per week' }, fmtDays(App.personCapacity(p)) + 'd')
-          ]));
-          wks.forEach(w => grid.appendChild(cell(load[p.id][w], w === thisWeek, () => openPerson(p.id))));
-        });
-      });
-      wrap.appendChild(el('.res-scroll', null, grid));
-      return wrap;
-    }
-  };
-
-  function cell(x, now, onclick) {
-    const busy = Math.max(x.booked, x.planned);
-    const level = x.cap <= 0 ? (busy > 0 ? 'over' : 'off') : busy > x.cap + 0.01 ? 'over' : busy >= x.cap * 0.8 ? 'full' : 'ok';
-    const scale = Math.max(x.cap, busy, 0.01);
-    const tip = [
-      'Booked: ' + fmtDays(x.booked) + ' d across ' + x.tasks + (x.tasks === 1 ? ' open task' : ' open tasks'),
-      'Planned: ' + fmtDays(x.planned) + ' d (allocations)',
-      'Capacity: ' + fmtDays(x.cap) + ' d' + (x.off ? ' — ' + x.off + ' d off' : '')
-    ].join(' · ');
-    return el('.res-cell.res-load.' + level + (now ? '.now' : '') + (x.off >= 5 ? '.away' : ''), { title: tip, onclick }, [
-      el('.res-bar', null, [
-        el('.res-fill', { style: { width: Math.min(100, x.booked / scale * 100) + '%' } }),
-        x.planned ? el('.res-plan', { style: { left: Math.min(100, x.planned / scale * 100) + '%' } }) : null,
-        x.cap > 0 && busy > x.cap ? el('.res-capline', { style: { left: (x.cap / scale * 100) + '%' } }) : null
-      ]),
-      el('.res-num', null, x.off >= 5 ? 'Away' : fmtDays(x.booked) + ' / ' + fmtDays(x.cap))
-    ]);
-  }
+  App.resources = { peopleInScope, openPerson: (id) => openPerson(id), contractorDialog: () => contractorDialog() };
 
   /* ---- a person: capacity, time off, allocations, their tasks ---- */
   function openPerson(id) {
@@ -160,7 +70,7 @@ window.App = window.App || {};
     sections.push(section('Allocations', allocRows.length ? allocRows : [el('.res-none', null, 'Not allocated to a show.')]));
 
     // their open tasks in the visible range
-    const from = st().start, to = App.shiftIso(from, WEEKS * 7 - 1);
+    const from = App.mondayIso(App.isoDate(App.today())), to = App.shiftIso(from, WEEKS * 7 - 1);
     const mates = App.state.data.people.filter(q => App.roleDept(q.role) === dept);
     const tasks = [];
     App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
@@ -208,7 +118,7 @@ window.App = window.App || {};
     if (a) show.value = a.showId;
     const today = App.isoDate(App.today());
     const pct = el('input.fld', { type: 'number', min: '1', max: '100', value: a ? a.pct : 100, style: { maxWidth: '90px' } });
-    const s = el('input.fld', { type: 'date', value: a ? a.start : st().start < today ? today : st().start });
+    const s = el('input.fld', { type: 'date', value: a ? a.start : today });
     const e = el('input.fld', { type: 'date', value: a ? a.end : App.shiftIso(s.value, 27) });
     const back = () => setTimeout(() => openPerson(personId), 0);
     App.modal.open(el('.modal-card.res-card', { onclick: ev => ev.stopPropagation() }, [

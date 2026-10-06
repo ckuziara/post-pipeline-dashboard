@@ -275,13 +275,17 @@ window.App = window.App || {};
     render(episodes) {
       this._episodes = episodes;       // what "all" means for the Opt shortcuts
       const sort = App.timelineGrouping();
+      // Resources mode (the toolbar's Schedule / Resources switch): the same
+      // time axis, header, zoom and today line, with departments and people
+      // as the rows instead of episodes — see resourceRows. Landscape only.
+      const resMode = App.timelineMode() === 'resources';
       /* Portrait (time runs top-to-bottom) applies to all three sorts. Every
          sort's rows are built from the same .g-row/.g-label/.g-track shape, so
          Portrait is the same two things everywhere: bars written along the
          other axis (setBarPos), and .gantt-body flipped to flex-row in CSS so
          a "row" lays out as a column. Grouping, ordering and interval-stacking
          are untouched and orientation-agnostic in all three. */
-      const portrait = App.prefs.get('timelineOrientation', 'landscape') === 'portrait';
+      const portrait = !resMode && App.prefs.get('timelineOrientation', 'landscape') === 'portrait';
       const axis = { portrait };
 
       const wrap = el('.gantt' + (App.prefs.get('latchScroll', false) ? '.latch' : '') + (portrait ? '.gantt-portrait' : ''));
@@ -408,12 +412,14 @@ window.App = window.App || {};
       // meaning already — narrow notes flipping to vertical text — and its own
       // transpose problem); hidden in Portrait rather than half-drawn.
       const singleShow = App.singleShowFilter();
-      if (singleShow && !portrait) this.producerNotesLane(body, singleShow, startIso, dw, xOf);
+      if (singleShow && !portrait && !resMode) this.producerNotesLane(body, singleShow, startIso, dw, xOf);
 
       const byStart = (a, b) => App.epStart(a) < App.epStart(b) ? -1 : 1;
       // All shows: the executive view — departments and the two dates that
       // matter, no tasks (see execRows). Landscape only.
-      if (!App.state.filters.show.length && !portrait) {
+      if (resMode) {
+        this.resourceRows(body, ctx);
+      } else if (!App.state.filters.show.length && !portrait) {
         this.execRows(body, episodes.slice().sort(byStart), xOf, dw, axis);
       } else if (sort === 'show') {
         // one row per show; matching tasks across its episodes share a line
@@ -1413,7 +1419,8 @@ window.App = window.App || {};
         style: { position: 'sticky', left: '0', zIndex: '9', width: LABEL_W + 'px', minWidth: LABEL_W + 'px',
                  background: 'var(--bg-2)', borderRight: '1px solid var(--border-2)', display: 'flex',
                  alignItems: 'center', padding: '0 14px', fontSize: '11px', fontWeight: '700', color: 'var(--text-3)' }
-      }, { show: 'SHOW / TASK', department: 'DEPARTMENT / TASK' }[App.timelineGrouping()] || 'EPISODE / SUBITEM'));
+      }, App.timelineMode() === 'resources' ? 'DEPARTMENT / PERSON'
+        : { show: 'SHOW / TASK', department: 'DEPARTMENT / TASK' }[App.timelineGrouping()] || 'EPISODE / SUBITEM'));
       const cols = el('.th-cols', { title: 'Drag along the dates to measure a range', style: { width: (ctx.totalCols * ctx.dw) + 'px' } });
       // the ruler's header half, on a strip of its own above the dates — a
       // capped line over the measured range with the day count sitting on it.
@@ -2001,6 +2008,115 @@ window.App = window.App || {};
     // "Department" sort: one top row per department, spanning every episode in
     // view; expand → one line per task in that department, each line holding a
     // bar per episode running it.
+    /* ---- Resources mode ----
+       One row per department, expanding (the shared .g-label click, keyed
+       'res:<dept>') into one row per person. Each week on the axis gets a
+       circle: the faint ring is capacity, the filled disc grows with load
+       (by area, so twice the load reads as twice the ink), and fills the ring
+       at capacity — over it, it turns red. The number is how many open tasks
+       touch that week; hovering lists them. Load is App.resourceLoad, so a
+       week's booked days are days with any task (side-by-side tasks share
+       the day), plus planned allocations, against capacity after time off.
+       Whose rows show is the role's Resource Visibility (Access Control). */
+    resourceRows(body, ctx) {
+      const people = App.resources.peopleInScope();
+      if (!people.length) {
+        body.appendChild(el('.empty', null, App.resourceView(App.state.role) === 'team' && !App.roleDept(App.state.role)
+          ? 'Your role isn’t in a department, so it has no team to show. An admin can open this up in Admin → Access Control.'
+          : 'Nobody in view — check the Dept and Owner filters.'));
+        return;
+      }
+      const weeks = segments(ctx, 'weeks').map(seg => ({
+        iso: App.mondayIso(App.isoDate(seg.day)), x: seg.colStart * ctx.dw, w: seg.colSpan * ctx.dw,
+        label: seg.label + ' · ' + seg.sub
+      }));
+      const load = App.resourceLoad(people, weeks.map(w => w.iso));
+      // every open task per department and week — the department's own count
+      // includes work nobody has been given yet
+      const deptTasks = {};
+      App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
+        if (su.status !== 'approved') (deptTasks[su.dept] = deptTasks[su.dept] || []).push({ ep, su });
+      }));
+      const byDept = {};
+      people.forEach(p => { const d = App.roleDept(p.role); (byDept[d] = byDept[d] || []).push(p); });
+      const thisWeek = App.mondayIso(App.isoDate(App.today()));
+
+      Object.keys(App.DEPARTMENTS).filter(d => byDept[d]).forEach(dk => {
+        const dep = App.dept(dk);
+        const crew = byDept[dk].sort((a, b) => a.name.localeCompare(b.name));
+        const expKey = 'res:' + dk;
+        const expanded = !!App.state.ganttExpanded[expKey];
+        const row = el('.g-row.res-lane');
+        row.dataset.episodeId = expKey;
+        row.appendChild(el('.g-label', null, [
+          el('.l-title', null, [el('span.chev' + (expanded ? '.open' : ''), null, '▶'), this.deptDot(dep), el('span', null, dep.label)]),
+          el('.l-sub', null, [el('span.code', null, crew.length + (crew.length === 1 ? ' person' : ' people'))])
+        ]));
+        const track = el('.g-track');
+        weeks.forEach(w => {
+          const end = App.shiftIso(w.iso, 4);
+          const x = crew.reduce((a, p) => { const l = load[p.id][w.iso]; a.cap += l.cap; a.busy += Math.max(l.booked, l.planned); return a; }, { cap: 0, busy: 0 });
+          const tasks = (deptTasks[dk] || []).filter(({ su }) => su.start <= end && su.due >= w.iso);
+          track.appendChild(this.resCircle(w, x.busy, x.cap, tasks, dep, dep.label, w.iso === thisWeek, false));
+        });
+        row.appendChild(track);
+        body.appendChild(row);
+        if (!expanded) return;
+
+        crew.forEach(p => {
+          const prow = el('.g-row.sub.res-lane.res-person');
+          prow.appendChild(el('.g-label', { onclick: (e) => { e.stopPropagation(); App.resources.openPerson(p.id); }, title: 'Capacity, time off and allocations' }, [
+            el('.l-title', null, [
+              el('span.avatar', { style: { width: '18px', height: '18px', fontSize: '8px', background: p.color, flex: 'none' } }, App.initials(p.name)),
+              el('span', null, p.name)
+            ]),
+            el('.l-sub', null, [el('span', null, App.role(p.role).label + (p.contractor ? ' · Contractor' : '') + ' · ' +
+              (Math.round(App.personCapacity(p) * 10) / 10) + 'd/wk')])
+          ]));
+          const ptrack = el('.g-track');
+          weeks.forEach(w => {
+            const l = load[p.id][w.iso];
+            ptrack.appendChild(this.resCircle(w, Math.max(l.booked, l.planned), l.cap, l.tasks, dep, p.name, w.iso === thisWeek, l.off >= 5, l));
+          });
+          prow.appendChild(ptrack);
+          body.appendChild(prow);
+        });
+      });
+    },
+
+    resCircle(w, busy, cap, tasks, dep, who, now, away, detail) {
+      const cell = el('.res-cell' + (now ? '.now' : ''), { style: { left: w.x + 'px', width: w.w + 'px' } });
+      if (away) { cell.appendChild(el('span.res-away', null, 'Away')); return cell; }
+      if (!tasks.length && busy <= 0) return cell;
+      const ratio = cap > 0 ? busy / cap : (busy > 0 ? 2 : 0);
+      const over = ratio > 1.001;
+      const ring = Math.max(8, Math.min(w.w - 12, 40));
+      const disc = ring * Math.sqrt(Math.min(1, ratio));
+      const tip = () => {
+        const box = el('.res-tip');
+        box.appendChild(el('.res-tip-head', null, who + ' · ' + w.label));
+        box.appendChild(el('.res-tip-sub', null, (detail
+          ? Math.round(detail.booked * 10) / 10 + ' d booked' + (detail.planned ? ' · ' + Math.round(detail.planned * 10) / 10 + ' d planned' : '')
+          : Math.round(busy * 10) / 10 + ' d busy') + ' of ' + Math.round(cap * 10) / 10 + ' d' + (detail && detail.off ? ' (' + detail.off + ' d off)' : '')));
+        tasks.slice().sort((a, b) => a.su.start < b.su.start ? -1 : 1).slice(0, 12).forEach(({ ep, su }) => {
+          const owner = !detail && su.assignee ? App.person(su.assignee) : null;
+          box.appendChild(el('.res-tip-task', { style: { borderLeftColor: App.dept(su.dept).color } }, [
+            el('span.res-tip-code', null, ep.code), ' ' + su.name,
+            el('span.res-tip-meta', null, App.fmtRange(su.start, su.due) + (owner ? ' · ' + owner.name : !detail && !su.assignee ? ' · unassigned' : ''))
+          ]));
+        });
+        if (tasks.length > 12) box.appendChild(el('.res-tip-sub', null, '+ ' + (tasks.length - 12) + ' more'));
+        return box;
+      };
+      const circle = el('.res-ring' + (over ? '.over' : ''), {
+        title: tip, style: { width: ring + 'px', height: ring + 'px' }
+      }, [el('.res-disc', { style: { width: disc + 'px', height: disc + 'px' } })]);
+      circle.style.setProperty('--res-c', dep.color);
+      cell.appendChild(circle);
+      if (tasks.length) cell.appendChild(el('span.res-count', null, String(tasks.length)));
+      return cell;
+    },
+
     departmentRows(body, episodes, startIso, dw, timeW, xOf, axis) {
       const { order, byDept } = this.groupByDept(episodes);
       const portrait = !!(axis && axis.portrait);

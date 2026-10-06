@@ -4994,39 +4994,35 @@ body.has-draft #toast-root { bottom: 92px; }
 .draft-item b { color: var(--text); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .draft-bar { transition: opacity .15s; } .draft-dot { animation: none; } }
 
-/* ---- Resources tab (js/resources.js) ---- */
-.res { padding: 18px 22px 40px; }
-.res-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
-.res-title { font-size: 20px; font-weight: 700; color: var(--text); }
-.res-sub { font-size: 12.5px; color: var(--text-3); margin-top: 3px; }
-.res-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.res-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
-.res-grid { display: grid; min-width: max-content; }
-.res-cell { padding: 8px 10px; border-bottom: 1px solid var(--border); border-left: 1px solid var(--border); min-width: 0; }
-.res-corner, .res-person { border-left: 0; position: sticky; left: 0; z-index: 1; background: var(--surface); }
-.res-corner, .res-wk { font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; background: var(--bg-2); }
-.res-corner { z-index: 2; }
-.res-wk { display: flex; flex-direction: column; gap: 1px; }
-.res-wk span { font-weight: 500; opacity: .7; }
-.res-wk.now { color: var(--accent); }
-.res-dept { border-left: 3px solid var(--border-2); background: var(--bg-2); font-size: 12px; font-weight: 700; color: var(--text-2); padding: 6px 10px; position: sticky; left: 0; }
-.res-person { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text); }
-.res-person:hover { background: var(--hover); }
-.res-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.res-tag { font-size: 10px; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--border-2); color: var(--text-3); }
-.res-capn { font-size: 11px; color: var(--text-3); }
-.res-load { cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
-.res-load:hover { background: var(--hover); }
-.res-load.now { background: rgba(127,127,255,.06); }
-.res-load.away { background: repeating-linear-gradient(135deg, transparent 0 6px, var(--bg-2) 6px 12px); }
-.res-bar { position: relative; height: 8px; border-radius: 4px; background: var(--surface-3); }
-.res-fill { height: 100%; border-radius: 4px; background: var(--accent); }
-.res-load.full .res-fill { background: #f6a609; }
-.res-load.over .res-fill { background: var(--danger); }
-.res-plan { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--text); border-radius: 1px; }
-.res-capline { position: absolute; top: -3px; bottom: -3px; width: 0; border-left: 2px dashed var(--text-2); }
-.res-num { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
-.res-load.over .res-num { color: var(--danger); font-weight: 600; }
+/* ---- Timeline Resources view (js/gantt.js resourceRows) ----
+   A week's circle: the ring is capacity, the disc is load (by area), filling
+   the ring at capacity and turning red past it. --res-c is the department. */
+.g-row.res-lane { min-height: 52px; }
+.g-row.sub.res-lane { min-height: 46px; }
+.g-row.res-person .g-label { cursor: pointer; }
+/* --hover is translucent, so on hover the sticky label would let the circles
+   scrolling under it show through — lay it over the label's own fill instead */
+.g-row.res-lane:hover .g-label { background: linear-gradient(var(--hover), var(--hover)), var(--surface); }
+.g-row.sub.res-lane:hover .g-label { background: linear-gradient(var(--hover), var(--hover)), var(--surface-2); }
+.g-row.res-person .g-label:hover .l-title span:last-child { color: var(--accent); }
+.res-cell { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; }
+.res-cell.now { background: rgba(91,108,255,.06); }
+.res-ring {
+  position: relative; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--res-c, var(--accent)) 22%, transparent); cursor: default;
+}
+.res-disc { border-radius: 50%; background: var(--res-c, var(--accent)); transition: width .15s, height .15s; }
+.res-ring.over { background: color-mix(in srgb, var(--danger) 25%, transparent); box-shadow: 0 0 0 2px var(--danger); }
+.res-ring.over .res-disc { background: var(--danger); }
+.res-count { position: absolute; right: 6px; bottom: 3px; font-size: 10.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.res-away { font-size: 10.5px; color: var(--text-3); letter-spacing: .03em; }
+.app-tooltip.rich { max-width: 320px; white-space: normal; font-weight: 500; }
+.res-tip { display: flex; flex-direction: column; gap: 4px; }
+.res-tip-head { font-weight: 700; }
+.res-tip-sub { font-size: 11px; color: var(--text-3); margin-bottom: 2px; }
+.res-tip-task { border-left: 3px solid; padding: 3px 0 3px 8px; background: var(--bg-2); border-radius: 0 5px 5px 0; }
+.res-tip-code { font-weight: 700; }
+.res-tip-meta { display: block; font-size: 10.5px; color: var(--text-3); }
 .res-card { width: min(640px, 94vw); }
 .res-sec { margin-bottom: 18px; display: flex; flex-direction: column; gap: 6px; }
 .res-sec-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); }
