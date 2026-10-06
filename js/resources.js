@@ -1,6 +1,7 @@
 /* Resourcing — the pieces behind the Timeline's Resources mode (js/gantt.js
    resourceRows draws the circles): whose rows a viewer gets, and the person
-   panel a Manager plans from — capacity, time off, allocations to shows, and
+   panel a Manager plans from — capacity, time off, which productions they're
+   on (show teams, with each one's share of them worked out from their tasks), and
    reassigning their open tasks — plus adding a contractor.
 
    What a viewer sees is an Access Control setting (App.resourceView): 'all'
@@ -31,113 +32,228 @@ window.App = window.App || {};
 
   App.resources = { peopleInScope, openPerson: (id) => openPerson(id), contractorDialog: () => contractorDialog() };
 
-  /* ---- a person: capacity, time off, allocations, their tasks ---- */
+  /* ---- a person: capacity, time off, productions, their tasks ----
+     Everything here is a DRAFT until Done: edits redraw only this panel
+     (with a live preview of the weeks ahead), and Done saves the lot in one
+     change (App.saveResourcePlan) — so nothing behind the panel re-renders
+     while you work, and Cancel / Esc simply walks away from the draft. */
+  const r1 = (n) => Math.round(n * 10) / 10;
+  const clone = (x) => JSON.parse(JSON.stringify(x));
+  const LEVEL_C = { ok: '#37b679', full: '#f6a609', over: 'var(--danger)' };
+  const levelOf = (busy, cap) => cap <= 0 ? (busy > 0 ? 'over' : 'ok') : busy > cap + 0.01 ? 'over' : busy >= cap * 0.8 ? 'full' : 'ok';
+
   function openPerson(id) {
     const p = App.person(id); if (!p) return;
     const edit = canEdit();
-    const reassign = edit && App.canAssignOwners(App.state.role);
-    const reopen = () => setTimeout(() => openPerson(id), 0);
-    const dept = App.roleDept(p.role);
-    const sections = [];
+    const canReassign = edit && App.canAssignOwners(App.state.role);
+    const dept = App.roleDept(p.role), dep = App.dept(dept);
+    const draft = {
+      capacity: App.personCapacity(p),
+      timeOff: clone(p.timeOff || []),
+      shows: App.personShows(id).map(s => s.id),     // the productions they're on (show teams)
+      assign: {}
+    };
+    const saved = JSON.stringify(draft);
+    const dirty = () => JSON.stringify(draft) !== saved;
+    let adding = false;          // the "add to a production" picker is open
 
-    // capacity
-    const capFld = el('input.fld', { type: 'number', min: '0', max: '7', step: '0.5', value: App.personCapacity(p), disabled: !edit, style: { maxWidth: '90px' } });
-    if (edit) capFld.addEventListener('change', () => { App.setCapacity(id, capFld.value); reopen(); });
-    sections.push(section('Capacity', [el('.res-inline', null, [capFld, el('span', null, 'days a week')])]));
-
-    // time off
-    const offRows = (p.timeOff || []).slice().sort((a, b) => a.start < b.start ? -1 : 1).map(t =>
-      el('.res-row', null, [
-        el('span', null, App.fmtRange(t.start, t.end) + (t.note ? ' — ' + t.note : '')),
-        edit ? el('button.ghost.res-x', { onclick: () => { App.removePersonTimeOff(id, t.id); reopen(); }, title: 'Remove' }, '✕') : null
-      ]));
-    if (edit) {
-      const s = el('input.fld', { type: 'date' }), e = el('input.fld', { type: 'date' }), n = el('input.fld', { type: 'text', placeholder: 'Note (optional)' });
-      offRows.push(el('.res-inline', null, [s, el('span', null, 'to'), e, n,
-        el('button.ghost', { onclick: () => { App.addPersonTimeOff(id, s.value, e.value || s.value, n.value); reopen(); } }, 'Add')]));
-    }
-    sections.push(section('Time off', offRows.length ? offRows : [el('.res-none', null, 'None booked.')]));
-
-    // allocations
-    const allocs = (App.state.data.allocations || []).filter(a => a.personId === id).sort((a, b) => a.start < b.start ? -1 : 1);
-    const allocRows = allocs.map(a => el('.res-row', null, [
-      el('span.res-swatch', { style: { background: App.show(a.showId).color } }),
-      el('span', null, App.show(a.showId).name + ' — ' + a.pct + '% · ' + App.fmtRange(a.start, a.end)),
-      edit ? el('button.ghost.res-x', { onclick: () => allocDialog(id, a), title: 'Edit' }, '✎') : null,
-      edit ? el('button.ghost.res-x', { onclick: () => { App.removeAllocation(a.id); reopen(); }, title: 'Remove' }, '✕') : null
-    ]));
-    if (edit) allocRows.push(el('button.ghost', { onclick: () => allocDialog(id, null) }, '＋ Allocate to a show'));
-    sections.push(section('Allocations', allocRows.length ? allocRows : [el('.res-none', null, 'Not allocated to a show.')]));
-
-    // their open tasks in the visible range
-    const from = App.mondayIso(App.isoDate(App.today())), to = App.shiftIso(from, WEEKS * 7 - 1);
+    const mon = App.mondayIso(App.isoDate(App.today()));
+    const weeks = [];
+    for (let i = 0; i < WEEKS; i++) { const start = App.shiftIso(mon, i * 7); weeks.push({ key: start, start, end: App.shiftIso(start, 4) }); }
+    const from = mon, to = App.shiftIso(mon, WEEKS * 7 - 1);
     const mates = App.state.data.people.filter(q => App.roleDept(q.role) === dept);
-    const tasks = [];
+    const myTasks = [];
     App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
-      if (su.assignee === id && su.status !== 'approved' && su.due >= from && su.start <= to) tasks.push({ ep, su });
+      if (su.assignee === id && su.status !== 'approved' && su.due >= from && su.start <= to) myTasks.push({ ep, su });
     }));
-    tasks.sort((a, b) => a.su.start < b.su.start ? -1 : 1);
-    const taskRows = tasks.map(({ ep, su }) => {
-      let who = null;
-      if (reassign) {
-        who = el('select.fld.res-who', { onchange: (e) => { if (App.reassignTask(ep.id, su.key, e.target.value || null)) reopen(); } });
-        [['', 'Unassigned']].concat(mates.map(q => [q.id, q.name])).forEach(([v, l]) => {
-          const o = document.createElement('option'); o.value = v; o.textContent = l; if (v === id) o.selected = true; who.appendChild(o);
-        });
-      }
-      return el('.res-row', null, [
-        el('span.res-task', null, [el('b', null, ep.code), ' ' + su.name]),
-        el('span.res-dates', null, App.fmtRange(su.start, su.due)),
-        el('span.res-pill', { style: { background: App.status(su.status).color, color: App.status(su.status).ink } }, App.status(su.status).label),
-        who
-      ]);
-    });
-    sections.push(section('Open tasks, ' + App.fmtRange(from, to), taskRows.length ? taskRows : [el('.res-none', null, 'No open tasks in this range.')]));
+    myTasks.sort((a, b) => a.su.start < b.su.start ? -1 : 1);
 
-    App.modal.open(el('.modal-card.res-card', { onclick: e => e.stopPropagation() }, [
-      el('.modal-head', null, [
-        el('.modal-head-main', null, [
-          el('span.avatar', { style: { width: '28px', height: '28px', fontSize: '11px', background: p.color } }, App.initials(p.name)),
-          el('div', null, [el('.modal-title', null, p.name),
-            el('.modal-subtitle', null, App.role(p.role).label + (p.contractor ? ' · Contractor' : ''))])
+    const gaugeBox = el('.rp-gauge-box');
+    const body = el('.modal-body.rp-body');
+    const foot = el('.modal-foot.rp-foot');
+    const card = el('.modal-card.res-card.rp-card', { onclick: e => e.stopPropagation() }, [
+      el('.rp-hero', { style: { '--rp-dept': dep.color } }, [
+        el('span.avatar.rp-avatar', { style: { background: p.color } }, App.initials(p.name)),
+        el('.rp-id', null, [
+          el('.rp-name', null, p.name),
+          el('.rp-tags', null, [
+            el('span.rp-tag.dept', null, [el('span.dot', { style: { background: dep.color } }), dep.label]),
+            p.contractor ? el('span.rp-tag', null, 'Contractor') : null,
+            !edit ? el('span.rp-tag', null, 'View only') : null
+          ])
         ]),
+        gaugeBox,
         el('button.modal-x', { onclick: () => App.modal.close(), title: 'Close' }, '✕')
       ]),
-      el('.modal-body', null, sections),
-      el('.modal-foot', null, [el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Done')])
-    ]));
+      body, foot
+    ]);
+    card.querySelector('.rp-hero').style.setProperty('--rp-dept', dep.color);
+
+    const draw = () => {
+      const keep = body.scrollTop;
+      body.innerHTML = '';
+      const pDraft = Object.assign({}, p, { capacity: { daysPerWeek: draft.capacity }, timeOff: draft.timeOff });
+      const load = App.resourceLoad([pDraft], weeks, { assign: draft.assign })[id];
+
+      // ---- this week, up in the hero ----
+      const now = load[mon], busyNow = Math.max(now.booked, now.planned);
+      const lvlNow = levelOf(busyNow, now.cap);
+      const pct = now.cap > 0 ? Math.min(100, Math.round(busyNow / now.cap * 100)) : (busyNow > 0 ? 100 : 0);
+      gaugeBox.innerHTML = '';
+      const g = el('.rp-gauge', null, [el('span', null, [el('b', null, r1(busyNow)), '/' + r1(now.cap) + 'd'])]);
+      g.style.setProperty('--rp-p', pct); g.style.setProperty('--rp-c', LEVEL_C[lvlNow]);
+      gaugeBox.appendChild(el('.rp-gauge-wrap', { title: 'This week: ' + r1(busyNow) + ' of ' + r1(now.cap) + ' days' }, [g, el('.rp-gauge-lbl', null, 'This week')]));
+
+      // ---- the weeks ahead ----
+      body.appendChild(el('.rp-weeks', null, weeks.map((w, i) => {
+        const l = load[w.key], busy = Math.max(l.booked, l.planned), lvl = levelOf(busy, l.cap);
+        const away = l.days && l.off >= l.days;
+        const ratio = l.cap > 0 ? busy / l.cap : (busy > 0 ? 2 : 0);
+        const ring = el('.res-ring.rp-ring' + (lvl === 'over' ? '.over' : ''), null,
+          [el('.res-disc', { style: { width: (26 * Math.sqrt(Math.min(1, ratio))) + 'px', height: (26 * Math.sqrt(Math.min(1, ratio))) + 'px' } })]);
+        ring.style.setProperty('--res-c', LEVEL_C[lvl]);
+        return el('.rp-wk' + (i === 0 ? '.now' : '') + (away ? '.away' : ''), {
+          title: 'w/c ' + App.fmtDate(w.start) + ' — ' + r1(l.booked) + ' d booked' + (l.planned ? ', ' + r1(l.planned) + ' d planned' : '') +
+                 ' of ' + r1(l.cap) + ' d' + (l.off ? ' (' + l.off + ' d off)' : '') + ' · ' + l.tasks.length + ' task' + (l.tasks.length === 1 ? '' : 's')
+        }, [
+          el('.rp-wk-lbl', null, i === 0 ? 'This wk' : App.fmtDate(w.start)),
+          away ? el('.rp-wk-away', null, 'Away') : ring,
+          el('.rp-wk-val.' + lvl, null, away ? '—' : r1(busy) + '/' + r1(l.cap))
+        ]);
+      })));
+
+      // ---- capacity ----
+      const setCap = (v) => { draft.capacity = Math.max(0, Math.min(7, Math.round(v * 2) / 2)); draw(); };
+      const days = ['M', 'T', 'W', 'T', 'F'].map((d, i) => {
+        const fill = Math.max(0, Math.min(1, draft.capacity - i));
+        return el('.rp-day' + (edit ? '.click' : ''), { title: edit ? 'Set to ' + (i + 1) + ' day' + (i ? 's' : '') + ' a week' : null, onclick: edit ? () => setCap(i + 1) : null }, [
+          el('.rp-day-fill', { style: { width: (fill * 100) + '%' } }), el('span', null, d)
+        ]);
+      });
+      body.appendChild(section('Capacity', null, [
+        el('.rp-cap', null, [
+          el('.rp-days', null, days),
+          edit ? el('.rp-stepper', null, [
+            el('button', { onclick: () => setCap(draft.capacity - 0.5), title: 'Half a day less' }, '−'),
+            el('span', null, [el('b', null, r1(draft.capacity)), ' days a week']),
+            el('button', { onclick: () => setCap(draft.capacity + 0.5), title: 'Half a day more' }, '+')
+          ]) : el('.rp-cap-ro', null, [el('b', null, r1(draft.capacity)), ' days a week'])
+        ])
+      ]));
+
+      // ---- time off ----
+      const offs = draft.timeOff.slice().sort((a, b) => a.start < b.start ? -1 : 1);
+      const offBody = [el('.rp-chips', null, offs.length ? offs.map(t => el('span.rp-off', null, [
+        el('b', null, App.fmtRange(t.start, t.end || t.start)), t.note ? ' · ' + t.note : '',
+        edit ? el('button.rp-x', { title: 'Remove', onclick: () => { draft.timeOff = draft.timeOff.filter(x => x !== t); draw(); } }, '✕') : null
+      ])) : [el('span.res-none', null, 'No time off booked.')])];
+      if (edit) {
+        const s = el('input.fld', { type: 'date' }), e = el('input.fld', { type: 'date' }), n = el('input.fld', { type: 'text', placeholder: 'Note (optional)' });
+        offBody.push(el('.rp-add', null, [s, el('span', null, 'to'), e, n, el('button.ghost', { onclick: () => {
+          if (!s.value || (e.value && e.value < s.value)) { App.toast('Pick the dates', true); return; }
+          draft.timeOff.push({ id: App.uid(), start: s.value, end: e.value || s.value, note: n.value.trim() }); draw();
+        } }, '＋ Add')]));
+      }
+      body.appendChild(section('Time off', null, offBody));
+
+      // ---- productions: show teams, and the share of them each one gets ----
+      const commit = App.personCommitment(id, from, to, { shows: draft.shows, assign: draft.assign });
+      const prodCards = commit.map(c => {
+        const lead = !c.offTeam && App.deptLead(c.show, dept) === id;
+        const card = el('.rp-prod' + (c.offTeam ? '.off-team' : ''), null, [
+          el('.rp-prod-ring', null, [el('span', null, c.pct + '%')]),
+          el('.rp-prod-main', null, [
+            el('.rp-prod-name', null, [c.show.name, lead ? el('span.rp-lead', null, 'Lead') : null]),
+            el('.rp-prod-meta', null, c.tasks
+              ? c.tasks + ' open task' + (c.tasks === 1 ? '' : 's') + ' · ' + r1(c.days) + ' of their days'
+              : 'No open tasks in the next ' + WEEKS + ' weeks'),
+            c.offTeam ? el('.rp-prod-warn', null, 'Has tasks here but isn’t on the production team') : null
+          ]),
+          edit ? (c.offTeam
+            ? el('button.rp-link', { onclick: () => { draft.shows.push(c.showId); draw(); } }, '＋ Add to team')
+            : el('button.rp-x', { title: 'Take off this production’s team', onclick: () => { draft.shows = draft.shows.filter(x => x !== c.showId); draw(); } }, '✕')) : null
+        ]);
+        // custom properties don't go through el()'s style object
+        card.style.setProperty('--rp-show', c.show.color);
+        card.querySelector('.rp-prod-ring').style.setProperty('--rp-p', c.pct);
+        return card;
+      });
+      // one bar across everything: how they're split, always 100% in total
+      const split = commit.length ? el('.rp-split', null, commit.map(c => el('.rp-split-seg', {
+        title: c.show.name + ' — ' + c.pct + '%', style: { width: c.pct + '%', background: c.show.color }
+      }))) : null;
+      const open = App.activeShows().filter(sh => !draft.shows.includes(sh.id) && (!dept || App.showDepts(sh).includes(dept)));
+      let picker = null;
+      if (edit && adding) {
+        picker = el('.rp-picker', null, open.length ? open.map(sh => {
+          const b = el('button.rp-pick', { onclick: () => { draft.shows.push(sh.id); adding = false; draw(); } },
+            [el('span.dot', { style: { background: sh.color } }), sh.name]);
+          b.style.setProperty('--rp-show', sh.color);
+          return b;
+        }) : [el('span.res-none', null, 'They’re on every production that has ' + dep.label + ' work.')]);
+      }
+      body.appendChild(section('Productions', edit ? el('button.rp-link', { onclick: () => { adding = !adding; draw(); } }, adding ? 'Done adding' : '＋ Add to a production') : null,
+        [split].concat(prodCards.length ? prodCards : [el('span.res-none', null, 'Not on any production team.')]).concat(picker ? [picker] : [])));
+
+      // ---- open tasks ----
+      const taskRows = myTasks.map(({ ep, su }) => {
+        const k = ep.id + '::' + su.key;
+        const moved = k in draft.assign;
+        const st = App.status(su.status);
+        let who = null;
+        if (canReassign) {
+          who = el('select.fld.rp-who', { onchange: (e) => {
+            const v = e.target.value || null;
+            if (v === id) delete draft.assign[k]; else draft.assign[k] = v;
+            draw();
+          } });
+          [['', 'Unassigned']].concat(mates.map(q => [q.id, q.name])).forEach(([v, l]) => {
+            const o = document.createElement('option'); o.value = v; o.textContent = l;
+            if (v === (moved ? (draft.assign[k] || '') : id)) o.selected = true;
+            who.appendChild(o);
+          });
+        }
+        const q = moved && draft.assign[k] ? App.person(draft.assign[k]) : null;
+        return el('.rp-task' + (moved ? '.moved' : ''), { style: { borderLeftColor: App.dept(su.dept).color } }, [
+          el('.rp-task-main', null, [
+            el('.rp-task-name', null, [el('b', null, ep.code), ' ' + su.name]),
+            el('.rp-task-meta', null, [
+              App.fmtRange(su.start, su.due),
+              moved ? el('span.rp-moved', null, '→ ' + (q ? q.name : 'Unassigned')) : null
+            ])
+          ]),
+          el('span.res-pill', { style: { background: st.color, color: st.ink } }, st.label),
+          who
+        ]);
+      });
+      body.appendChild(section('Open tasks', App.fmtRange(from, to), taskRows.length ? taskRows : [el('span.res-none', null, 'No open tasks in the next ' + WEEKS + ' weeks.')]));
+
+      // ---- footer ----
+      foot.innerHTML = '';
+      if (edit) {
+        foot.appendChild(el('span.rp-dirty' + (dirty() ? '.on' : ''), null, dirty() ? 'Unsaved changes' : 'No changes'));
+        foot.appendChild(el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'));
+        foot.appendChild(el('button.btn-primary', { onclick: () => {
+          if (dirty() && !App.saveResourcePlan(id, draft)) return;
+          App.modal.close();
+        } }, 'Done'));
+      } else {
+        foot.appendChild(el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Close'));
+      }
+      body.scrollTop = keep;
+    };
+
+    draw();
+    App.modal.open(card);
+    // the modal focuses its first field; here that's a time-off date, which
+    // isn't where anyone starts — leave focus on the panel instead
+    setTimeout(() => { if (card.contains(document.activeElement)) document.activeElement.blur(); }, 40);
   }
 
-  function section(title, body) {
-    return el('.res-sec', null, [el('.res-sec-title', null, title)].concat(body));
-  }
-
-  function allocDialog(personId, a) {
-    const show = el('select.fld');
-    App.activeShows().forEach(s => { const o = document.createElement('option'); o.value = s.id; o.textContent = s.name; show.appendChild(o); });
-    if (a) show.value = a.showId;
-    const today = App.isoDate(App.today());
-    const pct = el('input.fld', { type: 'number', min: '1', max: '100', value: a ? a.pct : 100, style: { maxWidth: '90px' } });
-    const s = el('input.fld', { type: 'date', value: a ? a.start : today });
-    const e = el('input.fld', { type: 'date', value: a ? a.end : App.shiftIso(s.value, 27) });
-    const back = () => setTimeout(() => openPerson(personId), 0);
-    App.modal.open(el('.modal-card.res-card', { onclick: ev => ev.stopPropagation() }, [
-      el('.modal-head', null, [el('.modal-head-main', null, [el('div', null, [
-        el('.modal-title', null, a ? 'Edit allocation' : 'Allocate to a show'),
-        el('.modal-subtitle', null, App.person(personId).name)])]),
-        el('button.modal-x', { onclick: back, title: 'Back' }, '✕')]),
-      el('.modal-body', null, [
-        fieldRow('Show', show), fieldRow('Share of their week', el('.res-inline', null, [pct, el('span', null, '%')])),
-        fieldRow('From', s), fieldRow('To', e)
-      ]),
-      el('.modal-foot', null, [
-        el('button.btn-ghost', { onclick: back }, 'Cancel'),
-        el('button.btn-primary', { onclick: () => {
-          App.saveAllocation({ id: a && a.id, personId, showId: show.value, pct: pct.value, start: s.value, end: e.value });
-          back();
-        } }, 'Save')
-      ])
-    ]));
+  function section(title, aside, body) {
+    return el('.rp-sec', null, [
+      el('.rp-sec-head', null, [el('.res-sec-title', null, title), aside == null ? null : typeof aside === 'string' ? el('span.rp-sec-aside', null, aside) : aside])
+    ].concat(body));
   }
 
   function contractorDialog() {

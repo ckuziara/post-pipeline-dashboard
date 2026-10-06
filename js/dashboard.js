@@ -56,7 +56,7 @@ window.App = window.App || {};
     pipeline:  { minW: 3, maxW: 12, minH: 140, maxH: 400 },
     deptLoad:  { minW: 3, maxW: 12, minH: 90,  maxH: 500, itemPx: 27, headPx: 45 },
     upcoming:  { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
-    teamLoad:  { minW: 3, maxW: 12, minH: 100, maxH: 700, itemPx: 36, headPx: 45 },
+    teamLoad:  { minW: 3, maxW: 12, minH: 130, maxH: 900, itemPx: 38, headPx: 52 },
     reviewUploads: { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
     directorCal: { minW: 3, maxW: 12, minH: 260, maxH: 900, itemPx: 22, headPx: 120 }
   };
@@ -106,10 +106,10 @@ window.App = window.App || {};
       { id: 'atRisk',    col: 0, row: 0,   w: 6, h: 430 },
       { id: 'journal',   col: 6, row: 0,   w: 6, h: 420 },
       { id: 'pipeline',  col: 0, row: 442, w: 4, h: 175 },
-      { id: 'teamLoad',  col: 4, row: 442, w: 4, h: 190 },
+      { id: 'teamLoad',  col: 4, row: 442, w: 4, h: 340 },
       { id: 'deptLoad',  col: 8, row: 442, w: 4, h: 130 },
-      { id: 'upcoming',  col: 0, row: 644, w: 6, h: 400 },
-      { id: 'delivered', col: 6, row: 644, w: 6, h: 150 }
+      { id: 'upcoming',  col: 0, row: 794, w: 6, h: 400 },
+      { id: 'delivered', col: 6, row: 794, w: 6, h: 150 }
     ],
     review: [
       // Priority across the top; At Risk over Upcoming on the left, Journal over Delivered on the right
@@ -1027,24 +1027,116 @@ window.App = window.App || {};
       return { title: 'Department Workload', sub: 'open subitems', body: rows.length ? rows : el('.dw-calm', null, 'Nothing open.') };
     },
 
+    /* Team Workload — the Resources view's numbers (App.resourceLoad), so the
+       dashboard and the Timeline never disagree: this week's booked days
+       against each person's capacity after time off. Who's listed follows Resource Visibility (Access Control);
+       a role that can't see resources gets a note instead of the team.
+
+       Each row: who, a capacity bar (coloured by how stretched they are —
+       green with room, amber at capacity, red past it, with a tick where
+       capacity sits; not by department, since a red department would read
+       as overload) and
+       days used / days available. Wide enough, a run of week circles looks
+       ahead — the same ring-and-disc as the Timeline, hover for the tasks.
+       Most stretched first, so the tile's top rows are the ones to act on. */
     teamLoad(m, t) {
-      const editors = App.state.data.people.filter(p => App.roleDept(p.role));
-      const rows = editors.map(p => {
-        const mine = m.subs.filter(x => x.su.assignee === p.id);
-        const activeN = mine.filter(x => ['ready', 'in_progress', 'review'].includes(x.su.status)).length;
-        const wip = mine.filter(x => x.su.status === 'in_progress').length;
-        return { p, activeN, wip };
-      }).filter(r => r.activeN > 0).sort((a, b) => b.activeN - a.activeN).slice(0, capOf('teamLoad', t.h));
-      const max = Math.max(1, ...rows.map(r => r.activeN));
-      const body = rows.length ? rows.map(r => el('.bar-row', null, [
-        el('.bl', null, [
-          el('span.avatar', { style: { width: '20px', height: '20px', fontSize: '8px', background: r.p.color } }, App.initials(r.p.name)),
-          r.p.name.split(' ')[0]
-        ]),
-        el('.bt', null, [el('.bf', { style: { width: Math.round(r.activeN / max * 100) + '%', background: r.wip ? 'var(--st-in_progress)' : 'var(--accent)' } })]),
-        el('.bv', null, r.activeN + (r.wip ? ' · ' + r.wip + '▶' : ''))
-      ])) : el('.dw-calm', null, 'No active assignments.');
-      return { title: 'Team Workload', sub: 'live tasks per editor', body };
+      const title = 'Team Workload';
+      if (!App.canSeeResources(App.state.role)) {
+        return { title, sub: 'capacity', body: el('.dw-calm', null, 'Team workload isn’t shared with your role — an admin can open it up in Admin → Access Control.') };
+      }
+      const people = App.resources.peopleInScope();
+      if (!people.length) return { title, sub: 'capacity', body: el('.dw-calm', null, 'Nobody in view.') };
+
+      const ahead = t.w >= 9 ? 6 : t.w >= 6 ? 4 : 0;           // forecast weeks the width can carry
+      const compact = t.h < 230;                                 // a short tile spends its height on people, not the summary
+      const narrow = t.w < 6;                                    // bar drops under the name rather than being squeezed out
+      const mon = App.mondayIso(App.isoDate(App.today()));
+      const weeks = [];
+      for (let i = 0; i < Math.max(1, ahead); i++) {
+        const start = App.shiftIso(mon, i * 7);
+        weeks.push({ key: start, start, end: App.shiftIso(start, 4) });
+      }
+      const load = App.resourceLoad(people, weeks);
+      const r1 = (n) => Math.round(n * 10) / 10;
+      const busyOf = (l) => Math.max(l.booked, l.planned);
+      const levelOf = (l) => l.cap <= 0 ? (busyOf(l) > 0 ? 'over' : 'off') : busyOf(l) > l.cap + 0.01 ? 'over' : busyOf(l) >= l.cap * 0.8 ? 'full' : 'ok';
+
+      const rows = people.map(p => ({ p, l: load[p.id][mon], dep: App.dept(App.roleDept(p.role)) }))
+        .sort((a, b) => (busyOf(b.l) - b.l.cap) - (busyOf(a.l) - a.l.cap) || a.p.name.localeCompare(b.p.name));
+
+      // the team at a glance: this week's use of the hours it has
+      const cap = rows.reduce((n, r) => n + r.l.cap, 0), used = rows.reduce((n, r) => n + Math.min(busyOf(r.l), r.l.cap), 0);
+      const n = { over: 0, full: 0, ok: 0, off: 0 };
+      rows.forEach(r => n[levelOf(r.l)]++);
+      const pct = cap > 0 ? Math.round(used / cap * 100) : 0;
+      const summary = el('.tw-sum', null, [
+        el('.tw-gauge', null, [el('span', null, pct + '%')]),
+        el('.tw-sum-txt', null, [
+          el('.tw-sum-head', null, r1(used) + ' of ' + r1(cap) + ' days used this week'),
+          el('.tw-chips', null, [
+            n.over ? el('span.tw-chip.over', null, n.over + ' over') : null,
+            n.full ? el('span.tw-chip.full', null, n.full + ' at capacity') : null,
+            n.ok ? el('span.tw-chip.ok', null, n.ok + ' with room') : null,
+            n.off ? el('span.tw-chip.off', null, n.off + ' away') : null
+          ])
+        ])
+      ]);
+      summary.querySelector('.tw-gauge').style.setProperty('--tw-p', pct);
+
+      const tipFor = (p, wk, l) => () => {
+        const box = el('.res-tip');
+        box.appendChild(el('.res-tip-head', null, p.name + ' · w/c ' + App.fmtDate(wk.start)));
+        box.appendChild(el('.res-tip-sub', null, r1(l.booked) + ' d booked' + (l.planned ? ' · ' + r1(l.planned) + ' d planned' : '') +
+          ' of ' + r1(l.cap) + ' d' + (l.off ? ' (' + l.off + ' d off)' : '')));
+        l.tasks.slice().sort((a, b) => a.su.start < b.su.start ? -1 : 1).slice(0, 10).forEach(({ ep, su }) =>
+          box.appendChild(el('.res-tip-task', { style: { borderLeftColor: App.dept(su.dept).color } }, [
+            el('span.res-tip-code', null, ep.code), ' ' + su.name, el('span.res-tip-meta', null, App.fmtRange(su.start, su.due))
+          ])));
+        if (l.tasks.length > 10) box.appendChild(el('.res-tip-sub', null, '+ ' + (l.tasks.length - 10) + ' more'));
+        return box;
+      };
+
+      const rowPx = narrow ? 42 : 38;
+      const fit = Math.max(1, Math.floor((t.h - WIDGETS.teamLoad.headPx - (compact ? 0 : 66) - (ahead ? 18 : 0) - 24) / rowPx));
+      const LEVEL_C = { ok: '#37b679', full: '#f6a609', over: 'var(--danger)', off: 'var(--text-3)' };
+      const list = el('.tw-list');
+      rows.slice(0, fit).forEach(({ p, l, dep }) => {
+        const busy = busyOf(l), lvl = levelOf(l);
+        const scale = Math.max(l.cap, busy, 0.01);
+        const within = Math.min(busy, l.cap) / scale * 100, past = Math.max(0, busy - l.cap) / scale * 100;
+        const bar = el('.tw-bar', { title: tipFor(p, weeks[0], l) }, [
+          el('.tw-fill', { style: { width: within + '%', background: LEVEL_C[lvl] } }),
+          past ? el('.tw-over', { style: { left: within + '%', width: past + '%' } }) : null,
+          l.cap > 0 && busy > l.cap ? el('.tw-cap', { style: { left: (l.cap / scale * 100) + '%' } }) : null
+        ]);
+        const row = el('.tw-row.' + lvl, { onclick: () => App.resources.openPerson(p.id) }, [
+          el('.tw-who', null, [
+            el('span.avatar', { style: { width: '22px', height: '22px', fontSize: '8.5px', background: p.color, flex: 'none' } }, App.initials(p.name)),
+            el('.tw-name', null, [el('span', null, p.name), el('span.tw-dept', null, dep.label)])
+          ]),
+          lvl === 'off' && l.days && l.off >= l.days ? el('.tw-away', null, 'Away this week') : bar,
+          el('.tw-val', null, [el('b', null, r1(busy)), '/' + r1(l.cap) + 'd']),
+          ahead ? el('.tw-weeks', null, weeks.map((wk, i) => {
+            const wl = load[p.id][wk.key], wb = busyOf(wl);
+            if (wl.days && wl.off >= wl.days) return el('.tw-wk.away', { title: 'w/c ' + App.fmtDate(wk.start) + ' — away' });
+            const ratio = wl.cap > 0 ? wb / wl.cap : (wb > 0 ? 2 : 0);
+            const ring = el('.res-ring.tw-ring' + (ratio > 1.001 ? '.over' : '') + (i === 0 ? '.now' : ''), { title: tipFor(p, wk, wl) },
+              [el('.res-disc', { style: { width: (18 * Math.sqrt(Math.min(1, ratio))) + 'px', height: (18 * Math.sqrt(Math.min(1, ratio))) + 'px' } })]);
+            ring.style.setProperty('--res-c', LEVEL_C[ratio > 1.001 ? 'over' : ratio >= 0.8 ? 'full' : 'ok']);
+            return el('.tw-wk', null, ring);
+          })) : null
+        ]);
+        list.appendChild(row);
+      });
+      const more = rows.length - fit;
+      return {
+        title, sub: 'this week · vs capacity',
+        body: el('.tw' + (narrow ? '.narrow' : ''), null, [compact ? null : summary,
+          ahead ? el('.tw-weekhead', null, [el('span'), el('span'), el('span'),
+            el('.tw-weeks', null, weeks.map((wk, i) => el('.tw-wk.lbl', null, i === 0 ? 'Now' : App.fmtDate(wk.start))))]) : null,
+          list,
+          more > 0 ? el('.tw-more', null, '+ ' + more + ' more — open Timeline → Resources') : null])
+      };
     },
 
     upcoming(m, t) {
