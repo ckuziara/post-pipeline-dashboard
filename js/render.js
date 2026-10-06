@@ -236,7 +236,7 @@ window.App = window.App || {};
 
     // signed in: show who you are, with sign-out
     if (user) {
-      box.appendChild(el('.user-chip', { title: user.email + ' — signed in via ' + (App.api.me && App.api.me.via === 'google' ? 'Google' : 'team sign-in') }, [
+      box.appendChild(el('.user-chip', { title: user.email + ' — signed in via ' + (App.api.me && App.api.me.via === 'neon' ? 'Neon Auth' : 'dev sign-in') }, [
         user.picture
           ? el('img.user-pic', { src: user.picture, alt: '' })
           : el('span.avatar', { style: { background: 'var(--accent)' } }, App.initials(user.name)),

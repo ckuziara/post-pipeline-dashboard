@@ -60,7 +60,7 @@ restores the reference board.
 The clock is pinned to a demo "today" (`App.DEMO_TODAY` in `js/state.js`) so the timeline
 stays lively; set `App.useRealClock = true` to track the real date.
 
-## Run it (Phase 2–3: shared server + SSO)
+## Run it (Phase 2–3: shared server + sign-in)
 
 **Team mode — the real thing.** From this folder run:
 
@@ -86,8 +86,8 @@ falls back to browser-local storage, exactly as before.
 
 ## Deploy for free (Render + Neon)
 
-To put the board on the internet — so teammates reach it anywhere and real
-Google SSO works — host the Node process on **Render** (free) with the shared
+To put the board on the internet — so teammates reach it anywhere with real
+sign-in — host the Node process on **Render** (free) with the shared
 state in **Neon** Postgres (free). The backend auto-switches storage: it uses
 Postgres when `DATABASE_URL` is set, and the local `data/state.json` file
 otherwise, so nothing changes for laptop dev. Sessions are stateless signed
@@ -101,14 +101,12 @@ cookies, so no session store is needed either.
    - `DATABASE_URL` — the Neon string from step 1
    - `SESSION_SECRET` — any long random string (keep it stable; changing it
      signs everyone out)
-   - `ACCESS_CODE` — **required** while `DEV_LOGIN` is `true` (see below)
-   - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — from the SSO step below
-     (leave blank at first; team sign-in still works)
+   - `NEON_AUTH_BASE_URL` — your Neon Auth URL (see *Sign-in* below)
    - `MASTER_KEY_V1` — only if you want BYOK (bring-your-own Gemini key) live;
      see below. Leave blank and the feature 503s gracefully — everything else
      works either way
    - `ADMIN_EMAILS` — comma-separated bootstrap admin address(es)
-   - `ALLOWED_DOMAIN` — your Workspace domain (blank allows any address — see below)
+   - `ALLOWED_DOMAIN` — your team's email domain (blank lets any address in — see below)
 3. Deploy. Render gives you a URL like `https://post-pipeline-dashboard.onrender.com`.
 
 The database connection verifies the server's TLS certificate by default, which
@@ -116,63 +114,68 @@ works out of the box with Neon (and RDS/Aurora). If you later point this at an
 on-prem Postgres using a **self-signed** certificate, set `PGSSL_NO_VERIFY=true`
 to skip verification — only do that on a trusted network.
 
-### ⚠ Securing the email sign-in (when you can't use Google SSO yet)
+### Sign-in (Neon Auth)
 
-The email sign-in (`DEV_LOGIN=true`) asks only for an address — so on a public
-URL, *anyone who finds the link* could sign in as an admin. Two protections,
-both on by default once configured:
+Sign-in is **Neon Auth** (Neon's managed Better Auth): email + password, with
+emailed six-digit codes to confirm a new account and to reset a password.
+Users, sessions and password hashes live in the `neon_auth` schema of your
+Neon database, not in the board.
 
-- **`ACCESS_CODE`** — a shared code the whole team types alongside their email.
-  Pick your own memorable phrase — don't reuse an example from these docs.
-  Compared in constant time, so it can't be guessed character-by-character.
-  **Always set this on a public deploy that doesn't have SSO yet.**
-- **`ALLOWED_DOMAIN`** — the email must end in `@your-domain.com` (or be listed
-  in `ADMIN_EMAILS`), so a leaked code alone isn't enough. Left blank (the
-  default), any address that knows the code can sign in — set this once you
-  know your team's Workspace domain.
+The browser never talks to Neon directly. The login screen posts to this
+server's own `/auth/*` routes, which call Neon server-to-server
+(`neon-auth.js`) and then set the board's usual signed `pp_sid` cookie. That
+keeps everything first-party, so Safari and other browsers that block
+third-party cookies work normally.
 
-The server prints which protections are active at startup and warns loudly if
-email sign-in is exposed without a code. Once Google SSO is working, set
-`DEV_LOGIN=false` and the email box disappears entirely.
+**Setup (one-time):**
 
-> Rotating the code just means changing `ACCESS_CODE` in Render — existing
-> sessions stay valid (they're signed with `SESSION_SECRET`, which is separate).
+1. In the Neon Console, open your project → **Auth**. Enable it if it isn't
+   already, and copy the **Auth URL** (`https://ep-….neonauth.…/neondb/auth`).
+2. Set it as `NEON_AUTH_BASE_URL` (Render env var, or `"neonAuthUrl"` in
+   `server-config.json` locally).
+3. **Auth → Configuration → Domains:** add every origin people open the board
+   from, e.g. `https://<your-app>.onrender.com`. Neon rejects sign-ins from
+   anywhere else ("isn't a trusted domain"). `localhost` is pre-approved; a
+   LAN address like `http://192.168.1.20:8771` must be added too.
+4. **Turn on email verification** (Auth → Settings → *Verify email on
+   sign-up* and *Require email verification*, method **OTP**). Without it,
+   anyone could create an account for a teammate's address they don't own.
+5. Set `ALLOWED_DOMAIN` (and `ADMIN_EMAILS` for anyone outside it). Neon lets
+   anyone create an account; the board refuses addresses outside these, before
+   an account is even created.
+
+**New people request access.** *Request access* on the login screen creates
+the account, but it doesn't open the board. It files a request that Producers
+and Managers see at the bottom of **Admin → User Directory**, where they pick a
+role and **Accept** (which adds the person to the directory) or **Deny**. The
+server only lets in people who are in the User Directory, or listed in
+`ADMIN_EMAILS`, so removing someone from the directory locks them out within
+five minutes. A denied address sees "Access not granted" and can't ask again
+until someone clicks *Allow to ask again*. Requests are kept in the
+`access_requests` table (`data/access-requests.json` locally), never in board
+state.
+
+Before real launch, work through Neon's
+[Auth production checklist](https://neon.com/docs/auth/production-checklist):
+your own SMTP sender instead of the shared `auth@mail.myneon.app`, the
+application name shown in emails, and turning off *Allow Localhost* on the
+production branch.
+
+Once Neon Auth is on it's the only way in: sessions from the old sign-ins
+(email-only, Google, board-set passwords) stop working on the next page load.
+Each page load also re-checks the Neon session (at most every five minutes),
+so signing out, resetting a password or deleting a user in Neon takes effect.
+
+**Without Neon Auth** (`NEON_AUTH_BASE_URL` unset), the server falls back to a
+password-less email sign-in that only answers a browser on the same machine
+(`localhost`). It's for local preview; it never works over the LAN or on a
+hosted URL.
 
 > Notes on the free tier: Render free web services **spin down after ~15 min
 > idle** (first request then takes ~1 min to wake) — fine for an internal tool.
 > Neon **scales its compute to zero** when idle and wakes on demand. When you
 > move to company servers, Neon → your Postgres/Aurora is just a
 > `pg_dump | pg_restore` (both are standard Postgres).
-
-### Enabling Google SSO (one-time)
-
-Config can come from **environment variables** (hosted deploys, where the
-filesystem is wiped on restart) or `server-config.json` (local dev). Env wins.
-
-Until SSO is set up, the login page uses the **team sign-in** (email only —
-fine on a trusted office network, but no passwords):
-
-Until this is done, the login page uses the **team sign-in** (email only —
-fine on a trusted office network, but no passwords, so do the below when ready):
-
-1. Go to <https://console.cloud.google.com/> → create/select a project.
-2. **APIs & Services → OAuth consent screen** → *Internal* (this limits sign-in
-   to your Workspace org) → fill in the app name.
-3. **APIs & Services → Credentials → Create credentials → OAuth client ID** →
-   *Web application*. Add the redirect URI for wherever you're running:
-   - local: `http://localhost:8771/auth/callback`
-   - Render: `https://<your-app>.onrender.com/auth/callback`
-4. Provide the **Client ID / secret**:
-   - hosted: set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` env vars
-   - local: put them in `server-config.json` under `"google"`
-5. Restart. The *Sign in with Google* button lights up, restricted to
-   `ALLOWED_DOMAIN` if you've set one. Set `DEV_LOGIN=false` to turn off the
-   email-only fallback — **do this on any public deploy.**
-
-> Note: Google accepts `localhost` and public `https` redirect URLs, but not a
-> raw LAN IP — so on a laptop the Google button works over localhost, and once
-> deployed (Render) it works for everyone. Over plain LAN, teammates use the
-> team sign-in, which still gives them their correct role via directory email.
 
 ### Enabling BYOK (bring-your-own Gemini key)
 
@@ -314,8 +317,9 @@ that becomes annoying.
 ```
 index.html          shell + script/style includes
 style.css           Monday-style dark theme
-server.js           Node backend: static hosting, Google SSO + dev sign-in,
+server.js           Node backend: static hosting, Neon Auth sign-in,
                     stateless cookie sessions, shared versioned state API
+neon-auth.js        server-to-server calls to Neon Auth (sign-in, sign-up, codes)
                     (Postgres when DATABASE_URL is set, else a local JSON file)
 package.json        start script + the one dependency (pg), used by the host
 render.yaml         Render Blueprint for the free deploy (env-var placeholders)

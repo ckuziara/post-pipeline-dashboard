@@ -2156,56 +2156,148 @@ window.App = window.App || {};
     return true;
   }
 
-  /* ---- sign-in screens ---- */
-  const G_LOGO = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M23.5 12.27c0-.85-.08-1.66-.22-2.45H12v4.64h6.45a5.52 5.52 0 0 1-2.39 3.62v3h3.87c2.26-2.09 3.57-5.17 3.57-8.81z"/><path fill="#34A853" d="M12 24c3.24 0 5.96-1.07 7.93-2.91l-3.87-3c-1.07.72-2.44 1.14-4.06 1.14-3.12 0-5.77-2.11-6.71-4.95H1.29v3.1A12 12 0 0 0 12 24z"/><path fill="#FBBC05" d="M5.29 14.28A7.2 7.2 0 0 1 4.91 12c0-.79.14-1.56.38-2.28v-3.1H1.29a12 12 0 0 0 0 10.76l4-3.1z"/><path fill="#EA4335" d="M12 4.77c1.76 0 3.34.6 4.58 1.79l3.44-3.44A11.97 11.97 0 0 0 12 0 12 12 0 0 0 1.29 6.62l4 3.1C6.23 6.88 8.88 4.77 12 4.77z"/></svg>';
+  /* ---- sign-in screens ----
+     Neon Auth (email + password) is the sign-in. One card, several modes:
+     sign in, create an account, forgot password, and the emailed-code step
+     Neon asks for when confirming a new address or resetting a password.
+     Without Neon Auth configured, a localhost-only dev sign-in stands in so
+     preview still works.
 
+     An account alone doesn't open the board: until a Producer or Manager
+     accepts the request (Admin → User Directory) every sign-in answers
+     { pending } or { denied } instead, and lands on the matching screen. */
   function loginScreen() {
     const el = App.el, opts = App.api.loginOpts || {};
     const err = new URLSearchParams(location.search).get('err');
-    const emailInput = el('input.login-input', { type: 'email', placeholder: 'you@example.com' });
-    const codeInput = opts.needsCode
-      ? el('input.login-input', { type: 'password', placeholder: 'Team access code' })
-      : null;
-    const devSubmit = () => App.api.devLogin(emailInput.value, codeInput ? codeInput.value : undefined)
-      .catch(e => App.toast(e.message, true));
-    emailInput.addEventListener('keydown', e => { if (e.key === 'Enter') devSubmit(); });
-    if (codeInput) codeInput.addEventListener('keydown', e => { if (e.key === 'Enter') devSubmit(); });
+    const card = el('.login-card');
+    document.body.appendChild(el('.login-screen', null, card));
+    const st = { mode: 'sign-in', email: '', busy: false };
 
-    /* Password sign-in. Unlike dev sign-in this is real, admin-granted
-       authorization — an admin set this specific person's password the same
-       way they add them to the People directory — so it's offered regardless
-       of devLogin or the access code: those two gate the insecure bypass,
-       not this. Whether a given address actually HAS a password is only
-       findable by trying, same as the "incorrect email or password" reply
-       the server gives either way. */
-    const pwEmail = el('input.login-input', { type: 'email', placeholder: 'you@example.com' });
-    const pwPass = el('input.login-input', { type: 'password', placeholder: 'Password' });
-    const pwSubmit = () => App.api.passwordLogin(pwEmail.value, pwPass.value)
-      .catch(e => App.toast(e.message, true));
-    pwEmail.addEventListener('keydown', e => { if (e.key === 'Enter') pwPass.focus(); });
-    pwPass.addEventListener('keydown', e => { if (e.key === 'Enter') pwSubmit(); });
+    const input = (type, placeholder, value, auto) =>
+      el('input.login-input', { type, placeholder, value: value || '', autocomplete: auto || 'off' });
+    const link = (label, mode) => el('button.login-link', { type: 'button', onclick: () => go(mode) }, label);
 
-    document.body.appendChild(el('.login-screen', null, el('.login-card', null, [
-      App.icon('clapper', { cls: 'login-logo', size: 26 }),
+    // run one step; keeps the button from double-submitting
+    const run = async (btn, fn) => {
+      if (st.busy) return;
+      st.busy = true; btn.disabled = true;
+      try { await fn(); }
+      catch (e) { App.toast(e.message, true); }
+      finally { st.busy = false; btn.disabled = false; }
+    };
+    const onEnter = (inputs, submit) => inputs.forEach((inp, i) => inp.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      if (inputs[i + 1]) inputs[i + 1].focus(); else submit();
+    }));
+
+    function form(title, note, inputs, btnLabel, submit, links) {
+      const btn = el('button.btn-primary', { onclick: () => run(btn, submit) }, btnLabel);
+      onEnter(inputs, () => btn.click());
+      card.replaceChildren(...[
+        App.icon('clapper', { cls: 'login-logo', size: 26 }),
+        el('.login-title', null, 'Post Pipeline'),
+        el('.login-sub', null, title),
+        (err && st.mode === 'sign-in' ? el('.login-err', null, [App.icon('warn'), ' ' + err]) : null),
+        (note ? el('.login-hint', null, note) : null),
+        el('.login-dev.stacked', null, inputs.concat([btn])),
+        (links && links.length ? el('.login-links', null, links) : null)
+      ].filter(Boolean));
+      const first = inputs.find(i => !i.value) || inputs[0];
+      if (first) setTimeout(() => first.focus(), 0);
+    }
+
+    // the server's answer to any step that could end signed in
+    const landed = (r) => {
+      if (r.pending) { go('pending'); return true; }
+      if (r.denied) { go('denied'); return true; }
+      return false;
+    };
+    const notice = (icon, title, text) => card.replaceChildren(
+      App.icon(icon, { cls: 'login-logo', size: 26 }),
+      el('.login-title', null, title),
+      el('.login-hint', { style: { marginBottom: '6px' } }, text),
+      el('.login-links', null, [link('Back to sign in', 'sign-in')]));
+
+    function go(mode) {
+      st.mode = mode;
+      if (mode === 'pending') {
+        notice('hourglass', 'Request sent',
+          'Your account for ' + st.email + ' is set up. A Producer or Manager needs to accept it before you can open the board — sign in again once they have.');
+        return;
+      }
+      if (mode === 'denied') {
+        notice('lock', 'Access not granted',
+          'A Producer or Manager declined access for ' + st.email + '. If that’s a mistake, ask them to look again in Admin → User Directory.');
+        return;
+      }
+      if (mode === 'sign-in') {
+        const em = input('email', 'you@example.com', st.email, 'username');
+        const pw = input('password', 'Password', '', 'current-password');
+        form('Sign in to your team board', null, [em, pw], 'Sign in', async () => {
+          st.email = em.value.trim();
+          const r = await App.api.auth('sign-in', { email: st.email, password: pw.value });
+          if (landed(r)) return;
+          if (r.verify) { App.toast('Confirm your email first — we’ve sent you a code'); go('verify'); return; }
+          App.api.enter();
+        }, [link('Request access', 'sign-up'), link('Forgot password?', 'forgot')]);
+      } else if (mode === 'sign-up') {
+        const nm = input('text', 'Your name', '', 'name');
+        const em = input('email', 'Work email', st.email, 'username');
+        const pw = input('password', 'Password (8+ characters)', '', 'new-password');
+        form('Request access', 'Create your account with your work email. A Producer or Manager will accept it before you can open the board.', [nm, em, pw], 'Request access', async () => {
+          st.email = em.value.trim();
+          const r = await App.api.auth('sign-up', { name: nm.value.trim(), email: st.email, password: pw.value });
+          if (landed(r)) return;
+          if (r.verify) { go('verify'); return; }
+          App.api.enter();
+        }, [link('I already have an account', 'sign-in')]);
+      } else if (mode === 'verify') {
+        const code = input('text', '6-digit code', '', 'one-time-code');
+        code.inputMode = 'numeric';
+        form('Confirm your email', 'We sent a code to ' + st.email + '. Enter it to finish.', [code], 'Confirm', async () => {
+          const r = await App.api.auth('verify', { email: st.email, code: code.value });
+          if (landed(r)) return;
+          if (r.verified) { App.toast('Email confirmed — sign in to continue'); go('sign-in'); return; }
+          App.api.enter();
+        }, [
+          el('button.login-link', { type: 'button', onclick: async () => {
+            try { await App.api.auth('resend', { email: st.email }); App.toast('New code sent'); }
+            catch (e) { App.toast(e.message, true); }
+          } }, 'Send a new code'),
+          link('Back to sign in', 'sign-in')
+        ]);
+      } else if (mode === 'forgot') {
+        const em = input('email', 'you@example.com', st.email, 'username');
+        form('Reset your password', 'We’ll email you a code to set a new one.', [em], 'Send code', async () => {
+          st.email = em.value.trim();
+          await App.api.auth('forgot', { email: st.email });
+          go('reset');
+        }, [link('Back to sign in', 'sign-in')]);
+      } else if (mode === 'reset') {
+        const code = input('text', 'Code from the email', '', 'one-time-code');
+        code.inputMode = 'numeric';
+        const pw = input('password', 'New password (8+ characters)', '', 'new-password');
+        form('Set a new password', 'If ' + st.email + ' has an account, a code is on its way.', [code, pw], 'Save and sign in', async () => {
+          const r = await App.api.auth('reset', { email: st.email, code: code.value, password: pw.value });
+          if (landed(r)) return;
+          App.api.enter();
+        }, [link('Send another code', 'forgot'), link('Back to sign in', 'sign-in')]);
+      } else if (mode === 'dev') {
+        const em = input('email', 'you@example.com', '', 'username');
+        form('Dev sign-in (this machine only)',
+          'Neon Auth isn’t configured on this server, so any team email signs in without a password.',
+          [em], 'Sign in', async () => {
+            await App.api.devLogin(em.value);
+          });
+      }
+    }
+
+    if (opts.neonAuth) go('sign-in');
+    else if (opts.devLogin) go('dev');
+    else card.replaceChildren(
+      App.icon('lock', { cls: 'login-logo', size: 26 }),
       el('.login-title', null, 'Post Pipeline'),
-      el('.login-sub', null, 'Episodic post-production tracker'),
-      (err ? el('.login-err', null, [App.icon('warn'), ' ' + err]) : null),
-      el('a.login-google' + (opts.googleConfigured ? '' : '.disabled'),
-        { href: opts.googleConfigured ? '/auth/google' : null },
-        [el('span.login-g', { html: G_LOGO }), 'Sign in with Google']),
-      (!opts.googleConfigured ? el('.login-hint', null, 'Google SSO isn’t configured yet — the server owner can enable it (see README). Use one of the options below for now.') : null),
-      el('.login-div', null, el('span', null, 'or')),
-      el('.login-dev.stacked', null, [
-        pwEmail, pwPass,
-        el('button.btn-primary', { onclick: pwSubmit }, 'Sign in with password')
-      ]),
-      (opts.devLogin ? el('.login-div', null, el('span', null, 'or')) : null),
-      (opts.devLogin ? el('.login-dev' + (codeInput ? '.stacked' : ''), null, [
-        emailInput,
-        codeInput,
-        el('button.btn-primary', { onclick: devSubmit }, 'Sign in')
-      ]) : null)
-    ])));
+      el('.login-hint', null, 'Sign-in isn’t set up on this server yet. The server owner needs to set NEON_AUTH_BASE_URL (see README).'));
   }
 
   function notInDirectoryScreen() {

@@ -23,7 +23,7 @@ window.App = window.App || {};
         this.online = true;
         const body = await r.json();
         if (r.ok) this.me = body;
-        else this.loginOpts = body;      // {devLogin, googleConfigured}
+        else this.loginOpts = body;      // {neonAuth, devLogin}
       } catch (e) {
         this.online = false;             // file:// or server down → offline mode
       }
@@ -370,11 +370,11 @@ window.App = window.App || {};
       return body;
     },
 
-    async devLogin(email, code) {
+    async devLogin(email) {
       const r = await fetch('/auth/dev', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code })
+        body: JSON.stringify({ email })
       });
       if (!r.ok) throw new Error((await r.json()).error || 'sign-in failed');
       // reboot signed in — drops ?err=… but keeps the hash, so a #task= deep
@@ -382,33 +382,35 @@ window.App = window.App || {};
       location.href = location.pathname + location.hash;
     },
 
-    async passwordLogin(email, password) {
-      const r = await fetch('/auth/password', {
+    /* Neon Auth. Every step posts to this server's own /auth/* routes, which
+       talk to Neon (see neon-auth.js). Resolves with the server's reply —
+       { ok } when signed in, { verify } when Neon wants the emailed code. */
+    async auth(step, fields) {
+      const r = await fetch('/auth/' + step, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      if (!r.ok) throw new Error((await r.json()).error || 'sign-in failed');
-      location.href = location.pathname + location.hash;
-    },
-
-    // admin only — sets or replaces another person's password
-    async setPersonPassword(email, password) {
-      const r = await fetch('/api/admin/password', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify(fields)
       });
       const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.error || 'could not set password');
+      if (!r.ok) throw new Error(body.error || 'sign-in failed');
+      return body;
     },
 
-    async clearPersonPassword(email) {
-      const r = await fetch('/api/admin/password', {
-        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      });
+    // signed in — reboot, keeping a #task= deep link that landed on the login screen
+    enter() { location.href = location.pathname + location.hash; },
+
+    // Admin → User Directory: accounts waiting for a Producer/Manager
+    async accessRequests() {
+      const r = await fetch('/api/admin/access-requests', { cache: 'no-store' });
       const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.error || 'could not remove password');
+      if (!r.ok) throw new Error(body.error || 'could not load access requests');
+      return body.requests || [];
+    },
+    // action: 'accept' | 'deny' | 'forget'
+    async reviewAccess(email, action) {
+      const r = await fetch('/api/admin/access-requests/' + encodeURIComponent(email) + '/' + action, { method: 'POST' });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not update the request');
     },
 
     // self-service — changing your own requires proving you still hold it
