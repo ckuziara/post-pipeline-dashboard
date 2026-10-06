@@ -5044,3 +5044,55 @@ body.has-draft #toast-root { bottom: 92px; }
 .res-who { width: auto; max-width: 150px; }
 .adm-permrow-choice { cursor: default; align-items: center; }
 .adm-permrow-choice:hover { background: transparent; }
+
+/* ---- Dashboard: Team Workload (js/dashboard.js teamLoad) ----
+   Same numbers and circle language as the Timeline's Resources view. */
+.tw { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.tw-sum { display: flex; align-items: center; gap: 12px; padding: 2px 0 8px; border-bottom: 1px solid var(--border); }
+.tw-gauge {
+  --tw-p: 0; width: 46px; height: 46px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  background: conic-gradient(var(--accent) calc(var(--tw-p) * 1%), var(--surface-3) 0);
+}
+.tw-gauge span {
+  width: 36px; height: 36px; border-radius: 50%; background: var(--surface); display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums;
+}
+.tw-sum-txt { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.tw-sum-head { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.tw-chips { display: flex; gap: 5px; flex-wrap: wrap; }
+.tw-chip { font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 10px; border: 1px solid currentColor; }
+.tw-chip.over { color: var(--danger); }
+.tw-chip.full { color: #f6a609; }
+.tw-chip.ok { color: #37b679; }
+.tw-chip.off { color: var(--text-3); }
+.tw-row, .tw-weekhead { display: grid; grid-template-columns: minmax(110px, 150px) 1fr 58px auto; align-items: center; gap: 10px; }
+.tw-row { padding: 4px 6px; margin: 0 -6px; border-radius: 7px; cursor: pointer; min-height: 34px; }
+.tw-row:hover { background: var(--hover); }
+.tw-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tw-name { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.tw-name span:first-child { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tw-dept { font-size: 10px; color: var(--text-3); }
+.tw-bar { position: relative; height: 10px; border-radius: 5px; background: var(--surface-3); }
+.tw-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; }
+.tw-over { position: absolute; top: 0; bottom: 0; border-radius: 0 5px 5px 0; background: var(--danger); }
+.tw-cap { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--text); border-radius: 1px; }
+.tw-away { font-size: 11px; color: var(--text-3); font-style: italic; }
+.tw-val { font-size: 11px; color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums; }
+.tw-val b { font-size: 12.5px; color: var(--text); }
+.tw-row.over .tw-val b { color: var(--danger); }
+.tw-weeks { display: flex; gap: 4px; }
+.tw-wk { width: 24px; height: 24px; display: grid; place-items: center; }
+.tw-wk.lbl { height: auto; font-size: 9px; color: var(--text-3); white-space: nowrap; }
+.tw-wk.away { background: repeating-linear-gradient(135deg, transparent 0 3px, var(--bg-2) 3px 6px); border-radius: 50%; }
+.res-ring.tw-ring { width: 18px; height: 18px; }
+.res-ring.tw-ring.now { box-shadow: 0 0 0 1.5px var(--text-3); }
+.res-ring.tw-ring.over { box-shadow: 0 0 0 1.5px var(--danger); }
+.tw-more { font-size: 11px; color: var(--text-3); text-align: center; }
+/* a narrow tile: name and figure on one line, the bar full-width beneath */
+.tw.narrow .tw-row { grid-template-columns: 1fr auto; grid-template-areas: 'who val' 'bar bar'; row-gap: 4px; padding: 3px 6px; }
+.tw.narrow .tw-bar { height: 7px; }
+.tw.narrow .tw-name { flex-direction: row; align-items: baseline; gap: 6px; }
+.tw.narrow .avatar { width: 18px !important; height: 18px !important; font-size: 7.5px !important; }
+.tw.narrow .tw-who { grid-area: who; }
+.tw.narrow .tw-val { grid-area: val; }
+.tw.narrow .tw-bar, .tw.narrow .tw-away { grid-area: bar; }
