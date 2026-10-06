@@ -1654,16 +1654,21 @@ body.gantt-shift .subrow:not(.head) { cursor: pointer; user-select: none; }
 .login-link { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; color: var(--text-3); cursor: pointer; }
 .login-link:hover { color: var(--accent); text-decoration: underline; }
 
-/* Admin → User Directory: access requests */
+/* Admin → User Directory: access requests (compact, under Add a team member) */
 .adm-requests:empty { display: none; }
-.adm-requests { margin: 0 0 16px; padding: 14px 16px; border: 1px solid var(--border-2); border-radius: 12px; background: var(--surface); }
-.adm-req { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.adm-requests { margin-top: 18px; }
+.adm-requests .modal-section-title { margin-bottom: 4px; }
+.adm-req { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-top: 1px solid var(--border); }
 .adm-req:first-of-type { border-top: 0; }
-.adm-req-who { flex: 1; min-width: 180px; }
-.adm-req-name { font-weight: 600; font-size: 13px; }
-.adm-req-meta { font-size: 11px; color: var(--text-3); }
-.adm-req-denied { margin-top: 10px; font-size: 11px; color: var(--text-3); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.adm-req-chip { display: inline-flex; gap: 8px; align-items: center; }
+.adm-req-who { flex: 1; min-width: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.adm-req-name { font-weight: 600; margin-right: 6px; }
+.adm-req-meta { color: var(--text-3); font-size: 11px; }
+.adm-req select { padding: 3px 6px; font-size: 11.5px; }
+.adm-req .adm-req-btn { white-space: nowrap; width: auto; height: auto; padding: 4px 10px; font-size: 11.5px; }
+.adm-req .adm-req-btn.ok { background: var(--accent); border-color: var(--accent); color: #fff; }
+.adm-req-denied { margin-top: 6px; font-size: 11px; color: var(--text-3); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.adm-req-chip { display: inline-flex; gap: 6px; align-items: center; }
+.adm-req-denied .login-link { font-size: 11px; }
 
 /* topbar — signed-in user */
 .user-chip {

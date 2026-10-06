@@ -82,7 +82,6 @@ window.App = window.App || {};
     const box = el('div');
     box.appendChild(crumb('User Directory'));
     box.appendChild(head('Directory — All Users', 'Click a row to edit a member’s name and pipeline role inline.'));
-    box.appendChild(accessRequestsPanel());
 
     // search (kept in admin state so it survives re-renders; rows rebuilt
     // locally on input so the field never loses focus)
@@ -144,6 +143,7 @@ window.App = window.App || {};
         }, '＋ Add member')
       ])
     ]));
+    box.appendChild(accessRequestsPanel());
     return box;
   }
 
@@ -176,18 +176,18 @@ window.App = window.App || {};
         };
         box.appendChild(el('.adm-req', null, [
           el('.adm-req-who', null, [
-            el('.adm-req-name', null, r.name),
-            el('.adm-req-meta', null, r.email + ' · asked ' + App.fmtDate(r.requestedAt.slice(0, 10)))
+            el('span.adm-req-name', null, r.name),
+            el('span.adm-req-meta', null, r.email + ' · ' + App.fmtDate(r.requestedAt.slice(0, 10)))
           ]),
           roleSelect(role, v => { role = v; }),
-          el('button.btn-primary', { onclick: act(async () => {
+          el('button.btn-mini.adm-req-btn.ok', { onclick: act(async () => {
             if (!App.state.data.people.some(p => (p.email || '').toLowerCase() === r.email)) {
               App.addPerson(r.name, role, r.email);
             }
             await App.api.reviewAccess(r.email, 'accept');
             App.track.audit('person.accessAccepted', { person: r.name, role, email: r.email });
           }) }, 'Accept'),
-          el('button.btn-ghost', { onclick: act(async () => {
+          el('button.btn-mini.adm-req-btn', { onclick: act(async () => {
             await App.api.reviewAccess(r.email, 'deny');
             App.track.audit('person.accessDenied', { person: r.name, email: r.email });
             App.toast('Declined ' + r.name);
