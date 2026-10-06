@@ -497,7 +497,120 @@
     list.forEach(t => { if (t.kind === 'task' && t.count === 1 && eps.length >= 5) { t.rare = true; t.kind = 'ignore'; } });
     measure(list, instances);
     list.sort((a, b) => a.offset - b.offset || (a.track < b.track ? -1 : a.track > b.track ? 1 : 0));
+    detectStructure(list, instances);
     return { tasks: list, instances };
+  }
+
+  /* ---- versions and Kick Offs ----
+     A schedule writes a task's rounds as bars of their own along its row —
+     ANIMATIC · 1st · 2nd · 3rd, or V1 · R1 · V2 · R2 · V3 — and a Kick Off as
+     a one-day "KO" in front of the work it starts. Add Show models both: a
+     task's later versions are its revisions (maxRev, revDays, revGaps), and
+     a Kick Off is a one-day task of its own (ko, koFor) that its task waits
+     on. These read the sheet's rows for both, voting across episodes so one
+     odd row doesn't decide it:
+       task.versionOf = the task this bar is a later version of
+       task.koFor     = the task this Kick Off starts                       */
+  const ORDINAL = /^(\d+)\s*(st|nd|rd|th)$/i;
+  const VNUM = /^v\s*(\d+)$/i;
+  const KO_RE = /^(ko|kick\s*-?\s*off)$/i;
+  const versionNum = (label) => {
+    const t = clean(label);
+    let m = ORDINAL.exec(t); if (m) return { kind: 'ord', n: +m[1] };
+    m = VNUM.exec(t); if (m) return { kind: 'v', n: +m[1] };
+    return null;
+  };
+  function detectStructure(tasks, instances) {
+    const byId = {};
+    tasks.forEach(t => { byId[t.id] = t; delete t.versionOf; delete t.koFor; delete t.reviewOf; });
+    const rows = {};
+    instances.forEach(i => { if (!i.offGrid) (rows[i.ep + '/' + i.row] = rows[i.ep + '/' + i.row] || []).push(i); });
+    const vVotes = {}, kVotes = {};
+    const vote = (box, a, b) => { const m = box[a] = box[a] || {}; m[b] = (m[b] || 0) + 1; };
+    Object.keys(rows).forEach(k => {
+      const bars = rows[k].slice().sort((a, b) => a.start < b.start ? -1 : a.start > b.start ? 1 : 0);
+      const root = {};                    // instance id → the task it's a version of
+      bars.forEach((b, idx) => {
+        const t = byId[b.task]; if (!t || t.kind === 'ignore') return;
+        if (KO_RE.test(clean(t.label))) {
+          // the work it kicks off: the next bar to start, else the one it sits inside
+          const next = bars.slice(idx + 1).find(o => byId[o.task] && !KO_RE.test(clean(byId[o.task].label)) && byId[o.task].kind === 'task' && daysBetween(b.end, o.start) <= 21);
+          const inside = bars.find(o => o !== b && o.start <= b.start && o.end >= b.end && byId[o.task] && !KO_RE.test(clean(byId[o.task].label)) && byId[o.task].kind === 'task');
+          const owner = inside && (!next || daysBetween(inside.start, b.start) <= daysBetween(b.end, next.start) + 30) ? inside : next;
+          if (owner) vote(kVotes, t.id, owner.task);
+          return;
+        }
+        const v = versionNum(t.label);
+        if (!v) return;
+        let parent = null;
+        if (v.kind === 'v' && v.n >= 2) {
+          // V3 follows the V2 before it on the row, V2 the V1
+          parent = bars.slice(0, idx).reverse().find(o => { const x = byId[o.task] && versionNum(byId[o.task].label); return x && x.kind === 'v' && x.n === v.n - 1; });
+        } else if (v.kind === 'ord') {
+          // 1st follows whatever's just before it; 2nd follows 1st…
+          const prev = bars.slice(0, idx).reverse().find(o => byId[o.task] && !KO_RE.test(clean(byId[o.task].label)));
+          if (prev && daysBetween(prev.end, b.start) <= 7) parent = prev;
+        }
+        if (!parent) return;
+        const r = root[parent.id] || parent.task;
+        if (r === t.id) return;
+        root[b.id] = r;
+        vote(vVotes, t.id, r);
+      });
+    });
+    const winner = (m, need) => {
+      const k = Object.keys(m || {}).sort((a, b) => m[b] - m[a])[0];
+      return k && m[k] >= need ? k : null;
+    };
+    tasks.forEach(t => {
+      const r = winner(vVotes[t.id], Math.max(1, Math.ceil(t.count / 2)));
+      if (r && byId[r] && byId[r].kind === 'task') t.versionOf = r;
+    });
+    // a chain resolves to its first task (1st → ANIMATIC, so 2nd → ANIMATIC too)
+    tasks.forEach(t => { let g = 0; while (t.versionOf && byId[t.versionOf] && byId[t.versionOf].versionOf && g++ < 20) t.versionOf = byId[t.versionOf].versionOf; });
+    /* Anything sitting between a task's versions on the same row (R1 between
+       V1 and V2, a "Rev") is that task's review time — the gap before the
+       next version already holds it — so it's set aside, not made a task. */
+    const roots = {};
+    tasks.forEach(t => { if (t.versionOf) roots[t.versionOf] = 1; });
+    const span = {};                    // ep/row → [{ root, start, end }]
+    instances.forEach(i => {
+      const t = byId[i.task]; if (!t || i.offGrid) return;
+      const root = t.versionOf || (roots[t.id] ? t.id : null); if (!root) return;
+      const k = i.ep + '/' + i.row, list = span[k] = span[k] || [];
+      let x = list.find(z => z.root === root);
+      if (!x) list.push(x = { root, start: i.start, end: i.end });
+      if (i.start < x.start) x.start = i.start; if (i.end > x.end) x.end = i.end;
+    });
+    tasks.forEach(t => {
+      if (t.versionOf || roots[t.id] || t.kind !== 'task' || KO_RE.test(clean(t.label))) return;
+      const mine = instances.filter(i => i.task === t.id && !i.offGrid);
+      const inside = {};
+      mine.forEach(i => (span[i.ep + '/' + i.row] || []).forEach(x => { if (i.start > x.start && i.end < x.end) inside[x.root] = (inside[x.root] || 0) + 1; }));
+      const r = winner(inside, Math.max(1, Math.ceil(mine.length / 2)));
+      if (r) { t.reviewOf = r; t.kind = 'ignore'; }
+    });
+    tasks.forEach(t => {
+      const o = winner(kVotes[t.id], Math.max(1, Math.ceil(t.count / 2)));
+      if (o && byId[o] && !byId[o].versionOf && byId[o].kind === 'task' && !tasks.some(x => x !== t && x.koFor === o)) { t.koFor = o; t.kind = 'task'; t.dept = byId[o].dept; }
+    });
+    /* A Kick Off comes before its work. Where the sheet coloured the task's
+       bar from before its KO (Studio from the 26th, KO on the 28th), the task
+       starts the working day after the KO instead. */
+    const nextWorkday = (iso) => { let x = addDaysIso(iso, 1); while ([0, 6].indexOf(new Date(x + 'T00:00:00Z').getUTCDay()) >= 0) x = addDaysIso(x, 1); return x; };
+    tasks.forEach(ko => {
+      if (!ko.koFor) return;
+      instances.forEach(k => {
+        if (k.task !== ko.id || k.removed) return;
+        const own = instances.find(i => i.task === ko.koFor && i.ep === k.ep && !i.removed && i.start <= k.start && i.end > k.end);
+        if (own) { own.start = nextWorkday(k.end); own.afterKo = true; }
+      });
+    });
+    measure(tasks, instances);
+  }
+  // a task's versions after V1, in the order they run
+  function versionsOf(tasks, rootId) {
+    return tasks.filter(t => t.versionOf === rootId && t.kind === 'task').sort((a, b) => a.offset - b.offset);
   }
 
   /* Each task's typical length and where it typically starts relative to
@@ -535,9 +648,18 @@
      the task that, across most episodes, finishes closest before it starts —
      on its own track first (RED DATES follows RED DATES), else anywhere. */
   function suggestDeps(tasks, instances) {
-    const use = tasks.filter(t => t.kind === 'task');
-    const at = {};                                // ep → task → instance
-    instances.forEach(i => { if (!i.removed) { (at[i.ep] = at[i.ep] || {})[i.task] = i; } });
+    // a task and its later versions are one thing here, ending with its last version
+    const byId = {}; tasks.forEach(t => { byId[t.id] = t; });
+    const use = tasks.filter(t => t.kind === 'task' && !t.versionOf);
+    const at = {};                                // ep → task → { start, end }
+    instances.forEach(i => {
+      if (i.removed) return;
+      const t = byId[i.task]; if (!t || t.kind !== 'task') return;
+      const id = t.versionOf || t.id;
+      const m = at[i.ep] = at[i.ep] || {};
+      if (!m[id]) m[id] = { start: i.start, end: i.end };
+      else { if (i.start < m[id].start && !t.versionOf) m[id].start = i.start; if (i.end > m[id].end) m[id].end = i.end; }
+    });
     const deps = {};
     use.forEach(t => {
       const score = {};
@@ -570,7 +692,16 @@
     const taskBy = {};
     plan.tasks.forEach(t => { taskBy[t.id] = t; });
     measure(plan.tasks, plan.instances);
-    const live = plan.tasks.filter(t => t.kind === 'task');
+    // a task's later versions aren't pipeline tasks — they're its revisions
+    const live = plan.tasks.filter(t => t.kind === 'task' && !(t.versionOf && taskBy[t.versionOf] && taskBy[t.versionOf].kind === 'task'));
+    const liveIds = {}; live.forEach(t => { liveIds[t.id] = 1; });
+    const vers = {};                    // root id → its version tasks, in order
+    live.forEach(t => { const v = versionsOf(plan.tasks, t.id); if (v.length) vers[t.id] = v; });
+    // an instance per episode per task, for the version maths below
+    const at = {};
+    plan.instances.forEach(i => { if (!i.removed) (at[i.ep] = at[i.ep] || {})[i.task] = i; });
+    const kos = {};                     // owner id → its Kick Off task
+    live.forEach(t => { if (t.koFor && liveIds[t.koFor]) kos[t.koFor] = t; });
     // pipeline keys: unique slugs of the names
     const used = {};
     live.forEach(t => {
@@ -578,7 +709,21 @@
       while (used[k]) k = slug(t.name) + '_' + i++;
       used[k] = 1; t.key = k;
     });
-    const deps = plan.deps || {};
+    // dependencies the way Add Show keeps them: a task with a Kick Off waits
+    // on the KO alone, and the KO carries what the task would have waited on
+    const deps = {};
+    // a link to a later version is a link to its task
+    const owner = (d) => taskBy[d] && taskBy[d].versionOf && liveIds[taskBy[d].versionOf] ? taskBy[d].versionOf : d;
+    Object.keys(plan.deps || {}).forEach(k => {
+      const kk = owner(k);
+      deps[kk] = (deps[kk] || []).concat((plan.deps[k] || []).map(owner)).filter((d, i, a) => liveIds[d] && d !== kk && a.indexOf(d) === i);
+    });
+    Object.keys(kos).forEach(owner => {
+      const ko = kos[owner];
+      const pass = (deps[owner] || []).concat(deps[ko.id] || []).filter(d => d !== ko.id && d !== owner);
+      deps[ko.id] = pass.filter((d, i) => pass.indexOf(d) === i);
+      deps[owner] = [ko.id];
+    });
     // the order the producer left the list in, else the order the work runs
     const pos = {};
     (plan.order || []).forEach((id, i) => { pos[id] = i; });
@@ -586,9 +731,35 @@
     const pipeline = live.slice().sort((a, b) => rank(a) - rank(b) || a.offset - b.offset).map(t => {
       const p = { key: t.key, name: clean(t.name) || t.label, dept: t.dept, days: t.days, minDays: Math.max(1, Math.ceil(t.days / 2)),
         deps: (deps[t.id] || []).map(d => taskBy[d]).filter(d => d && d.kind === 'task').map(d => d.key) };
-      // versions set in the list (V2, V3… and any review gaps between them)
-      if (t.maxRev) { p.maxRev = t.maxRev; p.revDays = (t.revDays || []).slice(0, t.maxRev); if (t.revGaps) p.revGaps = t.revGaps.slice(); }
+      // versions: one revision per later round, its typical days and the
+      // typical review before it; each episode keeps its own (below)
+      const v = vers[t.id];
+      if (v) {
+        p.maxRev = v.length;
+        p.revDays = v.map(x => x.days);
+        const gaps = v.map((x, r) => median(Object.keys(at).map(ep => {
+          const prev = at[ep][r ? v[r - 1].id : t.id], me = at[ep][x.id];
+          return prev && me ? Math.max(0, daysBetween(prev.end, me.start) - 1) : null;
+        }).filter(n => n != null)));
+        if (gaps.some(n => n > 0)) p.revGaps = gaps;
+      }
+      // a Kick Off: one day, on the weekday it's usually held
+      if (t.koFor && kos[t.koFor] === t) {
+        p.ko = true; p.koFor = taskBy[t.koFor].key; p.days = 1; p.minDays = 1;
+        const dows = {};
+        plan.instances.forEach(i => { if (i.task === t.id && !i.removed) { const d = new Date(i.start + 'T00:00:00Z').getUTCDay(); dows[d] = (dows[d] || 0) + 1; } });
+        const top = Object.keys(dows).sort((a, b) => dows[b] - dows[a])[0];
+        if (top != null) p.koDay = +top;
+        p.name = (clean(taskBy[t.koFor].name) || 'Task') + ' KO';
+      }
       return p;
+    });
+    // a KO sits directly above its task, the way Add Show orders them
+    pipeline.slice().forEach(p => {
+      if (!p.ko) return;
+      pipeline.splice(pipeline.indexOf(p), 1);
+      const o = pipeline.findIndex(x => x.key === p.koFor);
+      pipeline.splice(o < 0 ? pipeline.length : o, 0, p);
     });
     const warnings = [];
     const episodes = [];
@@ -604,23 +775,46 @@
         if (tk.kind === 'live') { if (!milestones.live_date || i.start < milestones.live_date) milestones.live_date = i.start; return; }
         if (tk.kind === 'delivery') { if (!milestones.delivery_date || i.start < milestones.delivery_date) milestones.delivery_date = i.start; return; }
         if (tk.kind === 'note') { notes.push({ start: i.start, due: i.end, text: code + ' · ' + (clean(tk.name) || tk.label), color: '#f6be00' }); return; }
+        if (!liveIds[tk.id]) return;           // a later version — handled with its task
         dates[tk.key] = { start: i.start, due: i.end };
+      });
+      // each task's later versions in this episode: their own days and gaps,
+      // and their dates (for statuses and the clash check)
+      const revDays = {}, revGaps = {}, versions = {};
+      Object.keys(vers).forEach(rid => {
+        const root = taskBy[rid], first = at[e.r] && at[e.r][rid];
+        if (!first || !dates[root.key]) return;
+        let prev = first;
+        const ds = [], gs = [], vs = [];
+        vers[rid].forEach((x, r) => {
+          const me = at[e.r][x.id];
+          if (!me) { ds[r] = undefined; gs[r] = undefined; return; }
+          ds[r] = daysBetween(me.start, me.end) + 1;
+          gs[r] = Math.max(0, daysBetween(prev.end, me.start) - 1);
+          vs.push({ start: me.start, due: me.end });
+          prev = me;
+        });
+        if (vs.length) { revDays[root.key] = ds; revGaps[root.key] = gs; versions[root.key] = vs; }
       });
       const removed = pipeline.filter(p => !dates[p.key]).map(p => p.key);
       if (!Object.keys(dates).length) { warnings.push({ code, msg: 'No tasks left — skipped' }); return; }
       const lastDue = Object.keys(dates).reduce((m, k) => dates[k].due > m ? dates[k].due : m, '');
       if (milestones.live_date && lastDue > milestones.live_date) warnings.push({ code, msg: 'Work runs to ' + lastDue + ', past its live date ' + milestones.live_date });
-      // a task that starts before something it waits for has finished
+      // a task that starts before something it waits for has finished —
+      // its last version, since dependents wait for that
+      const lastEnd = (k) => versions[k] && versions[k].length ? versions[k][versions[k].length - 1].due : dates[k].due;
       pipeline.forEach(p => {
         const me = dates[p.key]; if (!me) return;
         p.deps.forEach(dk => {
-          const d = dates[dk];
-          if (d && d.due >= me.start) warnings.push({ code, msg: p.name + ' starts before ' + (pipeline.find(x => x.key === dk) || {}).name + ' has finished', clash: true });
+          if (dates[dk] && lastEnd(dk) >= me.start) warnings.push({ code, msg: p.name + ' starts before ' + (pipeline.find(x => x.key === dk) || {}).name + ' has finished', clash: true });
         });
       });
       if (!milestones.live_date) warnings.push({ code, msg: 'No live date found — one will be worked out from the schedule', soft: true });
       const out = { id: 'imp' + n, code, title: clean(e.title) || code, shiftDays: 0, dates, statuses: {}, assignees: {} };
       if (removed.length) out.removed = removed;
+      if (Object.keys(revDays).length) { out.revDays = revDays; out.revGaps = revGaps; }
+      // the versions' own dates, for working out statuses — not stored
+      if (Object.keys(versions).length) out._versions = versions;
       if (Object.keys(milestones).length) out.milestones = milestones;
       episodes.push(out);
     });
@@ -633,7 +827,7 @@
   }
 
   App.smartImportEngine = {
-    analyse, collectTasks, measure, suggestDeps, wouldLoop, build, detect, parseEpisodeLabel, guessDept, textDateAfter, serialToIso, prettyLabel,
+    analyse, collectTasks, measure, suggestDeps, wouldLoop, build, detect, detectStructure, versionsOf, parseEpisodeLabel, guessDept, textDateAfter, serialToIso, prettyLabel,
     addDays: addDaysIso, daysBetween,
     _internal: { trackKey, familyOf, slug }
   };

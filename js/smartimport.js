@@ -44,9 +44,42 @@ window.App = window.App || {};
   /* ---------------- shell ---------------- */
   let card = null, body = null, foot = null, stepper = null;
 
+  /* ---------------- the draft ----------------
+     Escape, the backdrop or ✕ partway through keeps the import as a draft,
+     the way Add Show keeps a half-planned show (App.draft — this device
+     only, never board data), and the next Smart import picks it up on the
+     step it was left on. Created, or Start fresh, clears it.
+
+     The workbook itself isn't kept — it can run to megabytes — only what was
+     read from the chosen sheet and everything done to it since. So a draft
+     resumes on any step; reading a different sheet needs the file again. */
+  const DRAFT = 'smartImport';
+  const KEEP = ['step', 'fileName', 'sheetName', 'model', 'groupId', 'show', 'episodes', 'tasks', 'instances',
+    'deps', 'depsSeeded', 'order', 'zoom', 'expanded', 'showCells', 'showRemoved', 'pastDone'];
+  function keepDraft() {
+    if (!S) return;
+    if (S.created || !S.model || !S.groupId) { App.draft.clear(DRAFT); return; }
+    const d = { v: 1, savedAt: new Date().toISOString(),
+      sheets: S.sheets.map(x => ({ name: x.name, hidden: x.hidden, summary: x.summary })) };
+    KEEP.forEach(k => { d[k] = S[k]; });
+    App.draft.set(DRAFT, d);
+    // App.draft swallows a full localStorage; say so rather than lose it quietly
+    const back = App.draft.get(DRAFT);
+    if (!back || back.savedAt !== d.savedAt) App.toast('Couldn’t keep this import as a draft — the browser’s storage is full', true);
+  }
+  function restoreDraft() {
+    const d = App.draft.get(DRAFT);
+    if (!d || d.v !== 1 || !d.model || !d.groupId) return null;
+    const st = fresh();
+    KEEP.forEach(k => { if (d[k] !== undefined) st[k] = d[k]; });
+    st.sheets = (d.sheets || []).map(x => Object.assign({}, x, x.name === d.sheetName ? { model: d.model } : {}));
+    st.restoredAt = d.savedAt;
+    return st;
+  }
+
   function open() {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return; }
-    S = fresh();
+    S = restoreDraft() || fresh();
     stepper = el('.smi-steps');
     body = el('.modal-body.smi-body');
     foot = el('.modal-foot');
@@ -62,9 +95,30 @@ window.App = window.App || {};
       ]),
       body, foot
     ]);
-    App.modal.open(card, { onClose: () => { S = null; document.removeEventListener('keydown', onKey, true); } });
+    App.modal.open(card, { onClose: () => {
+      keepDraft();
+      S = null;
+      document.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('pagehide', keepDraft);
+    } });
     document.addEventListener('keydown', onKey, true);
+    // closing the tab mid-import keeps it too
+    window.addEventListener('pagehide', keepDraft);
     draw();
+  }
+
+  // the note at the top of a resumed import, with a way out of it
+  function draftNote() {
+    if (!S.restoredAt) return null;
+    const when = new Date(S.restoredAt);
+    return el('.draft-note', null, [
+      el('span', null, [App.icon('save'), ' Picking up where you left off — ' + (S.fileName || 'your import') +
+        (S.sheetName ? ', “' + S.sheetName.trim() + '”' : '') + ', saved ' + when.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '.']),
+      el('button.draft-clear', {
+        type: 'button', title: 'Throw this draft away and start a new import',
+        onclick: () => { App.draft.clear(DRAFT); S.created = true; App.modal.close(); open(); }
+      }, 'Start fresh')
+    ]);
   }
 
   function go(step) {
@@ -99,6 +153,8 @@ window.App = window.App || {};
     body.innerHTML = '';
     foot.innerHTML = '';
     card.classList.toggle('smi-wide', S.step >= 2);
+    const note = draftNote();
+    if (note) body.appendChild(note);
     [stepFile, stepEpisodes, stepTasks, stepDeps][S.step]();
     if (keep.__body) body.scrollTop = keep.__body[1];
     body.querySelectorAll('[data-keep]').forEach(n => {
@@ -202,8 +258,14 @@ window.App = window.App || {};
   }
 
   async function chooseSheet(name) {
+    // the sheet already in hand: keep everything done to it
+    if (name === S.sheetName && S.model && S.groupId) { if (S.error) { S.error = ''; draw(); } return; }
     const s = S.sheets.find(x => x.name === name);
     S.sheetName = name; S.error = '';
+    if (!s.model && !S.book) {
+      // a resumed draft kept only the sheet it was working on
+      S.error = 'To read another sheet, drop ' + (S.fileName || 'the workbook') + ' in again.'; draw(); return;
+    }
     try {
       S.model = s.model || E().analyse(await S.book.sheet(name));
       s.model = S.model;
@@ -314,8 +376,16 @@ window.App = window.App || {};
   // what a task becomes, as one value: a department, or a kind of date
   const TYPE_EXTRA = [['live', 'Live date'], ['delivery', 'Delivery date'], ['note', 'Producer note']];
   const typeOf = (t) => t.kind === 'task' ? 'd:' + t.dept : t.kind;
-  const typeLabel = (t) => t.kind === 'task' ? App.dept(t.dept).label : (TYPE_EXTRA.find(x => x[0] === t.kind) || [, 'Removed'])[1];
-  const colourOf = (t) => t.kind === 'task' ? App.dept(t.dept).color
+  // a later version reads as its task's ("Animatic · V3"), a Kick Off as its task's KO
+  const rootOf = (t) => isVersion(t) ? taskOf(t.versionOf) : null;
+  const ownerOf = (t) => t && t.koFor && taskOf(t.koFor) && taskOf(t.koFor).kind === 'task' ? taskOf(t.koFor) : null;
+  const vIndex = (t) => versionsOfTask(t.versionOf).indexOf(t) + 2;
+  const displayName = (t) => rootOf(t) ? (rootOf(t).name || rootOf(t).label) + ' · V' + vIndex(t)
+    : ownerOf(t) ? 'KO · ' + (ownerOf(t).name || ownerOf(t).label) : (t.name || t.label);
+  const typeLabel = (t) => rootOf(t) ? 'Version ' + vIndex(t) + ' of ' + rootOf(t).name
+    : ownerOf(t) ? 'Kick Off for ' + ownerOf(t).name
+    : t.kind === 'task' ? App.dept(t.dept).label : (TYPE_EXTRA.find(x => x[0] === t.kind) || [, 'Removed'])[1];
+  const colourOf = (t) => rootOf(t) ? colourOf(rootOf(t)) : t.kind === 'task' ? App.dept(t.dept).color
     : t.kind === 'live' ? '#ff5b6e' : t.kind === 'delivery' ? '#aeb2c0' : t.kind === 'note' ? '#f6be00' : '#777c8c';
   function typeSelect(t, onPick) {
     const sel = el('select.fld.smi-in', { onchange: (e) => onPick(e.target.value) });
@@ -516,11 +586,16 @@ window.App = window.App || {};
     });
   }
   function select(task, inst, openInList) {
+    const t = taskOf(task);
+    if (t && isVersion(t)) task = t.versionOf;
     S.sel = { task, inst: inst || null };
     if (S.step === 2) drawSelPanel();
     applySel();
     // a bar picked on the timeline opens its task in the list, as in Add Show
-    if (openInList && S.editor && S.editor.pipe.some(p => p.key === task)) S.editor.api.edit(task);
+    const row = t && ownerOf(t) ? t.koFor : task;           // a KO shows on its task's row
+    // opening the row reports back through onEdit — that echo mustn't replace
+    // the bar just picked (a KO or a version opens a different row)
+    if (openInList && S.editor && S.editor.pipe.some(p => p.key === row)) { S.quiet = true; S.editor.api.edit(row); S.quiet = false; }
   }
   function hoverable(n, taskId) {
     n.addEventListener('mouseenter', () => { if (document.querySelector('.smi-dragging')) return; S.hover = taskId; applySel(); });
@@ -542,27 +617,46 @@ window.App = window.App || {};
     { key: '@delivery', label: 'Delivery date', color: '#aeb2c0' },
     { key: '@note', label: 'Producer note', color: '#f6be00' }
   ];
-  const inScope = (t, step) => step === 3 ? t.kind === 'task' : t.kind !== 'ignore';
+  const inScope = (t, step) => (step === 3 ? t.kind === 'task' : t.kind !== 'ignore') && !isVersion(t);
+  // a later version (2nd, V3…) lives inside its task — it's never a row of its own
+  const isVersion = (t) => !!(t && t.versionOf && taskOf(t.versionOf) && taskOf(t.versionOf).kind === 'task');
+  const versionsOfTask = (id) => E().versionsOf(S.tasks, id);
+  const median = (a) => { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
   function currentOrder() {
     if (S.order) return S.order.concat(S.tasks.filter(t => S.order.indexOf(t.id) < 0).map(t => t.id));
     E().measure(S.tasks, liveInstances());
     return S.tasks.slice().sort((a, b) => a.offset - b.offset).map(t => t.id);
   }
+  /* A task as Add Show's list holds it: its versions as revisions (days
+     per version, review before each), and a Kick Off as a KO row of its
+     own the list keeps directly above its task. */
   function toPipe(t) {
     const p = { key: t.id, name: t.name, dept: t.kind === 'task' ? t.dept : '@' + t.kind, days: t.days,
       minDays: Math.max(1, Math.ceil(t.days / 2)), deps: (S.deps[t.id] || []).filter(d => { const x = taskOf(d); return x && x.kind === 'task'; }), vc: false };
-    ['maxRev', 'revDays', 'revGaps'].forEach(k => { if (t[k] != null) p[k] = JSON.parse(JSON.stringify(t[k])); });
+    const v = versionsOfTask(t.id);
+    if (v.length) {
+      const live = liveInstances();
+      p.maxRev = v.length;
+      p.revDays = v.map(x => x.days);
+      const gaps = v.map((x, r) => median(live.filter(i => i.task === x.id).map(me => {
+        const prev = live.find(i => i.ep === me.ep && i.task === (r ? v[r - 1].id : t.id));
+        return prev ? Math.max(0, E().daysBetween(prev.end, me.start) - 1) : null;
+      }).filter(n => n != null)));
+      if (gaps.some(n => n > 0)) p.revGaps = gaps;
+    }
+    if (t.koFor && taskOf(t.koFor) && taskOf(t.koFor).kind === 'task') { p.ko = true; p.koFor = t.koFor; p.days = 1; p.minDays = 1; }
     return p;
   }
+  const versionCount = (id) => versionsOfTask(id).length;
 
   function editorPanel(step) {
     if (!S.editor || S.editor.step !== step) {
       const pipe = currentOrder().map(taskOf).filter(t => t && inScope(t, step)).map(toPipe);
       const api = App.pipelineEditor(pipe, {
-        onChange: () => { syncFromPipe(pipe, step); draw(); },
+        onChange: () => { if (syncFromPipe(pipe, step)) S.editor = null; draw(); },
         onDraft: () => {},
-        onEdit: (key) => { if (key && key !== S.sel.task) { S.sel = { task: key, inst: null }; if (S.step === 2) drawSelPanel(); applySel(); } },
-        tooltips: false, vcToggle: false, kickOffs: false,
+        onEdit: (key) => { if (key && key !== S.sel.task && !S.quiet) { S.sel = { task: key, inst: null }; if (S.step === 2) drawSelPanel(); applySel(); } },
+        tooltips: false, vcToggle: false,
         deps: step === 3, versions: step === 3,
         extraTypes: step === 3 ? [] : EXTRA_TYPES
       });
@@ -575,21 +669,23 @@ window.App = window.App || {};
         api.count, api.undoBtn, api.redoBtn, addBtn]),
       el('.pipe-body', null, api.list)
     ]);
-    const removed = S.tasks.filter(t => t.kind === 'ignore' || (step === 3 && t.kind !== 'task'));
+    const removed = S.tasks.filter(t => !isVersion(t) && (t.kind === 'ignore' || (step === 3 && t.kind !== 'task')));
     if (removed.length) {
       const det = el('details.smi-more', S.showRemoved ? { open: '' } : null, [
         el('summary', { onclick: () => { S.showRemoved = !S.showRemoved; } }, step === 3
-          ? removed.length + ' not in the pipeline — removed, or used as a date or note'
-          : removed.length + ' removed — one-off notes, plain numbers, unlabelled colour, and anything you removed')
+          ? removed.length + ' not in the pipeline — removed, review time, or used as a date or note'
+          : removed.length + ' removed — review time between versions, one-off notes, plain numbers, unlabelled colour, and anything you removed')
       ]);
       const list = el('.smi-removed');
       removed.forEach(t => list.appendChild(el('.smi-rrow', { 'data-task': t.id }, [
         el('span.smi-sw', { style: { background: t.fill || colourOf(t) }, title: t.fill ? 'Colour in the sheet: ' + t.fill : '' }),
         el('span.smi-src', { title: (t.trackLabel ? t.trackLabel + ' · ' : '') + '“' + t.label + '”' + (t.nth > 1 ? ', ' + ordinal(t.nth) + ' in its row' : '') },
-          [el('b', null, t.name || t.label), el('span.smi-track', null, [typeLabel(t), t.trackLabel ? ' · ' + t.trackLabel : '', t.rare ? ' · only on ' + t.firstEp : ''].join(''))]),
+          [el('b', null, t.name || t.label), el('span.smi-track', null, [
+            t.reviewOf && taskOf(t.reviewOf) ? 'Review time between ' + taskOf(t.reviewOf).name + '’s versions' : typeLabel(t),
+            t.trackLabel ? ' · ' + t.trackLabel : '', t.rare ? ' · only on ' + t.firstEp : ''].join(''))]),
         el('span.smi-meta', null, countOf(t) + ' of ' + S.episodes.filter(e => e.include).length),
         t.kind === 'ignore' ? el('button.btn-ghost.smi-mini', { type: 'button', onclick: () => {
-          t.kind = t.wasKind && t.wasKind !== 'ignore' ? t.wasKind : 'task'; S.editor = null; draw();
+          t.kind = t.wasKind && t.wasKind !== 'ignore' ? t.wasKind : 'task'; delete t.reviewOf; S.editor = null; draw();
         } }, 'Restore') : el('span')
       ])));
       det.appendChild(list);
@@ -598,27 +694,34 @@ window.App = window.App || {};
     return wrap;
   }
 
-  // the editor's array → the import: names, types, order, links, lengths
+  /* The editor's array → the import: names, types, order, links, lengths,
+     Kick Offs and versions. Returns true when the list needs rebuilding
+     (a version came off or went on, which changes what rows there are). */
   function syncFromPipe(pipe, step) {
     const keys = pipe.map(p => p.key);
+    let rebuild = false;
     pipe.forEach((p, idx) => {
       let t = taskOf(p.key);
       if (!t) t = newTask(p, pipe, idx);
       t.name = p.name;
       if (String(p.dept).charAt(0) === '@') t.kind = p.dept.slice(1); else { t.kind = 'task'; t.dept = p.dept; }
+      if (p.ko) { t.koFor = p.koFor; t.kind = 'task'; } else delete t.koFor;
       if (step === 3) {
         const d = p.deps.filter(k => keys.indexOf(k) >= 0);
         if (d.length) S.deps[p.key] = d; else delete S.deps[p.key];
         // a new first-pass length is applied to the task's bar in every episode
-        if (p.days !== t.days && S.view) {
-          S.instances.forEach(i => { if (i.task === t.id && !i.removed) { i.end = S.view.axis.shift(i.start, p.days - 1); i.edited = true; } });
-        }
-        ['maxRev', 'revDays', 'revGaps'].forEach(k => { if (p[k] != null) t[k] = JSON.parse(JSON.stringify(p[k])); else delete t[k]; });
+        if (!p.ko && p.days !== t.days) resizeAll(t.id, p.days);
+        // versions: one fewer takes the last off as a task of its own again;
+        // one more adds a version after the last; new days resize them
+        const v = versionsOfTask(t.id), want = p.maxRev || 0;
+        if (want < v.length) { v.slice(want).forEach(x => { delete x.versionOf; }); rebuild = true; }
+        if (want > v.length) { for (let r = v.length; r < want; r++) addVersion(t, r, (p.revDays || [])[r] || 1); rebuild = true; }
+        versionsOfTask(t.id).forEach((x, r) => { const n = (p.revDays || [])[r]; if (n && n !== x.days) resizeAll(x.id, n); });
       }
     });
-    // anything the list no longer has was removed
+    // anything the list no longer has was removed (a KO's ✕ included)
     S.tasks.forEach(t => {
-      if (keys.indexOf(t.id) < 0 && inScope(t, step)) { t.wasKind = t.kind; t.kind = 'ignore'; }
+      if (keys.indexOf(t.id) < 0 && inScope(t, step)) { t.wasKind = t.kind; t.kind = 'ignore'; delete t.koFor; }
     });
     Object.keys(S.deps).forEach(k => {
       if (!taskOf(k) || taskOf(k).kind !== 'task') { delete S.deps[k]; return; }
@@ -627,25 +730,50 @@ window.App = window.App || {};
     });
     S.order = keys.concat(currentOrder().filter(id => keys.indexOf(id) < 0));
     E().measure(S.tasks, liveInstances());
+    return rebuild;
+  }
+  // every bar of a task made `days` long, from where each starts (calendar
+  // days — the same days the list counts)
+  function resizeAll(id, days) {
+    S.instances.forEach(i => { if (i.task === id && !i.removed) { i.end = App.shiftIso(i.start, Math.max(1, days) - 1); i.edited = true; } });
+  }
+  // a version added in the list: a bar after the task's last version in every episode
+  function addVersion(root, r, days) {
+    const prevId = r ? versionsOfTask(root.id)[r - 1].id : root.id;
+    const t = { id: 'v' + App.uid(), track: root.track, trackLabel: root.trackLabel, label: 'V' + (r + 2), nth: 1, fill: null, offGrid: false,
+      firstEp: '', name: root.name + ' V' + (r + 2), dept: root.dept, kind: 'task', count: 0, days, offset: (root.offset || 0) + 1 + r, added: true, versionOf: root.id };
+    S.tasks.push(t);
+    S.instances.filter(i => i.task === prevId && !i.removed).forEach(prev => {
+      const start = App.shiftIso(prev.end, 1);
+      S.instances.push({ id: 'n' + App.uid(), task: t.id, ep: prev.ep, row: prev.row, start, end: App.shiftIso(start, days - 1), fill: null, offGrid: false, edited: true });
+    });
   }
 
   /* A task added in the list has no bars yet: give it one in every episode,
      straight after the task above it in the list (or at the episode's start),
-     as long as the editor says — then it can be dragged like any other. */
+     as long as the editor says — then it can be dragged like any other.
+     A Kick Off added from the dependency menu lands on the day before its task. */
   function newTask(p, pipe, idx) {
-    const t = { id: p.key, track: '', trackLabel: '', label: p.name, nth: 1, fill: null, offGrid: false, firstEp: '',
+    const t = { id: p.key, track: '', trackLabel: '', label: p.ko ? 'KO' : p.name, nth: 1, fill: null, offGrid: false, firstEp: '',
       name: p.name, dept: p.dept, kind: 'task', count: 0, days: p.days, offset: 0, added: true };
+    if (p.ko) t.koFor = p.koFor;
     S.tasks.push(t);
-    const ax = S.view && S.view.axis;
     S.episodes.filter(e => e.include).forEach(e => {
       const mine = S.instances.filter(i => i.ep === e.r && !i.removed);
       if (!mine.length) return;
+      if (p.ko) {
+        const own = mine.find(i => i.task === p.koFor); if (!own) return;
+        let d = App.shiftIso(own.start, -1);
+        while ([0, 6].indexOf(App.parseDate(d).getDay()) >= 0) d = App.shiftIso(d, -1);
+        S.instances.push({ id: 'n' + App.uid(), task: t.id, ep: e.r, row: own.row, start: d, end: d, fill: null, offGrid: false, edited: true });
+        return;
+      }
       let start = mine.reduce((m, i) => i.start < m ? i.start : m, '9999');
       for (let j = idx - 1; j >= 0; j--) {
         const prev = mine.find(i => i.task === pipe[j].key);
-        if (prev) { start = ax ? ax.shift(prev.end, 1) : App.shiftIso(prev.end, 1); break; }
+        if (prev) { start = App.shiftIso(prev.end, 1); break; }
       }
-      S.instances.push({ id: 'n' + App.uid(), task: t.id, ep: e.r, row: e.r, start, end: ax ? ax.shift(start, Math.max(1, p.days) - 1) : App.shiftIso(start, p.days - 1), fill: null, offGrid: false, edited: true });
+      S.instances.push({ id: 'n' + App.uid(), task: t.id, ep: e.r, row: e.r, start, end: App.shiftIso(start, Math.max(1, p.days) - 1), fill: null, offGrid: false, edited: true });
     });
     return t;
   }
@@ -715,10 +843,12 @@ window.App = window.App || {};
           const oneDay = t.kind === 'live' || t.kind === 'delivery';
           const cls = '.smi-ib' + (t.kind === 'ignore' ? '.ign' : '') + (i.removed ? '.gone' : '') + (oneDay ? '.ms' : '') + (t.kind === 'note' ? '.note' : '');
           const w = ax.w(i.start, i.end);
-          const name = oneDay ? (t.kind === 'live' ? 'Live' : 'Delivery') : (t.name || t.label);
-          const b = el(cls, {
-            'data-task': t.id, 'data-inst': i.id,
-            title: (t.name || t.label) + ' — ' + typeLabel(t) + '\n' + shortRange(i.start, i.end) +
+          const name = oneDay ? (t.kind === 'live' ? 'Live' : 'Delivery') : displayName(t);
+          // a version lights and opens with its task, so the whole run reads as one
+          const group = rootOf(t) ? rootOf(t).id : t.id;
+          const b = el(cls + (rootOf(t) ? '.ver' : '') + (ownerOf(t) ? '.ko' : ''), {
+            'data-task': group, 'data-inst': i.id,
+            title: displayName(t) + ' — ' + typeLabel(t) + '\n' + shortRange(i.start, i.end) + (i.afterKo ? '\nStarts after its Kick Off' : '') +
               (i.removed ? '\nRemoved — press Delete to bring it back' : '') + (i.edited ? '\nMoved from the sheet' : '') +
               (i.guessed ? '\nUnlabelled in the sheet — named from its colour' : ''),
             style: oneDay ? { left: (ax.x(i.start) + ax.dw / 2 - 7) + 'px' } : { left: ax.x(i.start) + 'px', width: w + 'px' }
@@ -730,7 +860,7 @@ window.App = window.App || {};
           b.style.setProperty('--cf', rgba(col, t.kind === 'ignore' || i.removed ? 0 : 0.16));
           b.style.setProperty('--ink', App.pickInk ? App.pickInk(col) : '#11131a');
           dragBar(b, i, ax, () => select(t.id, i.id, true), oneDay);
-          hoverable(b, t.id);
+          hoverable(b, group);
           track.appendChild(b);
         });
         row.appendChild(track);
@@ -744,7 +874,8 @@ window.App = window.App || {};
     body.appendChild(editorPanel(2));
     applySel();
 
-    const n = S.tasks.filter(t => t.kind === 'task' && countOf(t) > 0).length;
+    // the list's own count: versions ride inside their task, Kick Offs are rows of their own
+    const n = S.tasks.filter(t => t.kind === 'task' && !isVersion(t) && countOf(t) > 0).length;
     foot.appendChild(el('span.smi-foot-note', null, n + ' task' + (n === 1 ? '' : 's') + ' in the pipeline'));
     foot.appendChild(el('button.btn-ghost', { onclick: () => go(1) }, 'Back'));
     foot.appendChild(el('button.btn-primary', { disabled: !n || null, onclick: () => go(3) }, 'Next: dependencies'));
@@ -755,17 +886,42 @@ window.App = window.App || {};
   function drawSelPanel() {
     if (!selPanel) return;
     selPanel.innerHTML = '';
-    const t = S.sel.task && taskOf(S.sel.task), i = S.sel.inst && instOf(S.sel.inst);
+    const i = S.sel.inst && instOf(S.sel.inst);
+    const t = i ? taskOf(i.task) : S.sel.task && taskOf(S.sel.task);
     if (!t) { selPanel.appendChild(el('span.smi-hint', null, 'Nothing picked — click a bar, or a task in the list.')); return; }
     const ep = i && S.episodes.find(e => e.r === i.ep);
     selPanel.appendChild(el('span.smi-sw', { style: { background: colourOf(t) } }));
-    selPanel.appendChild(el('b', null, t.name || t.label));
+    selPanel.appendChild(el('b', null, displayName(t)));
     selPanel.appendChild(el('span.smi-selmeta', null, typeLabel(t) + ' · ' + countOf(t) + ' bar' + (countOf(t) === 1 ? '' : 's') +
       ' · “' + t.label + '”' + (t.trackLabel ? ' on ' + t.trackLabel : '')));
-    if (i) {
-      selPanel.appendChild(el('span.smi-selmeta', null, '· ' + (ep ? ep.code : '') + ' · ' + shortRange(i.start, i.end)));
-      selPanel.appendChild(el('button.btn-ghost.smi-mini', { type: 'button', onclick: () => { i.removed = !i.removed; draw(); } },
-        i.removed ? 'Bring this bar back' : 'Remove this bar'));
+    if (!i) return;
+    selPanel.appendChild(el('span.smi-selmeta', null, '· ' + (ep ? ep.code : '') + ' · ' + shortRange(i.start, i.end)));
+    const btn = (label, title, fn) => el('button.btn-ghost.smi-mini', { type: 'button', title, onclick: () => { fn(); S.editor = null; draw(); } }, label);
+    selPanel.appendChild(el('button.btn-ghost.smi-mini', { type: 'button', onclick: () => { i.removed = !i.removed; draw(); } },
+      i.removed ? 'Bring this bar back' : 'Remove this bar'));
+    /* What the bar is, as Add Show knows it — a version of the task before
+       it, a Kick Off for the work after it, or a task of its own. Each is
+       decided for the task in every episode, not just this bar. */
+    const row = S.instances.filter(x => x.ep === i.ep && x.row === i.row && !x.removed && x !== i && taskOf(x.task) && taskOf(x.task).kind === 'task')
+      .sort((a, b) => a.start < b.start ? -1 : 1);
+    if (rootOf(t)) {
+      selPanel.appendChild(btn('Make it a task of its own', 'Stop treating “' + t.label + '” as a version of ' + rootOf(t).name, () => { delete t.versionOf; }));
+    } else if (ownerOf(t)) {
+      selPanel.appendChild(btn('Not a Kick Off', 'Make “' + t.label + '” a task of its own', () => { delete t.koFor; }));
+    } else if (t.kind === 'task') {
+      const prev = row.filter(x => x.end < i.start).pop();
+      const prevRoot = prev && (rootOf(taskOf(prev.task)) || taskOf(prev.task));
+      if (prevRoot && prevRoot.id !== t.id && !ownerOf(prevRoot) && !versionsOfTask(t.id).length) {
+        selPanel.appendChild(btn('Make it a version of ' + prevRoot.name, 'Its bars become ' + prevRoot.name + '’s next version (a revision) in every episode', () => {
+          t.versionOf = prevRoot.id;
+          if (S.deps[t.id]) delete S.deps[t.id];
+        }));
+      }
+      const next = row.find(x => x.start >= i.start && x.task !== t.id && !isVersion(taskOf(x.task))) || row.find(x => x.start <= i.start && x.end >= i.end && !isVersion(taskOf(x.task)));
+      const nt = next && taskOf(next.task);
+      if (nt && !ownerOf(nt) && !S.tasks.some(x => x.koFor === nt.id) && !versionsOfTask(t.id).length && countOf(t) && E().daysBetween(i.start, i.end) <= 2) {
+        selPanel.appendChild(btn('Make it the Kick Off for ' + nt.name, nt.name + ' will wait on it, as with a Kick Off in Add Show', () => { t.koFor = nt.id; t.dept = nt.dept; }));
+      }
     }
   }
 
@@ -805,9 +961,13 @@ window.App = window.App || {};
     body.appendChild(timeline([from, to], 'EPISODE / SUBITEM', (ax, rows) => {
       eps.forEach(e => {
         const mine = insts.filter(i => i.ep === e.r && useBy[i.task]);
-        const work = mine.filter(i => useBy[i.task].kind === 'task');
+        const allWork = mine.filter(i => useBy[i.task].kind === 'task');
+        // a task's later versions ride on its own line, after V1
+        const work = allWork.filter(i => !isVersion(useBy[i.task]));
+        const versOf = (i) => allWork.filter(x => isVersion(useBy[x.task]) && useBy[x.task].versionOf === i.task).sort((a, b) => a.start < b.start ? -1 : 1);
+        const lastEnd = (i) => versOf(i).reduce((m, x) => x.end > m ? x.end : m, i.end);
         let s0 = '9999', e0 = '0000';
-        work.forEach(i => { if (i.start < s0) s0 = i.start; if (i.end > e0) e0 = i.end; });
+        allWork.forEach(i => { if (i.start < s0) s0 = i.start; if (i.end > e0) e0 = i.end; });
         const open = !!S.expanded[e.r];
         const top = el('.g-row');
         top.appendChild(el('.g-label', { onclick: () => { S.expanded[e.r] = !open; draw(); } }, [
@@ -835,7 +995,7 @@ window.App = window.App || {};
           const lines = [];
           items.forEach(i => {
             const l = lines.find(x => i.start > x.last);
-            if (l) { l.items.push(i); l.last = i.end; } else lines.push({ last: i.end, items: [i] });
+            if (l) { l.items.push(i); l.last = lastEnd(i); } else lines.push({ last: lastEnd(i), items: [i] });
           });
           const dep = App.dept(dk);
           lines.forEach((l, li) => {
@@ -847,13 +1007,29 @@ window.App = window.App || {};
               const t = useBy[i.task];
               const w = ax.w(i.start, i.end);
               const waits = (S.deps[t.id] || []).map(d => (taskOf(d) || {}).name).filter(Boolean);
-              const b = el('.bar.smi-tbar', {
+              const vs = versOf(i);
+              const label = ownerOf(t) ? 'KO' : (t.name || t.label) + (vs.length ? ' · V1' : '');
+              const b = el('.bar.smi-tbar' + (ownerOf(t) ? '.ko' : ''), {
                 'data-task': t.id, 'data-inst': i.id,
-                title: (t.name || t.label) + ' — ' + dep.label + '\n' + shortRange(i.start, i.end) + (waits.length ? '\nWaits for ' + waits.join(', ') : '\nWaits for nothing'),
+                title: displayName(t) + ' — ' + dep.label + '\n' + shortRange(i.start, i.end) + (vs.length ? '\nV1 of ' + (vs.length + 1) : '') +
+                  (waits.length ? '\nWaits for ' + waits.join(', ') : '\nWaits for nothing'),
                 style: { left: ax.x(i.start) + 'px', width: w + 'px', background: dep.color, color: App.pickInk ? App.pickInk(dep.color) : '#11131a' }
-              }, w > 30 ? el('span.smi-tbar-txt', null, t.name || t.label) : null);
+              }, w > 22 ? el('span.smi-tbar-txt', null, label) : null);
+              // its revisions, striped like the Timeline's, each its own days
+              vs.forEach(v => {
+                const vt = useBy[v.task], vw = ax.w(v.start, v.end);
+                const vb = el('.bar.smi-tbar.smi-ver', {
+                  'data-task': t.id, 'data-inst': v.id,
+                  title: displayName(vt) + '\n' + shortRange(v.start, v.end),
+                  style: { left: ax.x(v.start) + 'px', width: vw + 'px', '--c': dep.color }
+                }, vw > 16 ? el('span.smi-tbar-txt', null, 'V' + vIndex(vt)) : null);
+                vb.style.setProperty('--c', dep.color);
+                dragBar(vb, v, ax, () => select(t.id, v.id, true), false);
+                hoverable(vb, t.id);
+                tr.appendChild(vb);
+              });
               // a task that starts before something it waits for has finished
-              const clash = (S.deps[t.id] || []).some(d => { const o = mine.find(x => x.task === d); return o && o.end >= i.start; });
+              const clash = (S.deps[t.id] || []).some(d => { const o = mine.find(x => x.task === d); return o && lastEnd(o) >= i.start; });
               if (clash) b.classList.add('smi-clash');
               dragBar(b, i, ax, () => select(t.id, i.id, true), false);
               hoverable(b, t.id);
@@ -911,11 +1087,23 @@ window.App = window.App || {};
     const today = App.isoDate(App.today());
     p.episodes.forEach(ep => {
       ep.statuses = App.deriveStatusesFromDates(p.show.pipeline, ep.dates, {});
+      const vers = ep._versions || {};
+      delete ep._versions;
       if (!S.pastDone) return;
+      /* Versions already done count as revisions spent, the way the app
+         records one a Director sent back (App.requestRevision): the task's
+         due date grows to the end of the last one, and ep.revisions says how
+         many — so what's left is planned from there. */
+      const spend = (k, n) => { (ep.revisions = ep.revisions || {})[k] = n; ep.dates[k].due = vers[k][n - 1].due; };
       Object.keys(ep.dates).forEach(k => {
-        const dt = ep.dates[k];
-        if (dt.due < today) ep.statuses[k] = 'approved';
-        else if (dt.start <= today) ep.statuses[k] = 'in_progress';
+        const dt = ep.dates[k], vs = vers[k] || [];
+        const last = vs.length ? vs[vs.length - 1].due : dt.due;
+        if (last < today) { ep.statuses[k] = 'approved'; if (vs.length) spend(k, vs.length); }
+        else if (dt.start <= today) {
+          ep.statuses[k] = 'in_progress';
+          const used = vs.filter(v => v.start <= today).length;
+          if (used) spend(k, used);
+        }
       });
     });
     const out = App.importShow(p);
@@ -925,6 +1113,7 @@ window.App = window.App || {};
       file: S.fileName, episodes: p.episodes.length, tasks: p.show.pipeline.length, links, notes: (p.show.notes || []).length,
       edited: S.instances.filter(i => i.edited).length, pastDone: S.pastDone });
     App.state.filters.show = [out.showId];
+    S.created = true;                     // closing now clears the draft rather than keeping it
     App.modal.close();
     App.render();
   }
