@@ -399,6 +399,20 @@ window.App = window.App || {};
     // signed in — reboot, keeping a #task= deep link that landed on the login screen
     enter() { location.href = location.pathname + location.hash; },
 
+    // Admin → User Directory: accounts waiting for a Producer/Manager
+    async accessRequests() {
+      const r = await fetch('/api/admin/access-requests', { cache: 'no-store' });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not load access requests');
+      return body.requests || [];
+    },
+    // action: 'accept' | 'deny' | 'forget'
+    async reviewAccess(email, action) {
+      const r = await fetch('/api/admin/access-requests/' + encodeURIComponent(email) + '/' + action, { method: 'POST' });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || 'could not update the request');
+    },
+
     // self-service — changing your own requires proving you still hold it
     async changeMyPassword(currentPassword, newPassword) {
       const r = await fetch('/api/account/password', {

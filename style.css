@@ -1654,6 +1654,17 @@ body.gantt-shift .subrow:not(.head) { cursor: pointer; user-select: none; }
 .login-link { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; color: var(--text-3); cursor: pointer; }
 .login-link:hover { color: var(--accent); text-decoration: underline; }
 
+/* Admin → User Directory: access requests */
+.adm-requests:empty { display: none; }
+.adm-requests { margin: 0 0 16px; padding: 14px 16px; border: 1px solid var(--border-2); border-radius: 12px; background: var(--surface); }
+.adm-req { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.adm-req:first-of-type { border-top: 0; }
+.adm-req-who { flex: 1; min-width: 180px; }
+.adm-req-name { font-weight: 600; font-size: 13px; }
+.adm-req-meta { font-size: 11px; color: var(--text-3); }
+.adm-req-denied { margin-top: 10px; font-size: 11px; color: var(--text-3); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.adm-req-chip { display: inline-flex; gap: 8px; align-items: center; }
+
 /* topbar — signed-in user */
 .user-chip {
   display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--border);

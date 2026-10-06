@@ -82,6 +82,7 @@ window.App = window.App || {};
     const box = el('div');
     box.appendChild(crumb('User Directory'));
     box.appendChild(head('Directory — All Users', 'Click a row to edit a member’s name and pipeline role inline.'));
+    box.appendChild(accessRequestsPanel());
 
     // search (kept in admin state so it survives re-renders; rows rebuilt
     // locally on input so the field never loses focus)
@@ -143,6 +144,71 @@ window.App = window.App || {};
         }, '＋ Add member')
       ])
     ]));
+    return box;
+  }
+
+  /* ---- access requests ----
+     New accounts wait here until a Producer or Manager decides. Accept adds
+     the person to the directory with the role picked on their row — the
+     directory is what the server checks at sign-in — then clears the
+     request. Deny keeps a record so the address can't simply ask again;
+     "Allow to ask again" forgets it. Fetched on open rather than synced:
+     requests never ride board state (see server.js). Hidden when there are
+     none, and on servers without sign-in (offline / file:// mode). */
+  function accessRequestsPanel() {
+    const box = el('.adm-requests');
+    if (!App.api.online || !App.api.me) return box;
+    const draw = (rows) => {
+      box.replaceChildren();
+      const pending = rows.filter(r => r.status === 'pending');
+      const denied = rows.filter(r => r.status === 'denied');
+      if (!rows.length) return;
+      box.appendChild(el('.modal-section-title', null,
+        pending.length ? 'Access requests · ' + pending.length + ' waiting' : 'Access requests'));
+      pending.forEach(r => {
+        let role = 'creative';
+        const act = (fn) => async (e) => {
+          e.currentTarget.disabled = true;
+          try { await fn(); } catch (err) { App.toast(err.message, true); }
+          // Accept re-renders the directory mid-flight (adding the person),
+          // which detaches this panel — so redraw the page, not this box.
+          App.render();
+        };
+        box.appendChild(el('.adm-req', null, [
+          el('.adm-req-who', null, [
+            el('.adm-req-name', null, r.name),
+            el('.adm-req-meta', null, r.email + ' · asked ' + App.fmtDate(r.requestedAt.slice(0, 10)))
+          ]),
+          roleSelect(role, v => { role = v; }),
+          el('button.btn-primary', { onclick: act(async () => {
+            if (!App.state.data.people.some(p => (p.email || '').toLowerCase() === r.email)) {
+              App.addPerson(r.name, role, r.email);
+            }
+            await App.api.reviewAccess(r.email, 'accept');
+            App.track.audit('person.accessAccepted', { person: r.name, role, email: r.email });
+          }) }, 'Accept'),
+          el('button.btn-ghost', { onclick: act(async () => {
+            await App.api.reviewAccess(r.email, 'deny');
+            App.track.audit('person.accessDenied', { person: r.name, email: r.email });
+            App.toast('Declined ' + r.name);
+          }) }, 'Deny')
+        ]));
+      });
+      if (denied.length) {
+        box.appendChild(el('.adm-req-denied', null, [
+          el('span', null, 'Declined: '),
+          ...denied.map(r => el('span.adm-req-chip', null, [
+            r.name + ' (' + r.email + ')',
+            el('button.login-link', { title: 'Let this address request access again', onclick: async () => {
+              try { await App.api.reviewAccess(r.email, 'forget'); App.render(); }
+              catch (err) { App.toast(err.message, true); }
+            } }, 'Allow to ask again')
+          ]))
+        ]));
+      }
+    };
+    const load = () => App.api.accessRequests().then(draw).catch(() => box.replaceChildren());
+    load();
     return box;
   }
 

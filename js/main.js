@@ -2161,7 +2161,11 @@ window.App = window.App || {};
      sign in, create an account, forgot password, and the emailed-code step
      Neon asks for when confirming a new address or resetting a password.
      Without Neon Auth configured, a localhost-only dev sign-in stands in so
-     preview still works. */
+     preview still works.
+
+     An account alone doesn't open the board: until a Producer or Manager
+     accepts the request (Admin → User Directory) every sign-in answers
+     { pending } or { denied } instead, and lands on the matching screen. */
   function loginScreen() {
     const el = App.el, opts = App.api.loginOpts || {};
     const err = new URLSearchParams(location.search).get('err');
@@ -2202,24 +2206,48 @@ window.App = window.App || {};
       if (first) setTimeout(() => first.focus(), 0);
     }
 
+    // the server's answer to any step that could end signed in
+    const landed = (r) => {
+      if (r.pending) { go('pending'); return true; }
+      if (r.denied) { go('denied'); return true; }
+      return false;
+    };
+    const notice = (icon, title, text) => card.replaceChildren(
+      App.icon(icon, { cls: 'login-logo', size: 26 }),
+      el('.login-title', null, title),
+      el('.login-hint', { style: { marginBottom: '6px' } }, text),
+      el('.login-links', null, [link('Back to sign in', 'sign-in')]));
+
     function go(mode) {
       st.mode = mode;
+      if (mode === 'pending') {
+        notice('hourglass', 'Request sent',
+          'Your account for ' + st.email + ' is set up. A Producer or Manager needs to accept it before you can open the board — sign in again once they have.');
+        return;
+      }
+      if (mode === 'denied') {
+        notice('lock', 'Access not granted',
+          'A Producer or Manager declined access for ' + st.email + '. If that’s a mistake, ask them to look again in Admin → User Directory.');
+        return;
+      }
       if (mode === 'sign-in') {
         const em = input('email', 'you@example.com', st.email, 'username');
         const pw = input('password', 'Password', '', 'current-password');
         form('Sign in to your team board', null, [em, pw], 'Sign in', async () => {
           st.email = em.value.trim();
           const r = await App.api.auth('sign-in', { email: st.email, password: pw.value });
+          if (landed(r)) return;
           if (r.verify) { App.toast('Confirm your email first — we’ve sent you a code'); go('verify'); return; }
           App.api.enter();
-        }, [link('Create an account', 'sign-up'), link('Forgot password?', 'forgot')]);
+        }, [link('Request access', 'sign-up'), link('Forgot password?', 'forgot')]);
       } else if (mode === 'sign-up') {
         const nm = input('text', 'Your name', '', 'name');
         const em = input('email', 'Work email', st.email, 'username');
         const pw = input('password', 'Password (8+ characters)', '', 'new-password');
-        form('Create your account', 'Use your work email — the board only lets the team in.', [nm, em, pw], 'Create account', async () => {
+        form('Request access', 'Create your account with your work email. A Producer or Manager will accept it before you can open the board.', [nm, em, pw], 'Request access', async () => {
           st.email = em.value.trim();
           const r = await App.api.auth('sign-up', { name: nm.value.trim(), email: st.email, password: pw.value });
+          if (landed(r)) return;
           if (r.verify) { go('verify'); return; }
           App.api.enter();
         }, [link('I already have an account', 'sign-in')]);
@@ -2228,6 +2256,7 @@ window.App = window.App || {};
         code.inputMode = 'numeric';
         form('Confirm your email', 'We sent a code to ' + st.email + '. Enter it to finish.', [code], 'Confirm', async () => {
           const r = await App.api.auth('verify', { email: st.email, code: code.value });
+          if (landed(r)) return;
           if (r.verified) { App.toast('Email confirmed — sign in to continue'); go('sign-in'); return; }
           App.api.enter();
         }, [
@@ -2249,7 +2278,8 @@ window.App = window.App || {};
         code.inputMode = 'numeric';
         const pw = input('password', 'New password (8+ characters)', '', 'new-password');
         form('Set a new password', 'If ' + st.email + ' has an account, a code is on its way.', [code, pw], 'Save and sign in', async () => {
-          await App.api.auth('reset', { email: st.email, code: code.value, password: pw.value });
+          const r = await App.api.auth('reset', { email: st.email, code: code.value, password: pw.value });
+          if (landed(r)) return;
           App.api.enter();
         }, [link('Send another code', 'forgot'), link('Back to sign in', 'sign-in')]);
       } else if (mode === 'dev') {

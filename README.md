@@ -144,6 +144,17 @@ third-party cookies work normally.
    anyone create an account; the board refuses addresses outside these, before
    an account is even created.
 
+**New people request access.** *Request access* on the login screen creates
+the account, but it doesn't open the board. It files a request that Producers
+and Managers see at the top of **Admin → User Directory**, where they pick a
+role and **Accept** (which adds the person to the directory) or **Deny**. The
+server only lets in people who are in the User Directory, or listed in
+`ADMIN_EMAILS`, so removing someone from the directory locks them out within
+five minutes. A denied address sees "Access not granted" and can't ask again
+until someone clicks *Allow to ask again*. Requests are kept in the
+`access_requests` table (`data/access-requests.json` locally), never in board
+state.
+
 Before real launch, work through Neon's
 [Auth production checklist](https://neon.com/docs/auth/production-checklist):
 your own SMTP sender instead of the shared `auth@mail.myneon.app`, the

@@ -603,6 +603,83 @@ function aggregate(rows, since) {
 
 const activity = config.databaseUrl ? makePgActivity(config.databaseUrl) : makeFileActivity();
 
+/* ------------------------------------------ access requests (2 backends) --
+   Creating an account doesn't let anyone in. Neon will take a sign-up from
+   any address, so the board's own rule is: you're in once you're in the
+   User Directory (or listed in ADMIN_EMAILS). A new account that isn't yet
+   files a request here, and Producers/Managers accept or deny it from
+   Admin → User Directory. Accepting adds the person to the directory —
+   the directory stays the single source of who's allowed — and clears the
+   request; denying keeps it, marked denied, so the same address can't keep
+   re-requesting. Kept out of board state for the same reason as passwords
+   used to be: it's read only by these routes, never synced to browsers. */
+const REQUESTS_PATH = path.join(DATA_DIR, 'access-requests.json');
+
+function makeFileRequests() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  let rows = readJson(REQUESTS_PATH, {});   // { [email]: { email, name, status, requestedAt } }
+  const save = () => writeJson(REQUESTS_PATH, rows);
+  return {
+    async init() {},
+    async get(email) { return rows[email] || null; },
+    async list() { return Object.values(rows).sort((a, b) => a.requestedAt < b.requestedAt ? 1 : -1); },
+    async request(email, name) {
+      if (rows[email]) return rows[email];
+      rows[email] = { email, name, status: 'pending', requestedAt: new Date().toISOString() };
+      save(); return rows[email];
+    },
+    async deny(email) { if (rows[email]) { rows[email].status = 'denied'; save(); } },
+    async remove(email) { delete rows[email]; save(); }
+  };
+}
+
+function makePgRequests(connectionString) {
+  const pool = getPgPool(connectionString);
+  const row = r => r && { email: r.email, name: r.name, status: r.status, requestedAt: r.requested_at.toISOString() };
+  return {
+    async init() {
+      await pool.query(
+        'CREATE TABLE IF NOT EXISTS access_requests (' +
+        'email text PRIMARY KEY, name text NOT NULL, status text NOT NULL DEFAULT \'pending\', ' +
+        'requested_at timestamptz NOT NULL DEFAULT now())'
+      );
+    },
+    async get(email) {
+      return row((await pool.query('SELECT * FROM access_requests WHERE email = $1', [email])).rows[0]);
+    },
+    async list() {
+      return (await pool.query('SELECT * FROM access_requests ORDER BY requested_at DESC')).rows.map(row);
+    },
+    // an existing row (pending or denied) is left exactly as it is
+    async request(email, name) {
+      await pool.query('INSERT INTO access_requests (email, name) VALUES ($1, $2) ON CONFLICT (email) DO NOTHING', [email, name]);
+      return this.get(email);
+    },
+    async deny(email) { await pool.query('UPDATE access_requests SET status = \'denied\' WHERE email = $1', [email]); },
+    async remove(email) { await pool.query('DELETE FROM access_requests WHERE email = $1', [email]); }
+  };
+}
+
+const accessRequests = config.databaseUrl ? makePgRequests(config.databaseUrl) : makeFileRequests();
+
+const isAdminEmail = (email) => config.adminEmails.map(e => e.toLowerCase()).includes(email);
+// the signed-in person's directory entry, or null
+async function directoryEntry(email) {
+  const { data } = await storage.get();
+  const people = (data && data.people) || [];
+  return people.find(p => String(p.email || '').trim().toLowerCase() === email) || null;
+}
+async function hasBoardAccess(email) {
+  return isAdminEmail(email) || !!(await directoryEntry(email));
+}
+/* Who may accept or deny: bootstrap admins, Producers and Managers (base
+   role or the Manager sub-role) — the people the Admin page is for. */
+async function canReviewAccess(email) {
+  if (isAdminEmail(email)) return true;
+  const p = await directoryEntry(email);
+  return !!(p && (p.role === 'producer' || p.role === 'manager' || p.manager));
+}
+
 /* Contextual task chat. Postgres only — there is no file backend, so chat is
    simply absent when the board runs on the JSON store (local preview). Shares
    the one pool rather than opening a second. Null here is a supported state,
@@ -860,6 +937,8 @@ async function currentSession(req, res) {
   try { live = await neonAuth.getSession(baseUrl(req), s.nt); }
   catch (e) { return e.status === 401 ? dropSession(req, res, s) : s; }
   if (!live || String(live.user.email).toLowerCase() !== s.email) return dropSession(req, res, s);
+  // removed from the User Directory since signing in → out
+  if (!(await hasBoardAccess(s.email))) return dropSession(req, res, s);
   if (neonSeen.size > 5000) neonSeen.clear();
   neonSeen.set(s.nt, Date.now());
   return s;
@@ -1218,10 +1297,18 @@ const server = http.createServer(async (req, res) => {
       const notAllowed = () => sendJson(res, 403, {
         error: 'Only @' + config.allowedDomain + ' addresses can use this board'
       });
-      // A Neon session in hand → the board's own cookie around it.
-      const finish = (user, token) => {
+      /* A Neon session in hand → the board's own cookie around it, but only
+         for someone already in the User Directory. Anyone else gets an access
+         request filed (or finds their existing one) and no session. */
+      const finish = async (user, token) => {
         const em = String(user.email || email).toLowerCase();
         if (!emailAllowed(em)) { neonAuth.signOut(origin, token); return notAllowed(); }
+        if (!(await hasBoardAccess(em))) {
+          neonAuth.signOut(origin, token);
+          const r = await accessRequests.request(em, String(user.name || body.name || em).trim());
+          if (r.status === 'pending') auditServer({ email: em }, 'account.accessRequested', {});
+          return sendJson(res, 200, { pending: r.status === 'pending', denied: r.status === 'denied' });
+        }
         res.setHeader('Set-Cookie', sessionCookie(createSession({
           email: em, name: user.name || em, picture: user.image || '', via: 'neon', nt: token
         }), { secure: isSecure(req) }));
@@ -1233,7 +1320,7 @@ const server = http.createServer(async (req, res) => {
           if (!emailAllowed(email)) return notAllowed();
           try {
             const r = await neonAuth.signIn(origin, email, password);
-            return finish(r.data.user, r.token);
+            return await finish(r.data.user, r.token);
           } catch (e) {
             // unverified account: send a fresh code and tell the screen to ask for it
             if (e.code !== 'EMAIL_NOT_VERIFIED') throw e;
@@ -1249,14 +1336,14 @@ const server = http.createServer(async (req, res) => {
           const r = await neonAuth.signUp(origin, name, email, password);
           // With email verification on, Neon holds the session back until the
           // emailed code is entered; without it, the account is live now.
-          if (r.token) return finish(r.data.user, r.token);
+          if (r.token) return await finish(r.data.user, r.token);
           return sendJson(res, 200, { verify: true });
         }
         if (route === 'POST /auth/verify') {
           if (!email || !code) return sendJson(res, 400, { error: 'Enter the code from the email' });
           if (!emailAllowed(email)) return notAllowed();
           const r = await neonAuth.verifyEmail(origin, email, code);
-          if (r.token) return finish(r.data.user, r.token);
+          if (r.token) return await finish(r.data.user, r.token);
           // verified but not auto-signed-in (Neon setting) → sign in normally
           return sendJson(res, 200, { verified: true });
         }
@@ -1278,7 +1365,7 @@ const server = http.createServer(async (req, res) => {
           await neonAuth.resetPassword(origin, email, code, password);
           // Reset doesn't sign anyone in, so do it now with the new password.
           const r = await neonAuth.signIn(origin, email, password);
-          return finish(r.data.user, r.token);
+          return await finish(r.data.user, r.token);
         }
       } catch (e) {
         return sendJson(res, e.status && e.status < 500 ? e.status : 502, { error: e.message });
@@ -1325,6 +1412,32 @@ const server = http.createServer(async (req, res) => {
 
       if (route === 'GET /api/state') return sendJson(res, 200, await storage.get());
       if (route === 'GET /api/version') return sendJson(res, 200, { version: await storage.version() });
+
+      /* ---- access requests (Admin → User Directory) ---- */
+      if (url.pathname.startsWith('/api/admin/access-requests')) {
+        const s = getSession(req);
+        if (!(await canReviewAccess(s.email))) {
+          return sendJson(res, 403, { error: 'Only Producers and Managers can review access requests' });
+        }
+        if (route === 'GET /api/admin/access-requests') return sendJson(res, 200, { requests: await accessRequests.list() });
+        const m = url.pathname.match(/^\/api\/admin\/access-requests\/([^/]+)\/(accept|deny|forget)$/);
+        if (!m || req.method !== 'POST') return sendJson(res, 404, { error: 'not found' });
+        const target = decodeURIComponent(m[1]).toLowerCase();
+        if (!(await accessRequests.get(target))) return sendJson(res, 404, { error: 'No request from that address' });
+        if (m[2] === 'accept') {
+          // the browser adds them to the directory first; this only clears the request
+          await accessRequests.remove(target);
+          auditServer(s, 'account.accessAccepted', { target });
+        } else if (m[2] === 'deny') {
+          await accessRequests.deny(target);
+          auditServer(s, 'account.accessDenied', { target });
+        } else {
+          // forget a denial, so that address may ask again
+          await accessRequests.remove(target);
+          auditServer(s, 'account.accessReset', { target });
+        }
+        return sendJson(res, 200, { ok: true });
+      }
 
       /* ---- your own password ----
          Neon holds it; changing it needs the current one, same as before. */
@@ -2196,6 +2309,8 @@ const server = http.createServer(async (req, res) => {
   try { await activity.init(); }
   catch (e) { console.error('Activity log init failed (logging disabled):', e.message); }
   // likewise backups — the board must still serve if the table can't be made
+  try { await accessRequests.init(); }
+  catch (e) { console.error('Access request store init failed:', e.message); }
   try { await backups.init(); }
   catch (e) { console.error('Backup store init failed (backups disabled):', e.message); }
   // chat is Postgres-only and equally optional: the tracker predates it and
