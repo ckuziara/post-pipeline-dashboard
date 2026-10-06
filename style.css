@@ -5186,3 +5186,130 @@ body.has-draft #toast-root { bottom: 92px; }
 .rp-dirty { margin-right: auto; font-size: 11.5px; color: var(--text-3); display: inline-flex; align-items: center; gap: 6px; }
 .rp-dirty.on { color: #f6a609; font-weight: 600; }
 .rp-dirty.on::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #f6a609; }
+
+/* ----------------------------------------------------------------- smart import (js/smartimport.js)
+   smi- rather than si-: si- already belongs to another view's styles */
+.modal-card.smi-card { max-width: min(1180px, 96vw); }
+.modal-card.smi-card.smi-wide { max-width: min(1560px, 97vw); }
+.smi-card .modal-head { align-items: center; gap: 16px; }
+.smi-body { max-height: 76vh; overflow-y: auto; overflow-x: hidden; }
+.smi-steps { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+.smi-step { display: inline-flex; align-items: center; gap: 7px; border: 0; background: transparent; color: var(--text-3); font: inherit; font-size: 12.5px; font-weight: 700; padding: 6px 10px; border-radius: 8px; }
+.smi-step:not(:disabled):hover { background: var(--hover); color: var(--text); }
+.smi-step:disabled { opacity: .5; cursor: default; }
+.smi-step-n { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; background: var(--surface-3); color: var(--text-2); }
+.smi-step.on { color: var(--text); }
+.smi-step.on .smi-step-n { background: var(--accent); color: #fff; }
+.smi-step.done .smi-step-n { background: var(--st-approved); color: #fff; }
+
+.smi-drop { border: 1.5px dashed var(--border-2); border-radius: 12px; padding: 26px 16px; text-align: center; cursor: pointer; color: var(--text-2); display: grid; justify-items: center; gap: 6px; margin-top: 6px; }
+.smi-drop:hover, .smi-drop.over { border-color: var(--accent); background: rgba(91,108,255,.06); color: var(--text); }
+.smi-drop-title { font-weight: 700; font-size: 14px; color: var(--text); }
+.smi-drop-hint { font-size: 12px; color: var(--text-3); }
+.smi-error { margin-top: 12px; padding: 10px 12px; border-radius: 9px; background: rgba(255,91,110,.12); color: var(--danger); font-size: 12.5px; }
+.smi-hint { font-size: 12px; color: var(--text-3); line-height: 1.5; margin: 0 0 10px; }
+.smi-hint b { color: var(--text-2); }
+.smi-tag { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); background: var(--surface-3); border-radius: 5px; padding: 1px 6px; margin-left: 6px; vertical-align: 1px; }
+.smi-count { color: var(--text-3); font-weight: 600; margin-left: 4px; font-size: 12px; }
+
+.smi-sheets { display: grid; gap: 4px; }
+.smi-sheet, .smi-group { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; border: 1px solid var(--border); background: var(--bg-2); color: var(--text); font: inherit; font-size: 13px; padding: 9px 12px; border-radius: 9px; }
+.smi-sheet:hover, .smi-group:hover { border-color: var(--border-2); background: var(--hover); }
+.smi-sheet.on, .smi-group.on { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,108,255,.16); }
+.smi-sheet-name, .smi-group-name { font-weight: 700; }
+.smi-sheet-what, .smi-group-n { margin-left: auto; font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.smi-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px; }
+.smi-more { margin-top: 8px; }
+.smi-more > summary { cursor: pointer; font-size: 12.5px; color: var(--text-3); font-weight: 700; padding: 6px 2px; }
+.smi-more > summary:hover { color: var(--text); }
+.smi-more > .smi-sheet { margin-top: 4px; }
+
+.smi-showrow { display: grid; grid-template-columns: 1fr 140px 160px; gap: 12px; }
+@media (max-width: 640px) { .smi-showrow { grid-template-columns: 1fr; } }
+.smi-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.smi-tr { display: grid; align-items: center; gap: 10px; padding: 5px 10px; border-top: 1px solid var(--border); }
+.smi-tr:first-child { border-top: 0; }
+.smi-th { background: var(--bg-2); font-size: 11px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; padding: 7px 10px; }
+.smi-tr.off { opacity: .5; }
+.smi-eps .smi-tr { grid-template-columns: 22px 130px minmax(0, 1fr) minmax(0, 1fr); }
+.fld.smi-in { padding: 6px 9px; font-size: 12.5px; border-radius: 7px; min-width: 0; }
+.smi-src { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.smi-src b { color: var(--text); font-weight: 700; }
+.smi-track { display: block; font-size: 10.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }
+.smi-meta { font-size: 11px; color: var(--text-3); line-height: 1.3; text-align: right; }
+.smi-sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--border-2); vertical-align: -2px; margin-right: 4px; flex: none; }
+.smi-bg { font-size: 12px; color: var(--text-3); display: inline-flex; align-items: center; gap: 2px; }
+.smi-foot-note { margin-right: auto; align-self: center; font-size: 12px; color: var(--text-3); display: inline-flex; align-items: center; gap: 8px; }
+.smi-foot-note .fld { width: auto; }
+.btn-ghost.smi-mini { padding: 5px 10px; font-size: 12px; border-radius: 7px; }
+.smi-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); cursor: pointer; }
+
+/* the two timelines — the main Timeline's chrome (.gantt, .g-row, .bar) */
+.smi-tl { margin-bottom: 10px; }
+.smi-tl-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+.smi-tl-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1; }
+.smi-gantt { overflow: hidden; }
+.smi-tl-scroll { overflow: auto; overscroll-behavior: contain; max-height: 46vh; }
+.smi-inner { position: relative; }
+.smi-corner { position: sticky; left: 0; z-index: 9; background: var(--bg-2); border-right: 1px solid var(--border-2); display: flex; align-items: center; padding: 0 14px; font-size: 11px; font-weight: 700; color: var(--text-3); }
+.smi-th-cols { cursor: default; }
+.smi-rows { position: relative; }
+.smi-rows .g-label { cursor: default; }
+.smi-rows .g-row:not(.sub):not(.smi-srow) .g-label { cursor: pointer; }
+
+/* step 3: the real sheet underneath, the reading over it. Each sheet row is
+   a name strip (the tabs) over a band of cells. */
+.smi-srow, .smi-srow.sub { min-height: 42px; }
+.smi-cell { position: absolute; top: 16px; bottom: 3px; overflow: hidden; white-space: nowrap; padding: 0 4px; display: flex; align-items: center; font-size: 10px; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.smi-cell.bg { opacity: .55; }
+.smi-cell.bare { box-shadow: none; }
+.smi-ib { position: absolute; top: 16px; bottom: 3px; border-radius: 3px; border: 2px solid var(--c); background: var(--cf); cursor: grab; z-index: 2; touch-action: none; }
+.smi-ib-name { position: absolute; left: -2px; bottom: calc(100% + 1px); max-width: calc(100% + 4px); height: 13px; line-height: 13px; padding: 0 5px; border-radius: 4px 4px 0 0; background: var(--c); color: var(--ink); font-size: 10px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.smi-ib.ign { border-style: dashed; border-color: var(--text-3); }
+.smi-ib.ign .smi-ib-name { background: var(--surface-3); color: var(--text-3); }
+.smi-ib.gone { border-style: dashed; border-color: var(--danger); }
+.smi-ib.gone .smi-ib-name { background: var(--surface-3); color: var(--text-3); text-decoration: line-through; }
+/* a tab too narrow for its name opens out on hover (and on the picked bar) */
+.smi-ib:hover, .smi-ib.sel { z-index: 4; }
+.smi-ib:hover .smi-ib-name, .smi-ib.sel .smi-ib-name { max-width: none; overflow: visible; }
+.smi-ib.ms { width: 14px; border: 0; background: none; }
+.smi-ib.ms .smi-dia { position: absolute; left: 1px; top: 50%; width: 11px; height: 11px; margin-top: -6px; transform: rotate(45deg); background: var(--c); border: 1px solid rgba(0,0,0,.4); border-radius: 2px; }
+.smi-ib.ms .smi-ib-name { max-width: none; left: 0; }
+.smi-ib.lit { box-shadow: 0 0 0 1px var(--text-2); }
+.smi-ib.sel { box-shadow: 0 0 0 2px var(--accent); z-index: 3; }
+.smi-ib.sel .smi-ib-name { box-shadow: 0 0 0 2px var(--accent); }
+.smi-ib.one { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent); }
+.smi-ib.dim { opacity: .3; }
+.smi-dragging { opacity: .85; z-index: 5 !important; cursor: grabbing !important; }
+
+.smi-selpanel { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 2px; font-size: 13px; flex-wrap: wrap; }
+.smi-selpanel .smi-hint { margin: 0; }
+.smi-selmeta { color: var(--text-3); font-size: 12px; }
+
+/* the pipeline list is Add Show's (.pipe-list) */
+.smi-plist { margin-top: 4px; }
+.smi-pipe-head { cursor: default; }
+.smi-plist .pipe-body { display: block; }
+.smi-removed { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.smi-rrow { display: grid; grid-template-columns: 16px minmax(0, 1fr) 64px 80px; align-items: center; gap: 10px; padding: 6px 10px; border-top: 1px solid var(--border); }
+.smi-rrow:first-child { border-top: 0; }
+.smi-rrow.sel { background: rgba(91,108,255,.12); }
+
+/* step 4: the episodes */
+.smi-epbar { background: linear-gradient(90deg, #5b6cff, #3547d6); color: #fff; opacity: .9; }
+.smi-tbar { padding: 0 5px; cursor: grab; touch-action: none; }
+.smi-tbar-txt { overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.smi-tbar.lit { box-shadow: 0 0 0 1.5px #fff; }
+.smi-tbar.sel { box-shadow: 0 0 0 2px #fff, 0 2px 8px rgba(0,0,0,.4); z-index: 3; }
+.smi-tbar.dim { opacity: .3; }
+.smi-tbar.smi-clash { outline: 2px solid var(--danger); outline-offset: 1px; }
+.smi-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.smi-ms { position: absolute; top: 50%; width: 11px; height: 11px; margin: -6px 0 0 -6px; transform: rotate(45deg); background: #aeb2c0; border: 1px solid var(--bg-2); border-radius: 2px; cursor: grab; z-index: 2; touch-action: none; }
+.smi-ms.live { background: var(--danger); }
+.smi-ms.note { background: #f6be00; }
+.smi-ms.sel { box-shadow: 0 0 0 2px var(--accent); }
+.smi-ms.dim { opacity: .3; }
+.smi-warns > summary { display: flex; align-items: center; gap: 6px; }
+.smi-warns .ico { color: #fdab3d; }
+.smi-warn { display: grid; gap: 4px; font-size: 12.5px; color: var(--text-2); margin: 4px 0 10px; max-height: 160px; overflow: auto; }
+.smi-warn .soft { color: var(--text-3); }
