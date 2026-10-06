@@ -5000,6 +5000,10 @@ body.has-draft #toast-root { bottom: 92px; }
 .g-row.res-lane { min-height: 52px; }
 .g-row.sub.res-lane { min-height: 46px; }
 .g-row.res-person .g-label { cursor: pointer; }
+/* day zoom: a person's lanes of task bars — Timeline task-row height, the
+   first lane just tall enough for the name and role */
+.g-row.sub.res-lane.res-bars { min-height: 34px; }
+.g-row.sub.res-lane.res-bars.res-cont { min-height: 23px; }
 /* --hover is translucent, so on hover the sticky label would let the circles
    scrolling under it show through — lay it over the label's own fill instead */
 .g-row.res-lane:hover .g-label { background: linear-gradient(var(--hover), var(--hover)), var(--surface); }

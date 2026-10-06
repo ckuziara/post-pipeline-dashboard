@@ -2094,15 +2094,11 @@ window.App = window.App || {};
         if (!expanded) return;
 
         crew.forEach(p => {
+          // zoomed in to days, a person's circles give way to their actual
+          // task bars — see resPersonBars
+          if (unit === 'days') { this.resPersonBars(body, p, dep, buckets, load, ctx); return; }
           const prow = el('.g-row.sub.res-lane.res-person');
-          prow.appendChild(el('.g-label', { onclick: (e) => { e.stopPropagation(); App.resources.openPerson(p.id); }, title: 'Capacity, time off and allocations' }, [
-            el('.l-title', null, [
-              el('span.avatar', { style: { width: '18px', height: '18px', fontSize: '8px', background: p.color, flex: 'none' } }, App.initials(p.name)),
-              el('span', null, p.name)
-            ]),
-            el('.l-sub', null, [el('span', null, App.role(p.role).label + (p.contractor ? ' · Contractor' : '') + ' · ' +
-              (Math.round(App.personCapacity(p) * 10) / 10) + 'd/wk')])
-          ]));
+          prow.appendChild(this.resPersonLabel(p));
           const ptrack = el('.g-track', { 'data-res-key': 'person:' + p.id });
           buckets.forEach(b => {
             const l = load[p.id][b.key];
@@ -2154,6 +2150,13 @@ window.App = window.App || {};
         const seen = (x) => x >= lo && x <= hi;
         // ease-in-out (cubic) on every leg, so motion ramps up and settles at both ends
         const ease = 'cubic-bezier(.65,0,.35,1)', dur = 560;
+        // a person's task bars (day zoom) draw out from their start as they arrive
+        if (zoomIn) body.querySelectorAll('.res-bars .bar').forEach((bar, i) => {
+          if (!seen(parseFloat(bar.style.left))) return;
+          // .bar centres itself with translateY(-50%), so the keyframes keep it
+          bar.animate([{ transform: 'translateY(-50%) scaleX(.15)', transformOrigin: 'left center', opacity: 0 }, { transform: 'translateY(-50%)', transformOrigin: 'left center', opacity: 1 }],
+            { duration: dur, easing: ease, delay: Math.min(i % 7, 6) * 18 });
+        });
         // the counts sit at their final spots, so they wait for the circles to land
         body.querySelectorAll('.res-count').forEach(n => {
           if (seen(parseFloat(n.parentNode.style.left))) n.animate([{ opacity: 0 }, { opacity: 0, offset: .6 }, { opacity: 1 }], { duration: dur + 160, easing: 'ease-in-out' });
@@ -2196,6 +2199,51 @@ window.App = window.App || {};
             });
           }
         });
+      });
+    },
+
+    resPersonLabel(p) {
+      return el('.g-label', { onclick: (e) => { e.stopPropagation(); App.resources.openPerson(p.id); }, title: 'Capacity, time off and allocations' }, [
+        el('.l-title', null, [
+          el('span.avatar', { style: { width: '18px', height: '18px', fontSize: '8px', background: p.color, flex: 'none' } }, App.initials(p.name)),
+          el('span', null, p.name)
+        ]),
+        el('.l-sub', null, [el('span', null, App.role(p.role).label + (p.contractor ? ' · Contractor' : '') + ' · ' +
+          (Math.round(App.personCapacity(p) * 10) / 10) + 'd/wk')])
+      ]);
+    },
+
+    /* A person at day zoom: their tasks as the Timeline's own task bars
+       (taskBar — same colours, status ring, holiday pauses, revisions, and
+       the same click-to-edit and drag, since they're .bar elements in a
+       .g-row.sub carrying the episode and task). Overlapping tasks stack
+       into lanes exactly as epTaskLines does; the first lane carries the
+       person's label, the rest are continuation rows. Days they're off are
+       hatched behind the bars, across every lane. */
+    resPersonBars(body, p, dep, buckets, load, ctx) {
+      const xOf = this._xOf;
+      const items = [];
+      App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => { if (su.assignee === p.id) items.push({ ep, su }); }));
+      items.sort((a, b) => a.su.start < b.su.start ? -1 : 1);
+      const levels = [];
+      items.forEach(it => {
+        const end = App.plannedRevisions(it.ep, it.su).end;
+        const lvl = levels.find(l => it.su.start > l.lastDue);
+        if (lvl) { lvl.lastDue = end; lvl.items.push(it); }
+        else levels.push({ lastDue: end, items: [it] });
+      });
+      if (!levels.length) levels.push({ items: [] });
+      levels.forEach((lvl, li) => {
+        const row = el('.g-row.sub.res-lane.res-person.res-bars' + (li ? '.res-cont' : ''));
+        row.appendChild(li === 0 ? this.resPersonLabel(p) : el('.g-label'));
+        const track = el('.g-track');
+        buckets.forEach(b => {
+          const l = load[p.id][b.key];
+          if (l.days && l.off >= l.days) track.appendChild(el('.res-cell.away', { style: { left: b.x + 'px', width: b.w + 'px' } }));
+        });
+        lvl.items.forEach(({ ep, su }) => this.taskBar(track, ep, su, dep, xOf, ctx.dw, ep.code + ' · ' + su.name, null, { portrait: false }));
+        row.appendChild(track);
+        body.appendChild(row);
       });
     },
 
