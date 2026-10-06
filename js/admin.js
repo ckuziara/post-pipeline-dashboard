@@ -254,6 +254,13 @@ window.App = window.App || {};
       { title: 'Manage Shows', danger: true, desc: 'Can create new shows — and permanently remove a show together with all of its episodes.',
         get: k => App.rolePermOf(k, 'manageShows', App.role(k).manageShows), set: (k, v) => App.setRolePerm(k, 'manageShows', v, 'Manage Shows') }
     ]},
+    { title: 'Resourcing', desc: 'Who can see the Resources tab, and who plans people’s time.', items: [
+      { title: 'Resource Visibility', type: 'choice', options: () => App.RESOURCE_VIEWS,
+        desc: 'Whose workload and allocations this role can see on the Resources tab. Own team is their own department; None hides the tab.',
+        get: k => App.resourceViewOf(k), set: (k, v) => App.setResourceView(k, v) },
+      { title: 'Manage Resources', desc: 'Can allocate people to shows, set capacity and time off, add contractors, and reassign tasks from the Resources tab (reassigning also needs Assign Task Owners).',
+        get: k => App.rolePermOf(k, 'manageResources', App.role(k).manageResources), set: (k, v) => App.setRolePerm(k, 'manageResources', v, 'Manage Resources') }
+    ]},
     { title: 'System Administration', desc: 'Access to this admin area and the team roster.', items: [
       { title: 'Admin Access', desc: 'Can open the Admin page: manage users, privileges and system settings.',
         get: k => App.rolePermOf(k, 'admin', App.role(k).admin), set: (k, v) => App.setRolePerm(k, 'admin', v, 'Admin Access') }
@@ -289,6 +296,16 @@ window.App = window.App || {};
         el('.adm-permcard-desc', null, cat.desc)
       ]));
       cat.items.forEach(item => {
+        // a three-way setting (Resource Visibility) is a segmented choice, not a switch
+        if (item.type === 'choice') {
+          const cur = item.get(roleKey);
+          card.appendChild(el('.adm-permrow.adm-permrow-choice', null, [
+            el('div', null, [el('.adm-perm-title', null, item.title), el('.adm-perm-desc', null, item.desc)]),
+            el('.prefs-seg', null, item.options().map(([v, label]) =>
+              el('button.seg' + (cur === v ? '.active' : ''), { onclick: () => { if (cur !== v) item.set(roleKey, v); } }, label)))
+          ]));
+          return;
+        }
         const on = item.get(roleKey);
         card.appendChild(el('.adm-permrow', {
           onclick: () => item.set(roleKey, !on)

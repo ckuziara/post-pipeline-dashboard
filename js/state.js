@@ -141,9 +141,9 @@ window.App = window.App || {};
      Operations also owns scheduling (across every department, since that's the
      coordinating job), so it carries editSchedule without editAll. */
   App.ROLES = [
-    { key: 'producer',  label: 'Producer',        ico: 'clapper', approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, hint: 'Full access — all tasks, shows & admin' },
-    { key: 'manager',   label: 'Manager',         ico: 'compass', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, hint: 'Oversight, approvals & admin' },
-    { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, reviewQueue: true, kickOff: true, hint: 'Review & approve cuts' },
+    { key: 'producer',  label: 'Producer',        ico: 'clapper', approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, resourceView: 'all', hint: 'Full access — all tasks, shows & admin' },
+    { key: 'manager',   label: 'Manager',         ico: 'compass', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, resourceView: 'all', manageResources: true, hint: 'Oversight, approvals & admin' },
+    { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, reviewQueue: true, kickOff: true, resourceView: 'none', hint: 'Review & approve cuts' },
     { key: 'creative',  label: 'Creative',        ico: 'pencil', dept: 'creative',  hint: 'Creative department tasks' },
     { key: 'music',     label: 'Music',           ico: 'music', dept: 'music',     hint: 'Music department tasks' },
     { key: 'animation', label: 'Animation',       ico: 'film', dept: 'animation', hint: 'Animation department tasks' },
@@ -233,6 +233,78 @@ window.App = window.App || {};
   App.canSelectTasks  = (k) => k === 'producer';
   // choosing which tasks need a Kick Off, and ticking them done — Producer and Director by default
   App.canSetKickOff   = (k) => App.rolePerm(k, 'kickOff', App.role(k).kickOff);
+  /* ---- resourcing ----
+     Who sees the Resources tab, and how much of the team. Unlike the switches
+     above this is a three-way choice per role — 'none', 'team' (their own
+     department) or 'all' — kept as a string in data.rolePerms[k].resourceView.
+     Department roles default to 'team'; a role without a department can't see
+     a team, so 'team' falls back to just themselves. Managing (allocations,
+     capacity, contractors) is a plain switch, Manager by default. */
+  App.RESOURCE_VIEWS = [['none', 'None'], ['team', 'Own team'], ['all', 'All']];
+  const RV_RANK = { none: 0, team: 1, all: 2 };
+  App.resourceViewOf = function (k) {
+    const t = App.state && App.state.data && App.state.data.rolePerms;
+    const v = t && t[k] && t[k].resourceView;
+    if (v in RV_RANK) return v;
+    const r = App.role(k);
+    return r.resourceView || (r.dept ? 'team' : 'none');
+  };
+  // the widest of the base role and the viewer's sub-roles, like rolePerm
+  App.resourceView = function (k) {
+    return [k].concat(App.mySubRoles()).map(App.resourceViewOf)
+      .reduce((a, b) => RV_RANK[b] > RV_RANK[a] ? b : a, 'none');
+  };
+  App.canSeeResources = (k) => App.resourceView(k) !== 'none';
+  App.canManageResources = (k) => App.rolePerm(k, 'manageResources', App.role(k).manageResources);
+
+  /* Weekly load for the Resources grid, in working days. For each person and
+     each week (keyed by its Monday):
+       cap     — their days per week, less any of their own time off
+       booked  — working days in the week with at least one of their open
+                 (not approved) tasks. Tasks running side by side share the
+                 day — two on Monday are half a day each, not two days — so a
+                 week of overlapping tasks reads as a full week, not 2x
+       tasks   — how many of their open tasks touch the week
+       planned — their allocations: pct of capacity over the days in range
+       off     — working days of time off */
+  App.mondayIso = function (iso) {
+    const d = App.parseDate(iso); const dow = (d.getDay() + 6) % 7;
+    return App.isoDate(App.addDays(d, -dow));
+  };
+  const overlapWorkdays = (aS, aE, bS, bE) => {
+    const s = aS > bS ? aS : bS, e = aE < bE ? aE : bE;
+    return s > e ? 0 : App.visibleDayCount(s, e, true);
+  };
+  App.personCapacity = (p) => { const v = p && p.capacity && p.capacity.daysPerWeek; return typeof v === 'number' && v >= 0 ? v : 5; };
+  App.resourceLoad = function (people, weeks) {
+    const out = {};
+    const tasks = {};
+    App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
+      if (!su.assignee || su.status === 'approved') return;
+      (tasks[su.assignee] = tasks[su.assignee] || []).push(su);
+    }));
+    const allocs = (App.state.data.allocations || []);
+    people.forEach(p => {
+      const base = App.personCapacity(p);
+      out[p.id] = {};
+      weeks.forEach(wk => {
+        const end = App.shiftIso(wk, 4);
+        const off = Math.min(5, (p.timeOff || []).reduce((n, t) => n + overlapWorkdays(wk, end, t.start, t.end || t.start), 0));
+        const cap = base * (5 - off) / 5;
+        const mine = (tasks[p.id] || []).filter(su => su.start <= end && su.due >= wk);
+        let booked = 0;
+        for (let i = 0; i < 5; i++) {
+          const day = App.shiftIso(wk, i);
+          if (mine.some(su => su.start <= day && su.due >= day)) booked++;
+        }
+        const planned = allocs.filter(a => a.personId === p.id)
+          .reduce((n, a) => n + (+a.pct || 0) / 100 * base * overlapWorkdays(wk, end, a.start, a.end) / 5, 0);
+        out[p.id][wk] = { cap, booked, planned, off, tasks: mine.length };
+      });
+    });
+    return out;
+  };
+
   // status choices a role may set (non-approvers can't choose Approved)
   App.statusOptionsFor = (k) => App.canApprove(k) ? App.STATUS_ORDER : App.STATUS_ORDER.filter(s => s !== 'approved');
 
