@@ -260,26 +260,30 @@ window.App = window.App || {};
   // only Resources for a role that may see it
   App.timelineMode = () => App.prefs.get('timelineMode', 'schedule') === 'resources' && App.canSeeResources(App.state.role) ? 'resources' : 'schedule';
 
-  /* Weekly load for the Resources grid, in working days. For each person and
-     each week (keyed by its Monday):
-       cap     — their days per week, less any of their own time off
-       booked  — working days in the week with at least one of their open
+  /* Load for the Timeline's Resources view, in working days, for any run of
+     dates — a day, a week or a month, whichever the zoom calls for. `buckets`
+     are { key, start, end }; for each person and bucket:
+       days    — working days in the bucket (weekends never carry capacity)
+       cap     — their share of those days (days per week ÷ 5 each), less
+                 any of their own time off
+       booked  — working days in the bucket with at least one of their open
                  (not approved) tasks. Tasks running side by side share the
                  day — two on Monday are half a day each, not two days — so a
                  week of overlapping tasks reads as a full week, not 2x
-       tasks   — their open tasks that touch the week, as { ep, su }
-       planned — their allocations: pct of capacity over the days in range
-       off     — working days of time off */
+       planned — their allocations: pct of their daily share over the days
+       off     — working days of time off
+       tasks   — their open tasks that touch the bucket, as { ep, su } */
   App.mondayIso = function (iso) {
     const d = App.parseDate(iso); const dow = (d.getDay() + 6) % 7;
     return App.isoDate(App.addDays(d, -dow));
   };
-  const overlapWorkdays = (aS, aE, bS, bE) => {
-    const s = aS > bS ? aS : bS, e = aE < bE ? aE : bE;
-    return s > e ? 0 : App.visibleDayCount(s, e, true);
+  App.workdaysIn = function (start, end) {
+    const out = []; let d = App.parseDate(start); const e = App.parseDate(end);
+    while (d <= e) { const dow = d.getDay(); if (dow !== 0 && dow !== 6) out.push(App.isoDate(d)); d = App.addDays(d, 1); }
+    return out;
   };
   App.personCapacity = (p) => { const v = p && p.capacity && p.capacity.daysPerWeek; return typeof v === 'number' && v >= 0 ? v : 5; };
-  App.resourceLoad = function (people, weeks) {
+  App.resourceLoad = function (people, buckets) {
     const out = {};
     const tasks = {};
     App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
@@ -287,22 +291,23 @@ window.App = window.App || {};
       (tasks[su.assignee] = tasks[su.assignee] || []).push({ ep, su });
     }));
     const allocs = (App.state.data.allocations || []);
+    // each bucket's working days, worked out once for everybody
+    const workdays = buckets.map(b => App.workdaysIn(b.start, b.end));
     people.forEach(p => {
-      const base = App.personCapacity(p);
+      const perDay = App.personCapacity(p) / 5;
+      const mineAll = tasks[p.id] || [];
+      const myAllocs = allocs.filter(a => a.personId === p.id);
       out[p.id] = {};
-      weeks.forEach(wk => {
-        const end = App.shiftIso(wk, 4);
-        const off = Math.min(5, (p.timeOff || []).reduce((n, t) => n + overlapWorkdays(wk, end, t.start, t.end || t.start), 0));
-        const cap = base * (5 - off) / 5;
-        const mine = (tasks[p.id] || []).filter(({ su }) => su.start <= end && su.due >= wk);
-        let booked = 0;
-        for (let i = 0; i < 5; i++) {
-          const day = App.shiftIso(wk, i);
-          if (mine.some(({ su }) => su.start <= day && su.due >= day)) booked++;
-        }
-        const planned = allocs.filter(a => a.personId === p.id)
-          .reduce((n, a) => n + (+a.pct || 0) / 100 * base * overlapWorkdays(wk, end, a.start, a.end) / 5, 0);
-        out[p.id][wk] = { cap, booked, planned, off, tasks: mine };
+      buckets.forEach((b, i) => {
+        const wd = workdays[i];
+        const off = wd.filter(day => (p.timeOff || []).some(t => t.start <= day && (t.end || t.start) >= day)).length;
+        // a task counts toward a bucket only on a working day — one that
+        // starts on a Saturday isn't Friday's work
+        const covers = ({ su }) => wd.some(day => su.start <= day && su.due >= day);
+        const mine = mineAll.filter(covers);
+        const booked = wd.filter(day => mine.some(({ su }) => su.start <= day && su.due >= day)).length;
+        const planned = myAllocs.reduce((n, a) => n + (+a.pct || 0) / 100 * perDay * wd.filter(day => a.start <= day && a.end >= day).length, 0);
+        out[p.id][b.key] = { days: wd.length, cap: perDay * (wd.length - off), booked, planned, off, tasks: mine };
       });
     });
     return out;

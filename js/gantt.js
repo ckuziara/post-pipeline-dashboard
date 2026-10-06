@@ -84,6 +84,14 @@ window.App = window.App || {};
     return { primary: 'years', secondary: 'quarters' };
   }
   function clampZoom(z) { return Math.max(1.4, Math.min(60, z)); }
+  /* Resources view cell size for a zoom (px per day): days once a day is wide
+     enough for a legible circle — the top of the zoom range — weeks until a
+     week gets too narrow for one, then months. */
+  const RES_DAY_MIN = 32;
+  function resourceUnit(dw) {
+    if (dw >= RES_DAY_MIN) return 'days';
+    return dw * 5 >= 18 ? 'weeks' : 'months';
+  }
 
   /* Zoomed out to quarters, the chart is read as shape rather than detail.
 
@@ -2010,14 +2018,19 @@ window.App = window.App || {};
     // bar per episode running it.
     /* ---- Resources mode ----
        One row per department, expanding (the shared .g-label click, keyed
-       'res:<dept>') into one row per person. Each week on the axis gets a
+       'res:<dept>') into one row per person. Each cell along the axis gets a
        circle: the faint ring is capacity, the filled disc grows with load
        (by area, so twice the load reads as twice the ink), and fills the ring
        at capacity — over it, it turns red. The number is how many open tasks
-       touch that week; hovering lists them. Load is App.resourceLoad, so a
-       week's booked days are days with any task (side-by-side tasks share
+       touch the cell; hovering lists them. Load is App.resourceLoad, so a
+       cell's booked days are days with any task (side-by-side tasks share
        the day), plus planned allocations, against capacity after time off.
-       Whose rows show is the role's Resource Visibility (Access Control). */
+       Whose rows show is the role's Resource Visibility (Access Control).
+
+       What a cell is follows the zoom, so a circle always has room to read:
+       a DAY near full zoom, a WEEK through the middle, and a MONTH once a
+       week is too narrow for a circle. Weekends never carry capacity, so with
+       Hide weekends off their day columns stay empty. */
     resourceRows(body, ctx) {
       const people = App.resources.peopleInScope();
       if (!people.length) {
@@ -2026,20 +2039,32 @@ window.App = window.App || {};
           : 'Nobody in view — check the Dept and Owner filters.'));
         return;
       }
-      const weeks = segments(ctx, 'weeks').map(seg => ({
-        iso: App.mondayIso(App.isoDate(seg.day)), x: seg.colStart * ctx.dw, w: seg.colSpan * ctx.dw,
-        label: seg.label + ' · ' + seg.sub
-      }));
-      const load = App.resourceLoad(people, weeks.map(w => w.iso));
-      // every open task per department and week — the department's own count
-      // includes work nobody has been given yet
+      const unit = resourceUnit(ctx.dw);
+      const segs = segments(ctx, unit);
+      const lastIso = App.shiftIso(App.isoDate(ctx.start), ctx.totalCalDays - 1);
+      const buckets = segs.map((seg, i) => {
+        const start = App.isoDate(seg.day);
+        const end = unit === 'days' ? start : segs[i + 1] ? App.shiftIso(App.isoDate(segs[i + 1].day), -1) : lastIso;
+        return {
+          key: start, start, end, x: seg.colStart * ctx.dw, w: seg.colSpan * ctx.dw,
+          label: unit === 'days' ? App.fmtDate(start) : unit === 'weeks' ? seg.label + ' · ' + seg.sub : seg.label + ' ' + seg.sub
+        };
+      }).filter(b => {
+        if (unit !== 'days') return true;
+        const dow = App.parseDate(b.start).getDay();
+        return dow !== 0 && dow !== 6;
+      });
+      const load = App.resourceLoad(people, buckets);
+      // every open task per department — a department's count includes work
+      // nobody has been given yet
       const deptTasks = {};
       App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
         if (su.status !== 'approved') (deptTasks[su.dept] = deptTasks[su.dept] || []).push({ ep, su });
       }));
       const byDept = {};
       people.forEach(p => { const d = App.roleDept(p.role); (byDept[d] = byDept[d] || []).push(p); });
-      const thisWeek = App.mondayIso(App.isoDate(App.today()));
+      const todayIso = App.isoDate(App.today());
+      const isNow = (b) => b.start <= todayIso && b.end >= todayIso;
 
       Object.keys(App.DEPARTMENTS).filter(d => byDept[d]).forEach(dk => {
         const dep = App.dept(dk);
@@ -2053,11 +2078,15 @@ window.App = window.App || {};
           el('.l-sub', null, [el('span.code', null, crew.length + (crew.length === 1 ? ' person' : ' people'))])
         ]));
         const track = el('.g-track');
-        weeks.forEach(w => {
-          const end = App.shiftIso(w.iso, 4);
-          const x = crew.reduce((a, p) => { const l = load[p.id][w.iso]; a.cap += l.cap; a.busy += Math.max(l.booked, l.planned); return a; }, { cap: 0, busy: 0 });
-          const tasks = (deptTasks[dk] || []).filter(({ su }) => su.start <= end && su.due >= w.iso);
-          track.appendChild(this.resCircle(w, x.busy, x.cap, tasks, dep, dep.label, w.iso === thisWeek, false));
+        buckets.forEach(b => {
+          const x = crew.reduce((a, p) => {
+            const l = load[p.id][b.key];
+            a.cap += l.cap; a.busy += Math.max(l.booked, l.planned); a.booked += l.booked; a.planned += l.planned;
+            return a;
+          }, { cap: 0, busy: 0, booked: 0, planned: 0 });
+          const wd = App.workdaysIn(b.start, b.end);
+          const tasks = (deptTasks[dk] || []).filter(({ su }) => wd.some(day => su.start <= day && su.due >= day));
+          track.appendChild(this.resCircle(b, x, tasks, dep, dep.label, isNow(b), false, true));
         });
         row.appendChild(track);
         body.appendChild(row);
@@ -2074,9 +2103,10 @@ window.App = window.App || {};
               (Math.round(App.personCapacity(p) * 10) / 10) + 'd/wk')])
           ]));
           const ptrack = el('.g-track');
-          weeks.forEach(w => {
-            const l = load[p.id][w.iso];
-            ptrack.appendChild(this.resCircle(w, Math.max(l.booked, l.planned), l.cap, l.tasks, dep, p.name, w.iso === thisWeek, l.off >= 5, l));
+          buckets.forEach(b => {
+            const l = load[p.id][b.key];
+            ptrack.appendChild(this.resCircle(b, { cap: l.cap, busy: Math.max(l.booked, l.planned), booked: l.booked, planned: l.planned, off: l.off },
+              l.tasks, dep, p.name, isNow(b), l.days > 0 && l.off >= l.days, false));
           });
           prow.appendChild(ptrack);
           body.appendChild(prow);
@@ -2084,25 +2114,30 @@ window.App = window.App || {};
       });
     },
 
-    resCircle(w, busy, cap, tasks, dep, who, now, away, detail) {
-      const cell = el('.res-cell' + (now ? '.now' : ''), { style: { left: w.x + 'px', width: w.w + 'px' } });
-      if (away) { cell.appendChild(el('span.res-away', null, 'Away')); return cell; }
-      if (!tasks.length && busy <= 0) return cell;
-      const ratio = cap > 0 ? busy / cap : (busy > 0 ? 2 : 0);
+    /* One cell's circle, sized to the cell: as big as the narrower of the
+       cell and the row allows (capped so a wide day or month doesn't balloon
+       into the row's borders). The task count needs room beside the circle,
+       so on a narrow cell it moves into the tooltip only. */
+    resCircle(b, x, tasks, dep, who, now, away, isDept) {
+      const cell = el('.res-cell' + (now ? '.now' : ''), { style: { left: b.x + 'px', width: b.w + 'px' } });
+      const roomy = b.w >= 34;
+      if (away) { if (b.w >= 30) cell.appendChild(el('span.res-away', null, 'Away')); else cell.classList.add('away'); return cell; }
+      if (!tasks.length && x.busy <= 0) return cell;
+      const ratio = x.cap > 0 ? x.busy / x.cap : (x.busy > 0 ? 2 : 0);
       const over = ratio > 1.001;
-      const ring = Math.max(8, Math.min(w.w - 12, 40));
+      const ring = Math.max(6, Math.min(b.w - (roomy ? 12 : 4), isDept ? 40 : 34));
       const disc = ring * Math.sqrt(Math.min(1, ratio));
+      const r1 = (n) => Math.round(n * 10) / 10;
       const tip = () => {
         const box = el('.res-tip');
-        box.appendChild(el('.res-tip-head', null, who + ' · ' + w.label));
-        box.appendChild(el('.res-tip-sub', null, (detail
-          ? Math.round(detail.booked * 10) / 10 + ' d booked' + (detail.planned ? ' · ' + Math.round(detail.planned * 10) / 10 + ' d planned' : '')
-          : Math.round(busy * 10) / 10 + ' d busy') + ' of ' + Math.round(cap * 10) / 10 + ' d' + (detail && detail.off ? ' (' + detail.off + ' d off)' : '')));
-        tasks.slice().sort((a, b) => a.su.start < b.su.start ? -1 : 1).slice(0, 12).forEach(({ ep, su }) => {
-          const owner = !detail && su.assignee ? App.person(su.assignee) : null;
+        box.appendChild(el('.res-tip-head', null, who + ' · ' + b.label));
+        box.appendChild(el('.res-tip-sub', null, r1(x.booked) + ' d booked' + (x.planned ? ' · ' + r1(x.planned) + ' d planned' : '') +
+          ' of ' + r1(x.cap) + ' d' + (x.off ? ' (' + x.off + ' d off)' : '') + ' · ' + tasks.length + (tasks.length === 1 ? ' task' : ' tasks')));
+        tasks.slice().sort((a, c) => a.su.start < c.su.start ? -1 : 1).slice(0, 12).forEach(({ ep, su }) => {
+          const owner = isDept && su.assignee ? App.person(su.assignee) : null;
           box.appendChild(el('.res-tip-task', { style: { borderLeftColor: App.dept(su.dept).color } }, [
             el('span.res-tip-code', null, ep.code), ' ' + su.name,
-            el('span.res-tip-meta', null, App.fmtRange(su.start, su.due) + (owner ? ' · ' + owner.name : !detail && !su.assignee ? ' · unassigned' : ''))
+            el('span.res-tip-meta', null, App.fmtRange(su.start, su.due) + (owner ? ' · ' + owner.name : isDept && !su.assignee ? ' · unassigned' : ''))
           ]));
         });
         if (tasks.length > 12) box.appendChild(el('.res-tip-sub', null, '+ ' + (tasks.length - 12) + ' more'));
@@ -2113,7 +2148,7 @@ window.App = window.App || {};
       }, [el('.res-disc', { style: { width: disc + 'px', height: disc + 'px' } })]);
       circle.style.setProperty('--res-c', dep.color);
       cell.appendChild(circle);
-      if (tasks.length) cell.appendChild(el('span.res-count', null, String(tasks.length)));
+      if (tasks.length && roomy) cell.appendChild(el('span.res-count', null, String(tasks.length)));
       return cell;
     },
 
