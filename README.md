@@ -146,7 +146,7 @@ third-party cookies work normally.
 
 **New people request access.** *Request access* on the login screen creates
 the account, but it doesn't open the board. It files a request that Producers
-and Managers see at the top of **Admin → User Directory**, where they pick a
+and Managers see at the bottom of **Admin → User Directory**, where they pick a
 role and **Accept** (which adds the person to the directory) or **Deny**. The
 server only lets in people who are in the User Directory, or listed in
 `ADMIN_EMAILS`, so removing someone from the directory locks them out within
