@@ -871,51 +871,68 @@ window.App = window.App || {};
     if (App.canManageResources(App.state.role)) return true;
     App.toast('Your role can’t manage resources', true); return false;
   };
-  // add (no id) or update an allocation — { personId, showId, pct, start, end }
-  App.saveAllocation = function (a) {
-    if (!canResource()) return;
-    if (!a.personId || !a.showId || !a.start || !a.end || a.end < a.start) { App.toast('Pick a show and a date range', true); return; }
-    const pct = Math.max(1, Math.min(100, Math.round(+a.pct || 0)));
-    const isNew = !a.id;
-    const rec = { id: a.id || App.uid(), personId: a.personId, showId: a.showId, pct, start: a.start, end: a.end };
-    App.mutate(d => {
-      d.allocations = d.allocations || [];
-      const i = d.allocations.findIndex(x => x.id === rec.id);
-      if (i >= 0) d.allocations[i] = rec; else d.allocations.push(rec);
-    }, 'the allocation');
-    const p = App.person(rec.personId);
-    App.track.audit(isNew ? 'resource.allocate' : 'resource.allocationEdit',
-      { person: p && p.name, show: App.show(rec.showId).name, pct, from: rec.start, to: rec.end });
-    App.toast((p ? p.name : 'Person') + ' — ' + pct + '% on ' + App.show(rec.showId).name);
-  };
-  App.removeAllocation = function (id) {
-    if (!canResource()) return;
-    const a = (App.state.data.allocations || []).find(x => x.id === id); if (!a) return;
-    App.mutate(d => { d.allocations = (d.allocations || []).filter(x => x.id !== id); }, 'the allocation');
-    const p = App.person(a.personId);
-    App.track.audit('resource.unallocate', { person: p && p.name, show: App.show(a.showId).name });
-    App.toast('Allocation removed');
-  };
-  App.setCapacity = function (personId, days) {
-    if (!canResource()) return;
-    const n = Math.max(0, Math.min(7, Math.round((+days || 0) * 2) / 2));
-    App.mutate(d => { const p = d.people.find(x => x.id === personId); if (p) p.capacity = { daysPerWeek: n }; }, 'the capacity');
-    const p = App.person(personId);
-    App.track.audit('resource.capacity', { person: p && p.name, daysPerWeek: n });
-  };
-  App.addPersonTimeOff = function (personId, start, end, note) {
-    if (!canResource()) return;
-    if (!start || (end && end < start)) { App.toast('Pick the dates', true); return; }
+  /* Save a person's plan from their panel in one go — capacity, time off,
+     the productions they're on, and any tasks handed to someone else — as a single
+     change: one save, one redraw, one undo step. The panel holds all of it as
+     a draft until Done, so nothing behind it moves while it's being edited.
+     plan: { capacity, timeOff: [], shows: [showId…], assign: { 'epId::key': personId|null } }
+     `shows` is the productions they're on: joining adds them to that show's
+     team for their department, leaving takes them off it (and off its lead). */
+  App.saveResourcePlan = function (personId, plan) {
+    if (!canResource()) return false;
+    const p0 = App.person(personId); if (!p0) return false;
+    const reassign = Object.entries(plan.assign || {});
+    if (reassign.length && !App.canAssignOwners(App.state.role)) { App.toast('Your role can’t reassign tasks', true); return false; }
+    const dept = App.roleDept(p0.role);
+    const wasOn = App.personShows(personId).map(s => s.id);
+    const want = plan.shows || wasOn;
+    const join = want.filter(id => !wasOn.includes(id)), leave = wasOn.filter(id => !want.includes(id));
+    const cap = Math.max(0, Math.min(7, Math.round((+plan.capacity || 0) * 2) / 2));
+    const before = { cap: App.personCapacity(p0), off: (p0.timeOff || []).length };
     App.mutate(d => {
       const p = d.people.find(x => x.id === personId); if (!p) return;
-      p.timeOff = (p.timeOff || []).concat([{ id: App.uid(), start, end: end || start, note: (note || '').trim() }]);
-    }, 'the time off');
-    const p = App.person(personId);
-    App.track.audit('resource.timeOff', { person: p && p.name, from: start, to: end || start });
-  };
-  App.removePersonTimeOff = function (personId, id) {
-    if (!canResource()) return;
-    App.mutate(d => { const p = d.people.find(x => x.id === personId); if (p) p.timeOff = (p.timeOff || []).filter(t => t.id !== id); }, 'the time off');
+      p.capacity = { daysPerWeek: cap };
+      p.timeOff = (plan.timeOff || []).map(t => ({ id: t.id || App.uid(), start: t.start, end: t.end || t.start, note: (t.note || '').trim() }));
+      // production teams: their own department's slot on each show
+      join.forEach(id => {
+        const s = d.shows.find(x => x.id === id); if (!s || !dept) return;
+        s.team = s.team || {};
+        const t = s.team[dept] = s.team[dept] || { ids: [] };
+        t.ids = (t.ids || []).filter(x => x !== personId).concat([personId]);
+      });
+      leave.forEach(id => {
+        const s = d.shows.find(x => x.id === id); if (!s || !s.team) return;
+        Object.keys(s.team).forEach(slot => {
+          const t = s.team[slot];
+          t.ids = (t.ids || []).filter(x => x !== personId);
+          if (t.lead === personId) delete t.lead;
+          if (!t.ids.length) delete s.team[slot];
+        });
+        if (!Object.keys(s.team).length) delete s.team;
+      });
+      // manual % allocations are retired — commitment is worked out from tasks
+      if (d.allocations) d.allocations = d.allocations.filter(a => a.personId !== personId);
+      reassign.forEach(([k, to]) => {
+        const [epId, key] = k.split('::');
+        const e = d.episodes.find(x => x.id === epId); if (!e) return;
+        const put = (x) => { x.assignees = x.assignees || {}; if (to) x.assignees[key] = to; else delete x.assignees[key]; };
+        put(e); (App.batchMates(d, e, key) || []).forEach(put);
+      });
+    }, p0.name + '’s plan');
+    if (cap !== before.cap) App.track.audit('resource.capacity', { person: p0.name, daysPerWeek: cap });
+    if ((plan.timeOff || []).length !== before.off) App.track.audit('resource.timeOff', { person: p0.name, entries: (plan.timeOff || []).length });
+    join.concat(leave).forEach(id => {
+      const s = App.state.data.shows.find(x => x.id === id);
+      App.track.audit('show.team', { show: s && s.name, person: p0.name, change: join.includes(id) ? 'joined' : 'left', via: 'resources' });
+    });
+    App.track.audit('resource.plan', { person: p0.name, productions: want.length, reassigned: reassign.length });
+    reassign.forEach(([k, to]) => {
+      const [epId, key] = k.split('::');
+      const ep = App.state.data.episodes.find(x => x.id === epId), su = ep && App.subitem(ep, key), q = to && App.person(to);
+      App.track.audit('task.reassign', { episode: ep && ep.code, task: su && su.name, to: q ? q.name : null });
+    });
+    App.toast('Saved ' + p0.name + '’s plan');
+    return true;
   };
   // a freelancer or placeholder seat: on the roster for planning and task
   // ownership, never a sign-in (no email)

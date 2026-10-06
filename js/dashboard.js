@@ -1029,8 +1029,7 @@ window.App = window.App || {};
 
     /* Team Workload — the Resources view's numbers (App.resourceLoad), so the
        dashboard and the Timeline never disagree: this week's booked days
-       against each person's capacity after time off, plus planned
-       allocations. Who's listed follows Resource Visibility (Access Control);
+       against each person's capacity after time off. Who's listed follows Resource Visibility (Access Control);
        a role that can't see resources gets a note instead of the team.
 
        Each row: who, a capacity bar (coloured by how stretched they are —

@@ -238,7 +238,7 @@ window.App = window.App || {};
      above this is a three-way choice per role — 'none', 'team' (their own
      department) or 'all' — kept as a string in data.rolePerms[k].resourceView.
      Department roles default to 'team'; a role without a department can't see
-     a team, so 'team' falls back to just themselves. Managing (allocations,
+     a team, so 'team' falls back to just themselves. Managing (production teams,
      capacity, contractors) is a plain switch, Manager by default. */
   App.RESOURCE_VIEWS = [['none', 'None'], ['team', 'Own team'], ['all', 'All']];
   const RV_RANK = { none: 0, team: 1, all: 2 };
@@ -270,7 +270,8 @@ window.App = window.App || {};
                  (not approved) tasks. Tasks running side by side share the
                  day — two on Monday are half a day each, not two days — so a
                  week of overlapping tasks reads as a full week, not 2x
-       planned — their allocations: pct of their daily share over the days
+       planned — 0; kept so callers can still read it (manual % allocations
+                 were replaced by production teams + App.personCommitment)
        off     — working days of time off
        tasks   — their open tasks that touch the bucket, as { ep, su } */
   App.mondayIso = function (iso) {
@@ -283,20 +284,24 @@ window.App = window.App || {};
     return out;
   };
   App.personCapacity = (p) => { const v = p && p.capacity && p.capacity.daysPerWeek; return typeof v === 'number' && v >= 0 ? v : 5; };
-  App.resourceLoad = function (people, buckets) {
+  /* `what` is an optional what-if, for previewing a plan before it's saved
+     (the person panel): { assign: { 'epId::taskKey': personId|null } } moves
+     tasks between people. */
+  App.resourceLoad = function (people, buckets, what) {
     const out = {};
     const tasks = {};
+    const assign = (what && what.assign) || {};
     App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
-      if (!su.assignee || su.status === 'approved') return;
-      (tasks[su.assignee] = tasks[su.assignee] || []).push({ ep, su });
+      const k = ep.id + '::' + su.key;
+      const who = k in assign ? assign[k] : su.assignee;
+      if (!who || su.status === 'approved') return;
+      (tasks[who] = tasks[who] || []).push({ ep, su });
     }));
-    const allocs = (App.state.data.allocations || []);
     // each bucket's working days, worked out once for everybody
     const workdays = buckets.map(b => App.workdaysIn(b.start, b.end));
     people.forEach(p => {
       const perDay = App.personCapacity(p) / 5;
       const mineAll = tasks[p.id] || [];
-      const myAllocs = allocs.filter(a => a.personId === p.id);
       out[p.id] = {};
       buckets.forEach((b, i) => {
         const wd = workdays[i];
@@ -306,8 +311,7 @@ window.App = window.App || {};
         const covers = ({ su }) => wd.some(day => su.start <= day && su.due >= day);
         const mine = mineAll.filter(covers);
         const booked = wd.filter(day => mine.some(({ su }) => su.start <= day && su.due >= day)).length;
-        const planned = myAllocs.reduce((n, a) => n + (+a.pct || 0) / 100 * perDay * wd.filter(day => a.start <= day && a.end >= day).length, 0);
-        out[p.id][b.key] = { days: wd.length, cap: perDay * (wd.length - off), booked, planned, off, tasks: mine };
+        out[p.id][b.key] = { days: wd.length, cap: perDay * (wd.length - off), booked, planned: 0, off, tasks: mine };
       });
     });
     return out;
@@ -1379,6 +1383,48 @@ window.App = window.App || {};
      of someone, two shows have half of them each. Someone on nothing reads as
      100% rather than as a share of no work — they're free, not idle-at-zero. */
   App.availabilityPct = (showCount) => Math.round(100 / Math.max(1, showCount));
+
+  /* A person's commitment across their productions, as shares that always
+     add up to 100% — nobody is more than all of themselves. Each show's share
+     is its part of their working days in [from, to], with a day that has
+     several tasks running split evenly between them (the same "tasks share
+     the day" rule as App.resourceLoad, so one long-running task doesn't
+     outweigh a busy stretch of short ones); on a show's
+     team with nothing booked yet counts as 0% while other shows have work,
+     and when nothing at all is booked, their shows split them evenly (as
+     App.availabilityPct does). Shows they have tasks on without being on the
+     team are included too, flagged `offTeam`, since that work is real.
+     `what` previews a draft: { shows: [showId…] } replaces their team shows,
+     { assign } is the same task what-if App.resourceLoad takes. */
+  App.personCommitment = function (personId, from, to, what) {
+    const assign = (what && what.assign) || {};
+    const onTeam = (what && what.shows) || App.personShows(personId).map(s => s.id);
+    const days = {};
+    const mine = [];
+    App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
+      const k = ep.id + '::' + su.key;
+      const who = k in assign ? assign[k] : su.assignee;
+      if (who !== personId || su.status === 'approved' || su.due < from || su.start > to) return;
+      mine.push({ showId: ep.showId, su });
+      (days[ep.showId] = days[ep.showId] || { days: 0, tasks: 0 }).tasks++;
+    }));
+    App.workdaysIn(from, to).forEach(day => {
+      const on = mine.filter(m => m.su.start <= day && m.su.due >= day);
+      on.forEach(m => { days[m.showId].days += 1 / on.length; });
+    });
+    const ids = [...new Set(onTeam.concat(Object.keys(days)))].filter(id => App.state.data.shows.some(s => s.id === id && !s.archived));
+    const total = ids.reduce((n, id) => n + ((days[id] || {}).days || 0), 0);
+    const raw = ids.map(id => ({ id, v: total ? ((days[id] || {}).days || 0) / total * 100 : 100 / Math.max(1, ids.length) }));
+    // largest remainder, so the whole numbers shown still total exactly 100
+    const out = raw.map(r => ({ id: r.id, pct: Math.floor(r.v), rem: r.v - Math.floor(r.v) }));
+    let left = ids.length ? 100 - out.reduce((n, r) => n + r.pct, 0) : 0;
+    out.slice().sort((a, b) => b.rem - a.rem).forEach(r => { if (left > 0) { r.pct++; left--; } });
+    return out.map(r => ({
+      show: App.show(r.id), showId: r.id, pct: r.pct,
+      days: (days[r.id] || {}).days || 0, tasks: (days[r.id] || {}).tasks || 0,
+      offTeam: !onTeam.includes(r.id)
+    })).sort((a, b) => b.pct - a.pct || a.show.name.localeCompare(b.show.name));
+  };
 
   App.personLoad = function (personId) {
     const shows = App.personShows(personId);
