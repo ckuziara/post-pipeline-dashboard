@@ -1337,6 +1337,10 @@ const server = http.createServer(async (req, res) => {
           // With email verification on, Neon holds the session back until the
           // emailed code is entered; without it, the account is live now.
           if (r.token) return await finish(r.data.user, r.token);
+          // Send the code ourselves: Neon only emails one on sign-up when
+          // "Verify email on sign-up" is on, and requiring verification
+          // alone doesn't turn that on.
+          await neonAuth.sendCode(origin, email, 'email-verification').catch(() => null);
           return sendJson(res, 200, { verify: true });
         }
         if (route === 'POST /auth/verify') {
