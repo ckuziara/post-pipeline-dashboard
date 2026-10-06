@@ -287,6 +287,7 @@ window.App = window.App || {};
       // time axis, header, zoom and today line, with departments and people
       // as the rows instead of episodes — see resourceRows. Landscape only.
       const resMode = App.timelineMode() === 'resources';
+      if (!resMode) this._resSnap = null;   // re-entering Resources shouldn't animate from a stale zoom
       /* Portrait (time runs top-to-bottom) applies to all three sorts. Every
          sort's rows are built from the same .g-row/.g-label/.g-track shape, so
          Portrait is the same two things everywhere: bars written along the
@@ -2077,7 +2078,7 @@ window.App = window.App || {};
           el('.l-title', null, [el('span.chev' + (expanded ? '.open' : ''), null, '▶'), this.deptDot(dep), el('span', null, dep.label)]),
           el('.l-sub', null, [el('span.code', null, crew.length + (crew.length === 1 ? ' person' : ' people'))])
         ]));
-        const track = el('.g-track');
+        const track = el('.g-track', { 'data-res-key': expKey });
         buckets.forEach(b => {
           const x = crew.reduce((a, p) => {
             const l = load[p.id][b.key];
@@ -2102,7 +2103,7 @@ window.App = window.App || {};
             el('.l-sub', null, [el('span', null, App.role(p.role).label + (p.contractor ? ' · Contractor' : '') + ' · ' +
               (Math.round(App.personCapacity(p) * 10) / 10) + 'd/wk')])
           ]));
-          const ptrack = el('.g-track');
+          const ptrack = el('.g-track', { 'data-res-key': 'person:' + p.id });
           buckets.forEach(b => {
             const l = load[p.id][b.key];
             ptrack.appendChild(this.resCircle(b, { cap: l.cap, busy: Math.max(l.booked, l.planned), booked: l.booked, planned: l.planned, off: l.off },
@@ -2112,6 +2113,89 @@ window.App = window.App || {};
           body.appendChild(prow);
         });
       });
+      this.resAnimate(body, ctx, unit);
+    },
+
+    /* Changing cell size (day / week / month) animates instead of snapping.
+       Zooming IN, every new circle grows out of the parent it came from:
+       it starts at the parent's centre and size and glides to its own spot.
+       Zooming OUT, the old circles are pulled into their new parent and
+       shrink away (stand-ins, since the real ones are already gone), while
+       the parent swells into place. Everything is worked out from the
+       circles' dates under the CURRENT scale, so it holds however far the
+       zoom jumped. The snapshot taken here is what the next render compares
+       against. Transforms only — nothing reflows — and none of it for
+       people who ask for reduced motion. */
+    resAnimate(body, ctx, unit) {
+      const RANK = { days: 0, weeks: 1, months: 2 };
+      const centre = (start, end) => (ctx.colOf(start) + ctx.colOf(App.shiftIso(end, 1))) / 2 * ctx.dw;
+      const read = () => {
+        const rows = {};
+        body.querySelectorAll('.g-track[data-res-key]').forEach(t => {
+          rows[t.dataset.resKey] = [...t.querySelectorAll('.res-cell[data-start]')].map(c => {
+            const ring = c.querySelector('.res-ring');
+            return ring && { start: c.dataset.start, end: c.dataset.end, el: ring, size: ring.offsetWidth || parseFloat(ring.style.width),
+              disc: parseFloat(ring.firstChild.style.width), over: ring.classList.contains('over'), color: ring.style.getPropertyValue('--res-c') };
+          }).filter(Boolean);
+        });
+        return rows;
+      };
+      const prev = this._resSnap;
+      const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      requestAnimationFrame(() => {
+        const now = read();
+        this._resSnap = { unit, rows: Object.fromEntries(Object.entries(now).map(([k, v]) => [k, v.map(({ el: _, ...rest }) => rest)])) };
+        if (!prev || prev.unit === unit || reduce || !body.isConnected) return;
+        const zoomIn = RANK[unit] < RANK[prev.unit];
+        // only what's on screen (plus a margin) moves — a long board has
+        // hundreds of circles, and off-screen motion is all cost, no picture
+        const sc = this._scrollEl;
+        const lo = (sc ? sc.scrollLeft : 0) - 160, hi = (sc ? sc.scrollLeft + sc.clientWidth - LABEL_W : Infinity) + 160;
+        const seen = (x) => x >= lo && x <= hi;
+        const ease = 'cubic-bezier(.2,.8,.2,1)', dur = 380;
+        // the counts sit at their final spots, so they wait for the circles to land
+        body.querySelectorAll('.res-count').forEach(n => {
+          if (seen(parseFloat(n.parentNode.style.left))) n.animate([{ opacity: 0 }, { opacity: 0, offset: .6 }, { opacity: 1 }], { duration: dur + 120, easing: 'ease-out' });
+        });
+        body.querySelectorAll('.g-track[data-res-key]').forEach(track => {
+          const before = prev.rows[track.dataset.resKey] || [];
+          const after = now[track.dataset.resKey] || [];
+          if (zoomIn) {
+            after.forEach((c, i) => {
+              if (!seen(centre(c.start, c.end))) return;
+              const parent = before.find(p => p.start <= c.start && p.end >= c.start);
+              if (!parent) { c.el.animate([{ transform: 'scale(0)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: dur, easing: ease }); return; }
+              const dx = centre(parent.start, parent.end) - centre(c.start, c.end);
+              const k = parent.size / Math.max(1, c.size);
+              c.el.animate([
+                { transform: 'translateX(' + dx + 'px) scale(' + k + ')', opacity: .35 },
+                { transform: 'none', opacity: 1 }
+              ], { duration: dur, easing: ease, delay: Math.min(i % 7, 6) * 12 });
+            });
+          } else {
+            after.forEach(p => {
+              const pc = centre(p.start, p.end);
+              if (!seen(pc)) return;
+              const kids = before.filter(c => c.start >= p.start && c.start <= p.end && seen(centre(c.start, c.end)));
+              kids.forEach(c => {
+                const cc = centre(c.start, c.end);
+                const ghost = el('.res-cell.res-ghost', { style: { left: (cc - c.size / 2) + 'px', width: c.size + 'px' } }, [
+                  el('.res-ring' + (c.over ? '.over' : ''), { style: { width: c.size + 'px', height: c.size + 'px' } },
+                    [el('.res-disc', { style: { width: c.disc + 'px', height: c.disc + 'px' } })])
+                ]);
+                ghost.firstChild.style.setProperty('--res-c', c.color);
+                track.appendChild(ghost);
+                ghost.animate([
+                  { transform: 'none', opacity: 1 },
+                  { transform: 'translateX(' + (pc - cc) + 'px) scale(.2)', opacity: 0 }
+                ], { duration: dur - 60, easing: 'cubic-bezier(.5,0,.75,0)', fill: 'forwards' }).onfinish = () => ghost.remove();
+              });
+              p.el.animate([{ transform: 'scale(.3)', opacity: 0 }, { transform: 'scale(.3)', opacity: 0, offset: .35 }, { transform: 'none', opacity: 1 }],
+                { duration: dur + 80, easing: ease });
+            });
+          }
+        });
+      });
     },
 
     /* One cell's circle, sized to the cell: as big as the narrower of the
@@ -2119,7 +2203,7 @@ window.App = window.App || {};
        into the row's borders). The task count needs room beside the circle,
        so on a narrow cell it moves into the tooltip only. */
     resCircle(b, x, tasks, dep, who, now, away, isDept) {
-      const cell = el('.res-cell' + (now ? '.now' : ''), { style: { left: b.x + 'px', width: b.w + 'px' } });
+      const cell = el('.res-cell' + (now ? '.now' : ''), { style: { left: b.x + 'px', width: b.w + 'px' }, 'data-start': b.start, 'data-end': b.end });
       const roomy = b.w >= 34;
       if (away) { if (b.w >= 30) cell.appendChild(el('span.res-away', null, 'Away')); else cell.classList.add('away'); return cell; }
       if (!tasks.length && x.busy <= 0) return cell;

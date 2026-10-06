@@ -5007,6 +5007,7 @@ body.has-draft #toast-root { bottom: 92px; }
 .g-row.res-person .g-label:hover .l-title span:last-child { color: var(--accent); }
 .res-cell { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; }
 .res-cell.now { background: rgba(91,108,255,.06); }
+.res-ghost { pointer-events: none; z-index: 1; }
 .res-cell.away { background: repeating-linear-gradient(135deg, transparent 0 4px, var(--bg-2) 4px 8px); }
 .res-ring {
   position: relative; border-radius: 50%; display: flex; align-items: center; justify-content: center;
