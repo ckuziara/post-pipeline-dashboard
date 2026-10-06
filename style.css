@@ -1635,14 +1635,6 @@ body.gantt-shift .subrow:not(.head) { cursor: pointer; user-select: none; }
   font-size: 12px; color: #ffb3bd; background: rgba(255,91,110,.12); border: 1px solid rgba(255,91,110,.3);
   border-radius: 9px; padding: 8px 12px; margin-bottom: 14px; max-width: 300px;
 }
-.login-google {
-  display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%;
-  background: #fff; color: #1a1c22; text-decoration: none; font-weight: 700; font-size: 13.5px;
-  border-radius: 10px; padding: 11px 16px; transition: transform .12s ease, box-shadow .12s ease;
-}
-.login-google:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,.35); }
-.login-google.disabled { opacity: .38; pointer-events: none; }
-.login-g { display: flex; }
 .login-hint { font-size: 11px; color: var(--text-3); line-height: 1.5; margin-top: 10px; max-width: 290px; }
 .login-div {
   display: flex; align-items: center; gap: 12px; width: 100%; margin: 16px 0 12px;
@@ -1650,7 +1642,7 @@ body.gantt-shift .subrow:not(.head) { cursor: pointer; user-select: none; }
 }
 .login-div::before, .login-div::after { content: ''; flex: 1; height: 1px; background: var(--border-2); }
 .login-dev { display: flex; gap: 8px; width: 100%; }
-/* email + access code don't fit side by side — stack them */
+/* sign-in fields stack one per row */
 .login-dev.stacked { flex-direction: column; }
 .login-dev.stacked .btn-primary { width: 100%; padding: 10px; }
 .login-input {
@@ -1658,6 +1650,9 @@ body.gantt-shift .subrow:not(.head) { cursor: pointer; user-select: none; }
   padding: 10px 12px; font-size: 13px; color: var(--text); font-family: inherit; outline: none;
 }
 .login-input:focus { border-color: var(--accent); }
+.login-links { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; margin-top: 14px; }
+.login-link { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; color: var(--text-3); cursor: pointer; }
+.login-link:hover { color: var(--accent); text-decoration: underline; }
 
 /* topbar — signed-in user */
 .user-chip {

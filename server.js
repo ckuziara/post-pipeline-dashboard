@@ -1,6 +1,7 @@
 /* Post Pipeline backend (Node 18+).
    Serves the static frontend AND provides:
-     • Google Workspace SSO (OAuth code flow) with a dev sign-in fallback
+     • Neon Auth (email + password, emailed codes) — see neon-auth.js — with a
+       localhost-only dev sign-in when Neon Auth isn't configured
      • stateless, HMAC-signed cookie sessions (no server-side session store)
      • a shared board-state store with optimistic versioning:
          – Postgres (Neon/RDS/…) when DATABASE_URL is set   → hosted / prod
@@ -20,6 +21,7 @@ const folders = require('./folders');
 const { makePgChat, parseTaskId } = require('./chat-store');
 const { makeKeyVault } = require('./keyvault');
 const { makeSlackBridge } = require('./slack-bridge');
+const { makeNeonAuth } = require('./neon-auth');
 
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
@@ -32,12 +34,11 @@ const DEFAULT_CONFIG = {
   port: 8771,
   host: '0.0.0.0',                       // bind to the LAN; use 127.0.0.1 for laptop-only
   sessionSecret: '',                     // from SESSION_SECRET env, or auto-generated locally
-  devLogin: true,                        // email-only sign-in; MUST be false in a public deploy
-  google: { clientId: '', clientSecret: '' },
+  devLogin: true,                        // email-only sign-in; localhost only, and only without Neon Auth
+  neonAuthUrl: '',                       // Neon Auth base URL (NEON_AUTH_BASE_URL) → real sign-in
   allowedDomain: '',                     // only this Workspace domain may sign in ('' = any)
   adminEmails: [],                       // always treated as Producer (bootstrap) — set via ADMIN_EMAILS
   databaseUrl: '',                       // Postgres connection string (Neon) → hosted mode
-  accessCode: '',                        // shared team code required by the email sign-in
   /* Companion mode. Origins allowed to drive THIS server's file routes from
      another origin — i.e. the hosted board calling a studio machine that has
      the volume mounted. Empty (the default) means off: a plain local install
@@ -56,18 +57,15 @@ function loadConfig() {
   let cfg = {};
   try { cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch (e) { /* first run / hosted */ }
   cfg = Object.assign({}, DEFAULT_CONFIG, cfg);
-  cfg.google = Object.assign({}, DEFAULT_CONFIG.google, cfg.google || {});
 
   // Environment overrides — the source of truth for hosted deploys, where the
   // filesystem is wiped on every restart so a config file can't be trusted.
   if (ENV.SESSION_SECRET) cfg.sessionSecret = ENV.SESSION_SECRET;
-  if (ENV.GOOGLE_CLIENT_ID) cfg.google.clientId = ENV.GOOGLE_CLIENT_ID;
-  if (ENV.GOOGLE_CLIENT_SECRET) cfg.google.clientSecret = ENV.GOOGLE_CLIENT_SECRET;
+  if (ENV.NEON_AUTH_BASE_URL) cfg.neonAuthUrl = ENV.NEON_AUTH_BASE_URL;
   if (ENV.ALLOWED_DOMAIN !== undefined) cfg.allowedDomain = ENV.ALLOWED_DOMAIN;
   if (ENV.ADMIN_EMAILS) cfg.adminEmails = ENV.ADMIN_EMAILS.split(',').map(s => s.trim()).filter(Boolean);
   if (ENV.DEV_LOGIN !== undefined) cfg.devLogin = ENV.DEV_LOGIN === 'true';
   if (ENV.DATABASE_URL) cfg.databaseUrl = ENV.DATABASE_URL;
-  if (ENV.ACCESS_CODE) cfg.accessCode = ENV.ACCESS_CODE;
   if (ENV.COMPANION_ORIGINS) {
     cfg.companionOrigins = ENV.COMPANION_ORIGINS.split(',').map(o => o.trim().replace(/\/$/, '')).filter(Boolean);
   }
@@ -87,27 +85,23 @@ function loadConfig() {
     cfg.sessionSecret = crypto.randomBytes(32).toString('hex');
     try {
       const toSave = Object.assign({}, cfg);
-      delete toSave.databaseUrl; delete toSave.accessCode;
+      delete toSave.databaseUrl;
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(toSave, null, 2));
     } catch (e) { /* read-only fs — fine, secret just lives for this run */ }
   }
   return cfg;
 }
 
-// Constant-time compare so the code can't be guessed a character at a time.
-// Both sides are hashed first, which also sidesteps length leakage.
-function codeMatches(given) {
-  const h = (s) => crypto.createHash('sha256').update(String(s || '')).digest();
-  return crypto.timingSafeEqual(h(given), h(config.accessCode));
-}
-// Who may use the email sign-in: the configured Workspace domain, plus the
-// bootstrap admins (who might be on another domain).
+// Who may use the board: the configured Workspace domain, plus the bootstrap
+// admins (who might be on another domain). Neon Auth lets anyone create an
+// account, so this is the gate that keeps the board to the team.
 function emailAllowed(email) {
   if (!config.allowedDomain) return true;
   return email.endsWith('@' + config.allowedDomain) ||
          config.adminEmails.map(e => e.toLowerCase()).includes(email);
 }
 const config = loadConfig();
+const neonAuth = config.neonAuthUrl ? makeNeonAuth(config.neonAuthUrl) : null;
 const PORT = ENV.PORT || config.port;
 const SESSION_TTL = 1000 * 60 * 60 * 24 * 30; // 30 days
 
@@ -609,79 +603,6 @@ function aggregate(rows, since) {
 
 const activity = config.databaseUrl ? makePgActivity(config.databaseUrl) : makeFileActivity();
 
-/* ------------------------------------------------ passwords (2 backends) --
-   Deliberately NOT part of board state (data.people). GET /api/state ships
-   the whole board to every signed-in browser verbatim — that's the entire
-   sync mechanism — so a hash stored alongside a person's name and email would
-   go out to every teammate's browser on every load. Hashed or not, that's an
-   offline-crackable password list handed to anyone who opens dev tools. This
-   store never rides that payload; it is read only by the two auth routes.
-
-   scrypt, not bcrypt: Node's crypto ships it, so this stays dependency-free.
-   N=16384 (2^14) is Node's own recommended minimum work factor. Format is
-   "salt:hash", both hex, so a future rehash to stronger parameters can be
-   read and verified as long as it exposes the same two hex fields. */
-const PASSWORD_PATH = path.join(DATA_DIR, 'passwords.json');
-const SCRYPT_OPTS = { N: 16384, r: 8, p: 1 };
-const SCRYPT_KEYLEN = 64;
-
-function hashPassword(plain) {
-  const salt = crypto.randomBytes(16);
-  const key = crypto.scryptSync(plain, salt, SCRYPT_KEYLEN, SCRYPT_OPTS);
-  return salt.toString('hex') + ':' + key.toString('hex');
-}
-// Constant-time compare of a hash that IS constant length, so no length or
-// early-exit leakage — same discipline as codeMatches() above.
-function verifyPassword(plain, stored) {
-  if (!stored || typeof stored !== 'string') return false;
-  const [saltHex, hashHex] = stored.split(':');
-  if (!saltHex || !hashHex) return false;
-  const salt = Buffer.from(saltHex, 'hex');
-  const want = Buffer.from(hashHex, 'hex');
-  if (want.length !== SCRYPT_KEYLEN) return false;
-  const got = crypto.scryptSync(plain, salt, SCRYPT_KEYLEN, SCRYPT_OPTS);
-  return crypto.timingSafeEqual(got, want);
-}
-
-function makeFilePasswords() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  let rows = readJson(PASSWORD_PATH, {});   // { [lowercased email]: hash }
-  return {
-    kind: 'json file',
-    async init() {},
-    async get(email) { return rows[email.toLowerCase()] || null; },
-    async set(email, hash) { rows[email.toLowerCase()] = hash; writeJson(PASSWORD_PATH, rows); },
-    async clear(email) { delete rows[email.toLowerCase()]; writeJson(PASSWORD_PATH, rows); }
-  };
-}
-
-function makePgPasswords(connectionString) {
-  const pool = getPgPool(connectionString);
-  return {
-    kind: 'postgres',
-    async init() {
-      await pool.query(
-        'CREATE TABLE IF NOT EXISTS user_passwords (' +
-        'email text PRIMARY KEY, hash text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())'
-      );
-    },
-    async get(email) {
-      const r = await pool.query('SELECT hash FROM user_passwords WHERE email = $1', [email.toLowerCase()]);
-      return r.rows[0] ? r.rows[0].hash : null;
-    },
-    async set(email, hash) {
-      await pool.query(
-        'INSERT INTO user_passwords (email, hash, updated_at) VALUES ($1, $2, now()) ' +
-        'ON CONFLICT (email) DO UPDATE SET hash = $2, updated_at = now()',
-        [email.toLowerCase(), hash]
-      );
-    },
-    async clear(email) { await pool.query('DELETE FROM user_passwords WHERE email = $1', [email.toLowerCase()]); }
-  };
-}
-
-const passwords = config.databaseUrl ? makePgPasswords(config.databaseUrl) : makeFilePasswords();
-
 /* Contextual task chat. Postgres only — there is no file backend, so chat is
    simply absent when the board runs on the JSON store (local preview). Shares
    the one pool rather than opening a second. Null here is a supported state,
@@ -918,7 +839,35 @@ function getSession(req) {
   let data;
   try { data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch (e) { return null; }
   if (!data.iat || Date.now() - data.iat > SESSION_TTL) return null;
-  return data;   // { email, name, picture, via, iat }
+  // Once Neon Auth is on, it is the only way in: cookies from the old
+  // sign-ins (dev, Google, board passwords) stop working.
+  if (neonAuth && (data.via !== 'neon' || !data.nt)) return null;
+  return data;   // { email, name, picture, via, nt?, iat }
+}
+
+/* The cookie alone would outlive a Neon session that has since ended (signed
+   out elsewhere, password reset, account removed). So on each page load
+   (/api/me) the Neon session is re-checked, at most once per five minutes
+   per token. Neon being unreachable doesn't sign anyone out. */
+const neonSeen = new Map();              // token -> last confirmed (ms)
+const NEON_RECHECK_MS = 5 * 60 * 1000;
+async function currentSession(req, res) {
+  const s = getSession(req);
+  if (!s || !neonAuth) return s;
+  const seen = neonSeen.get(s.nt);
+  if (seen && Date.now() - seen < NEON_RECHECK_MS) return s;
+  let live;
+  try { live = await neonAuth.getSession(baseUrl(req), s.nt); }
+  catch (e) { return e.status === 401 ? dropSession(req, res, s) : s; }
+  if (!live || String(live.user.email).toLowerCase() !== s.email) return dropSession(req, res, s);
+  if (neonSeen.size > 5000) neonSeen.clear();
+  neonSeen.set(s.nt, Date.now());
+  return s;
+}
+function dropSession(req, res, s) {
+  neonSeen.delete(s.nt);
+  res.setHeader('Set-Cookie', sessionCookie('', { expire: true, secure: isSecure(req) }));
+  return null;
 }
 function sessionCookie(value, opts) {
   opts = opts || {};
@@ -927,67 +876,22 @@ function sessionCookie(value, opts) {
     (opts.expire ? '; Max-Age=0' : '; Max-Age=' + Math.floor(SESSION_TTL / 1000));
 }
 
-/* --------------------------------------------------------- google oauth --- */
-const oauthStates = new Map();           // state -> expiry (10 min)
-function googleConfigured() { return !!(config.google.clientId && config.google.clientSecret); }
-// Honour the reverse-proxy's protocol header so the OAuth redirect is the real
-// public https:// URL (a hosted app receives http internally behind TLS).
+/* ------------------------------------------------------- request origin --- */
+// Honour the reverse-proxy's protocol header so origins are the real public
+// https:// URL (a hosted app receives http internally behind TLS).
 function baseUrl(req) {
   const xf = (req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
   const proto = xf || (req.socket && req.socket.encrypted ? 'https' : 'http');
   return proto + '://' + req.headers.host;
 }
 function isSecure(req) { return baseUrl(req).startsWith('https'); }
-function redirectUri(req) { return baseUrl(req) + '/auth/callback'; }
-
-function googleAuthUrl(req) {
-  const state = crypto.randomBytes(16).toString('hex');
-  oauthStates.set(state, Date.now() + 600000);
-  for (const [k, exp] of oauthStates) if (exp < Date.now()) oauthStates.delete(k);
-  const q = new URLSearchParams({
-    client_id: config.google.clientId,
-    redirect_uri: redirectUri(req),
-    response_type: 'code',
-    scope: 'openid email profile',
-    state,
-    prompt: 'select_account'
-  });
-  if (config.allowedDomain) q.set('hd', config.allowedDomain);
-  return 'https://accounts.google.com/o/oauth2/v2/auth?' + q;
+// Dev sign-in takes an email on trust, so it only answers a browser on this
+// same machine — never the LAN or a hosted URL.
+function isLoopback(req) {
+  const a = (req.socket && req.socket.remoteAddress) || '';
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
 }
-
-async function googleCallback(req, url) {
-  const code = url.searchParams.get('code');
-  const state = url.searchParams.get('state');
-  if (!code || !oauthStates.has(state)) throw new Error('Sign-in expired — please try again');
-  oauthStates.delete(state);
-
-  const tokRes = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      code,
-      client_id: config.google.clientId,
-      client_secret: config.google.clientSecret,
-      redirect_uri: redirectUri(req),
-      grant_type: 'authorization_code'
-    })
-  });
-  const tok = await tokRes.json();
-  if (!tok.access_token) throw new Error('Google rejected the sign-in (' + (tok.error || 'no token') + ')');
-
-  const uiRes = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
-    headers: { Authorization: 'Bearer ' + tok.access_token }
-  });
-  const ui = await uiRes.json();
-  if (!ui.email || ui.email_verified === false) throw new Error('Google account has no verified email');
-  const email = ui.email.toLowerCase();
-  if (config.allowedDomain && !email.endsWith('@' + config.allowedDomain) &&
-      !config.adminEmails.map(e => e.toLowerCase()).includes(email)) {
-    throw new Error('Only @' + config.allowedDomain + ' accounts can sign in');
-  }
-  return { email, name: ui.name || email, picture: ui.picture || '', via: 'google' };
-}
+function devLoginOn(req) { return !neonAuth && config.devLogin && isLoopback(req); }
 
 /* --------------------------------------------------- task workspace ------ */
 /* Backs the per-subtask workspace (Project / Assets / Deliver) so nobody has to
@@ -1271,48 +1175,30 @@ const server = http.createServer(async (req, res) => {
       return slack.handleEvent(req, res);
     }
 
-    /* ---- auth ---- */
+    /* ---- auth ----
+       Neon Auth is the sign-in whenever NEON_AUTH_BASE_URL is set. Each route
+       below calls Neon server-to-server (see neon-auth.js), then wraps Neon's
+       session token in the board's own pp_sid cookie. Neon lets anyone create
+       an account, so emailAllowed() still decides who gets into the board,
+       and is checked before an account is even created. */
     if (route === 'GET /api/me') {
-      const s = getSession(req);
+      const s = await currentSession(req, res);
       if (!s) return sendJson(res, 401, {
         error: 'not signed in',
-        devLogin: config.devLogin,
-        needsCode: !!config.accessCode,
-        googleConfigured: googleConfigured()
+        neonAuth: !!neonAuth,
+        devLogin: devLoginOn(req)
       });
       return sendJson(res, 200, {
         email: s.email, name: s.name, picture: s.picture, via: s.via,
-        admin: config.adminEmails.map(e => e.toLowerCase()).includes(s.email),
-        devLogin: config.devLogin, googleConfigured: googleConfigured()
+        admin: config.adminEmails.map(e => e.toLowerCase()).includes(s.email)
       });
     }
 
-    if (route === 'GET /auth/google') {
-      if (!googleConfigured()) { res.writeHead(302, { Location: '/?err=' + encodeURIComponent('Google SSO isn’t configured yet — see README') }); return res.end(); }
-      res.writeHead(302, { Location: googleAuthUrl(req) }); return res.end();
-    }
-
-    if (route === 'GET /auth/callback') {
-      try {
-        const user = await googleCallback(req, url);
-        res.writeHead(302, { 'Set-Cookie': sessionCookie(createSession(user), { secure: isSecure(req) }), Location: '/' });
-      } catch (e) {
-        res.writeHead(302, { Location: '/?err=' + encodeURIComponent(e.message) });
-      }
-      return res.end();
-    }
-
     if (route === 'POST /auth/dev') {
-      if (!config.devLogin) return sendJson(res, 403, { error: 'dev sign-in is disabled' });
+      if (!devLoginOn(req)) return sendJson(res, 403, { error: 'dev sign-in is disabled' });
       const body = JSON.parse(await readBody(req) || '{}');
       const email = String(body.email || '').trim().toLowerCase();
       if (!/^\S+@\S+\.\S+$/.test(email)) return sendJson(res, 400, { error: 'enter a valid email' });
-      // Without Google SSO this endpoint is the only gate, so it enforces both
-      // the shared team code and the allowed domain — otherwise anyone who
-      // finds the URL could sign in as an admin.
-      if (config.accessCode && !codeMatches(body.code)) {
-        return sendJson(res, 403, { error: 'Wrong access code' });
-      }
       if (!emailAllowed(email)) {
         return sendJson(res, 403, { error: 'Only @' + config.allowedDomain + ' accounts can sign in' });
       }
@@ -1321,30 +1207,89 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
-    /* Real credentialed sign-in — works whether devLogin/accessCode are on or
-       off, unlike /auth/dev, because the password itself is the gate: an
-       admin chose to grant this specific person a way in, the same act as
-       adding them to the People directory in the first place. No domain
-       check either, for the same reason bootstrap admins in adminEmails may
-       sit outside allowedDomain — a password an admin set is authorization,
-       independent of what domain the address happens to be on. */
-    if (route === 'POST /auth/password') {
+    if (url.pathname.startsWith('/auth/') && route !== 'POST /auth/logout') {
+      if (!neonAuth) return sendJson(res, 503, { error: 'Sign-in isn’t set up on this server — set NEON_AUTH_BASE_URL' });
+      if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' });
       const body = JSON.parse(await readBody(req) || '{}');
+      const origin = baseUrl(req);
       const email = String(body.email || '').trim().toLowerCase();
-      const pw = String(body.password || '');
-      if (!email || !pw) return sendJson(res, 400, { error: 'Enter your email and password' });
-      const hash = await passwords.get(email);
-      // Same "invalid email or password" either way — confirming an address
-      // has no password set is a small enumeration leak otherwise.
-      if (!hash || !verifyPassword(pw, hash)) {
-        return sendJson(res, 401, { error: 'Incorrect email or password' });
+      const password = String(body.password || '');
+      const code = String(body.code || '').trim();
+      const notAllowed = () => sendJson(res, 403, {
+        error: 'Only @' + config.allowedDomain + ' addresses can use this board'
+      });
+      // A Neon session in hand → the board's own cookie around it.
+      const finish = (user, token) => {
+        const em = String(user.email || email).toLowerCase();
+        if (!emailAllowed(em)) { neonAuth.signOut(origin, token); return notAllowed(); }
+        res.setHeader('Set-Cookie', sessionCookie(createSession({
+          email: em, name: user.name || em, picture: user.image || '', via: 'neon', nt: token
+        }), { secure: isSecure(req) }));
+        return sendJson(res, 200, { ok: true });
+      };
+      try {
+        if (route === 'POST /auth/sign-in') {
+          if (!email || !password) return sendJson(res, 400, { error: 'Enter your email and password' });
+          if (!emailAllowed(email)) return notAllowed();
+          try {
+            const r = await neonAuth.signIn(origin, email, password);
+            return finish(r.data.user, r.token);
+          } catch (e) {
+            // unverified account: send a fresh code and tell the screen to ask for it
+            if (e.code !== 'EMAIL_NOT_VERIFIED') throw e;
+            await neonAuth.sendCode(origin, email, 'email-verification').catch(() => null);
+            return sendJson(res, 200, { verify: true });
+          }
+        }
+        if (route === 'POST /auth/sign-up') {
+          const name = String(body.name || '').trim();
+          if (!name || !email || !password) return sendJson(res, 400, { error: 'Enter your name, email and a password' });
+          if (password.length < 8) return sendJson(res, 400, { error: 'Password must be at least 8 characters' });
+          if (!emailAllowed(email)) return notAllowed();
+          const r = await neonAuth.signUp(origin, name, email, password);
+          // With email verification on, Neon holds the session back until the
+          // emailed code is entered; without it, the account is live now.
+          if (r.token) return finish(r.data.user, r.token);
+          return sendJson(res, 200, { verify: true });
+        }
+        if (route === 'POST /auth/verify') {
+          if (!email || !code) return sendJson(res, 400, { error: 'Enter the code from the email' });
+          if (!emailAllowed(email)) return notAllowed();
+          const r = await neonAuth.verifyEmail(origin, email, code);
+          if (r.token) return finish(r.data.user, r.token);
+          // verified but not auto-signed-in (Neon setting) → sign in normally
+          return sendJson(res, 200, { verified: true });
+        }
+        if (route === 'POST /auth/resend') {
+          if (!email) return sendJson(res, 400, { error: 'Enter your email' });
+          if (emailAllowed(email)) await neonAuth.sendCode(origin, email, 'email-verification');
+          return sendJson(res, 200, { ok: true });
+        }
+        if (route === 'POST /auth/forgot') {
+          if (!email) return sendJson(res, 400, { error: 'Enter your email' });
+          // Same answer whether or not the address has an account, so this
+          // can't be used to find out who does.
+          if (emailAllowed(email)) await neonAuth.sendCode(origin, email, 'forget-password').catch(() => null);
+          return sendJson(res, 200, { ok: true });
+        }
+        if (route === 'POST /auth/reset') {
+          if (!email || !code || !password) return sendJson(res, 400, { error: 'Enter the code and a new password' });
+          if (password.length < 8) return sendJson(res, 400, { error: 'Password must be at least 8 characters' });
+          await neonAuth.resetPassword(origin, email, code, password);
+          // Reset doesn't sign anyone in, so do it now with the new password.
+          const r = await neonAuth.signIn(origin, email, password);
+          return finish(r.data.user, r.token);
+        }
+      } catch (e) {
+        return sendJson(res, e.status && e.status < 500 ? e.status : 502, { error: e.message });
       }
-      const name = email.split('@')[0].split(/[._-]/).map(w => w[0] ? w[0].toUpperCase() + w.slice(1) : w).join(' ');
-      res.setHeader('Set-Cookie', sessionCookie(createSession({ email, name, picture: '', via: 'password' }), { secure: isSecure(req) }));
-      return sendJson(res, 200, { ok: true });
+      return sendJson(res, 404, { error: 'not found' });
     }
 
     if (route === 'POST /auth/logout') {
+      const s = getSession(req);
+      if (s && s.nt && neonAuth) await neonAuth.signOut(baseUrl(req), s.nt);
+      if (s && s.nt) neonSeen.delete(s.nt);
       res.setHeader('Set-Cookie', sessionCookie('', { expire: true, secure: isSecure(req) }));
       return sendJson(res, 200, { ok: true });
     }
@@ -1381,53 +1326,19 @@ const server = http.createServer(async (req, res) => {
       if (route === 'GET /api/state') return sendJson(res, 200, await storage.get());
       if (route === 'GET /api/version') return sendJson(res, 200, { version: await storage.version() });
 
-      /* ---- passwords ----
-         Two different rights, deliberately not merged into one route: an
-         admin sets ANYONE's password without knowing the old one (the same
-         authority that adds someone to the People directory); a signed-in
-         user changes their OWN and must prove they still hold it. Neither
-         touches data.people or storage — see the note where `passwords` is
-         defined for why a hash can never ride the board sync. */
-      if (route === 'POST /api/admin/password') {
-        const s = getSession(req);
-        if (!config.adminEmails.map(e => e.toLowerCase()).includes(s.email)) {
-          return sendJson(res, 403, { error: 'Only admins can set another user’s password' });
-        }
-        const body = JSON.parse(await readBody(req) || '{}');
-        const email = String(body.email || '').trim().toLowerCase();
-        const pw = String(body.password || '');
-        if (!/^\S+@\S+\.\S+$/.test(email)) return sendJson(res, 400, { error: 'That’s not a valid email' });
-        if (pw.length < 8) return sendJson(res, 400, { error: 'Password must be at least 8 characters' });
-        await passwords.set(email, hashPassword(pw));
-        auditServer(s, 'account.passwordSet', { target: email });
-        return sendJson(res, 200, { ok: true });
-      }
-      if (route === 'DELETE /api/admin/password') {
-        const s = getSession(req);
-        if (!config.adminEmails.map(e => e.toLowerCase()).includes(s.email)) {
-          return sendJson(res, 403, { error: 'Only admins can remove a password' });
-        }
-        const body = JSON.parse(await readBody(req) || '{}');
-        const email = String(body.email || '').trim().toLowerCase();
-        if (!email) return sendJson(res, 400, { error: 'Missing email' });
-        await passwords.clear(email);
-        auditServer(s, 'account.passwordCleared', { target: email });
-        return sendJson(res, 200, { ok: true });
-      }
+      /* ---- your own password ----
+         Neon holds it; changing it needs the current one, same as before. */
       if (route === 'POST /api/account/password') {
         const s = getSession(req);
+        if (!neonAuth || !s.nt) return sendJson(res, 409, { error: 'This sign-in has no password to change' });
         const body = JSON.parse(await readBody(req) || '{}');
-        const current = String(body.currentPassword || '');
         const next = String(body.newPassword || '');
         if (next.length < 8) return sendJson(res, 400, { error: 'New password must be at least 8 characters' });
-        const hash = await passwords.get(s.email);
-        if (!hash) {
-          return sendJson(res, 409, { error: 'You don’t have a password set yet — ask an admin to set one first' });
+        try {
+          await neonAuth.changePassword(baseUrl(req), s.nt, String(body.currentPassword || ''), next);
+        } catch (e) {
+          return sendJson(res, e.status && e.status < 500 ? e.status : 502, { error: e.message });
         }
-        if (!verifyPassword(current, hash)) {
-          return sendJson(res, 403, { error: 'Current password is incorrect' });
-        }
-        await passwords.set(s.email, hashPassword(next));
         auditServer(s, 'account.passwordChanged', {});
         return sendJson(res, 200, { ok: true });
       }
@@ -2287,9 +2198,6 @@ const server = http.createServer(async (req, res) => {
   // likewise backups — the board must still serve if the table can't be made
   try { await backups.init(); }
   catch (e) { console.error('Backup store init failed (backups disabled):', e.message); }
-  // and passwords — Google/dev sign-in must still work if this table can't be made
-  try { await passwords.init(); }
-  catch (e) { console.error('Password store init failed (password sign-in disabled):', e.message); }
   // chat is Postgres-only and equally optional: the tracker predates it and
   // must still serve without it
   if (chat) {
@@ -2327,13 +2235,8 @@ const server = http.createServer(async (req, res) => {
     console.log('  • This host:    http://localhost:' + PORT + '/');
     if (config.host !== '127.0.0.1' && lan) console.log('  • Team (LAN):   http://' + lan.address + ':' + PORT + '/');
     console.log('  • Storage:      ' + storage.kind);
-    console.log('  • Google SSO:   ' + (googleConfigured() ? 'configured ✓' : 'not configured — dev sign-in active'));
-    console.log('  • Email sign-in: ' + (!config.devLogin ? 'off'
-      : config.accessCode ? 'on, access code required' : 'on, NO ACCESS CODE'));
-    if (config.devLogin && !config.accessCode && storage.kind === 'postgres') {
-      console.log('  ⚠ SECURITY: email sign-in is open on a hosted deploy — anyone with the URL');
-      console.log('    can sign in as any ' + (config.allowedDomain || 'valid') + ' address, including an admin.');
-      console.log('    Set ACCESS_CODE (shared team code), or DEV_LOGIN=false once Google SSO works.');
-    }
+    console.log('  • Sign-in:      ' + (neonAuth ? 'Neon Auth (' + new URL(config.neonAuthUrl).host + ')'
+      : config.devLogin ? 'dev email sign-in, this machine only — set NEON_AUTH_BASE_URL for real sign-in'
+      : 'none — set NEON_AUTH_BASE_URL'));
   });
 })();

@@ -14,18 +14,12 @@ services:
         sync: false
       - key: SESSION_SECRET        # any long random string — keep it stable
         sync: false
-      - key: GOOGLE_CLIENT_ID      # from Google Cloud OAuth client
-        sync: false
-      - key: GOOGLE_CLIENT_SECRET
-        sync: false
-      - key: ALLOWED_DOMAIN         # your Workspace domain, e.g. example.com — blank ('') allows any
+      - key: NEON_AUTH_BASE_URL    # Neon Console → Auth → Auth URL. The sign-in; add this
+        sync: false                # service's URL under Auth → Domains too
+      - key: ALLOWED_DOMAIN         # team email domain, e.g. example.com — blank ('') lets any Neon account in
         sync: false
       - key: ADMIN_EMAILS           # comma-separated bootstrap admin(s), e.g. you@example.com
         sync: false
-      - key: DEV_LOGIN             # email sign-in; set "false" once Google SSO works
-        value: "true"
-      - key: ACCESS_CODE           # REQUIRED while DEV_LOGIN is true on a public URL —
-        sync: false                # shared team code, else anyone with the link can sign in
       # BYOK relay (keyvault.js): needs Postgres AND at least one MASTER_KEY_V*,
       # or /api/save-key, /api/key and /api/call-gemini 503 — gracefully, but
       # silently, since nothing else here says these two are required.
@@ -57,4 +51,4 @@ services:
       # mounted LucidLink volume and a local desktop to spawn apps on, so they
       # only work when the server runs on a studio machine. Hosted, those routes
       # fail gracefully ("Master directory not found — is LucidLink mounted?")
-      # while the board, timeline, admin and SSO all work normally.
+      # while the board, timeline, admin and sign-in all work normally.
