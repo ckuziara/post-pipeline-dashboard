@@ -965,8 +965,14 @@ function baseUrl(req) {
 }
 function isSecure(req) { return baseUrl(req).startsWith('https'); }
 // Dev sign-in takes an email on trust, so it only answers a browser on this
-// same machine — never the LAN or a hosted URL.
+// same machine — never the LAN or a hosted URL. A loopback socket alone isn't
+// proof: behind a reverse proxy (Render) every visitor arrives from the
+// proxy on localhost. Proxies add forwarding headers, so any of those means
+// the request came from somewhere else. (A client can add the header to
+// look less local, never more, so it's safe to trust in this direction.)
 function isLoopback(req) {
+  const h = req.headers;
+  if (h['x-forwarded-for'] || h['x-forwarded-host'] || h['x-real-ip'] || h['forwarded']) return false;
   const a = (req.socket && req.socket.remoteAddress) || '';
   return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
 }
