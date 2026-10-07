@@ -2307,7 +2307,15 @@ window.App = window.App || {};
       }
     }
 
-    if (opts.neonAuth) go('sign-in');
+    /* Someone who's never signed in on this device is most likely new, so
+       they land on creating an account; anyone who has (or who's just been
+       bounced back with a sign-in error) gets the sign-in form. Either form
+       links to the other. */
+    const seenBefore = (() => {
+      try { return ['postpipeline_seen', 'postpipeline_prefs', 'postpipeline_session'].some(k => localStorage.getItem(k) != null); }
+      catch (e) { return true; }
+    })();
+    if (opts.neonAuth) go(err || seenBefore ? 'sign-in' : 'sign-up');
     else if (opts.devLogin) go('dev');
     else card.replaceChildren(
       App.icon('lock', { cls: 'login-logo', size: 26 }),
@@ -2467,6 +2475,8 @@ window.App = window.App || {};
     await App.api.boot();
 
     if (App.api.online && !App.api.me) { loginScreen(); return; }
+    // this device has now been signed in on — next time the sign-in form comes first
+    if (App.api.online) { try { localStorage.setItem('postpipeline_seen', '1'); } catch (e) {} }
 
     if (App.api.online) {
       let remote = null;
