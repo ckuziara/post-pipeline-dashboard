@@ -215,6 +215,13 @@ window.App = window.App || {};
     // budget modelling is oversight work, so it rides the same gate as Admin
     if (!phone && App.isAdminRole(App.state.role)) tabs.push(['planning', 'sparkle', 'Planning']);
     if (App.isAdminRole(App.state.role)) tabs.push(['admin', 'tools', 'Admin']);
+    // the person's own priority order (set in the setup wizard) leads; the
+    // tabs they didn't rank (Planning, Admin) keep their place after
+    const rank = App.profile ? App.profile.viewOrder() : [];
+    if (rank.length && App.profile.hasOrder()) {
+      const pos = (v) => { const i = rank.indexOf(v); return i < 0 ? 100 : i; };
+      tabs.sort((a, b) => pos(a[0]) - pos(b[0]));
+    }
     tabs.forEach(([v, ic, lbl]) => {
       box.appendChild(el('button.view-tab' + (App.state.view === v ? '.active' : ''),
         { 'data-view': v, onclick: () => { App.state.view = v; App.render(); } },
@@ -437,6 +444,7 @@ window.App = window.App || {};
        back-up file. */
     if (App.canManageShows(App.state.role)) {
       actions.appendChild(el('button.btn-addshow', {
+        'data-guide': 'shows',
         title: 'Browse this board’s shows — open one to edit it, add one, or import one',
         onclick: () => App.showsBrowser.open()
       }, 'Shows'));
@@ -525,7 +533,7 @@ window.App = window.App || {};
       return names.length <= 2 ? names.join(', ') : names.slice(0, 2).join(', ') + ' +' + (names.length - 2) + ' more';
     };
 
-    const btn = el('button.filter.filter-multi', { type: 'button', title: label() }, [
+    const btn = el('button.filter.filter-multi', { type: 'button', title: label(), 'data-fkey': key }, [
       el('span.filter-multi-label', null, label()),
       el('span.filter-multi-chev', null, '▾')
     ]);

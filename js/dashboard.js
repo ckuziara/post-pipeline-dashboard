@@ -139,6 +139,21 @@ window.App = window.App || {};
     directorCal: () => App.canSetKickOff(App.state.role)
   };
   const widgetFor = (list) => list.filter(t => !WIDGET_WHEN[t.id] || WIDGET_WHEN[t.id]());
+  /* Everything this role may put on its dashboard from the widget tray —
+     the gated widgets above still only for whom they're for, and Priority
+     (a department's own queue) only for a department. */
+  const availableWidgets = () => Object.keys(WIDGETS)
+    .filter(id => !WIDGET_WHEN[id] || WIDGET_WHEN[id]())
+    .filter(id => id !== 'priority' || !!App.roleDept(App.state.role));
+  // a dropped-in widget's starting size: what its own hand-laid layout gives
+  // it, if any layout has it, else half the page at a comfortable height
+  const defaultRect = (id) => {
+    for (const k of Object.keys(LAYOUTS)) {
+      const t = LAYOUTS[k].find(x => x.id === id);
+      if (t) return { w: t.w, h: t.h };
+    }
+    return { w: 6, h: Math.max(WIDGETS[id].minH, 260) };
+  };
   // the placeholder a popped-out widget leaves behind names it without having
   // to build the widget itself
   const WIDGET_TITLE = {
@@ -302,7 +317,7 @@ window.App = window.App || {};
       const d = w.document;
       d.head.innerHTML = '';
       d.body.innerHTML = '';
-      d.title = 'Post Pipeline — ' + (WIDGET_TITLE[id] || id);
+      d.title = 'PipeDream — ' + (WIDGET_TITLE[id] || id);
       // borrow the app's own stylesheets and theme attributes, so the popped
       // widget is the same widget rather than an unstyled copy of its markup
       document.querySelectorAll('link[rel="stylesheet"], style').forEach(n => d.head.appendChild(n.cloneNode(true)));
@@ -371,13 +386,17 @@ window.App = window.App || {};
 
       if (App.isPhone()) { wrap.appendChild(this.renderPhone(m)); return wrap; }
 
+      if (this._editing) wrap.appendChild(this.tray());
       const grid = el('.dash-grid' + (this._editing ? '.editing' : ''));
       const layout = this.getLayout();
       layout.forEach(t => grid.appendChild(this.popped(t.id) ? this.popHolder(t) : this.cell(t, m)));
+      if (!layout.length) grid.appendChild(el('.dash-empty-hint', null, this._editing
+        ? 'Drag widgets here from the tray above'
+        : ['Your dashboard is empty. ', el('button.ghost', { onclick: () => this.toggleEdit() }, 'Add widgets')]));
       // absolutely-positioned children don't contribute to a parent's auto
       // height, so the grid's own height is set explicitly from whatever the
       // layout actually uses
-      grid.style.height = (Math.max(0, ...layout.map(t => t.row + t.h)) + GAP) + 'px';
+      grid.style.height = Math.max(layout.length ? 0 : 240, Math.max(0, ...layout.map(t => t.row + t.h)) + GAP) + 'px';
       this.wireDrag(grid);
       if (this._editing) this.wireResize(grid);
       wrap.appendChild(grid);
@@ -416,7 +435,10 @@ window.App = window.App || {};
        the point of a phone dashboard is a glance, and a tap into the row
        (every list item already opens App.editTask) is the way to the rest. */
     renderPhone(m) {
-      const ids = widgetFor(LAYOUTS[layoutKind(App.state.role)]).map(t => t.id);
+      const placed = this.placed();
+      const ids = placed
+        ? this.getLayout().slice().sort((a, b) => a.row - b.row || a.col - b.col).map(t => t.id)
+        : widgetFor(LAYOUTS[layoutKind(App.state.role)]).map(t => t.id);
       const stack = el('.dash-phone');
       ids.forEach(id => {
         const built = this[id](m, { w: 4, h: phoneRows(id) });
@@ -443,7 +465,10 @@ window.App = window.App || {};
        (newly added since) drops in below everything else rather than being
        left out. */
     getLayout() {
-      const dflt = widgetFor(LAYOUTS[layoutKind(App.state.role)]);
+      const placed = this.placed();
+      let dflt = widgetFor(LAYOUTS[layoutKind(App.state.role)]);
+      // a hand-picked set (the widget tray) replaces the role's default hand
+      if (placed) dflt = placed.map(id => Object.assign({ id, col: 0, row: 0 }, defaultRect(id)));
       const saved = App.prefs.get(this.layoutKey(), null);
       if (!saved) return compact(dflt.map(d => clampTile(Object.assign({}, d))));
 
@@ -466,6 +491,120 @@ window.App = window.App || {};
       App.prefs.set(this.layoutKey(), layout.map(t => ({ id: t.id, col: t.col, row: t.row, w: t.w, h: t.h })));
     },
 
+    /* ---- the widget tray ----
+       Which widgets are on the dashboard at all. null (never touched) means
+       the role's default hand, exactly as before the tray existed; an array
+       is the person's own pick. Per device and per role, like the layout. */
+    placedKey() { return 'dashWidgets:' + App.state.role; },
+    placed() {
+      const p = App.prefs.get(this.placedKey(), null);
+      if (!Array.isArray(p)) return null;
+      const avail = availableWidgets();
+      return p.filter(id => avail.includes(id));
+    },
+    unplaced() {
+      const on = new Set(this.getLayout().map(t => t.id));
+      return availableWidgets().filter(id => !on.has(id));
+    },
+    addWidget(id, col, row) {
+      if (!WIDGETS[id]) return;
+      const layout = this.getLayout();
+      if (layout.some(t => t.id === id)) return;
+      const r = defaultRect(id);
+      const bottom = layout.length ? Math.max(...layout.map(t => t.row + t.h)) + GAP : 0;
+      const t = clampTile({ id, w: r.w, h: r.h, col: col == null ? 0 : col, row: row == null ? bottom : row });
+      layout.push(t);
+      resolveCollisions(layout, id, 'b');
+      App.prefs.set(this.placedKey(), layout.map(x => x.id));
+      this.saveLayout(compact(layout));
+      App.render();
+    },
+    removeWidget(id) {
+      if (this.popped(id)) this.popIn(id);
+      const layout = this.getLayout().filter(t => t.id !== id);
+      App.prefs.set(this.placedKey(), layout.map(x => x.id));
+      this.saveLayout(compact(layout));
+      App.render();
+    },
+    // the setup wizard's starting point: nothing on it, the tray open
+    clearForSetup() {
+      this.closeAllPops();
+      App.prefs.set(this.placedKey(), []);
+      App.prefs.set(this.layoutKey(), []);
+      this._editing = true;
+      App.render();
+    },
+    // back to the role's own hand, sizes and all
+    restoreDefault() {
+      App.prefs.set(this.placedKey(), null);
+      App.prefs.set(this.layoutKey(), null);
+      App.render();
+    },
+
+    tray() {
+      const left = this.unplaced();
+      const tray = el('.dash-tray', null, [
+        el('.dash-tray-title', null, 'Widgets'),
+        el('.dash-tray-sub', null, left.length ? 'Drag one onto your dashboard — or click to add it at the bottom' : 'Every widget is on your dashboard')
+      ]);
+      const list = el('.dash-tray-list');
+      left.forEach(id => {
+        const chip = el('button.dash-tray-item', { type: 'button', title: 'Drag onto the dashboard' }, [
+          el('span.dash-tray-grip', null, '⠿'), WIDGET_TITLE[id] || id
+        ]);
+        chip.dataset.wid = id;
+        list.appendChild(chip);
+      });
+      tray.appendChild(list);
+      this.wireTray(list);
+      return tray;
+    },
+
+    /* Drag a chip out of the tray: a ghost rides the cursor; let go over the
+       grid and the widget lands at that column and height (pushing anything
+       there down), anywhere else and nothing happens. A click that never
+       moved adds it at the bottom. */
+    wireTray(list) {
+      list.addEventListener('pointerdown', (e) => {
+        const chip = e.target.closest('.dash-tray-item');
+        if (!chip) return;
+        e.preventDefault();
+        const id = chip.dataset.wid;
+        const x0 = e.clientX, y0 = e.clientY;
+        let ghost = null;
+        const move = (ev) => {
+          if (!ghost && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return;
+          if (!ghost) {
+            ghost = el('.dash-tray-ghost', null, WIDGET_TITLE[id] || id);
+            document.body.appendChild(ghost);
+          }
+          ghost.style.left = (ev.clientX + 8) + 'px';
+          ghost.style.top = (ev.clientY + 8) + 'px';
+          const grid = document.querySelector('.dash-grid');
+          if (grid) {
+            const r = grid.getBoundingClientRect();
+            grid.classList.toggle('drop-over', ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top - 40 && ev.clientY <= r.bottom + 200);
+          }
+        };
+        const up = (ev) => {
+          document.removeEventListener('pointermove', move);
+          document.removeEventListener('pointerup', up);
+          const grid = document.querySelector('.dash-grid');
+          if (grid) grid.classList.remove('drop-over');
+          if (!ghost) { this.addWidget(id); return; }
+          ghost.remove();
+          if (!grid) return;
+          const r = grid.getBoundingClientRect();
+          if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top - 40 || ev.clientY > r.bottom + 200) return;
+          const rect = defaultRect(id);
+          const col = clamp(Math.round((ev.clientX - r.left) / (r.width / COLS) - rect.w / 2), 0, COLS - rect.w);
+          this.addWidget(id, col, Math.max(0, Math.round(ev.clientY - r.top - 20)));
+        };
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', up);
+      });
+    },
+
     greeting() {
       const user = App.state.user;
       const name = user ? user.name.split(' ')[0] : App.role(App.state.role).label;
@@ -486,10 +625,7 @@ window.App = window.App || {};
         (App.isPhone() ? null : el('.dash-tools', null, [
           (editing ? el('button.ghost.dash-reset', {
             title: 'Put every widget back to its default size and position',
-            onclick: () => {
-              App.prefs.set(this.layoutKey(), null);
-              App.render();
-            }
+            onclick: () => this.restoreDefault()
           }, 'Reset layout') : null),
           el('button' + (editing ? '.btn-primary' : '.ghost'), {
             title: editing ? 'Finish editing the layout' : 'Move and resize widgets',
@@ -549,7 +685,12 @@ window.App = window.App || {};
           ]),
           el('.dw-head-r', null, [
             built.sub ? el('.widget-sub', null, built.sub) : null,
-            popBtn
+            popBtn,
+            editing ? el('button.dw-remove', {
+              type: 'button', title: 'Take this widget off the dashboard (it goes back in the tray)',
+              onpointerdown: (e) => e.stopPropagation(),
+              onclick: (e) => { e.stopPropagation(); this.removeWidget(t.id); }
+            }, '✕') : null
           ])
         ]),
         el('.widget-body' + (built.bare ? '.bare' : ''), null, built.body)

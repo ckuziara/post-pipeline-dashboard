@@ -427,7 +427,7 @@ window.App = window.App || {};
     const layout = el('.adm-split');
     const side = el('.adm-side');
     side.appendChild(el('.adm-side-label', null, 'Workflow'));
-    [['statuses', 'palette', 'Task statuses'], ['departments', 'tag', 'Departments'], ['software', 'mixer', 'Software'], ['pipelines', 'pipeline', 'Pipelines'], ['shows', 'book', 'Shows'], ['storage', 'folderOpen', 'Storage'], ['connectors', 'plug', 'Connectors']].forEach(([k, ic, lbl]) => {
+    [['statuses', 'palette', 'Task statuses'], ['departments', 'tag', 'Departments'], ['software', 'mixer', 'Software'], ['pipelines', 'pipeline', 'Pipelines'], ['shows', 'book', 'Shows'], ['storage', 'folderOpen', 'Storage'], ['connectors', 'plug', 'Connectors'], ['guide', 'sparkle', 'Guide Configuration']].forEach(([k, ic, lbl]) => {
       side.appendChild(el('button.adm-role' + (tab === k ? '.active' : ''), {
         onclick: () => { App.state.admin.wfTab = k; App.render(); }
       }, [App.icon(ic, { cls: 'adm-role-ic' }), lbl]));
@@ -444,6 +444,7 @@ window.App = window.App || {};
       : tab === 'shows' ? showsPanel()
       : tab === 'storage' ? storageCard()
       : tab === 'connectors' ? connectorsCard()
+      : tab === 'guide' ? guideCard()
       : statusesCard());
 
     layout.appendChild(side);
@@ -666,6 +667,94 @@ window.App = window.App || {};
   /* Storage: the LucidLink master directory new shows are built under. Held in
      shared board state so everyone resolves the same root; the server does the
      actual mkdir and generates every path itself from the show's pipeline. */
+  /* Guide Configuration: what the setup wizard (js/guide.js) says when it
+     welcomes someone and when it lets them go, which mascots it offers, and
+     the show its tour runs on. A blank message falls back to the built-in
+     text; {name} becomes the person's chosen name. */
+  function guideCard() {
+    const wrap = el('.gd-adm');
+    const g = App.guideConfig();
+    const raw = App.state.data.guide || {};
+
+    const msgCard = (title, desc, field, def) => {
+      const card = el('.adm-permcard');
+      card.appendChild(el('.adm-permcard-head', null, [
+        el('.adm-permcard-title', null, title),
+        el('.adm-permcard-desc', null, desc)
+      ]));
+      const ta = el('textarea.fld.gd-adm-text', { rows: '5', placeholder: def });
+      ta.value = raw[field] || '';
+      const saveBtn = el('button.btn-primary', { onclick: () => App.setGuideConfig({ [field]: ta.value.trim() }) }, 'Save');
+      const resetBtn = el('button.btn-ghost', { onclick: () => App.setGuideConfig({ [field]: '' }) }, 'Use the default');
+      card.appendChild(el('.gd-adm-body', null, [
+        ta,
+        el('.fld-hint', null, '{name} is replaced with the person’s name. Leave it empty for the built-in text.'),
+        el('.gd-adm-acts', null, [resetBtn, saveBtn])
+      ]));
+      return card;
+    };
+    wrap.appendChild(msgCard('Welcome message', 'The first thing the setup wizard says to someone new.', 'welcome', App.GUIDE_DEFAULTS.welcome));
+    wrap.appendChild(msgCard('Completion message', 'Said when setup finishes, and written as the first entry in their Journal.', 'completion', App.GUIDE_DEFAULTS.completion));
+
+    // ---- mascots ----
+    const mCard = el('.adm-permcard');
+    mCard.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'Mascots'),
+      el('.adm-permcard-desc', null, 'The companions offered in setup. The one someone picks pops up behind whatever the tour is explaining.')
+    ]));
+    const list = el('.wf-list');
+    const setMascots = (next) => App.setGuideConfig({ mascots: next });
+    g.mascots.forEach((m, i) => {
+      list.appendChild(el('.wf-row.gd-adm-mascot', null, [
+        el('span.gd-adm-emoji', null, m.emoji),
+        el('span.gd-adm-mlabel', null, m.label || ''),
+        g.mascots.length > 1 ? el('button.btn-mini', {
+          title: 'Remove this mascot',
+          onclick: () => setMascots(g.mascots.filter((_, j) => j !== i))
+        }, 'Remove') : null
+      ]));
+    });
+    mCard.appendChild(list);
+    const emojiIn = el('input.fld', { type: 'text', placeholder: '🦄', maxlength: '8', style: { width: '70px', textAlign: 'center', fontSize: '18px' } });
+    const labelIn = el('input.fld', { type: 'text', placeholder: 'Name, e.g. Sparkle the Colourist', style: { flex: '1', minWidth: '200px' } });
+    const add = () => {
+      const emoji = emojiIn.value.trim();
+      if (!emoji) { App.toast('Type or paste an emoji first', true); return; }
+      setMascots(g.mascots.concat([{ emoji, label: labelIn.value.trim() }]));
+    };
+    labelIn.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
+    mCard.appendChild(el('.wf-add', null, [emojiIn, labelIn, el('button.btn-primary', { onclick: add }, '＋ Add mascot')]));
+    if (Array.isArray(raw.mascots) && raw.mascots.length) {
+      mCard.appendChild(el('button.btn-ghost', { style: { marginTop: '8px' }, onclick: () => setMascots(null) }, '↺ Back to the default five'));
+    }
+    wrap.appendChild(mCard);
+
+    // ---- the tour's show ----
+    const sCard = el('.adm-permcard');
+    sCard.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'Tour show'),
+      el('.adm-permcard-desc', null, 'The show the guided tour walks through. The tour runs in a sandbox — nothing done in it is saved, whichever show it uses.')
+    ]));
+    const sel = el('select.fld', { style: { maxWidth: '360px' } });
+    const opt = (v, t) => { const o = document.createElement('option'); o.value = v; o.textContent = t; sel.appendChild(o); };
+    opt('', 'Built-in demo — Alp’s Ping Pong Adventure');
+    App.activeShows().forEach(sh => opt(sh.id, sh.name));
+    sel.value = App.activeShows().some(sh => sh.id === g.demoShowId) ? g.demoShowId : '';
+    sel.addEventListener('change', () => App.setGuideConfig({ demoShowId: sel.value }));
+    sCard.appendChild(el('.gd-adm-body', null, sel));
+    wrap.appendChild(sCard);
+
+    // ---- testing aid ----
+    const tCard = el('.adm-permcard');
+    tCard.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'Try it'),
+      el('.adm-permcard-desc', null, 'Run the wizard as a brand-new person would see it. Your current choices are kept until you change them.')
+    ]));
+    tCard.appendChild(el('.gd-adm-body', null, el('button.btn-ghost', { onclick: () => App.guide.start() }, '▶ Run the setup wizard')));
+    wrap.appendChild(tCard);
+    return wrap;
+  }
+
   function storageCard() {
     const wrap = el('div');
     const cur = (App.state.data.storage && App.state.data.storage.masterPath) || '';
@@ -1310,6 +1399,7 @@ window.App = window.App || {};
     'episode.archive': 'Episode archived', 'episode.restore': 'Episode restored', 'episode.delete': 'Episode deleted',
     'person.add': 'Team member added', 'person.remove': 'Team member removed', 'person.role': 'Role reassigned',
     'perm.change': 'Permission changed',
+    'guide.config': 'Guide configuration changed',
     'workflow.status': 'Status style changed', 'workflow.department': 'Department style changed',
     'workflow.deptAdd': 'Department added', 'workflow.deptRemove': 'Department removed',
     'workflow.reset': 'Workflow reset',

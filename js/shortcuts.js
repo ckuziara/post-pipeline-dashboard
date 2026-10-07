@@ -167,6 +167,7 @@ window.App = window.App || {};
       if (tabFor(v)) list.push({ kind: 'Page', label: 'Go to ' + label, hint, run: () => goView(v) });
     });
     if (tabFor('timeline')) list.push({ kind: 'Action', label: 'Jump to today', hint: 'T', run: jumpToday });
+    if (App.guide && !App.guide.running) list.push({ kind: 'Action', label: 'Redo Setup Wizard', run: () => App.guide.start({ redo: true }) });
     if (App.state.view === 'board') {
       list.push({ kind: 'Action', label: 'Open every episode', hint: OPT() + ' click', run: () => {
         App.visibleEpisodes().forEach(ep => { App.state.expanded[ep.id] = true; }); App.render();

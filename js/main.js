@@ -1071,6 +1071,16 @@ window.App = window.App || {};
     App.track.audit('workflow.status', { status: key, patch });
   };
 
+  /* ---- Guide Configuration (Admin → Workflow) ----
+     What the setup wizard says at either end, the mascots it offers, and the
+     show its tour runs on. Stored in data.guide; js/guide.js reads it through
+     App.guideConfig with the built-in defaults behind every field. */
+  App.setGuideConfig = function (patch) {
+    if (!guardAdmin()) return;
+    App.mutate(d => { d.guide = Object.assign({}, d.guide, patch); }, 'Guide configuration');
+    App.track.audit('guide.config', { fields: Object.keys(patch) });
+  };
+
   App.setDeptStyle = function (key, patch) {
     if (!guardAdmin()) return;
     if (patch.color && !HEX.test(patch.color)) { App.toast('Enter a valid colour', true); return; }
@@ -1837,7 +1847,7 @@ window.App = window.App || {};
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can add shows', true); return null; }
     const bad = (m) => { App.toast(m, true); return null; };
     if (!payload || typeof payload !== 'object') return bad('That file isn’t a show back-up');
-    if (payload.format !== 'postpipeline.show-backup') return bad('That file isn’t a Post Pipeline show back-up');
+    if (payload.format !== 'postpipeline.show-backup') return bad('That file isn’t a PipeDream show back-up');
     const src = payload.show;
     if (!src || !src.name) return bad('That back-up has no show in it');
     const srcEps = Array.isArray(payload.episodes) ? payload.episodes : [];
@@ -2155,6 +2165,9 @@ window.App = window.App || {};
     const r = App.role(App.state.role);
     App.state.view = 'dashboard';
     if (r.dept) App.state.filters.dept = [r.dept];
+    // the name they chose in setup, over the directory's
+    const prof = App.profile && App.profile.get();
+    if (prof && prof.name) App.state.user.name = prof.name;
     return true;
   }
 
@@ -2197,7 +2210,7 @@ window.App = window.App || {};
       onEnter(inputs, () => btn.click());
       card.replaceChildren(...[
         App.icon('clapper', { cls: 'login-logo', size: 26 }),
-        el('.login-title', null, 'Post Pipeline'),
+        el('.login-title', null, 'PipeDream'),
         el('.login-sub', null, title),
         (err && st.mode === 'sign-in' ? el('.login-err', null, [App.icon('warn'), ' ' + err]) : null),
         (note ? el('.login-hint', null, note) : null),
@@ -2298,7 +2311,7 @@ window.App = window.App || {};
     else if (opts.devLogin) go('dev');
     else card.replaceChildren(
       App.icon('lock', { cls: 'login-logo', size: 26 }),
-      el('.login-title', null, 'Post Pipeline'),
+      el('.login-title', null, 'PipeDream'),
       el('.login-hint', null, 'Sign-in isn’t set up on this server yet. The server owner needs to set NEON_AUTH_BASE_URL (see README).'));
   }
 
@@ -2399,8 +2412,7 @@ window.App = window.App || {};
         dashboard: () => [
           actionRow('Widget layout', [
             { label: 'Reset to default', run: () => {
-              App.prefs.set(App.dashboard.orderKey(), null);
-              App.prefs.set(App.dashboard.sizeKey(), null);
+              App.dashboard.restoreDefault();
             } }
           ])
         ],
@@ -2431,10 +2443,17 @@ window.App = window.App || {};
         el('button.prefs-btn', { onclick: (e) => { e.stopPropagation(); this.close(); App.byokKey.open(); } }, 'Manage')
       ]);
 
+      // the setup wizard, again — with the answers already given filled in
+      const redoRow = el('.prefs-row', { onclick: () => { this.close(); App.guide.start({ redo: true }); } }, [
+        el('.prefs-row-title', null, 'Redo Setup Wizard'),
+        el('button.prefs-btn', { onclick: (e) => { e.stopPropagation(); this.close(); App.guide.start({ redo: true }); } }, 'Start')
+      ]);
+
       const pop = el('.prefs-pop', { onclick: e => e.stopPropagation() },
         [el('.prefs-title', null, label + ' preferences')]
           .concat(rows.length ? rows : [el('.prefs-note', null, 'No display options for this view.')])
           .concat([el('.prefs-title.sep', null, 'Appearance'), themeRow])
+          .concat(App.guide && !App.guide.running ? [el('.prefs-title.sep', null, 'Setup'), redoRow] : [])
           .concat(App.api.online ? [el('.prefs-title.sep', null, 'AI features'), byokRow] : []));
       const r = document.getElementById('brand-logo').getBoundingClientRect();
       pop.style.top = (r.bottom + 8) + 'px';
@@ -2463,7 +2482,11 @@ window.App = window.App || {};
     /* Both paths park the user on the Dashboard — it's home. Put them back
        where they actually were if they've already been here today, so a
        refresh mid-task isn't a trip back to the start (see App.session). */
-    App.session.restore();
+    /* A new day (or a first visit) opens on the person's first-priority tab
+       from setup; their filters come back either way. With no saved filters
+       the role's own department, set by applyIdentity, stands. */
+    const restored = App.session.restore();
+    if (restored !== true && App.profile) App.profile.applyStart();
 
     document.getElementById('brand-logo').addEventListener('click', e => {
       e.stopPropagation();
@@ -2582,6 +2605,8 @@ window.App = window.App || {};
     });
     App.render();
     openTaskFromHash();
+    // first sign-in: the setup wizard (js/guide.js)
+    App.guide && App.guide.maybeStart();
     // a Slack link clicked into an already-open tab changes only the hash
     window.addEventListener('hashchange', openTaskFromHash);
   }

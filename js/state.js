@@ -1,4 +1,4 @@
-/* Post Pipeline — data model, pipeline template, derived metrics, persistence.
+/* PipeDream — data model, pipeline template, derived metrics, persistence.
    Buildless: plain JS in window.App, loaded as classic deferred scripts. No Node, no bundler.
    The pipeline TEMPLATE below is transcribed straight from the Monday board (Episode 1:
    "Episode One") — 27 subitems, their departments, dependencies and dates. */
@@ -1750,6 +1750,8 @@ window.App = window.App || {};
   // anchored to the old demo date and must reseed
   const KEY = 'postpipeline_v3';
   App.save = function () {
+    // the guided tour's sandbox: nothing it does is kept (see js/guide.js)
+    if (App.state.sandbox) return;
     try { localStorage.setItem(KEY, JSON.stringify(App.state.data)); }
     catch (e) { console.error('save failed', e); }
     if (App.api && App.api.online) App.api.push();   // sync to the shared server store
@@ -2062,6 +2064,7 @@ window.App = window.App || {};
     // Debounced: a drag or a keystroke can trigger many renders a second, and
     // this only has to be right by the time the tab actually goes away.
     save() {
+      if (App.state.sandbox) return;      // the tour's filters aren't where you were
       clearTimeout(this._t);
       this._t = setTimeout(() => {
         try { localStorage.setItem(this.KEY, JSON.stringify(this.snapshot())); } catch (e) {}
@@ -2075,9 +2078,13 @@ window.App = window.App || {};
     restore() {
       let s = null;
       try { s = JSON.parse(localStorage.getItem(this.KEY) || 'null'); } catch (e) { s = null; }
-      if (!s || s.day !== App.isoDate(App.today())) return false;   // new day → start at home
+      if (!s) return false;
       const st = App.state;
-      if (typeof s.view === 'string') st.view = s.view;
+      const sameDay = s.day === App.isoDate(App.today());
+      /* Filters, zoom and open rows are kept whatever the day — they're how
+         this person likes to look at the board. Where they were (the view,
+         the timeline's scroll) is only today's: a new morning starts on their
+         first-priority tab, with the timeline centred on today. */
       if (s.filters) {
         ['show', 'dept', 'person'].forEach(k => { if (Array.isArray(s.filters[k])) st.filters[k] = s.filters[k]; });
         if (typeof s.filters.q === 'string') st.filters.q = s.filters.q;
@@ -2085,6 +2092,8 @@ window.App = window.App || {};
       if (typeof s.zoom === 'number' && s.zoom > 0) st.zoom = s.zoom;
       if (s.expanded && typeof s.expanded === 'object') st.expanded = s.expanded;
       if (s.ganttExpanded && typeof s.ganttExpanded === 'object') st.ganttExpanded = s.ganttExpanded;
+      if (!sameDay) return 'filters';
+      if (typeof s.view === 'string') st.view = s.view;
       if (s.gantt && typeof s.gantt === 'object') st.gantt = s.gantt;
       if (s.admin) Object.keys(s.admin).forEach(k => { if (s.admin[k] != null) st.admin[k] = s.admin[k]; });
       if (s.planning) Object.keys(s.planning).forEach(k => { if (s.planning[k] != null) st.planning[k] = s.planning[k]; });
