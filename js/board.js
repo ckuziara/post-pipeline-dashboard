@@ -95,6 +95,7 @@ window.App = window.App || {};
       const progLabel = s.myDept ? App.dept(s.myDept).label + ' tasks' : 'complete';
 
       const grp = el('.ep-group');
+      grp.dataset.epId = ep.id;
       /* The Timeline's modifiers, on the Board's episode rows: Opt opens or
          closes every episode with this one; Opt+Shift takes all of this
          episode's tasks into the selection (the Timeline's selection — one

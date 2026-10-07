@@ -1,5 +1,5 @@
 #!/bin/bash
-# Double-click to run this machine as a Post Pipeline companion.
+# Double-click to run this machine as a PipeDream companion.
 #
 # What that means: the hosted board can't see your LucidLink volume — no
 # server in a datacenter can — so it hands its file work to a copy of Post
@@ -63,7 +63,7 @@ if [ ! -d "$MOUNT/!!_Templates" ] && [ -z "$(find "$MOUNT" -maxdepth 1 -type d -
   read -r -p "Continue anyway? Press return to carry on, or close this window. " _
 fi
 
-echo "Post Pipeline companion"
+echo "PipeDream companion"
 echo "  serving files to : $BOARD"
 echo "  from the volume  : $MOUNT"
 echo

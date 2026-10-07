@@ -35,6 +35,7 @@ window.App = window.App || {};
 
     push(kind, action, detail) {
       if (!this._on()) return;
+      if (kind === 'audit' && App.state && App.state.sandbox) return;   // the tour's edits never happened
       const role = App.state && App.state.role;
       buffer.push({
         kind, action, role,

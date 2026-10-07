@@ -349,7 +349,7 @@ window.App = window.App || {};
         App.state.view = 'timeline'; App.state.ganttExpanded = {}; App.render();
         App.gantt.centerToday && App.gantt.centerToday();
         await this.moveTo(window.innerWidth / 2, window.innerHeight * 0.45, 10);
-        this.say('Post Pipeline — episodic post-production, under control');
+        this.say('PipeDream — episodic post-production, under control');
         await this.sleep(2400);
 
         // ---- 2. timeline overview ----
@@ -579,7 +579,7 @@ window.App = window.App || {};
           App.state.view = 'timeline'; App.state.ganttExpanded = {}; App.render();
           App.gantt.centerToday && App.gantt.centerToday();
           await this.moveTo(window.innerWidth / 2, window.innerHeight * 0.45, 1100);
-          this.say('Post Pipeline');
+          this.say('PipeDream');
           await this.sleep(2400);
           this.say('');
         });

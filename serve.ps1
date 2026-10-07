@@ -6,7 +6,7 @@ $root = $PSScriptRoot
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$Port/")
 $listener.Start()
-Write-Host "Post Pipeline Dashboard -> http://localhost:$Port/  (Ctrl+C to stop)"
+Write-Host "PipeDream -> http://localhost:$Port/  (Ctrl+C to stop)"
 $mime = @{ '.html'='text/html; charset=utf-8'; '.css'='text/css'; '.js'='application/javascript'; '.json'='application/json';
            '.png'='image/png'; '.jpg'='image/jpeg'; '.svg'='image/svg+xml'; '.ico'='image/x-icon'; '.md'='text/plain' }
 while ($listener.IsListening) {

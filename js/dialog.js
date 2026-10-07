@@ -174,8 +174,8 @@ window.App = window.App || {};
           upBtn.disabled = true;
           crumb.textContent = '';
           list.appendChild(el('.fp-error', null, c.unpaired()
-            ? 'A Post Pipeline is running on this computer but isn’t paired yet — open any task and enter its pairing code, then try again.'
-            : 'This picker browses the machine that has the volume mounted. Run Post Pipeline on that machine (see Companion mode in the README) and reopen this.'));
+            ? 'A PipeDream is running on this computer but isn’t paired yet — open any task and enter its pairing code, then try again.'
+            : 'This picker browses the machine that has the volume mounted. Run PipeDream on that machine (see Companion mode in the README) and reopen this.'));
           return;
         }
 
@@ -239,8 +239,8 @@ window.App = window.App || {};
             el('div', null, [
               el('.modal-title', null, opts.title || 'Choose master directory'),
               el('.modal-subtitle', null, opts.subtitle || (files
-                ? 'Files on the machine running Post Pipeline — pick one to deliver.'
-                : 'Folders on the machine running Post Pipeline — where your LucidLink volume is mounted.'))
+                ? 'Files on the machine running PipeDream — pick one to deliver.'
+                : 'Folders on the machine running PipeDream — where your LucidLink volume is mounted.'))
             ])
           ]),
           el('button.modal-x', { onclick: cancel, title: 'Close' }, '✕')

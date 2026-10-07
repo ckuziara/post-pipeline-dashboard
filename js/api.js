@@ -41,7 +41,7 @@ window.App = window.App || {};
     // Debounced save. On a version conflict (someone else saved first) we
     // adopt the server's copy — with 5s polling that's a rare race.
     push() {
-      if (!this.online || !this.me) return;
+      if (!this.online || !this.me || App.state.sandbox) return;
       clearTimeout(this._pushTimer);
       this._pushTimer = setTimeout(() => this._doPush(), 400);
     },
@@ -91,6 +91,7 @@ window.App = window.App || {};
     // Shared guard: never clobber unsent edits, and never re-render mid-typing
     // in the journal — used by both the SSE push and the fallback poll.
     async _adoptVersion(v) {
+      if (App.state.sandbox) return;     // the tour's board isn't to be swapped out from under it
       if (this._pushTimer || this._pushing || document.hidden) return;
       const ae = document.activeElement;
       if (ae && ae.classList && (ae.classList.contains('jr-block') || ae.classList.contains('pn-note-input'))) return;

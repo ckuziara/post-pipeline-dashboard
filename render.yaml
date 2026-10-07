@@ -1,4 +1,4 @@
-# Render Blueprint — free web service for the Post Pipeline backend.
+# Render Blueprint — free web service for the PipeDream backend.
 # Postgres is hosted separately on Neon (free); paste its connection string
 # into DATABASE_URL. Secrets are marked sync:false so Render prompts for them
 # in the dashboard on first deploy (never commit them).
@@ -40,7 +40,7 @@ services:
       - key: SLACK_SIGNING_SECRET
         sync: false
       - key: APP_URL               # this service's own public URL — without it,
-        sync: false                # Slack Task Card "Open in Post Pipeline" links
+        sync: false                # Slack Task Card "Open in PipeDream" links
                                     # post with no URL at all
       # NOTE: COMPANION_ORIGINS is deliberately NOT set here either. It's
       # configured on the STUDIO MACHINE that has the LucidLink mount (the

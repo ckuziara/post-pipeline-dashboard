@@ -879,7 +879,7 @@ window.App = window.App || {};
       '<style>' + DOC_CSS + '@page{size:' + (o.paper === 'letter' ? 'letter' : 'A4') + ' ' + (land ? 'landscape' : 'portrait') + ';margin:11mm 11mm 12mm}' +
       ':root{--acc:' + acc + ';--pad:11mm;--ph:' + ph + 'mm}@media screen{.doc{width:' + pw + 'mm}}</style>' + FIT_JS + '</head><body><div class="doc">';
     h += '<div class="hd"><div><h1>' + esc(ctx.title) + '</h1>' + (ctx.subtitle ? '<div class="sub">' + esc(ctx.subtitle) + '</div>' : '') + '</div>' +
-      '<div class="brand"><b>Post Pipeline</b>' + esc(fmtY(today())) + (who ? ' · ' + esc(who) : '') + '</div></div>';
+      '<div class="brand"><b>PipeDream</b>' + esc(fmtY(today())) + (who ? ' · ' + esc(who) : '') + '</div></div>';
     if (doc.meta && doc.meta.length) h += '<div class="meta">' + doc.meta.map(([k, v]) => '<div><span>' + esc(k) + '</span><b>' + esc(v) + '</b></div>').join('') + '</div>';
     doc.blocks.forEach(b => {
       if (b.title) h += '<h2>' + esc(b.title) + (b.sub ? ' <small>' + esc(b.sub) + '</small>' : '') + '</h2>';

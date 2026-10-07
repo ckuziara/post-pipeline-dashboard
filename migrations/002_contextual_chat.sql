@@ -19,7 +19,7 @@
 --    revision_id, POST /api/tasks/:taskId/revisions creates one, and the chat
 --    stream draws milestone dividers between them, but Section 2 has no DDL
 --    for it. Defined below so the foreign key has a target. Note this is a new
---    concept for Post Pipeline: "revision" here currently means revision
+--    concept for PipeDream: "revision" here currently means revision
 --    ROUNDS in the planner (a duration multiplier in craft.js/planning.js),
 --    not a versioned artifact anyone can point at.
 --

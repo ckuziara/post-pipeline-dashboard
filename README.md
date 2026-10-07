@@ -1,4 +1,4 @@
-# Post Pipeline — Episodic Post-Production Dashboard
+# PipeDream — Episodic Post-Production Dashboard
 
 A standalone, local, Monday.com-style tracker for episodic post-production. Built to the
 **Episodic Post-Production Tracking Application** proposal (the PDF) as the functional spec,
@@ -215,7 +215,7 @@ same one contextual chat uses) and two secrets from your Slack app:
    set as `SLACK_SIGNING_SECRET`.
 3. Set `APP_URL` to this service's own public URL (e.g.
    `https://post-pipeline-dashboard.onrender.com`) — without it, the "Open
-   in Post Pipeline" link on a Slack Task Card posts with no URL at all.
+   in PipeDream" link on a Slack Task Card posts with no URL at all.
 4. In the Slack app's **Event Subscriptions**, set the Request URL to
    `https://<your-app>/slack/events`. Slack calls it immediately to verify
    — a green checkmark means the two secrets above are both correct.
