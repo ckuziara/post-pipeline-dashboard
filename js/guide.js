@@ -597,6 +597,36 @@ window.App = window.App || {};
       this.stepEl.innerHTML = '';
       for (let i = 1; i <= total; i++) this.stepEl.appendChild(el('span.if-frame' + (i < n ? '.done' : i === n ? '.now' : ''), null, String(i)));
     },
+    /* The title card: before any questions, what this is and what's about to
+       happen, with one big Start. Resolves when it's pressed (or Enter). */
+    titleCard(opts) {
+      opts = opts || {};
+      return new Promise(resolve => {
+        const stage = this.stage;
+        this.root.classList.add('if-titled');
+        const startBtn = el('button.if-start', { type: 'button' }, opts.button || 'Start');
+        const card = el('.if-title', null, [
+          el('.if-title-kicker', null, opts.kicker || 'Welcome to'),
+          el('.if-title-logo', null, 'PipeDream'),
+          el('.if-title-tag', null, opts.tagline || 'Every episode, from kick off to delivery.'),
+          el('.if-title-steps', null, (opts.steps || []).map((t, i) => el('span.if-title-step', null, [el('b', null, String(i + 1)), t]))),
+          startBtn,
+          el('.if-title-hint', null, opts.hint || 'Press Enter to start')
+        ]);
+        stage.appendChild(card);
+        setTimeout(() => startBtn.focus(), 50);
+        const go = () => {
+          document.removeEventListener('keydown', key, true);
+          card.classList.add('out');
+          this.root.classList.remove('if-titled');
+          setTimeout(() => { card.remove(); resolve(); }, 450);
+        };
+        const key = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); go(); } };
+        startBtn.addEventListener('click', go);
+        document.addEventListener('keydown', key, true);
+      });
+    },
+
     // which prop in the scene is being talked about: it wiggles
     focus(id) { if (this.root) this.root.dataset.focus = id || ''; },
     // a slow camera push in on one prop ('monitor'), or back out ('')
@@ -1765,6 +1795,16 @@ window.App = window.App || {};
 
       // opts.step jumps straight to a wizard step (1–9) — for reviewing
       const jump = Math.max(1, Math.min(9, opts.step || 1));
+      if (jump === 1) {
+        await IF.titleCard(redo ? {
+          kicker: 'Back in the edit suite', tagline: 'Change your look, your sidekick or your tab order — and take the tour again if you like.',
+          steps: ['Your name', 'A look', 'A sidekick', 'Your tabs', 'Your dashboard', 'The tour'], button: 'Start'
+        } : {
+          kicker: 'Welcome to', tagline: 'Every episode of every show, from kick off to delivery — all in one place.',
+          steps: ['Your name', 'A look', 'A sidekick', 'Your tabs', 'Your dashboard', 'A quick tour'],
+          hint: 'About 3 minutes · Press Enter to start'
+        });
+      }
       let i = Math.min(jump - 1, steps.length);
       while (i < steps.length) {
         const r = await steps[i]();
