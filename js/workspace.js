@@ -256,7 +256,7 @@ window.App = window.App || {};
       if (!d.masterOk && c.wanted()) {
         return el('.ws-note.ws-mode', null, [
           App.icon('plug'),
-          ' Running Post Pipeline on the machine that has the volume mounted lets this page use it for files.'
+          ' Running PipeDream on the machine that has the volume mounted lets this page use it for files.'
         ]);
       }
       return null;
@@ -406,7 +406,7 @@ window.App = window.App || {};
         // from here, which is how that changes without a trip to Admin.
         return this._step('mixer', 'Create project', deptLabel + ' has no applications configured.',
           el('.ws-note', null, deptLabel + ' work isn’t template-driven by default, so there’s nothing to copy. ' +
-            'Post Pipeline can still create and open the working folder for you.'),
+            'PipeDream can still create and open the working folder for you.'),
           [
             el('button.btn-ghost', { onclick: () => this._back() }, 'Cancel'),
             this._canAdmin() ? el('button.btn-ghost', { onclick: () => this._addAppPicker(d) }, '＋ Add an application') : null,

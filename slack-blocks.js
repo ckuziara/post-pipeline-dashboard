@@ -39,9 +39,9 @@ function taskCard(task) {
     text: task.code + ' · ' + task.taskName,          // notification fallback
     blocks: [
       { type: 'header', text: { type: 'plain_text', text: clamp(task.code + ' · ' + task.taskName, 150), emoji: true } },
-      { type: 'section', text: mrkdwn('*' + esc(task.epTitle) + '*' + (task.url ? '  ·  <' + task.url + '|Open in Post Pipeline>' : '')) },
+      { type: 'section', text: mrkdwn('*' + esc(task.epTitle) + '*' + (task.url ? '  ·  <' + task.url + '|Open in PipeDream>' : '')) },
       { type: 'section', fields },
-      { type: 'context', elements: [mrkdwn('Replies in this thread sync to the task’s discussion in Post Pipeline.')] }
+      { type: 'context', elements: [mrkdwn('Replies in this thread sync to the task’s discussion in PipeDream.')] }
     ]
   };
 }

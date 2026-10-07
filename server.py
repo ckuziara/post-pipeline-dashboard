@@ -12,5 +12,5 @@ class MyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         return super().end_headers()
 
 with socketserver.TCPServer(("", PORT), MyHTTPRequestHandler) as httpd:
-    print(f"Post Pipeline Dashboard -> http://localhost:{PORT}/")
+    print(f"PipeDream -> http://localhost:{PORT}/")
     httpd.serve_forever()

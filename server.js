@@ -1,4 +1,4 @@
-/* Post Pipeline backend (Node 18+).
+/* PipeDream backend (Node 18+).
    Serves the static frontend AND provides:
      • Neon Auth (email + password, emailed codes) — see neon-auth.js — with a
        localhost-only dev sign-in when Neon Auth isn't configured
@@ -1227,7 +1227,7 @@ const server = http.createServer(async (req, res) => {
     applyCompanionCors(req, res);
 
     /* How a page finds out whether a usable companion is listening here.
-       Deliberately thin: enough to tell "this is Post Pipeline, and it can
+       Deliberately thin: enough to tell "this is PipeDream, and it can
        reach a volume" apart from "something else is on this port", and
        nothing more. No path, no board data, no identity — a probe runs
        before anyone has signed in. */
@@ -2356,7 +2356,7 @@ const server = http.createServer(async (req, res) => {
   server.listen(PORT, config.host, () => {
     const nets = os.networkInterfaces();
     const lan = Object.values(nets).flat().find(n => n && n.family === 'IPv4' && !n.internal);
-    console.log('Post Pipeline server running:');
+    console.log('PipeDream server running:');
     console.log('  • This host:    http://localhost:' + PORT + '/');
     if (config.host !== '127.0.0.1' && lan) console.log('  • Team (LAN):   http://' + lan.address + ':' + PORT + '/');
     console.log('  • Storage:      ' + storage.kind);

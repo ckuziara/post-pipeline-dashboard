@@ -1,4 +1,4 @@
-/* Companion probe — find a local Post Pipeline that can reach the volume.
+/* Companion probe — find a local PipeDream that can reach the volume.
 
    The hosted board has no LucidLink mount and never can: a container in a
    datacenter cannot see a volume mounted on someone's Mac, and there is no
@@ -123,9 +123,9 @@ window.App = window.App || {};
        wording stays consistent wherever it surfaces. */
     describe() {
       if (!this.wanted()) return null;
-      if (this._state === 'present' && this._masterOk) return 'Files are served by the Post Pipeline running on this computer.';
-      if (this._state === 'present') return 'A local Post Pipeline is running, but it can’t reach the volume either.';
-      if (this._state === 'unpaired') return 'A Post Pipeline is running on this computer. Enter its pairing code to use the volume.';
+      if (this._state === 'present' && this._masterOk) return 'Files are served by the PipeDream running on this computer.';
+      if (this._state === 'present') return 'A local PipeDream is running, but it can’t reach the volume either.';
+      if (this._state === 'unpaired') return 'A PipeDream is running on this computer. Enter its pairing code to use the volume.';
       return null;
     }
   };
