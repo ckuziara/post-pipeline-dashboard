@@ -1273,12 +1273,14 @@ window.App = window.App || {};
     const box = sc ? sc.getBoundingClientRect() : { left: 0, right: innerWidth, top: 0, bottom: innerHeight };
     const today = document.querySelector('.today-line');
     const tx = today ? today.getBoundingClientRect().left : (box.left + box.right) / 2;
-    const bars = Array.from(document.querySelectorAll('.g-row.sub:not(.phase) .bar[data-episode-id][data-su-key]')).filter(b => {
+    const bars = myDeptFirst(Array.from(document.querySelectorAll('.g-row.sub:not(.phase) .bar[data-episode-id][data-su-key]'))).filter(b => {
       const r = b.getBoundingClientRect();
       return r.width > 20 && r.left >= box.left + 230 && r.right <= Math.min(box.right, innerWidth) - 8 && r.top >= box.top && r.bottom <= Math.min(box.bottom, innerHeight);
     });
-    bars.sort((a, b) => Math.abs(a.getBoundingClientRect().left - tx) - Math.abs(b.getBoundingClientRect().left - tx));
-    return bars[0] || null;
+    const mine = bars.filter(isMyDept);
+    const pool = mine.length ? mine : bars;
+    pool.sort((a, b) => Math.abs(a.getBoundingClientRect().left - tx) - Math.abs(b.getBoundingClientRect().left - tx));
+    return pool[0] || null;
   };
 
   /* Scroll the page and the chart so one task bar sits about a quarter of the
@@ -1294,10 +1296,11 @@ window.App = window.App || {};
     // chart can scroll it up into a comfortable spot
     const today = document.querySelector('.today-line');
     const tx = today ? today.getBoundingClientRect().left : null;
-    const all = Array.from(document.querySelectorAll('.g-row.sub:not(.phase) .bar[data-episode-id][data-su-key]'))
-      .filter(x => x.getBoundingClientRect().width > 20);
+    const all = myDeptFirst(Array.from(document.querySelectorAll('.g-row.sub:not(.phase) .bar[data-episode-id][data-su-key]'))
+      .filter(x => x.getBoundingClientRect().width > 20));
     const near = tx == null ? all : all.filter(x => { const r = x.getBoundingClientRect(); return r.right > tx - 250 && r.left < tx + 250; });
-    const b = near[0] || all[0];
+    // their own department's work first, wherever it sits
+    const b = near.find(isMyDept) || all.find(isMyDept) || near[0] || all[0];
     if (!b) return null;
     const box = sc.getBoundingClientRect(), r = b.getBoundingClientRect();
     sc.scrollTop += (r.top - box.top) - Math.max(60, box.height * 0.18);
@@ -1319,10 +1322,23 @@ window.App = window.App || {};
     return n;
   };
   let framed = null;   // the task bar the "Open a task" step framed and lit
+  /* The task a department person is shown is one of their department's: the
+     bar's task belongs to the department of the role they're signed in as.
+     Oversight roles have no department, so any task will do for them. */
+  const isMyDept = (bar) => {
+    const dept = App.roleDept(App.state.role);
+    if (!dept) return true;
+    const ep = App.state.data.episodes.find(e => e.id === bar.dataset.episodeId);
+    const su = ep && App.subitem(ep, bar.dataset.suKey);
+    return !!(su && su.dept === dept);
+  };
+  const myDeptFirst = (bars) => bars.filter(isMyDept).concat(bars.filter(b => !isMyDept(b)));
+
   const SECTIONS = {
     timeline: () => {
       let zoom0 = 0, notes0 = 0;
       const creative = deptKey(/creative/i);
+      const myDept = () => App.roleDept(App.state.role);
       const allButCreative = () => Object.keys(App.DEPARTMENTS).filter(k => k !== creative);
       return [
         { title: 'Production Schedule', text: 'Click the Timeline tab — the production schedule, every episode laid out on a calendar.',
@@ -1344,14 +1360,25 @@ window.App = window.App || {};
           target: () => { const z = document.querySelector('#toolbar .toolbar-group'); return z; },
           waitFor: () => App.state.zoom !== zoom0,
           showMe: () => App.gantt.zoomBy(1.25) },
-        { title: 'Everyone but…', text: () => 'Open Dept, then ' + cmd() + '-click “Creative” twice. The first click shows only Creative; the second shows everything except Creative.',
+        // a department person narrows to just their own department's tasks…
+        { when: () => !!myDept(), title: 'Just yours', text: () => 'Open Dept, then ' + cmd() + '-click “' + App.DEPARTMENTS[myDept()].label + '” to show only your department’s tasks.',
+          target: '.filter-multi[data-fkey="dept"]', also: '.filter-pop',
+          waitFor: () => { const d = App.state.filters.dept; return d.length === 1 && d[0] === myDept(); },
+          showMe: () => { App.filterMenu.close(); App.state.filters.dept = [myDept()]; App.render(); } },
+        // …oversight roles see the other trick: everything except one department
+        { when: () => !myDept(), title: 'Everyone but…', text: () => 'Open Dept, then ' + cmd() + '-click “Creative” twice. The first click shows only Creative; the second shows everything except Creative.',
           target: '.filter-multi[data-fkey="dept"]', also: '.filter-pop',
           waitFor: () => { const d = App.state.filters.dept, w = allButCreative(); return d.length === w.length && w.every(k => d.includes(k)); },
           showMe: () => { App.filterMenu.close(); App.state.filters.dept = allButCreative(); App.render(); } },
         { title: 'Open a task', text: 'Click any task bar to open it.',
           // frame one task high in the chart, with room below it for the bubble,
           // then hold the page still so nothing drifts apart
-          before: () => { framed = frameBar(); }, lock: true, pick: () => (framed && framed.isConnected ? framed : visibleBar()),
+          before: () => {
+            // the step before filtered out Creative — bring their own department back into view
+            const mine = App.roleDept(App.state.role), f = App.state.filters;
+            if (mine && f.dept.length && !f.dept.includes(mine)) { f.dept = []; App.render(); }
+            framed = frameBar();
+          }, lock: true, pick: () => (framed && framed.isConnected ? framed : visibleBar()),
           target: () => visibleBar(),
           waitFor: modalOpen,
           showMe: () => {
@@ -1431,6 +1458,14 @@ window.App = window.App || {};
     board: () => {
       const myDept = App.roleDept(App.state.role);
       const firstEpId = () => { const g = document.querySelector('.ep-group[data-ep-id]'); return g && g.dataset.epId; };
+      // the task in the open episode that's most theirs: assigned to them, else
+      // their department's, else (oversight roles) the first
+      const yours = () => {
+        const id = firstEpId(); const ep = id && App.state.data.episodes.find(e => e.id === id);
+        const subs = ep ? App.subsView(ep) : [];
+        const me = App.state.user && App.state.user.personId, dept = App.roleDept(App.state.role);
+        return subs.find(x => x.assignee === me && (!dept || x.dept === dept)) || (dept && subs.find(x => x.dept === dept)) || subs[0];
+      };
       const workspace = () => !sandbox.isBuiltIn() && App.masterPathSet && App.masterPathSet() &&
         !!(App.companion && (App.companion.usable() || !App.companion.wanted || !App.companion.wanted()));
       const wsBlock = (i) => () => document.querySelectorAll('.ws .ws-block')[i];
@@ -1457,20 +1492,16 @@ window.App = window.App || {};
         { title: 'What’s it waiting on?', text: 'Stage is the department the episode is with now. Hover over it to see exactly what it’s waiting on.',
           target: () => document.querySelector('.stage-chip'), event: { type: 'mouseover', sel: '.stage-chip', delay: 1400 }, next: 'Next' },
         { title: 'One of yours', text: 'Click one of your tasks.',
+          // theirs if one's assigned to them, else one from their department —
+          // a department role can only open its own department's tasks
           target: () => {
-            const mine = App.state.user && App.state.user.personId;
+            const su = yours();
             const rows = Array.from(document.querySelectorAll('.subtable .subrow:not(.head)'));
-            const r = (mine && rows.find(x => x.textContent.includes((App.person(mine) || {}).name || '\u0000'))) || rows[0];
+            const r = (su && rows.find(x => (x.querySelector('.c-name') || {}).textContent === su.name)) || rows[0];
             return r && r.querySelector('.c-name');
           },
           waitFor: modalOpen,
-          showMe: () => {
-            const id = firstEpId(); const ep = id && App.state.data.episodes.find(e => e.id === id);
-            const subs = ep ? App.subsView(ep) : [];
-            const mine = App.state.user && App.state.user.personId;
-            const su = subs.find(s => s.assignee === mine) || subs[0];
-            if (su) App.editTask.open(ep.id, su.key);
-          } },
+          showMe: () => { const id = firstEpId(), su = yours(); if (id && su) App.editTask.open(id, su.key); } },
         { when: workspace, title: 'Production Asset Manager', text: 'This is the Production Asset Manager — quick access to the production folders, so you can get to your work and deliver it without hunting.',
           target: '.ws' },
         ...wsNames.map(([name, blurb], i) => ({
