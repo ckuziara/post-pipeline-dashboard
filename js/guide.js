@@ -34,6 +34,12 @@ window.App = window.App || {};
   const modalOpen = () => !!document.querySelector('.modal-overlay');
   const cmd = () => App.isMac ? '⌘' : 'Ctrl';
   const alt = () => App.isMac ? 'Option' : 'Alt';
+  // the chart (and the page) back to the top — the Producer Notes lane lives there
+  const toTop = () => {
+    const v = document.getElementById('view'), sc = document.querySelector('.gantt-scroll');
+    if (v) v.scrollTop = 0;
+    if (sc) sc.scrollTop = 0;
+  };
   const escHtml = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
   /* ------------------------------------------------------------ config */
@@ -156,6 +162,7 @@ window.App = window.App || {};
       s.sandbox = true;
       document.body.classList.add('gd-sandboxed');
       this.showId = this.pickShow();
+      this.stageReviews(3);
       s.filters = { show: [], dept: [], person: [], q: '' };
       s.expanded = {}; s.ganttExpanded = {};
     },
@@ -215,37 +222,49 @@ window.App = window.App || {};
       d.episodes.push(...eps);
       return DEMO_ID;
     },
-    isBuiltIn() { return this.showId === DEMO_ID; }
+    isBuiltIn() { return this.showId === DEMO_ID; },
+
+    /* The Reviews tab should have something on it: make sure the tour's show
+       has `n` cuts sitting in review — tasks already under way around today,
+       set to Ready for Review with a (pretend) Frame.io link, as if Post
+       Operations had sent them on to the Director. Sandbox data only. */
+    stageReviews(n) {
+      const d = App.state.data, today = App.isoDate(App.today());
+      const eps = d.episodes.filter(e => e.showId === this.showId);
+      const sent = (e, k) => App.review && App.review.sent(e.id, k);
+      let have = 0;
+      eps.forEach(e => App.subitems(e).forEach(su => { if (su.status === 'review' && sent(e, su.key)) have++; }));
+      const cands = [];
+      eps.forEach(e => App.subitems(e).forEach(su => {
+        if (su.status === 'approved' || (su.status === 'review' && sent(e, su.key))) return;
+        if (su.start > today) return;
+        cands.push({ e, su, gap: Math.abs(App.diffDays(su.due, today)) });
+      }));
+      cands.sort((a, b) => a.gap - b.gap);
+      d.reviews = d.reviews || {};
+      cands.slice(0, Math.max(0, n - have)).forEach(({ e, su }, i) => {
+        e.statuses = Object.assign({}, e.statuses, { [su.key]: 'review' });
+        d.reviews[e.id + '::' + su.key] = {
+          state: 'sent', frameUrl: 'https://f.io/pipedream-demo-' + (i + 1),
+          sentAt: new Date().toISOString(), sentBy: 'Post Operations'
+        };
+      });
+    }
   };
   App.guideSandbox = sandbox;
 
   /* ------------------------------------------------------------ skip, reluctantly
-     Every Skip ducks out of the way the first time it's pressed: it slides a
-     short way in a random direction, and the mascot asks whether you're sure.
-     The second press on the same step really skips. */
+     Skip doesn't skip the first time it's pressed: the mascot pops up and
+     asks whether you're sure. The second press on the same step really
+     skips. The button itself stays put, where it can always be reached. */
   function reluctantSkip(btn, sayFn, onSkip) {
-    let tries = 0, dx = 0, dy = 0;
+    let tries = 0;
     const press = () => {
       if (tries++ > 0) { onSkip(); return; }
-      const r = btn.getBoundingClientRect();
-      const ang = Math.random() * Math.PI * 2, dist = 40 + Math.random() * 40;
-      let nx = dx + Math.cos(ang) * dist, ny = dy + Math.sin(ang) * dist;
-      // keep it in reach — on screen, and inside the terminal when it's in
-      // one: a skip you can't get to isn't a joke, it's a bug
-      const box = btn.closest('.if-stage, .gd-bubble');
-      const bb = box ? box.getBoundingClientRect()
-        : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
-      const left = r.left - dx + nx, top = r.top - dy + ny;
-      if (left < bb.left + 8) nx += bb.left + 8 - left;
-      if (left + r.width > bb.right - 8) nx -= left + r.width - (bb.right - 8);
-      if (top < bb.top + 8) ny += bb.top + 8 - top;
-      if (top + r.height > bb.bottom - 8) ny -= top + r.height - (bb.bottom - 8);
-      dx = nx; dy = ny;
-      btn.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
-      btn.classList.add('gd-dodged');
+      btn.classList.add('gd-sure');
       sayFn('Are you sure about that?');
     };
-    return { press, reset() { tries = 0; dx = 0; dy = 0; btn.style.transform = ''; btn.classList.remove('gd-dodged'); } };
+    return { press, reset() { tries = 0; btn.classList.remove('gd-sure'); } };
   }
 
   /* ------------------------------------------------------------ mascot speech */
@@ -254,10 +273,64 @@ window.App = window.App || {};
     const old = mascotEl.querySelector('.gd-mascot-say');
     if (old) old.remove();
     const b = el('.gd-mascot-say', null, text);
-    if (mascotEl.getBoundingClientRect().top < 70) b.classList.add('below');
+    if (mascotEl.dataset.from === 'bottom' || mascotEl.getBoundingClientRect().top < 70) b.classList.add('below');
     mascotEl.appendChild(b);
     setTimeout(() => { b.classList.add('out'); setTimeout(() => b.remove(), 300); }, 2500);
   }
+
+  /* The themes from lightest to darkest, by how bright each one's page
+     background actually is — read by trying each theme on the root for a
+     moment (no paint happens in between) and measuring --bg. */
+  function themesByBrightness() {
+    const root = document.documentElement;
+    const keep = ['data-theme', 'data-mode', 'data-skin'].map(a => [a, root.getAttribute(a)]);
+    const cv = document.createElement('canvas'); cv.width = cv.height = 1;
+    const ctx = cv.getContext('2d');
+    const lum = (css) => {
+      ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = '#808080'; ctx.fillStyle = css || '#808080'; ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+      return { l: 0.2126 * r + 0.7152 * g + 0.0722 * b, rgb: 'rgb(' + r + ',' + g + ',' + b + ')' };
+    };
+    const out = App.THEMES.map(t => {
+      root.setAttribute('data-theme', t.v);
+      root.setAttribute('data-mode', t.mode || 'dark');
+      if (t.skin) root.setAttribute('data-skin', t.skin); else root.removeAttribute('data-skin');
+      const m = lum(getComputedStyle(root).getPropertyValue('--bg').trim());
+      return { t, bg: m.rgb, l: m.l };
+    });
+    keep.forEach(([a, v]) => { if (v == null) root.removeAttribute(a); else root.setAttribute(a, v); });
+    return out.sort((a, b) => b.l - a.l);
+  }
+  /* The light end is where everyone starts; the dark end is earned. Each
+     title belongs to a level, not a slot, so adding or removing a theme
+     moves the stops without renaming them: a stop takes the title of the
+     highest level at or below its own. */
+  const RANKS = [
+    [1, 'Producer'], [10, 'Runner'], [20, 'Intern'], [30, 'Boom Op'], [40, 'Assistant Editor'],
+    [50, 'Editor'], [60, 'Colourist'], [70, 'Sound Wizard'], [80, 'Post Supervisor'],
+    [90, 'Director'], [100, 'Film Goat']
+  ];
+  const levelFor = (i, n) => {
+    // Lv. 1 at the light end, then even steps up to Lv. 100 (10, 20, 30… with 11 themes)
+    const lv = i === 0 ? 1 : Math.round((n > 1 ? i / (n - 1) : 1) * 100);
+    const r = RANKS.filter(x => x[0] <= lv).pop();
+    return 'Lv. ' + lv + ' ' + r[1];
+  };
+
+  /* The slider's two ends, in the scene's own hand: a studio lamp blazing at
+     the bright end, a projector rolling at the dark end. */
+  const LAMP = `<svg viewBox="0 0 48 48" class="sc-o"><path d="M27 21 L44 13 L44 39 L27 31 Z" fill="#ffe27a" stroke="none" opacity=".75"/>
+    <path d="M17 32 L11 43 M17 32 L23 43 M17 32 V43" fill="none"/>
+    <path d="M10 26 Q17 34 24 26" fill="none"/>
+    <rect x="7" y="16" width="16" height="14" rx="3" fill="#5d6fd6"/>
+    <ellipse cx="25" cy="23" rx="3.5" ry="8.5" fill="#fffaf0"/>
+    <path d="M11 13 L14 16 M16 12 V16" fill="none"/></svg>`;
+  const PROJECTOR = `<svg viewBox="0 0 48 48" class="sc-o"><path d="M30 27 L44 21 L44 37 Z" fill="#fff3b0" stroke="none" opacity=".55"/>
+    <circle cx="14" cy="15" r="6" fill="#7d84c9"/><circle cx="26" cy="15" r="6" fill="#7d84c9"/>
+    <rect x="8" y="22" width="22" height="13" rx="3" fill="#b9bde6"/>
+    <rect x="30" y="25" width="4" height="7" rx="1" fill="#ffd166"/>
+    <path d="M12 35 L10 41 M26 35 L28 41" fill="none"/></svg>`;
+  const endIcon = (svg, title) => { const n = el('span.if-end', { title }); n.innerHTML = svg; return n; };
 
   /* ================================================================ WIZARD
      A cozy visual-novel screen: an illustrated edit suite (the scene) with a
@@ -278,11 +351,11 @@ window.App = window.App || {};
 <svg class="if-svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
   <g class="sc-o">
     <!-- wall + floor -->
-    <rect x="-20" y="-20" width="1640" height="720" fill="#f4ecd6" stroke="none"/>
-    <path d="M-20 700 H1620 V920 H-20Z" fill="#e3c99b"/>
-    <path d="M-20 700 H1620" />
+    <rect x="-20" y="-20" width="1960" height="720" fill="#f4ecd6" stroke="none"/>
+    <path d="M-20 700 H1940 V920 H-20Z" fill="#e3c99b"/>
+    <path d="M-20 700 H1940" />
     <g stroke-width="3" opacity=".35"><path d="M120 760 H520 M700 800 H1180 M1300 750 H1600 M60 860 H400 M880 870 H1400"/></g>
-    <path d="M-20 640 H1620" stroke-width="3" opacity=".25"/>
+    <path d="M-20 640 H1940" stroke-width="3" opacity=".25"/>
 
     <!-- the schedule board -->
     <g id="sc-calendar">
@@ -297,11 +370,11 @@ window.App = window.App || {};
     </g>
 
     <!-- wall clock: it's always about the schedule -->
-    <g id="sc-clock" transform="translate(720 150)">
-      <circle r="74" fill="#fffaf0"/>
-      <circle r="60" fill="none" stroke-width="3" opacity=".3"/>
-      <path d="M0 0 L0 -40" transform="rotate(${hA})" stroke-width="7"/>
-      <path d="M0 0 L0 -54" transform="rotate(${mA})" stroke-width="4"/>
+    <g id="sc-clock" transform="translate(720 200)">
+      <circle r="64" fill="#fffaf0"/>
+      <circle r="51" fill="none" stroke-width="3" opacity=".3"/>
+      <path d="M0 0 L0 -32" transform="rotate(${hA})" stroke-width="7"/>
+      <path d="M0 0 L0 -45" transform="rotate(${mA})" stroke-width="4"/>
       <circle r="6" fill="#2b2b2b"/>
     </g>
 
@@ -336,19 +409,59 @@ window.App = window.App || {};
     <g id="sc-monitor">
       <path d="M1340 470 L1330 520 H1410 L1400 470" fill="#4a4a4a"/>
       <rect x="1220" y="290" width="300" height="190" rx="14" fill="#3b3b44"/>
+      <!-- a miniature of the app, no words: just its layout in the theme's colours -->
       <g class="sc-theme">
         <rect x="1236" y="306" width="268" height="158" rx="6" style="fill:var(--bg)" stroke-width="3"/>
-        <rect x="1236" y="306" width="268" height="24" rx="6" style="fill:var(--surface)" stroke="none"/>
-        <rect x="1248" y="314" width="40" height="8" rx="4" style="fill:var(--accent)" stroke="none"/>
-        <rect x="1250" y="342" width="110" height="52" rx="6" style="fill:var(--surface)" stroke="none"/>
-        <rect x="1372" y="342" width="118" height="52" rx="6" style="fill:var(--surface)" stroke="none"/>
-        <rect x="1262" y="356" width="60" height="8" rx="4" style="fill:var(--text)" opacity=".6" stroke="none"/>
-        <rect x="1262" y="372" width="80" height="8" rx="4" style="fill:var(--accent)" stroke="none"/>
-        <rect x="1384" y="356" width="70" height="8" rx="4" style="fill:var(--text)" opacity=".6" stroke="none"/>
-        <rect x="1384" y="372" width="50" height="8" rx="4" style="fill:var(--st-approved)" stroke="none"/>
-        <rect x="1250" y="404" width="240" height="46" rx="6" style="fill:var(--surface)" stroke="none"/>
-        <rect x="1262" y="418" width="160" height="8" rx="4" style="fill:var(--st-review)" stroke="none"/>
-        <rect x="1262" y="432" width="100" height="8" rx="4" style="fill:var(--text)" opacity=".4" stroke="none"/>
+        <rect x="1237.5" y="307.5" width="265" height="15" rx="5" style="fill:var(--bg-2)" stroke="none"/>
+        <rect x="1242" y="311" width="8" height="8" rx="2" style="fill:var(--accent)" stroke="none"/>
+        <rect x="1256" y="312" width="20" height="6" rx="3" style="fill:var(--accent)" stroke="none"/>
+        <rect x="1280" y="312" width="18" height="6" rx="3" style="fill:var(--surface-2)" stroke="none"/>
+        <rect x="1302" y="312" width="20" height="6" rx="3" style="fill:var(--surface-2)" stroke="none"/>
+        <rect x="1326" y="312" width="16" height="6" rx="3" style="fill:var(--surface-2)" stroke="none"/>
+        <rect x="1346" y="312" width="18" height="6" rx="3" style="fill:var(--surface-2)" stroke="none"/>
+        <circle cx="1494" cy="315" r="4" style="fill:var(--accent-2)" stroke="none"/>
+        <rect x="1242" y="327" width="30" height="7" rx="3.5" style="fill:var(--surface)" stroke="none"/>
+        <rect x="1276" y="327" width="30" height="7" rx="3.5" style="fill:var(--surface)" stroke="none"/>
+        <rect x="1310" y="327" width="30" height="7" rx="3.5" style="fill:var(--surface)" stroke="none"/>
+        <rect x="1346" y="327" width="64" height="7" rx="3.5" style="fill:var(--surface)" stroke="none"/>
+        <rect x="1470" y="327" width="28" height="7" rx="3.5" style="fill:var(--accent)" stroke="none"/>
+        <rect x="1242" y="339" width="44" height="9" rx="2.5" style="fill:var(--surface)" stroke="none"/>
+        <rect x="1242" y="339" width="3" height="9" rx="1.5" style="fill:var(--st-approved)" stroke="none"/>
+        <rect x="1250" y="342" width="18" height="3" rx="1.5" style="fill:var(--text-3)" stroke="none"/>
+        <rect x="1290" y="339" width="44" height="9" rx="2.5" style="fill:var(--surface)" stroke="none"/>
+        <rect x="1290" y="339" width="3" height="9" rx="1.5" style="fill:var(--accent-2)" stroke="none"/>
+        <rect x="1298" y="342" width="18" height="3" rx="1.5" style="fill:var(--text-3)" stroke="none"/>
+        <rect x="1338" y="339" width="44" height="9" rx="2.5" style="fill:var(--surface)" stroke="none"/>
+        <rect x="1338" y="339" width="3" height="9" rx="1.5" style="fill:var(--st-review)" stroke="none"/>
+        <rect x="1346" y="342" width="18" height="3" rx="1.5" style="fill:var(--text-3)" stroke="none"/>
+        <rect x="1386" y="339" width="44" height="9" rx="2.5" style="fill:var(--surface)" stroke="none"/>
+        <rect x="1386" y="339" width="3" height="9" rx="1.5" style="fill:var(--danger)" stroke="none"/>
+        <rect x="1394" y="342" width="18" height="3" rx="1.5" style="fill:var(--text-3)" stroke="none"/>
+        <rect x="1242" y="353" width="256" height="106" rx="4" style="fill:var(--surface)" stroke="none"/>
+        <rect x="1242" y="353" width="256" height="9" rx="4" style="fill:var(--surface-2)" stroke="none"/>
+        <rect x="1248" y="368" width="30" height="4" rx="2" style="fill:var(--text-3)" stroke="none"/>
+        <rect x="1242" y="377" width="256" height="14" style="fill:var(--row-alt)" stroke="none"/>
+        <rect x="1248" y="382" width="24" height="4" rx="2" style="fill:var(--text-3)" stroke="none"/>
+        <rect x="1248" y="396" width="18" height="4" rx="2" style="fill:var(--text-3)" stroke="none"/>
+        <rect x="1242" y="405" width="256" height="14" style="fill:var(--row-alt)" stroke="none"/>
+        <rect x="1248" y="410" width="30" height="4" rx="2" style="fill:var(--text-3)" stroke="none"/>
+        <rect x="1248" y="424" width="24" height="4" rx="2" style="fill:var(--text-3)" stroke="none"/>
+        <rect x="1242" y="433" width="256" height="14" style="fill:var(--row-alt)" stroke="none"/>
+        <rect x="1248" y="438" width="18" height="4" rx="2" style="fill:var(--text-3)" stroke="none"/>
+        <rect x="1310" y="362" width="1" height="96" style="fill:var(--border)" stroke="none"/>
+        <rect x="1340" y="362" width="1" height="96" style="fill:var(--border)" stroke="none"/>
+        <rect x="1370" y="362" width="1" height="96" style="fill:var(--border)" stroke="none"/>
+        <rect x="1400" y="362" width="1" height="96" style="fill:var(--border)" stroke="none"/>
+        <rect x="1430" y="362" width="1" height="96" style="fill:var(--border)" stroke="none"/>
+        <rect x="1460" y="362" width="1" height="96" style="fill:var(--border)" stroke="none"/>
+        <rect x="1490" y="362" width="1" height="96" style="fill:var(--border)" stroke="none"/>
+        <rect x="1300" y="366" width="60" height="7" rx="3.5" style="fill:var(--st-approved)" stroke="none"/>
+        <rect x="1330" y="380" width="70" height="7" rx="3.5" style="fill:var(--accent-2)" stroke="none"/>
+        <rect x="1360" y="394" width="55" height="7" rx="3.5" style="fill:var(--st-review)" stroke="none"/>
+        <rect x="1310" y="408" width="40" height="7" rx="3.5" style="fill:var(--st-ready)" stroke="none"/>
+        <rect x="1390" y="422" width="80" height="7" rx="3.5" style="fill:var(--accent)" stroke="none"/>
+        <rect x="1420" y="436" width="50" height="7" rx="3.5" style="fill:var(--text-3)" stroke="none"/>
+        <rect x="1378" y="362" width="1.5" height="96" style="fill:var(--danger)" stroke="none"/>
       </g>
     </g>
 
@@ -388,9 +501,56 @@ window.App = window.App || {};
       <path d="M1440 610 q-40 -70 10 -120 q10 60 -10 120 M1460 610 q10 -90 70 -110 q-20 70 -70 110 M1450 610 q-60 -40 -90 -100 q60 20 90 100" fill="#7cb86a"/>
       <path d="M1410 600 h90 l-12 90 h-66Z" fill="#e8946b"/>
     </g>
+
+    <!-- ivy trailing down from the ceiling on the right; some of it hangs
+         just past the frame, where the camera push on the monitor finds it -->
+    ${ivySVG()}
   </g>
 </svg>`;
   }
+
+  /* Hanging vines in the manner of a wandering-dude (tradescantia): pointed
+     leaves with a dark green rim, a pale silvery band, and a green stripe
+     down the middle, drooping on short stalks from a thin, wavy stem. Each
+     vine sways gently from the top. */
+  function ivySVG() {
+    const vines = [[1548, 470, 0], [1590, 640, 1.3], [1632, 420, 2.1], [1676, 590, .6], [1724, 380, 1.8], [1768, 520, 2.7]];
+    /* Leaf kinds, so the vines aren't one stamp repeated: [rim, band, stripe,
+       width]. Softer than black-and-white — the band is a pale sage, not
+       paper, and the outline is a deep green rather than the scene's ink. */
+    const KINDS = [
+      ['#5f9a57', '#d3e6c6', '#76b066', 1],     // variegated, the classic
+      ['#6aa65e', '#b9d9a8', '#7dba6c', .85],   // softer, mostly green
+      ['#78b468', '#cfe7bd', '#8cc37a', 1.1],   // young and light
+      ['#568f50', '#a9cf98', '#6aa65e', .7],    // slim and plain
+      ['#6aa65e', '#e0eed5', '#82bb70', .95]    // pale-banded
+    ];
+    const leaf = (x, y, side, k) => {
+      const [rim, band, stripe, wide] = KINDS[(k * 3 + (k >> 2)) % KINDS.length];
+      const tilt = 28 + (k * 17) % 30;                      // droops 28–58° below level
+      const rot = side > 0 ? tilt : 180 - tilt;
+      const sc = (0.8 + ((k * 7) % 5) * 0.09).toFixed(2);    // a little variety in size
+      const w = (n) => (n * wide).toFixed(1);
+      return `<g transform="translate(${x} ${y}) rotate(${rot}) scale(${sc})">` +
+        `<path d="M0 0 H6" fill="none" style="stroke:#6aa65e;stroke-width:2.5"/>` +
+        `<path d="M6 0 C 12 -${w(11)}, 28 -${w(12)}, 38 0 C 28 ${w(12)}, 12 ${w(11)}, 6 0Z" fill="${rim}" style="stroke:#3f6e3b;stroke-width:2"/>` +
+        `<path d="M10 0 C 15 -${w(7)}, 27 -${w(7.5)}, 33 0 C 27 ${w(7.5)}, 15 ${w(7)}, 10 0Z" fill="${band}" stroke="none"/>` +
+        `<path d="M12 0 C 17 -${w(2.6)}, 26 -${w(2.6)}, 31 0 C 26 ${w(2.6)}, 17 ${w(2.6)}, 12 0Z" fill="${stripe}" stroke="none"/>` +
+        `</g>`;
+    };
+    return '<g id="sc-ivy">' + vines.map(([x0, len, ph], vi) => {
+      let d = `M${x0} -10`, leaves = '';
+      for (let y = 0, k = 0; y <= len; y += 26, k++) {
+        const x = x0 + Math.sin(y / 60 + ph) * 11;
+        d += ` L${x.toFixed(1)} ${y}`;
+        if (y > 16) leaves += leaf(x, y, (k + vi) % 2 ? 1 : -1, k + vi * 3);
+      }
+      // the stem's tip curls off below the last leaf
+      d += ` q 10 18 -2 26`;
+      return `<g class="sc-vine" style="animation-delay:-${(ph * 1.7).toFixed(1)}s"><path d="${d}" fill="none" style="stroke:#6aa65e;stroke-width:3"/>${leaves}</g>`;
+    }).join('') + '<path d="M1520 -4 H1800" stroke-width="10"/></g>';
+  }
+
 
   const IF = {
     root: null, log: null, input: null, mascotEl: null, foot: null, stage: null,
@@ -404,12 +564,18 @@ window.App = window.App || {};
       this.stage = stage;
       this.mascotEl = el('.if-mascot');
       this.stepEl = el('.if-strip');
-      this.nameTag = el('.if-tag', null, 'PipeDream');
+      this.nameTag = el('.if-tag');
       this.log = el('.if-log');
       this.input = el('.if-input');
       this.foot = el('.if-foot');
-      const box = el('.if-box', null, [this.nameTag, this.log, this.input, this.foot]);
-      stage.appendChild(this.mascotEl);
+      // a second hiding place, behind the dialog box's top edge — used while
+      // the camera's pushed in and the monitor's out of shot
+      this.boxMascot = el('.if-box-mascot');
+      this.boxSay = el('.if-box-say');
+      const box = el('.if-box', null, [this.nameTag, el('.if-box-peek', null, this.boxMascot), this.boxSay, this.log, this.input, this.foot]);
+      // the companion hides behind the timeline monitor: this box's bottom
+      // edge is the monitor's top edge, so whatever's below it isn't drawn
+      stage.appendChild(el('.if-mascot-clip', null, this.mascotEl));
       stage.appendChild(this.stepEl);
       stage.appendChild(box);
       this.root.appendChild(stage);
@@ -425,7 +591,6 @@ window.App = window.App || {};
       if (this.root) this.root.remove();
       this.root = null;
     },
-    peek(on) { if (this.root) this.root.classList.toggle('if-peek', !!on); },
     // a film strip of frames across the top: one per step, the done ones exposed
     setStep(n, total) {
       if (!this.stepEl) return;
@@ -434,20 +599,28 @@ window.App = window.App || {};
     },
     // which prop in the scene is being talked about: it wiggles
     focus(id) { if (this.root) this.root.dataset.focus = id || ''; },
-    setSpeaker(name) { if (this.nameTag) this.nameTag.textContent = name || 'PipeDream'; },
+    // a slow camera push in on one prop ('monitor'), or back out ('')
+    zoom(id) { if (this.root) this.root.dataset.zoom = id || ''; },
+    setSpeaker(name) {
+      const t = this.nameTag;
+      if (!t || t.textContent === (name || '')) return;
+      t.textContent = name || '';
+      t.classList.remove('pop'); void t.offsetWidth; t.classList.add('pop');
+    },
     setClap(name) {
       const t = this.root && this.root.querySelector('#sc-clap-name');
       if (t) t.textContent = 'DIR: ' + (String(name || '?').slice(0, 14) || '?');
     },
     // the tab priorities, pinned to the schedule board in order
-    setNotes(labels) {
+    setNotes(labels, still) {
       const g = this.root && this.root.querySelector('#sc-notes');
       if (!g) return;
+      still = still || 0;
       const colors = ['#fff3a3', '#ffc9d6', '#c9e8ff', '#d4f5c4', '#e6d4ff'];
       g.innerHTML = (labels || []).map((l, i) => {
         const x = 124 + (i % 3) * 132, y = 146 + Math.floor(i / 3) * 106, r = (i % 2 ? 4 : -3);
         const words = l.split(' ');
-        return `<g transform="rotate(${r} ${x + 60} ${y + 46})" class="sc-note">
+        return `<g transform="rotate(${r} ${x + 60} ${y + 46})" class="sc-note${i < still ? ' still' : ''}">
           <rect x="${x}" y="${y}" width="122" height="92" rx="6" fill="${colors[i % colors.length]}" stroke="#2b2b2b" stroke-width="3"/>
           <circle cx="${x + 61}" cy="${y + 8}" r="6" fill="#e85d5d" stroke="#2b2b2b" stroke-width="2"/>
           <text x="${x + 61}" y="${y + 36}" class="sc-t" font-size="16" text-anchor="middle">${i + 1}</text>
@@ -455,17 +628,98 @@ window.App = window.App || {};
         </g>`;
       }).join('');
     },
-    // before a companion is chosen, a stand-in keeps the desk warm (and has
-    // something to say when Skip is pressed)
-    setMascot(emoji) {
-      if (!this.mascotEl) return;
-      const keep = this.mascotEl.querySelector('.gd-mascot-say');
-      this.mascotEl.textContent = emoji || '🎬';
-      if (keep) this.mascotEl.appendChild(keep);
-      this.mascotEl.classList.remove('hop'); void this.mascotEl.offsetWidth; this.mascotEl.classList.add('on', 'hop');
-      this.mascotEl.classList.toggle('stand-in', !emoji);
+    // nobody's on the desk until a companion is chosen (step 5)
+    // where note i sits on the board, on screen — for cards to fly to
+    noteSlot(i) {
+      const svg = this.root && this.root.querySelector('.if-svg');
+      if (!svg) return null;
+      const x = 124 + (i % 3) * 132, y = 146 + Math.floor(i / 3) * 106;
+      const m = svg.getScreenCTM();
+      const p = (px, py) => new DOMPoint(px, py).matrixTransform(m);
+      const a = p(x, y), b = p(x + 122, y + 92);
+      return { left: a.x, top: a.y, width: b.x - a.x, height: b.y - a.y, rot: i % 2 ? 4 : -3 };
     },
-    clear() { if (this.log) this.log.innerHTML = ''; if (this.input) this.input.innerHTML = ''; },
+    /* "Pin them up": each card flies from the dialog to its slot on the board,
+       in order, and is pinned there as it lands. */
+    async pinCards(cards, labels) {
+      const fl = [];
+      cards.forEach(c => { c.style.visibility = 'hidden'; });
+      await Promise.all(cards.map((c, i) => new Promise(res => {
+        setTimeout(() => {
+          const from = c.getBoundingClientRect(), to = this.noteSlot(i);
+          if (!to || !this.root) { res(); return; }
+          const f = c.cloneNode(true);
+          f.classList.add('if-card-fly');
+          f.style.visibility = '';
+          Object.assign(f.style, { left: from.left + 'px', top: from.top + 'px', width: from.width + 'px', height: from.height + 'px' });
+          this.root.appendChild(f); fl.push(f);
+          const dx = to.left + to.width / 2 - (from.left + from.width / 2);
+          const dy = to.top + to.height / 2 - (from.top + from.height / 2);
+          const sc = Math.min(to.width / from.width, to.height / from.height);
+          const anim = f.animate([
+            { transform: 'translate(0,0) rotate(0deg) scale(1)' },
+            { transform: `translate(${dx * .55}px, ${dy * .55 - 60}px) rotate(${to.rot * -3}deg) scale(${(1 + sc) / 2 * 1.08})`, offset: .55 },
+            { transform: `translate(${dx}px, ${dy}px) rotate(${to.rot}deg) scale(${sc})` }
+          ], { duration: 650, easing: 'cubic-bezier(.45,.05,.3,1)', fill: 'forwards' });
+          // the card IS the note now — it lands in place, so no second entrance
+          anim.onfinish = () => { this.setNotes(labels.slice(0, i + 1), i + 1); f.remove(); res(); };
+        }, i * 160);
+      })));
+      fl.forEach(f => f.remove());
+    },
+
+    /* Surprise! The companion pops up from behind the monitor, then floats
+       out in front of the screen and hovers there. Changing to another one
+       tucks the current one back behind first; quick changes (hovering along
+       the row) only ever show the latest. */
+    setMascot(emoji) {
+      const m = this.mascotEl;
+      if (!m) return;
+      if (emoji !== '🎬' && this._standIn) { this._standIn = false; clearTimeout(this._standInOff); }
+      const clip = m.parentNode;
+      clearTimeout(this._duck); clearTimeout(this._float);
+      const keep = () => m.querySelector('.gd-mascot-say');
+      const show = () => {
+        const b = keep();
+        m.textContent = emoji;
+        if (b) m.appendChild(b);
+        clip.classList.remove('front');
+        m.classList.remove('duck', 'up', 'float'); void m.offsetWidth; m.classList.add('on', 'up');
+        // once it's all the way up (nothing left behind the screen), it comes out front
+        this._float = setTimeout(() => { clip.classList.add('front'); m.classList.remove('up'); m.classList.add('float'); }, 560);
+      };
+      const tuck = () => { clip.classList.remove('front'); m.classList.remove('up', 'float'); m.classList.add('duck'); };
+      if (!emoji) { tuck(); this._duck = setTimeout(() => { m.textContent = ''; m.classList.remove('on'); }, 200); return; }
+      if (m.classList.contains('on') && m.firstChild && m.firstChild.nodeValue !== emoji) {
+        tuck();
+        this._duck = setTimeout(show, 170);
+      } else if (!m.classList.contains('on') || m.firstChild.nodeValue !== emoji) show();
+    },
+    /* The companion says something from on top of the monitor. Before one's
+       been chosen, a stand-in from the crew (🎬) pops up to say it, then
+       ducks back down. */
+    sayAsMascot(text) {
+      const m = this.mascotEl;
+      if (!m) return;
+      if (this.root && this.root.dataset.zoom) {
+        // zoomed in: pop up from behind the dialog box instead
+        const bm = this.boxMascot;
+        const chosen = m.classList.contains('on') && !this._standIn && m.firstChild ? m.firstChild.nodeValue : '';
+        clearTimeout(this._boxOff);
+        bm.textContent = chosen || '🎬';
+        bm.classList.remove('up'); void bm.offsetWidth; bm.classList.add('up');
+        setTimeout(() => sayFrom(this.boxSay, text), 450);
+        this._boxOff = setTimeout(() => bm.classList.remove('up'), 3200);
+        return;
+      }
+      if (m.classList.contains('on') && !this._standIn) { sayFrom(m, text); return; }
+      clearTimeout(this._standInOff);
+      if (!this._standIn) { this._standIn = true; this.setMascot('🎬'); }
+      setTimeout(() => sayFrom(m, text), m.parentNode.classList.contains('front') ? 0 : 600);
+      this._standInOff = setTimeout(() => { if (this._standIn) { this._standIn = false; this.setMascot(''); } }, 3400);
+    },
+    // a new line of dialogue: the old answers and menu bar go with the old question
+    clear() { if (this.log) this.log.innerHTML = ''; if (this.input) this.input.innerHTML = ''; if (this.foot) this.foot.innerHTML = ''; },
 
     async type(text, cls) {
       const p = el('p.if-line' + (cls ? '.' + cls : ''));
@@ -489,7 +743,7 @@ window.App = window.App || {};
     footer({ back, onSkip, onBack, onQuit }) {
       this.foot.innerHTML = '';
       const skipBtn = el('button.if-key.if-skip', { title: 'S' }, 'SKIP');
-      const rs = reluctantSkip(skipBtn, (t) => sayFrom(this.mascotEl, t), onSkip);
+      const rs = reluctantSkip(skipBtn, (t) => this.sayAsMascot(t), onSkip);
       skipBtn.onclick = () => rs.press();
       this.foot.appendChild(el('button.if-key' + (back ? '' : '.off'), { title: 'B', onclick: back ? onBack : null }, '« BACK'));
       this.foot.appendChild(skipBtn);
@@ -497,26 +751,34 @@ window.App = window.App || {};
       return rs;
     },
 
-    /* Pick one of `options` ([{label, value, hint}]), shown as numbered pills.
-       onFocus fires as the highlight moves (the theme step previews with it). */
+    /* Pick one of `options` ([{label, value, hint, face}]), shown as numbered
+       pills — or, with opts.faces, as a row of big faces and nothing else
+       (each option's `face`), which react as they're hovered. onFocus fires
+       as the highlight moves (the theme and character steps preview with it). */
     choose(options, opts) {
       opts = opts || {};
       return new Promise(resolve => {
-        let idx = Math.max(0, options.findIndex(o => o.value === opts.current));
+        const cur = options.findIndex(o => o.value === opts.current);
+        // faces start with nobody picked out, so nobody's name shows until hovered
+        let idx = opts.faces ? cur : Math.max(0, cur);
         this.input.innerHTML = '';
-        const list = el('.if-choices' + (options.length > 6 ? '.many' : ''));
-        const rows = options.map((o, i) => el('button.if-choice', {
-          onclick: () => done({ value: o.value }),
-          onmouseenter: () => focus(i)
-        }, [el('span.if-num', null, String(i + 1)), el('span.if-lbl', null, [o.label, o.hint ? el('span.if-hint', null, o.hint) : null])]));
+        const list = el(opts.faces ? '.if-faces' : '.if-choices' + (options.length > 6 ? '.many' : ''));
+        const rows = options.map((o, i) => opts.faces
+          ? el('button.if-face.react-' + (i % 4), {
+              title: String(i + 1), onclick: () => done({ value: o.value }), onmouseenter: () => focus(i)
+            }, el('span.if-face-emoji', null, o.face))
+          : el('button.if-choice', {
+              onclick: () => done({ value: o.value }), onmouseenter: () => focus(i)
+            }, [el('span.if-num', null, String(i + 1)), el('span.if-lbl', null, [o.label, o.hint ? el('span.if-hint', null, o.hint) : null])]));
         rows.forEach(r => list.appendChild(r));
         this.input.appendChild(list);
         const focus = (i) => {
+          if (i === idx && rows[i] && rows[i].classList.contains('on')) return;
           idx = i;
           rows.forEach((r, j) => r.classList.toggle('on', j === i));
-          if (opts.onFocus) opts.onFocus(options[i].value);
+          if (i >= 0 && opts.onFocus) opts.onFocus(options[i].value);
         };
-        focus(idx);
+        if (idx >= 0) focus(idx);
         let finished = false;
         const done = (r) => {
           if (finished) return;
@@ -534,8 +796,182 @@ window.App = window.App || {};
           const k = e.key;
           if (/^[1-9]$/.test(k) && options[Number(k) - 1]) { e.preventDefault(); e.stopPropagation(); done({ value: options[Number(k) - 1].value }); }
           else if (k === 'ArrowDown' || k === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); focus((idx + 1) % options.length); }
-          else if (k === 'ArrowUp' || k === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); focus((idx - 1 + options.length) % options.length); }
-          else if (k === 'Enter') { e.preventDefault(); e.stopPropagation(); done({ value: options[idx].value }); }
+          else if (k === 'ArrowUp' || k === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); focus(idx < 0 ? options.length - 1 : (idx - 1 + options.length) % options.length); }
+          else if (k === 'Enter') { e.preventDefault(); e.stopPropagation(); if (idx >= 0) done({ value: options[idx].value }); }
+          else if ((k === 'b' || k === 'B') && opts.back) { e.preventDefault(); e.stopPropagation(); done({ nav: 'back' }); }
+          else if (k === 's' || k === 'S') { e.preventDefault(); e.stopPropagation(); rs.press(); }
+          else if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); done({ nav: 'quit' }); }
+        };
+        this._keyHandler = key;
+        document.addEventListener('keydown', key, true);
+      });
+    },
+
+    /* A slider along `items` (in order), for the theme step: each stop names
+       itself above the bar. Arrow keys move it from anywhere; Enter, or the
+       button, settles on it. onChange fires as it moves. */
+    slide(items, opts) {
+      opts = opts || {};
+      return new Promise(resolve => {
+        let idx = Math.max(0, items.findIndex(o => o.value === opts.current));
+        this.input.innerHTML = '';
+        const lvl = el('.if-lvl'), name = el('.if-lvl-name');
+        const range = el('input.if-range', { type: 'range', min: '0', max: String(items.length - 1), step: '1', value: String(idx) });
+        if (opts.track) range.style.setProperty('--track', opts.track);
+        const ticks = el('.if-ticks', null, items.map(() => el('span')));
+        const go = el('button.if-choice.on.if-slide-go', { onclick: () => done({ value: items[idx].value }) }, [el('span.if-lbl', null, 'That’s the one ✓')]);
+        this.input.appendChild(el('.if-slider', null, [
+          el('.if-lvl-row', null, [lvl, name]),
+          el('.if-range-row', null, [endIcon(LAMP, 'Lights up'), el('.if-range-wrap', null, [range, ticks]), endIcon(PROJECTOR, 'Lights down')]),
+          go
+        ]));
+        const show = (i, quiet) => {
+          idx = Math.max(0, Math.min(items.length - 1, i));
+          range.value = String(idx);
+          range.style.setProperty('--pct', (idx / Math.max(1, items.length - 1) * 100) + '%');
+          lvl.textContent = items[idx].level;
+          name.textContent = items[idx].label;
+          lvl.classList.remove('pop'); void lvl.offsetWidth; lvl.classList.add('pop');
+          if (!quiet && opts.onChange) opts.onChange(items[idx].value);
+        };
+        range.addEventListener('input', () => show(Number(range.value)));
+        show(idx, true);
+        setTimeout(() => range.focus(), 0);
+        let finished = false;
+        const done = (r) => {
+          if (finished) return;
+          finished = true;
+          document.removeEventListener('keydown', key, true);
+          this._keyHandler = null;
+          resolve(r);
+        };
+        const rs = this.footer({
+          back: opts.back, onBack: () => done({ nav: 'back' }),
+          onSkip: () => done({ nav: 'skip' }), onQuit: () => done({ nav: 'quit' })
+        });
+        const key = (e) => {
+          if (!this.root) return;
+          const k = e.key;
+          if (k === 'ArrowRight' || k === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); show(idx + 1); }
+          else if (k === 'ArrowLeft' || k === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); show(idx - 1); }
+          else if (k === 'Enter') { e.preventDefault(); e.stopPropagation(); done({ value: items[idx].value }); }
+          else if ((k === 'b' || k === 'B') && opts.back) { e.preventDefault(); e.stopPropagation(); done({ nav: 'back' }); }
+          else if (k === 's' || k === 'S') { e.preventDefault(); e.stopPropagation(); rs.press(); }
+          else if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); done({ nav: 'quit' }); }
+        };
+        this._keyHandler = key;
+        document.addEventListener('keydown', key, true);
+      });
+    },
+
+    /* Drag-to-order: `items` as sticky notes in a row, first on the left.
+       Drag one sideways and the others shuffle out of its way; or focus one
+       and move it with ← →. onChange gets the order (values) as it changes. */
+    arrange(items, opts) {
+      opts = opts || {};
+      return new Promise(resolve => {
+        this.input.innerHTML = '';
+        const colors = ['#fff3a3', '#ffc9d6', '#c9e8ff', '#d4f5c4', '#e6d4ff'];
+        const row = el('.if-arrange');
+        const cards = items.map((it, i) => {
+          const c = el('button.if-card', { type: 'button', title: 'Drag, or use ← → to move' }, [
+            el('span.if-card-pin'), el('span.if-card-num'),
+            el('span.if-card-lbl', null, it.label), el('span.if-card-hint', null, it.hint || '')
+          ]);
+          c.dataset.value = it.value;
+          c.style.setProperty('--note', colors[i % colors.length]);
+          c.style.setProperty('--tilt', (i % 2 ? 1.5 : -1.5) + 'deg');
+          return c;
+        });
+        cards.forEach(c => row.appendChild(c));
+        const go = el('button.if-choice.on.if-slide-go', { onclick: () => done({ value: order() }) }, [el('span.if-lbl', null, 'Pin them up ✓')]);
+        this.input.appendChild(el('.if-arrange-wrap', null, [
+          el('.if-arrange-ends', null, [el('span', null, 'first'), el('span', null, 'last')]), row, go
+        ]));
+        const order = () => Array.from(row.children).map(c => c.dataset.value);
+        const renumber = () => {
+          Array.from(row.children).forEach((c, i) => { c.querySelector('.if-card-num').textContent = String(i + 1); });
+          if (opts.onChange) opts.onChange(order());
+        };
+        renumber();
+
+        // slide the cards that moved from where they were to where they are (FLIP)
+        const shuffle = (fn) => {
+          const before = new Map(Array.from(row.children).map(c => [c, c.getBoundingClientRect().left]));
+          fn();
+          Array.from(row.children).forEach(c => {
+            if (c.classList.contains('dragging')) return;
+            const dx = before.get(c) - c.getBoundingClientRect().left;
+            if (!dx) return;
+            c.style.transition = 'none'; c.style.translate = dx + 'px 0';
+            requestAnimationFrame(() => { c.style.transition = ''; c.style.translate = ''; });
+          });
+          renumber();
+        };
+
+        let drag = null;
+        row.addEventListener('pointerdown', (e) => {
+          const c = e.target.closest('.if-card');
+          if (!c) return;
+          e.preventDefault();
+          c.focus();
+          drag = { c, x0: e.clientX };
+          c.classList.add('dragging');
+          try { c.setPointerCapture(e.pointerId); } catch (err) {}
+        });
+        row.addEventListener('pointermove', (e) => {
+          if (!drag) return;
+          const c = drag.c;
+          c.style.translate = (e.clientX - drag.x0) + 'px 0';
+          const swap = (n, after) => {
+            const was = c.getBoundingClientRect().left - parseFloat(c.style.translate || 0);
+            shuffle(() => after ? n.after(c) : n.before(c));
+            c.style.translate = '0px 0';
+            const now = c.getBoundingClientRect().left;
+            drag.x0 += now - was;
+            c.style.translate = (e.clientX - drag.x0) + 'px 0';
+          };
+          // a fast drag can pass several cards in one move — keep swapping until it's settled
+          for (let guard = 0; guard < items.length; guard++) {
+            const m = c.getBoundingClientRect().left + c.offsetWidth / 2;
+            const next = c.nextElementSibling, prev = c.previousElementSibling;
+            if (next && m > next.getBoundingClientRect().left + next.offsetWidth / 2) swap(next, true);
+            else if (prev && m < prev.getBoundingClientRect().left + prev.offsetWidth / 2) swap(prev, false);
+            else break;
+          }
+        });
+        const drop = () => {
+          if (!drag) return;
+          const c = drag.c; drag = null;
+          c.classList.remove('dragging');
+          c.style.translate = '';
+        };
+        row.addEventListener('pointerup', drop);
+        row.addEventListener('pointercancel', drop);
+
+        let finished = false;
+        const done = (r) => {
+          if (finished) return;
+          finished = true;
+          document.removeEventListener('keydown', key, true);
+          this._keyHandler = null;
+          resolve(r);
+        };
+        const rs = this.footer({
+          back: opts.back, onBack: () => done({ nav: 'back' }),
+          onSkip: () => done({ nav: 'skip' }), onQuit: () => done({ nav: 'quit' })
+        });
+        const key = (e) => {
+          if (!this.root) return;
+          const k = e.key, card = document.activeElement && document.activeElement.closest && document.activeElement.closest('.if-card');
+          if ((k === 'ArrowLeft' || k === 'ArrowRight') && card) {
+            e.preventDefault(); e.stopPropagation();
+            const n = k === 'ArrowLeft' ? card.previousElementSibling : card.nextElementSibling;
+            if (n) { shuffle(() => k === 'ArrowLeft' ? n.before(card) : n.after(card)); card.focus(); }
+          } else if (k === 'ArrowLeft' || k === 'ArrowRight') {
+            e.preventDefault(); e.stopPropagation();
+            (k === 'ArrowLeft' ? row.lastElementChild : row.firstElementChild).focus();
+          } else if (k === 'Enter') { e.preventDefault(); e.stopPropagation(); done({ value: order() }); }
           else if ((k === 'b' || k === 'B') && opts.back) { e.preventDefault(); e.stopPropagation(); done({ nav: 'back' }); }
           else if (k === 's' || k === 'S') { e.preventDefault(); e.stopPropagation(); rs.press(); }
           else if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); done({ nav: 'quit' }); }
@@ -585,25 +1021,47 @@ window.App = window.App || {};
      target is looked up again every frame — App.render rebuilds the DOM, so
      an element reference would go stale on the first redraw. */
   const coach = {
-    layer: null, hole: null, bubble: null, mascot: null, _raf: 0, _poll: 0,
+    layer: null, bubble: null, mascot: null, peek: null, sayAnchor: null, _raf: 0, _poll: 0,
+    _glowed: [],
 
+    /* No dimming and no moving frame: whatever's being explained gets a glow
+       of its own (.gd-glow, a box-shadow on the element itself), so it
+       scrolls with the page exactly, never a frame behind. The mascot hides
+       behind that element and peeks out over its edge from a clipping box
+       whose cut line sits on the element's edge. */
     ensure() {
       if (this.layer && this.layer.isConnected) return;
       this.layer = el('.gd-layer');
-      this.hole = el('.gd-hole');
       this.mascot = el('.gd-mascot');
+      this.peek = el('.gd-peek', null, this.mascot);
+      this.sayAnchor = el('.gd-say-anchor');
       this.bubble = el('.gd-bubble', { onclick: e => e.stopPropagation(), onmousedown: e => e.stopPropagation() });
-      this.layer.appendChild(this.hole);
-      this.layer.appendChild(this.mascot);
+      this.layer.appendChild(this.peek);
+      this.layer.appendChild(this.sayAnchor);
       this.layer.appendChild(this.bubble);
       document.body.appendChild(this.layer);
     },
     close() {
       cancelAnimationFrame(this._raf); clearInterval(this._poll);
+      this.glow([]);
       if (this.layer) this.layer.remove();
       this.layer = null;
     },
-    say(text) { sayFrom(this.mascot, text); },
+    // the speech bubble hangs off an unclipped anchor beside the peeking mascot
+    say(text) { sayFrom(this.sayAnchor, text); },
+
+    // App.render rebuilds the DOM, so the glow is re-applied every frame to
+    // whatever the selectors find now, and taken off anything that left
+    glow(els) {
+      this._glowed.forEach(n => { if (!els.includes(n)) n.classList.remove('gd-glow', 'gd-round'); });
+      els.forEach(n => {
+        if (n.classList.contains('gd-glow')) return;
+        n.classList.add('gd-glow');
+        // a square container (a group of buttons) gets rounded corners for the glow
+        if (parseFloat(getComputedStyle(n).borderTopLeftRadius) === 0) n.classList.add('gd-round');
+      });
+      this._glowed = els;
+    },
 
     resolveTargets(t) {
       if (!t) return [];
@@ -613,54 +1071,72 @@ window.App = window.App || {};
     },
 
     place(opts) {
-      const els = this.resolveTargets(opts.target).concat(this.resolveTargets(opts.also));
+      // a step with `pick` chooses its element once and keeps it, so the light
+      // doesn't wander to a different bar as the page settles
+      if (opts.pick && !opts._picked) opts._picked = opts.pick();
+      const main = opts._picked && opts._picked.isConnected ? [opts._picked] : this.resolveTargets(opts.target);
+      const els = main.concat(this.resolveTargets(opts.also));
+      this.glow(els);
       const vw = window.innerWidth, vh = window.innerHeight;
-      let rect = null;
-      els.forEach(n => {
-        const r = n.getBoundingClientRect();
-        if (!r.width && !r.height) return;
-        rect = rect ? {
-          left: Math.min(rect.left, r.left), top: Math.min(rect.top, r.top),
-          right: Math.max(rect.right, r.right), bottom: Math.max(rect.bottom, r.bottom)
-        } : { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
-      });
-      const pad = 6;
-      if (rect) {
-        rect.left = Math.max(4, rect.left - pad); rect.top = Math.max(4, rect.top - pad);
-        rect.right = Math.min(vw - 4, rect.right + pad); rect.bottom = Math.min(vh - 4, rect.bottom + pad);
-        Object.assign(this.hole.style, {
-          display: '', left: rect.left + 'px', top: rect.top + 'px',
-          width: (rect.right - rect.left) + 'px', height: (rect.bottom - rect.top) + 'px'
+      const union = (list) => {
+        let rect = null;
+        list.forEach(n => {
+          const r = n.getBoundingClientRect();
+          if (!r.width && !r.height) return;
+          rect = rect ? {
+            left: Math.min(rect.left, r.left), top: Math.min(rect.top, r.top),
+            right: Math.max(rect.right, r.right), bottom: Math.max(rect.bottom, r.bottom)
+          } : { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
         });
-        this.layer.classList.remove('gd-nohole');
-      } else {
-        this.hole.style.display = 'none';
-        this.layer.classList.add('gd-nohole');
-      }
+        return rect;
+      };
+      const rect = union(els);
+      this.layer.classList.toggle('gd-nohole', !rect && !opts.noWash);
 
-      // the bubble: below the hole if it fits, else above, else beside, else centred
+      // the bubble: below what's lit if it fits, else above, else beside, else centred
       const b = this.bubble.getBoundingClientRect();
+      const gap = 18;
       let bx, by;
-      if (!rect) { bx = (vw - b.width) / 2; by = (vh - b.height) / 2; }
-      else if (rect.bottom + 14 + b.height < vh) { bx = rect.left; by = rect.bottom + 14; }
-      else if (rect.top - 14 - b.height > 0) { bx = rect.left; by = rect.top - 14 - b.height; }
-      else if (rect.right + 14 + b.width < vw) { bx = rect.right + 14; by = rect.top; }
+      // nothing lit: the bubble waits at the bottom, out of the page's way
+      if (!rect) { bx = (vw - b.width) / 2; by = vh - b.height - 28; }
+      // a step that needs the space under what's lit (dropping widgets onto
+      // the dashboard) parks the bubble in the bottom-right corner instead
+      else if (opts.corner) { bx = vw - b.width - 20; by = vh - b.height - 20; }
+      else if (rect.bottom + gap + b.height < vh) { bx = rect.left; by = rect.bottom + gap; }
+      else if (rect.top - gap - b.height > 0) { bx = rect.left; by = rect.top - gap - b.height; }
+      else if (rect.right + gap + b.width < vw) { bx = rect.right + gap; by = rect.top; }
       else { bx = (vw - b.width) / 2; by = vh - b.height - 16; }
       bx = Math.max(12, Math.min(vw - b.width - 12, bx));
       by = Math.max(12, Math.min(vh - b.height - 12, by));
       this.bubble.style.left = bx + 'px';
       this.bubble.style.top = by + 'px';
 
-      // the mascot peeks up from behind the top edge of what's lit — or sits
-      // on the bubble's shoulder when there's nothing to light
-      let mx, my;
-      if (!rect) { mx = bx + b.width - 30; my = by - 40; }
-      else if (rect.top >= 48) { mx = Math.min(vw - 60, rect.right - 46); my = rect.top - 44; }
-      // no room above (a tab, the toolbar): beside it instead, never over it
-      else if (rect.right + 52 < vw) { mx = rect.right + 4; my = rect.top; }
-      else { mx = rect.left - 50; my = rect.top; }
-      this.mascot.style.left = mx + 'px';
-      this.mascot.style.top = my + 'px';
+      /* The mascot peeks out from behind the main target: over its top edge
+         when there's room, else hanging down from under its bottom edge. The
+         clip box's cut line IS that edge, so the part of the mascot still
+         "behind" the element is simply not drawn. */
+      // a step can sit the mascot on the bubble itself instead (peekOn: 'bubble')
+      const t = opts.peekOn === 'bubble'
+        ? { left: bx + b.width * 0.55, right: bx + b.width - 50, top: by, bottom: by + b.height }
+        : union(main) || rect;
+      const W = 58, H = 52;
+      let px, py, from;
+      if (!t) { px = bx + b.width - W - 10; py = by - H; from = 'top'; }
+      else {
+        px = opts.peek === 'left' ? t.left + 10 : Math.max(t.left, Math.min(t.right - W - 6, vw - W - 4));
+        if (t.top - H >= 2) { py = t.top - H; from = 'top'; }
+        else { py = t.bottom; from = 'bottom'; }
+      }
+      // a step can go without the mascot (noMascot) — and any step pointing at
+      // one of the tabs along the top does, there's no room up there for it
+      const onTab = main.some(n => n.matches && n.matches('.view-tab'));
+      this.peek.style.display = opts.noMascot || onTab ? 'none' : '';
+      this.peek.style.left = px + 'px';
+      this.peek.style.top = py + 'px';
+      if (this.peek.dataset.from !== from) this.peek.dataset.from = from;
+      this.sayAnchor.style.left = px + 'px';
+      this.sayAnchor.style.top = (from === 'top' ? py : py + H) + 'px';
+      this.sayAnchor.dataset.from = from;
     },
 
     step(opts) {
@@ -668,7 +1144,7 @@ window.App = window.App || {};
       cancelAnimationFrame(this._raf); clearInterval(this._poll);
       const mascotEmoji = App.profile.mascot();
       this.mascot.textContent = mascotEmoji;
-      this.mascot.classList.remove('pop'); void this.mascot.offsetWidth; this.mascot.classList.add('pop');
+      this.peek.classList.remove('in'); void this.peek.offsetWidth; this.peek.classList.add('in');
 
       return new Promise(resolve => {
         let finished = false, evt = null;
@@ -676,10 +1152,49 @@ window.App = window.App || {};
           if (finished) return;
           finished = true;
           cancelAnimationFrame(this._raf); clearInterval(this._poll);
+          if (this._calmOff) this._calmOff();
+          if (this._unlock) { this._unlock(); this._unlock = null; }
           document.removeEventListener('keydown', keys, true);
           if (evt) document.removeEventListener(evt.type, evt.fn, true);
           resolve(how);
         };
+
+        /* The glow is for finding the thing. Once they're using it (a press
+           inside anything lit), it settles down to a soft outline. */
+        /* …or, for a step with a `then` (a target for once they've started),
+           the light moves on to that instead — the Done button, say. */
+        // a step can hold the page still (no wheel, touch or key scrolling)
+        if (opts.lock) {
+          const stop = (e) => { if (!(e.target.closest && e.target.closest('.gd-bubble'))) e.preventDefault(); };
+          const keysStop = (e) => {
+            const zoomKey = (e.metaKey || e.ctrlKey) && ['=', '+', '-', '_', '0'].includes(e.key);
+            if (zoomKey) { e.preventDefault(); e.stopPropagation(); return; }
+            if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key) && !(e.target.closest && e.target.closest('input, textarea, [contenteditable]'))) e.preventDefault();
+          };
+          // and the timeline's zoom (its buttons, ⌘+/⌘−, ctrl+scroll) holds still too
+          const zoomBy = App.gantt && App.gantt.zoomBy;
+          if (zoomBy) App.gantt.zoomBy = () => {};
+          window.addEventListener('wheel', stop, { passive: false, capture: true });
+          window.addEventListener('touchmove', stop, { passive: false, capture: true });
+          window.addEventListener('keydown', keysStop, true);
+          document.body.classList.add('gd-locked');
+          this._unlock = () => {
+            window.removeEventListener('wheel', stop, { capture: true });
+            window.removeEventListener('touchmove', stop, { capture: true });
+            window.removeEventListener('keydown', keysStop, true);
+            document.body.classList.remove('gd-locked');
+            if (zoomBy) App.gantt.zoomBy = zoomBy;
+          };
+        }
+        document.body.classList.remove('gd-calm');
+        let moved = false;
+        const calm = (e) => {
+          if (moved || !this._glowed.some(n => n.contains(e.target))) return;
+          if (opts.then) { moved = true; opts = Object.assign({}, opts, opts.then, { then: null }); }
+          else document.body.classList.add('gd-calm');
+        };
+        document.addEventListener('pointerdown', calm, true);
+        this._calmOff = () => { document.removeEventListener('pointerdown', calm, true); document.body.classList.remove('gd-calm'); };
 
         const text = typeof opts.text === 'function' ? opts.text() : opts.text;
         this.bubble.innerHTML = '';
@@ -688,14 +1203,13 @@ window.App = window.App || {};
           opts.progress ? el('span.gd-b-prog', null, opts.progress) : null,
           el('button.gd-b-x', { title: 'End the tour', onclick: () => finish('end') }, '✕')
         ]));
+        // opts.face: the mascot sits inside the bubble, saying the line itself
         const bodyEl = el('.gd-b-text', null, text);
-        this.bubble.appendChild(bodyEl);
+        if (opts.face) this.bubble.classList.add('gd-b-faced'); else this.bubble.classList.remove('gd-b-faced');
+        this.bubble.appendChild(opts.face ? el('.gd-b-face-row', null, [el('span.gd-b-face', null, App.profile.mascot()), bodyEl]) : bodyEl);
         if (opts.waitFor) this.bubble.appendChild(el('.gd-b-wait', null, opts.waitLabel || 'Go ahead — I’ll wait.'));
         const acts = el('.gd-b-acts');
-        const skipBtn = el('button.gd-b-skip', null, 'Skip');
-        const rs = reluctantSkip(skipBtn, (t) => this.say(t), () => finish('skip'));
-        skipBtn.onclick = () => rs.press();
-        acts.appendChild(skipBtn);
+        // no Skip in the tour: every step has Show me (or Next), and ✕ ends it
         if (opts.showMe) acts.appendChild(el('button.gd-b-show', {
           onclick: async () => { try { await opts.showMe(); } catch (e) { console.error(e); } if (!opts.waitFor) finish('done'); }
         }, 'Show me'));
@@ -708,6 +1222,8 @@ window.App = window.App || {};
             const t = opts.text();
             if (t !== bodyEl.textContent) bodyEl.textContent = t;
           }
+          // a step pinned to the top of the chart stays there, whatever redraws
+          if (opts.top) toTop();
           this.place(opts);
           this._raf = requestAnimationFrame(tick);
         };
@@ -733,8 +1249,7 @@ window.App = window.App || {};
           const t = e.target;
           if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
           if (e.metaKey || e.ctrlKey || e.altKey) return;
-          if (e.key === 's' || e.key === 'S') { e.preventDefault(); e.stopPropagation(); rs.press(); }
-          else if ((e.key === 'n' || e.key === 'N' || e.key === 'ArrowRight') && (!opts.waitFor || opts.next)) { e.preventDefault(); e.stopPropagation(); finish('done'); }
+          if ((e.key === 'n' || e.key === 'N' || e.key === 'ArrowRight') && (!opts.waitFor || opts.next)) { e.preventDefault(); e.stopPropagation(); finish('done'); }
         };
         document.addEventListener('keydown', keys, true);
       });
@@ -750,6 +1265,60 @@ window.App = window.App || {};
     .sort((a, b) => (a.index || 0) - (b.index || 0));
   const showName = () => (App.show(sandbox.showId) || {}).name || DEMO_NAME;
 
+  /* A task bar the person can actually see right now: inside the timeline's
+     scrolled view, not off past its left or right edge (the first bar in the
+     DOM is often weeks ago, scrolled out of sight). Nearest to today wins. */
+  const visibleBar = () => {
+    const sc = document.querySelector('.gantt-scroll, .gantt-wrap, #view');
+    const box = sc ? sc.getBoundingClientRect() : { left: 0, right: innerWidth, top: 0, bottom: innerHeight };
+    const today = document.querySelector('.today-line');
+    const tx = today ? today.getBoundingClientRect().left : (box.left + box.right) / 2;
+    const bars = Array.from(document.querySelectorAll('.g-row.sub:not(.phase) .bar[data-episode-id][data-su-key]')).filter(b => {
+      const r = b.getBoundingClientRect();
+      return r.width > 20 && r.left >= box.left + 230 && r.right <= Math.min(box.right, innerWidth) - 8 && r.top >= box.top && r.bottom <= Math.min(box.bottom, innerHeight);
+    });
+    bars.sort((a, b) => Math.abs(a.getBoundingClientRect().left - tx) - Math.abs(b.getBoundingClientRect().left - tx));
+    return bars[0] || null;
+  };
+
+  /* Scroll the page and the chart so one task bar sits about a quarter of the
+     way down the screen and comfortably inside the chart, leaving the space
+     below it for the bubble and above it for the mascot. Returns that bar. */
+  const frameBar = () => {
+    const view = document.getElementById('view');
+    const sc = document.querySelector('.gantt-scroll');
+    if (!sc) return null;
+    view.scrollTop = 0;
+    sc.scrollTop = 0;
+    // the highest task on the chart that's happening around today — so the
+    // chart can scroll it up into a comfortable spot
+    const today = document.querySelector('.today-line');
+    const tx = today ? today.getBoundingClientRect().left : null;
+    const all = Array.from(document.querySelectorAll('.g-row.sub:not(.phase) .bar[data-episode-id][data-su-key]'))
+      .filter(x => x.getBoundingClientRect().width > 20);
+    const near = tx == null ? all : all.filter(x => { const r = x.getBoundingClientRect(); return r.right > tx - 250 && r.left < tx + 250; });
+    const b = near[0] || all[0];
+    if (!b) return null;
+    const box = sc.getBoundingClientRect(), r = b.getBoundingClientRect();
+    sc.scrollTop += (r.top - box.top) - Math.max(60, box.height * 0.18);
+    sc.scrollLeft += (r.left - box.left) - Math.max(260, box.width * 0.35);
+    return b;
+  };
+
+  const closeAll = async () => { for (let i = 0; i < 4 && modalOpen(); i++) { App.modal.close(); await sleep(60); } };
+  /* Scroll the chart so the first element matching `sel` sits comfortably in
+     view (a third of the way across, a quarter of the way down). Returns it. */
+  const frameEl = (sel) => {
+    const sc = document.querySelector('.gantt-scroll');
+    const n = document.querySelector(sel);
+    if (!sc || !n) return n;
+    const v = document.getElementById('view'); if (v) v.scrollTop = 0;
+    const box = sc.getBoundingClientRect(), r = n.getBoundingClientRect();
+    sc.scrollLeft += (r.left - box.left) - Math.max(260, box.width * 0.35);
+    sc.scrollTop += (r.top - box.top) - Math.max(80, box.height * 0.22);
+    return n;
+  };
+  let framed = null;   // the task bar the "Open a task" step framed and lit
   const SECTIONS = {
     timeline: () => {
       let zoom0 = 0, notes0 = 0;
@@ -761,7 +1330,7 @@ window.App = window.App || {};
           before: () => { if (App.state.view === 'timeline' && App.timelineMode() !== 'schedule') { App.prefs.set('timelineMode', 'schedule'); App.render(); } },
           showMe: () => { App.prefs.set('timelineMode', 'schedule'); goView('timeline'); } },
         { title: 'Search & filters', text: 'Narrow everything down by Show, Department and Owner, or search by episode. Whatever you pick is remembered the next time you open the app.',
-          target: '#toolbar' },
+          target: '#toolbar .filter-multi[data-fkey], #search' },
         { title: 'Pick a show', text: () => 'Open the Show filter and pick “' + showName() + '”.',
           target: '.filter-multi[data-fkey="show"]', also: '.filter-pop',
           waitFor: () => App.state.filters.show.length === 1 && App.state.filters.show[0] === sandbox.showId,
@@ -780,10 +1349,13 @@ window.App = window.App || {};
           waitFor: () => { const d = App.state.filters.dept, w = allButCreative(); return d.length === w.length && w.every(k => d.includes(k)); },
           showMe: () => { App.filterMenu.close(); App.state.filters.dept = allButCreative(); App.render(); } },
         { title: 'Open a task', text: 'Click any task bar to open it.',
-          target: () => document.querySelector('.g-row.sub:not(.phase) .bar'),
+          // frame one task high in the chart, with room below it for the bubble,
+          // then hold the page still so nothing drifts apart
+          before: () => { framed = frameBar(); }, lock: true, pick: () => (framed && framed.isConnected ? framed : visibleBar()),
+          target: () => visibleBar(),
           waitFor: modalOpen,
           showMe: () => {
-            const b = document.querySelector('.g-row.sub:not(.phase) .bar[data-episode-id][data-su-key]');
+            const b = visibleBar();
             if (b) App.editTask.open(b.dataset.episodeId, b.dataset.suKey);
             else { const e = demoEps()[0]; const su = e && App.subitems(e)[0]; if (su) App.editTask.open(e.id, su.key); }
           } },
@@ -800,14 +1372,19 @@ window.App = window.App || {};
           showMe: () => App.editShowDialog.open(sandbox.showId, { back: () => App.showsBrowser.open() }) },
         { when: () => App.canManageShows(App.state.role), title: 'Changing the production',
           text: 'From here: the Team on each department, the Pipeline and episode schedule, Holidays and the working week, Export, a JSON backup, and Archive.',
-          target: '.show-edit-links' },
-        { when: () => App.canManageShows(App.state.role), title: 'Close it', text: 'Press Esc.',
-          target: '.modal-card', waitFor: () => !modalOpen(), showMe: () => App.modal.close() },
+          target: '.show-edit-links button' },
+        // closing the show editor drops back to the Shows browser — Esc again closes that
+        { when: () => App.canManageShows(App.state.role), title: 'Close it', text: 'Press Esc (twice — once for the show, once for the Shows list).',
+          target: '.modal-card', waitFor: () => !modalOpen(), showMe: closeAll },
         { when: () => App.canEditNotes(), title: 'Producer Notes', text: 'With a single show picked, this lane holds notes for the whole team — shoot days, holidays, heads-ups.',
-          target: '.g-row.pn-head', also: '.g-row.pn-row',
-          before: () => { if (!document.querySelector('.g-row.pn-head')) { App.state.filters.show = [sandbox.showId]; App.render(); } } },
+          target: '.g-row.pn-head', also: '.g-row.pn-row', lock: true, top: true, peekOn: 'bubble',
+          before: () => {
+            if (!document.querySelector('.g-row.pn-head')) { App.state.filters.show = [sandbox.showId]; App.render(); }
+            toTop();
+          } },
         { when: () => App.canEditNotes(), title: 'Draw a note', text: 'Drag across the notes lane to draw a note over some days.',
-          before: () => { const s = App.show(sandbox.showId); notes0 = (s && s.notes || []).length; },
+          lock: true, top: true, corner: true,   // the bubble keeps out of the lane
+          before: () => { toTop(); const s = App.show(sandbox.showId); notes0 = (s && s.notes || []).length; },
           target: () => document.querySelector('.g-row.pn-row .g-track.pn-drawable'),
           waitFor: () => { const s = App.show(sandbox.showId); return (s && s.notes || []).length > notes0; },
           showMe: () => {
@@ -819,24 +1396,34 @@ window.App = window.App || {};
             });
           } },
         { when: () => App.canEditNotes(), title: 'Name it', text: 'Give your note a name — type it in and press Enter.',
-          target: () => document.querySelector('.pn-note-input') || document.querySelector('.g-row.pn-row'),
+          lock: true, top: true, corner: true,
+          // the mascot sits on the note just drawn; its name box is lit too
+          target: () => {
+            const s = App.show(sandbox.showId), n = s && s.notes && s.notes[s.notes.length - 1];
+            return (n && document.querySelector('.pn-note[data-note-id="' + n.id + '"]')) || document.querySelector('.g-row.pn-row');
+          },
+          also: '.pn-note-input',
           waitFor: () => { const s = App.show(sandbox.showId); const n = s && s.notes && s.notes[s.notes.length - 1]; return !!(n && String(n.text || '').trim()); },
           showMe: () => {
             const s = App.show(sandbox.showId); const n = s && s.notes && s.notes[s.notes.length - 1];
             if (n) { App.gantt.closeNoteEditor && App.gantt.closeNoteEditor(); App.updateNote(sandbox.showId, n.id, { text: 'Ping pong table arrives' }); }
           } },
         { when: () => App.canManageShows(App.state.role), title: 'Delivery date', text: 'The D marks are each episode’s Delivery date. Click one.',
-          before: () => { App.gantt.closeNoteEditor && App.gantt.closeNoteEditor(); },
+          // bring the first D into view, then hold the chart still on it
+          before: () => { App.gantt.closeNoteEditor && App.gantt.closeNoteEditor(); framed = frameEl('.ms-day.ms-delivery_date'); },
+          lock: true, pick: () => framed, peekOn: 'bubble',
           target: () => document.querySelector('.ms-day.ms-delivery_date'),
           waitFor: modalOpen,
-          showMe: () => { const e = demoEps()[0]; if (e) App.milestoneDialog.open(e.id, 'delivery_date'); } },
-        { when: () => App.canManageShows(App.state.role), title: 'Delivery date', text: 'This is the date the episode is committed to. Press Esc to close.',
+          showMe: () => { const m = framed && framed.isConnected ? framed : null; if (m) m.click(); else { const e = demoEps()[0]; if (e) App.milestoneDialog.open(e.id, 'delivery_date'); } } },
+        { when: () => App.canManageShows(App.state.role), title: 'Delivery date', text: 'This is the date the episode is committed to. Press Esc to close.', peekOn: 'bubble',
           target: '.modal-card', waitFor: () => !modalOpen(), showMe: () => App.modal.close() },
         { when: () => App.canManageShows(App.state.role), title: 'Live date', text: 'And LD is when it goes Live. Click one.',
+          before: () => { framed = frameEl('.ms-day.ms-' + App.LIVE_KEY); },
+          lock: true, pick: () => framed, peekOn: 'bubble',
           target: () => document.querySelector('.ms-day.ms-' + App.LIVE_KEY),
           waitFor: modalOpen,
-          showMe: () => { const e = demoEps()[0]; if (e) App.milestoneDialog.open(e.id, App.LIVE_KEY); } },
-        { when: () => App.canManageShows(App.state.role), title: 'Live date', text: 'Press Esc to close.',
+          showMe: () => { const m = framed && framed.isConnected ? framed : null; if (m) m.click(); else { const e = demoEps()[0]; if (e) App.milestoneDialog.open(e.id, App.LIVE_KEY); } } },
+        { when: () => App.canManageShows(App.state.role), title: 'Live date', text: 'Press Esc to close.', peekOn: 'bubble',
           target: '.modal-card', waitFor: () => !modalOpen(), showMe: () => App.modal.close() }
       ];
     },
@@ -896,15 +1483,17 @@ window.App = window.App || {};
     dashboard: () => [
       { title: 'Dashboard', text: 'Click Dashboard — your day at a glance.',
         target: tabSel('dashboard'), waitFor: () => App.state.view === 'dashboard', showMe: () => goView('dashboard') },
-      { title: 'Make it yours', text: 'Edit lets you move, resize, add and remove widgets any time.', target: '.dash-tools' },
+      { title: 'Make it yours', text: 'Edit lets you move, resize, add and remove widgets any time.', target: '.dash-tools button' },
       { title: 'Pop it out', text: 'This opens a widget in its own window — handy on a second screen, or kept on top while you work in another app.',
         target: () => document.querySelector('.dw .dw-pop') }
     ],
 
     review: () => [
-      { title: 'Reviews', text: 'Click Reviews — cuts waiting for notes and approval.',
+      // every department's reviews, not just what an earlier step filtered down to
+      { title: 'Reviews', text: 'Click Reviews — cuts waiting for notes and approval.', noMascot: true,
+        before: () => { App.state.filters.dept = []; App.state.filters.person = []; App.render(); },
         target: tabSel('review'), waitFor: () => App.state.view === 'review', showMe: () => goView('review') },
-      { title: 'The review queue', text: 'Everything sent for review, most urgent first. Open one to watch it, leave notes, approve or send it back.', target: '#view' }
+      { title: 'The review queue', text: 'Everything sent for review, most urgent first. Open one to watch it, leave notes, approve or send it back.', target: null, peekOn: 'bubble', noWash: true }
     ],
 
     resources: () => [
@@ -914,11 +1503,13 @@ window.App = window.App || {};
         target: () => Array.from(document.querySelectorAll('#toolbar .toolbar-seg')).find(s => s.textContent.includes('Resources')),
         waitFor: () => App.timelineMode() === 'resources',
         showMe: () => { App.prefs.set('timelineMode', 'resources'); App.render(); } },
-      { title: 'Workload', text: 'Each circle is a week’s workload. Click a person for their capacity and time off.', target: '#view' }
+      { title: 'Workload', text: 'Each circle is a week’s workload. Click a person for their capacity and time off.', target: null, peekOn: 'bubble', noWash: true }
     ]
   };
 
-  async function runTour() {
+  // `from` (a step number, 1-based, or part of a title) starts part-way —
+  // for reviewing one step without clicking through the ones before it
+  async function runTour(from) {
     if (App.isPhone()) return 'done';
     App.filterMenu && App.filterMenu.close && App.filterMenu.close();
     sandbox.enter();
@@ -927,9 +1518,22 @@ window.App = window.App || {};
     try {
       const order = App.profile.tabOrder();
       const steps = [];
-      order.forEach(k => { if (SECTIONS[k]) steps.push(...SECTIONS[k]()); });
+      // the Dashboard isn't toured: setup has just had them build it by hand
+      // (step 7 covers the tray, Edit and the pop-out button)
+      order.forEach(k => { if (k !== 'dashboard' && SECTIONS[k]) steps.push(...SECTIONS[k]()); });
       const live = steps.filter(s => !s.when || s.when());
-      for (let i = 0; i < steps.length; i++) {
+      let start = 0;
+      if (typeof from === 'number') start = Math.max(0, steps.indexOf(live[from - 1]));
+      else if (typeof from === 'string') start = Math.max(0, steps.findIndex(s => (s.title || '').toLowerCase().includes(from.toLowerCase())));
+      // fast-forward: do what each skipped step would have had the user do,
+      // so the step we land on finds the screen it expects
+      for (let i = 0; i < start; i++) {
+        const s = steps[i];
+        if (s.when && !s.when()) continue;
+        if (s.before) s.before();
+        if (s.showMe) { try { await s.showMe(); } catch (e) {} await sleep(250); }
+      }
+      for (let i = start; i < steps.length; i++) {
         const s = steps[i];
         if (s.when && !s.when()) continue;
         if (s.before) s.before();
@@ -948,11 +1552,40 @@ window.App = window.App || {};
     return result;
   }
 
+  /* The completion line appears in the Journal as if typed, very fast. It's
+     already saved — this only replays it on screen, then leaves it whole. */
+  async function typeIntoJournal(html) {
+    await sleep(200);
+    const tmp = document.createElement('div'); tmp.innerHTML = html;
+    const text = tmp.textContent;
+    const blocks = Array.from(document.querySelectorAll('.dw[data-wid="journal"] .jr-block'));
+    const b = blocks.reverse().find(x => x.textContent === text);
+    if (!b) return;
+    b.textContent = '';
+    b.classList.add('gd-typing');
+    for (let i = 0; i <= text.length; i += 3) {
+      if (!b.isConnected) return;
+      b.textContent = text.slice(0, i);
+      await sleep(12);
+    }
+    b.innerHTML = html;
+    b.classList.remove('gd-typing');
+  }
+
   /* ================================================================ FLOW */
   const fill = (s) => s.replace(/\{name\}/g, App.profile.displayName() || 'traveller');
 
   App.guide = {
     running: false,
+
+    /* Review helpers, from the console:
+         App.guide.start({ redo: true, step: 4 })   the wizard from step 4
+         App.guide.tour(5) / App.guide.tour('zoom')  the tour from a step */
+    async tour(from) {
+      if (this.running) return;
+      this.running = true;
+      try { await runTour(from); } finally { coach.close(); this.running = false; App.render(); }
+    },
 
     // first sign-in, or any day the setup was never finished
     maybeStart() {
@@ -985,14 +1618,16 @@ window.App = window.App || {};
       const pick = {
         name: prof.name || App.profile.displayName(),
         theme: App.prefs.get('theme', prof.theme || 'midnight'),
-        character: prof.character || '',
-        tabOrder: App.profile.hasOrder() ? App.profile.tabOrder() : null
+        character: redo ? (prof.character || '') : '',
+        // a first run starts from a blank slate, even if a half-finished
+        // setup saved something; a redo starts from what they have
+        tabOrder: redo && App.profile.hasOrder() ? App.profile.tabOrder() : null
       };
       const themeBefore = App.prefs.get('theme', 'midnight');
       const save = (extra) => {
         if (App.state.user && pick.name) App.state.user.name = pick.name;
         App.profile.set(Object.assign({
-          name: pick.name, character: pick.character || (cfg.mascots[0] && cfg.mascots[0].emoji),
+          name: pick.name, character: pick.character || prof.character || '',
           theme: pick.theme, tabOrder: pick.tabOrder || App.profile.tabOrder()
         }, extra || {}));
       };
@@ -1003,7 +1638,7 @@ window.App = window.App || {};
       IF.setMascot(pick.character);
       const mascotLabel = (emoji) => { const m = cfg.mascots.find(x => x.emoji === emoji); return (m && m.label) || 'PipeDream'; };
       if (pick.character) IF.setSpeaker(mascotLabel(pick.character));
-      IF.setClap(pick.name);
+      IF.setClap(redo ? pick.name : '');
       if (pick.tabOrder) IF.setNotes(pick.tabOrder.map(k => PRIORITY_TABS.find(t => t.key === k).label));
       const TOTAL = phone ? 6 : 9;
 
@@ -1029,7 +1664,7 @@ window.App = window.App || {};
           return IF.choose([{ label: 'Got it', value: 'go' }], { back: true });
         },
         async () => {
-          IF.setStep(3, TOTAL); IF.clear(); IF.focus('clapper');
+          IF.setStep(3, TOTAL); IF.clear(); IF.focus('clapper'); IF.setClap(pick.name);
           await IF.type('Every production needs a name on the clapperboard. What would you like to be called?');
           const r = await IF.ask('', pick.name, { back: true, onInput: (v) => IF.setClap(v) });
           if (r.value) pick.name = r.value;
@@ -1037,13 +1672,17 @@ window.App = window.App || {};
           return r;
         },
         async () => {
-          IF.setStep(4, TOTAL); IF.clear(); IF.focus('monitor'); IF.peek(true);
-          await IF.type('Nice to meet you, ' + pick.name + '! Now, how should your screens look? Move through the list — the monitor on the right shows each one.');
-          const r = await IF.choose(App.THEMES.map(t => ({ label: t.label, value: t.v })), {
+          IF.setStep(4, TOTAL); IF.clear(); IF.focus(''); IF.zoom('monitor');
+          await IF.type('Nice to meet you, ' + pick.name + '! How bright do you like your screens? Slide from light to dark and watch the monitor.');
+          const ordered = themesByBrightness();
+          const r = await IF.slide(ordered.map((o, i) => ({
+            value: o.t.v, label: o.t.label.replace(/\s*\(default\)/, ''), level: levelFor(i, ordered.length)
+          })), {
             back: true, current: pick.theme,
-            onFocus: (v) => { App.prefs.set('theme', v); App.applyTheme(); App.render(); }
+            track: 'linear-gradient(to right, ' + ordered.map(o => o.bg || '#888').join(', ') + ')',
+            onChange: (v) => { App.prefs.set('theme', v); App.applyTheme(); }
           });
-          IF.peek(false);
+          IF.zoom('');
           if (r.value) pick.theme = r.value;
           App.prefs.set('theme', pick.theme); App.applyTheme(); App.render();
           return r;
@@ -1051,8 +1690,8 @@ window.App = window.App || {};
         async () => {
           IF.setStep(5, TOTAL); IF.clear(); IF.focus('mascot');
           await IF.type('Something rustles behind the monitors… a little companion wants to keep you company on the desk. Who’ll it be?');
-          const r = await IF.choose(cfg.mascots.map(m => ({ label: m.emoji + '  ' + (m.label || ''), value: m.emoji })), {
-            back: true, current: pick.character,
+          const r = await IF.choose(cfg.mascots.map(m => ({ label: m.label || '', value: m.emoji, face: m.emoji })), {
+            back: true, current: pick.character, faces: true,
             onFocus: (v) => { IF.setMascot(v); IF.setSpeaker(mascotLabel(v)); }
           });
           if (r.value) pick.character = r.value;
@@ -1064,39 +1703,38 @@ window.App = window.App || {};
         },
         async () => {
           IF.setStep(6, TOTAL); IF.clear(); IF.focus('calendar');
-          await IF.type('Let’s plan your mornings. Which do you check first each day? I’ll pin them to the board in order.');
-          const order = [];
-          const pin = () => IF.setNotes(order.map(k => PRIORITY_TABS.find(t => t.key === k).label));
-          pin();
-          let left = availableTabs();
-          while (left.length > 1) {
-            const r = await IF.choose(left.map(t => ({ label: t.label, value: t.key, hint: t.blurb })), { back: true });
-            if (r.nav === 'back') {
-              if (!order.length) return r;
-              left = availableTabs().filter(t => !order.slice(0, -1).includes(t.key));
-              order.pop();
-              pin();
+          await IF.type('Let’s plan your mornings. Drag these into the order you check them each day — first on the left. I’ll pin them to the board.');
+          const label = (k) => (PRIORITY_TABS.find(t => t.key === k) || {}).label || k;
+          // arrange → pin → look; Back from the pinned board unpins them to rearrange
+          let order = pick.tabOrder || availableTabs().map(t => t.key);
+          for (;;) {
+            IF.setNotes([]);                       // the board's empty until they're pinned up
+            const r = await IF.arrange(order.map(k => {
+              const t = PRIORITY_TABS.find(x => x.key === k);
+              return { value: k, label: t.label, hint: t.blurb };
+            }), { back: true });
+            if (r.nav) return r;
+            order = r.value;
+            await IF.pinCards(Array.from(IF.input.querySelectorAll('.if-card')), order.map(label));
+            IF.clear();
+            await IF.type('All pinned up! Your tabs will sit in this order too.');
+            const c = await IF.choose([{ label: 'Looks good', value: 'go' }], { back: true });
+            if (c.nav === 'back') {
+              IF.clear();
+              await IF.type('No problem — move them around again.');
               continue;
             }
-            if (r.nav === 'skip') { order.push(...left.map(t => t.key)); left = []; break; }
-            if (r.nav === 'quit') return r;
-            order.push(r.value);
-            pin();
-            left = left.filter(t => t.key !== r.value);
-            if (left.length > 1) { IF.clear(); await IF.type('And next?'); }
+            if (c.nav === 'quit') return c;
+            break;
           }
-          order.push(...left.map(t => t.key));
-          pin();
           pick.tabOrder = order;
-          IF.clear();
-          await IF.type('All pinned up: ' + order.map(k => PRIORITY_TABS.find(t => t.key === k).label).join(' → ') + '. Your tabs will sit in this order too.');
-          await sleep(700);
-          await sleep(500);
           return { value: 'ok' };
         }
       ];
 
-      let i = 0;
+      // opts.step jumps straight to a wizard step (1–9) — for reviewing
+      const jump = Math.max(1, Math.min(9, opts.step || 1));
+      let i = Math.min(jump - 1, steps.length);
       while (i < steps.length) {
         const r = await steps[i]();
         if (r && r.nav === 'back') { i = Math.max(0, i - 1); continue; }
@@ -1125,14 +1763,21 @@ window.App = window.App || {};
 
       // ---- step 7: the dashboard, built by hand ----
       IF.setStep(7, TOTAL); IF.clear(); IF.focus('');
-      let wantDash = true;
-      if (redo) {
+      let wantDash = jump <= 7;
+      if (wantDash && redo) {
         await IF.type('Rebuild your dashboard from scratch?');
         const r = await IF.choose([{ label: 'Yes — start me with an empty one', value: 'yes' }, { label: 'No, keep it as it is', value: 'no' }]);
         wantDash = r.value === 'yes';
-      } else {
-        await IF.type('Next, your Dashboard. It’s empty — you choose what goes on it.');
-        await IF.choose([{ label: 'Show me', value: 'go' }]);
+      } else if (wantDash) {
+        // Back from here returns to the pinboard (step 6), then comes back
+        for (;;) {
+          IF.setStep(7, TOTAL); IF.clear(); IF.focus('');
+          await IF.type('Next, your Dashboard. It’s empty — you choose what goes on it.');
+          const c = await IF.choose([{ label: 'Show me', value: 'go' }], { back: true });
+          if (c.nav !== 'back') break;
+          await steps[5]();
+          save();
+        }
       }
       IF.close();
       if (wantDash) {
@@ -1142,8 +1787,18 @@ window.App = window.App || {};
         const r1 = await coach.step({
           title: 'Build your dashboard', progress: '7 / ' + TOTAL,
           text: 'Drag widgets from the tray onto the dashboard, then drag their edges to size them. Add as many as you like, then press ✓ Done.',
-          target: '.dash-tray', also: () => document.querySelectorAll('.dash-grid, .dash-tools'),
-          waitFor: () => !App.dashboard._editing, waitLabel: 'Press ✓ Done when you’re happy.',
+          target: '.dash-tray', also: '.dash-tools button', corner: true, peek: 'left',
+          // once they've started building, only Done stays lit
+          then: { target: '.dash-tools .btn-primary', also: null, peek: null },
+          // Done with nothing on it doesn't count — back into edit mode, and a nudge
+          waitFor: () => {
+            if (App.dashboard._editing) return false;
+            if (App.dashboard.getLayout().length) return true;
+            App.dashboard._editing = true; App.render();
+            coach.say('Pick at least one first!');
+            return false;
+          },
+          waitLabel: 'Press ✓ Done when you’re happy.',
           showMe: () => { App.dashboard.restoreDefault(); }
         });
         if (r1 !== 'end') {
@@ -1159,23 +1814,32 @@ window.App = window.App || {};
       }
 
       // ---- step 8: the tour ----
-      IF.open(); IF.setMascot(pick.character); IF.setSpeaker(mascotLabel(pick.character)); IF.setStep(8, TOTAL);
-      IF.setClap(pick.name); IF.setNotes(App.profile.tabOrder().map(k => (PRIORITY_TABS.find(t => t.key === k) || {}).label || k)); IF.focus('reel');
-      await IF.type(redo ? 'Take the tour again?' : 'Last thing: a quick tour of each tab, in the order you picked. It’s a sandbox — nothing you do in it is saved.');
-      const t = await IF.choose([{ label: 'Take the tour', value: 'go' }, { label: redo ? 'No thanks' : 'Not now', value: 'no' }]);
-      IF.close();
+      let t = { value: 'no' };
+      if (jump <= 8) {
+        IF.open(); IF.setMascot(pick.character); IF.setSpeaker(mascotLabel(pick.character)); IF.setStep(8, TOTAL);
+        IF.setClap(pick.name); IF.setNotes(App.profile.tabOrder().map(k => (PRIORITY_TABS.find(t => t.key === k) || {}).label || k)); IF.focus('reel');
+        await IF.type(redo ? 'Take the tour again?' : 'Last thing: a quick tour of each tab, in the order you picked. It’s a sandbox — nothing you do in it is saved.');
+        t = await IF.choose([{ label: 'Take the tour', value: 'go' }, { label: redo ? 'No thanks' : 'Not now', value: 'no' }]);
+        IF.close();
+      }
       let tourResult = 'skipped';
       if (t.value === 'go') tourResult = await runTour();
 
       // ---- step 9: home, and the first page of the journal ----
       App.state.view = 'dashboard';
       save({ setupDone: prof.setupDone || today, tourDone: tourResult === 'done' ? today : (prof.tourDone || null) });
-      if (!redo || t.value === 'go') App.journal.addNote(escHtml(fill(cfg.completion)));
+      // written once: a redo on the same day doesn't add a second copy
+      const note = escHtml(fill(cfg.completion));
+      const todays = ((App.state.data.journal || {})[App.state.user ? App.state.user.email : 'local'] || {})[today] || [];
+      if ((!redo || t.value === 'go') && !todays.some(b => b.content === note)) App.journal.addNote(note);
       App.render();
+      // the message is written in the Journal, so the Journal has to be there to read it
+      if (!App.dashboard.getLayout().some(t => t.id === 'journal')) App.dashboard.addWidget('journal', 6, 0);
       await sleep(250);
+      typeIntoJournal(note);            // plays while the bubble's up
       await coach.step({
         title: 'Setup complete', progress: '9 / ' + TOTAL,
-        text: fill(cfg.completion),
+        text: 'Wow.. Look at you!', face: true, noMascot: true,
         target: () => document.querySelector('.dw[data-wid="journal"]') || document.querySelector('.dash-hello'),
         next: 'Finish'
       });

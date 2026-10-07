@@ -5336,10 +5336,13 @@ body.has-draft #toast-root { bottom: 92px; }
 }
 .if-stage {
   position: relative; width: min(1280px, 100%, calc((100vh - 24px) * 16 / 9)); aspect-ratio: 16 / 9;
+  container-type: inline-size;
   border: 5px solid var(--ink); border-radius: 26px; overflow: hidden; background: var(--cream);
   box-shadow: 0 10px 0 rgba(43, 43, 43, .18), 0 24px 60px rgba(0, 0, 0, .25);
 }
-.if-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.if-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
+.if-svg .sc-vine { transform-box: fill-box; transform-origin: 50% 0; animation: if-vine 5s ease-in-out infinite; }
+@keyframes if-vine { 0%, 100% { transform: rotate(-1.4deg); } 50% { transform: rotate(1.4deg); } }
 .if-svg .sc-o * { stroke: var(--ink); stroke-width: 5; stroke-linejoin: round; stroke-linecap: round; }
 .if-svg .sc-o [stroke="none"] { stroke: none; }
 .if-svg .sc-t { font-family: 'Fredoka', 'Patrick Hand', sans-serif; font-weight: 600; fill: var(--ink); stroke: none !important; }
@@ -5347,15 +5350,21 @@ body.has-draft #toast-root { bottom: 92px; }
 .if-svg .sc-steam { animation: if-steam 2.4s ease-in-out infinite; }
 @keyframes if-steam { 0%, 100% { opacity: .2; transform: translateY(4px); } 50% { opacity: .55; transform: translateY(-4px); } }
 .if-svg .sc-note { animation: if-pin .35s cubic-bezier(.34, 1.56, .64, 1) backwards; }
+.if-svg .sc-note.still { animation: none; }
+/* a card in flight from the dialog to the board */
+/* (doubled class: it must out-rank .if-card's own position, or the copy
+   joins the page's layout and squeezes the scene while it flies) */
+.if-card.if-card-fly { position: fixed; z-index: 10; flex: none; max-width: none; margin: 0; rotate: 0deg; scale: 1; pointer-events: none; box-shadow: 0 12px 0 rgba(43, 43, 43, .3); transform-origin: center; }
 @keyframes if-pin { from { opacity: 0; transform: translateY(-20px) scale(.6); } }
-/* the prop being talked about wiggles */
+/* the prop being talked about wiggles, once */
 .if-svg g[id^="sc-"] { transform-box: fill-box; transform-origin: center bottom; }
 .if-screen[data-focus="calendar"] #sc-calendar,
 .if-screen[data-focus="clapper"] #sc-clapper,
 .if-screen[data-focus="monitor"] #sc-monitor,
 .if-screen[data-focus="timeline"] #sc-timeline,
-.if-screen[data-focus="reel"] #sc-reel { animation: if-wiggle 2.2s ease-in-out infinite; }
-@keyframes if-wiggle { 0%, 70%, 100% { transform: none; } 76% { transform: rotate(-2deg) scale(1.03); } 84% { transform: rotate(2deg) scale(1.03); } 92% { transform: rotate(-1deg); } }
+.if-screen[data-focus="reel"] #sc-reel { animation: if-wiggle .9s ease-in-out .3s 1; }
+/* one wiggle when the step starts — enough to catch the eye, then it settles */
+@keyframes if-wiggle { 0%, 100% { transform: none; } 20% { transform: rotate(-2deg) scale(1.03); } 45% { transform: rotate(2deg) scale(1.03); } 70% { transform: rotate(-1deg); } }
 .if-screen[data-focus="monitor"] #sc-monitor .sc-theme rect:first-child { filter: drop-shadow(0 0 10px rgba(255, 220, 120, .8)); }
 
 /* film strip progress, top left */
@@ -5372,93 +5381,243 @@ body.has-draft #toast-root { bottom: 92px; }
 .if-frame.done { background: var(--peach); color: var(--ink); }
 .if-frame.now { background: #ffd166; color: var(--ink); transform: scale(1.12); }
 
-/* the companion, sitting on the desk */
+/* the companion, hiding behind the timeline monitor. The clip box ends on
+   the monitor's top edge, so a mascot pushed down below that line is simply
+   "behind the screen" — and pops up over it like a surprise. */
+.if-mascot-clip {
+  position: absolute; left: 50.75%; width: 26%; top: 0; height: 32.15%;
+  overflow: hidden; pointer-events: none; z-index: 2;
+}
 .if-mascot {
-  position: absolute; left: 63.75%; top: 32.6%; transform: translate(-50%, -100%);
-  font-size: clamp(34px, 6.2vw, 78px); line-height: 1; z-index: 2;
+  position: absolute; left: 50%; bottom: 0; transform: translate(-50%, 115%);
+  font-size: clamp(34px, 6.2cqw, 78px); line-height: 1;
   filter: drop-shadow(0 5px 0 rgba(43, 43, 43, .18)); opacity: 0;
+  transition: transform .17s ease-in, opacity .3s;
 }
 .if-mascot.on { opacity: 1; }
-.if-mascot.hop { animation: if-hop .5s cubic-bezier(.34, 1.56, .64, 1), if-sway 3s ease-in-out .5s infinite; }
-.if-mascot.stand-in { opacity: .8; font-size: clamp(28px, 4.6vw, 58px); }
-@keyframes if-hop { 0% { transform: translate(-50%, -40%) scale(.4); } 100% { transform: translate(-50%, -100%); } }
-@keyframes if-sway { 0%, 100% { transform: translate(-50%, -100%) rotate(-3deg); } 50% { transform: translate(-50%, -104%) rotate(3deg); } }
+.if-mascot.duck { transform: translate(-50%, 115%); }
+.if-mascot.up { transform: translate(-50%, 0); animation: if-surprise .55s cubic-bezier(.34, 1.7, .64, 1); }
+@keyframes if-surprise {
+  0% { transform: translate(-50%, 115%) scale(.9, 1.1); }
+  60% { transform: translate(-50%, -14%) scale(1.08, .94); }
+  100% { transform: translate(-50%, 0); }
+}
+/* then it settles, sitting on top of the monitor — the clip lets go so
+   nothing of it is cut off; it rests on the bezel and rocks a little */
+.if-mascot-clip.front { overflow: visible; }
+.if-mascot.float {
+  transform: translate(-50%, var(--sit, 6%)); transform-origin: 50% 100%;
+  transition: transform .25s ease-out;
+  animation: if-rock 3.2s ease-in-out .3s infinite;
+}
+@keyframes if-rock { 0%, 100% { transform: translate(-50%, var(--sit, 6%)) rotate(-2.5deg); } 50% { transform: translate(-50%, var(--sit, 6%)) rotate(2.5deg); } }
 .if-mascot .gd-mascot-say { right: auto; left: 50%; transform-origin: bottom left; }
 
-/* the dialog box */
+/* the dialog box. Everything in it is sized off the stage's own width (cqw),
+   so the box keeps the same proportions — and the same amount of text fits —
+   whatever size the window is, rather than growing a scrollbar. */
 .if-box {
-  position: absolute; left: 50%; bottom: 3.5%; transform: translateX(-50%);
-  width: min(78%, 900px); max-height: 52%; display: flex; flex-direction: column;
-  background: var(--paper); border: 5px solid var(--ink); border-radius: 30px;
+  position: absolute; left: 50%; bottom: 4%; transform: translateX(-50%);
+  width: 78%; max-height: 64%; display: flex; flex-direction: column;
+  background: var(--paper); border: 5px solid var(--ink); border-radius: 2.4cqw;
   box-shadow: 0 0 0 7px var(--paper), 0 8px 0 7px rgba(43, 43, 43, .12);
-  padding: 26px 30px 26px;
+  padding: 2.2cqw 2.4cqw 2.4cqw;
 }
 .if-tag {
-  position: absolute; top: -24px; left: 34px; padding: 0 12px; background: var(--paper);
-  font: 700 30px/1.2 'Fredoka', sans-serif; color: var(--lilac); letter-spacing: .5px;
-  -webkit-text-stroke: 1px rgba(43, 43, 43, .25);
+  position: absolute; top: 0; left: 2.4cqw; transform: translateY(-62%);
+  padding: .15cqw 1.3cqw; background: var(--paper); border: 3px solid var(--ink); border-radius: 999px;
+  box-shadow: 0 3px 0 var(--ink);
+  font: 700 max(15px, 2cqw)/1.15 'Fredoka', sans-serif; color: var(--lilac); letter-spacing: .5px;
 }
-.if-log { overflow-y: auto; min-height: 2.4em; font-size: clamp(19px, 2.1vw, 27px); line-height: 1.3; }
-.if-line { margin: 0 0 6px; white-space: pre-wrap; }
+.if-tag.pop { animation: if-tag-pop .3s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes if-tag-pop { from { transform: translateY(-62%) scale(.7); } }
+.if-tag:empty { display: none; }
+.if-log { font-size: max(15px, 1.85cqw); line-height: 1.3; }
+.if-line { margin: 0 0 .5cqw; white-space: pre-wrap; }
 .if-line:last-child::after { content: '▾'; display: inline-block; margin-left: 6px; color: var(--lilac); animation: if-bounce 1s ease-in-out infinite; }
 @keyframes if-bounce { 50% { transform: translateY(4px); } }
-.if-input { margin-top: 10px; overflow-y: auto; padding: 4px 2px 6px; }
-.if-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
-.if-choices.many { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-.if-choices.many .if-choice { padding: 4px 10px 4px 5px; font-size: 16px; box-shadow: 0 2px 0 var(--ink); border-width: 2.5px; }
-.if-choices.many .if-num { width: 22px; height: 22px; font-size: 12px; }
+.if-input { margin-top: 1cqw; padding: 2px 2px .4cqw; }
+/* the character step: just faces, which react when hovered */
+.if-faces { display: flex; flex-wrap: wrap; justify-content: center; gap: 1.6cqw; padding: .6cqw 0 .4cqw; }
+.if-face {
+  all: unset; cursor: pointer; width: max(54px, 6.4cqw); height: max(54px, 6.4cqw); border-radius: 50%;
+  display: grid; place-items: center; position: relative;
+  transition: background .15s, transform .15s;
+}
+.if-face::after {   /* a soft spotlight on the floor under whoever's picked out */
+  content: ''; position: absolute; left: 15%; right: 15%; bottom: 4%; height: 14%; border-radius: 50%;
+  background: rgba(43, 43, 43, .12); transition: background .15s, transform .15s;
+}
+.if-face-emoji { font-size: max(34px, 4.4cqw); line-height: 1; position: relative; z-index: 1; filter: grayscale(.35) opacity(.85); transition: filter .2s; }
+.if-face.on { background: radial-gradient(circle, #fff3c4 0 55%, transparent 70%); }
+.if-face.on::after { background: rgba(185, 140, 230, .45); transform: scaleX(1.15); }
+.if-face.on .if-face-emoji { filter: none; }
+.if-face.react-0.on .if-face-emoji { animation: if-r-hop .55s cubic-bezier(.34, 1.56, .64, 1); }
+.if-face.react-1.on .if-face-emoji { animation: if-r-wiggle .6s ease-in-out; }
+.if-face.react-2.on .if-face-emoji { animation: if-r-spin .6s cubic-bezier(.34, 1.56, .64, 1); }
+.if-face.react-3.on .if-face-emoji { animation: if-r-squish .55s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes if-r-hop { 0% { transform: none; } 40% { transform: translateY(-30%) scale(1.15); } 100% { transform: scale(1.12); } }
+@keyframes if-r-wiggle { 0%, 100% { transform: scale(1.12); } 20% { transform: rotate(-14deg) scale(1.15); } 45% { transform: rotate(12deg) scale(1.15); } 70% { transform: rotate(-6deg) scale(1.12); } }
+@keyframes if-r-spin { from { transform: rotate(-360deg) scale(.8); } to { transform: scale(1.12); } }
+@keyframes if-r-squish { 0% { transform: none; } 30% { transform: scale(1.3, .75); } 60% { transform: scale(.9, 1.2) translateY(-12%); } 100% { transform: scale(1.12); } }
+.if-face.on .if-face-emoji { transform: scale(1.12); }
+
+/* choices are pills the size of their own label, wrapping onto new rows */
+.if-choices { display: flex; flex-wrap: wrap; gap: .7cqw .8cqw; }
 .if-choice {
-  all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 10px;
-  padding: 7px 14px 7px 7px; border: 3px solid var(--ink); border-radius: 999px; background: #fff;
-  font: 500 17px/1.2 'Patrick Hand', sans-serif; color: var(--ink);
+  all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; gap: .7cqw;
+  padding: .45cqw 1.2cqw .45cqw .45cqw; border: 3px solid var(--ink); border-radius: 999px; background: #fff;
+  font: 500 max(14px, 1.45cqw)/1.15 'Patrick Hand', sans-serif; color: var(--ink);
   box-shadow: 0 3px 0 var(--ink); transition: transform .12s, background .12s, box-shadow .12s;
 }
 .if-choice.on { background: #ffe9a8; transform: translateY(-2px); box-shadow: 0 5px 0 var(--ink); }
 .if-choice:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
+.if-choices.many .if-choice { font-size: max(13px, 1.3cqw); padding: .3cqw 1cqw .3cqw .35cqw; border-width: 2.5px; box-shadow: 0 2px 0 var(--ink); }
 .if-num {
-  flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
-  background: var(--lilac); color: #fff; font: 700 14px/1 'Fredoka', sans-serif; border: 2px solid var(--ink);
+  flex: none; width: max(20px, 1.9cqw); height: max(20px, 1.9cqw); border-radius: 50%; display: grid; place-items: center;
+  background: var(--lilac); color: #fff; font: 700 max(11px, 1cqw)/1 'Fredoka', sans-serif; border: 2px solid var(--ink);
 }
 .if-lbl { display: flex; flex-direction: column; }
-.if-hint { font-size: 13px; opacity: .6; }
-.if-ask { display: flex; align-items: center; gap: 10px; }
+.if-hint { font-size: max(11px, 1cqw); opacity: .6; }
+.if-ask { display: flex; align-items: center; gap: 1cqw; }
 .if-field {
-  all: unset; flex: 1; box-sizing: border-box; padding: 8px 16px; border: 3px solid var(--ink); border-radius: 999px;
-  background: #fff; font: 22px/1.2 'Patrick Hand', sans-serif; color: var(--ink);
+  all: unset; flex: 0 1 26cqw; box-sizing: border-box; padding: .6cqw 1.3cqw; border: 3px solid var(--ink); border-radius: 999px;
+  background: #fff; font: max(16px, 1.7cqw)/1.2 'Patrick Hand', sans-serif; color: var(--ink);
 }
 .if-field::placeholder { color: rgba(43, 43, 43, .35); }
-.if-enter { font: 600 14px 'Fredoka', sans-serif; opacity: .55; }
+.if-enter { font: 600 max(11px, 1.1cqw) 'Fredoka', sans-serif; opacity: .55; }
 /* Back / Skip / Quit sit in the box's bottom border, like a game's menu bar */
 .if-foot {
-  position: absolute; left: 50%; bottom: -15px; transform: translateX(-50%);
-  display: flex; gap: 6px; padding: 0 10px; background: var(--paper); white-space: nowrap;
+  position: absolute; left: 50%; bottom: 0; transform: translate(-50%, 55%);
+  display: flex; gap: .3cqw; padding: .15cqw .7cqw; white-space: nowrap;
+  background: var(--paper); border: 3px solid var(--ink); border-radius: 999px; box-shadow: 0 3px 0 var(--ink);
+  font: 600 max(12px, 1.15cqw)/1.2 'Fredoka', sans-serif;
 }
 .if-key {
-  all: unset; cursor: pointer; padding: 2px 10px; font: 600 15px/1.4 'Fredoka', sans-serif; letter-spacing: 1.5px; color: var(--ink);
+  all: unset; cursor: pointer; padding: 0 .8cqw; font: inherit; letter-spacing: 1.5px; color: var(--ink);
   transition: transform .35s cubic-bezier(.34, 1.56, .64, 1), color .15s;
 }
 .if-key:hover { color: var(--lilac); }
 .if-key.off { opacity: .25; cursor: default; }
 .if-skip { position: relative; }
-.if-skip.gd-dodged { background: var(--paper); border-radius: 999px; }
+.if-foot:empty { display: none; }
+.if-key.gd-sure { color: #e85d5d; }   /* asked once — the next press means it */
+/* with no companion chosen yet, Skip's "are you sure?" comes from the menu bar */
 
-/* theme step: the box moves left so the preview monitor stays in view */
-.if-peek .if-box { left: 3%; transform: none; width: 64%; }
-/* theme step on a narrow window: nothing to change, the monitor previews it */
+/* theme step: the camera pushes in on the right-hand monitor */
+.if-svg { transform-origin: 85.6% 42.8%; transition: transform 1s cubic-bezier(.65, 0, .35, 1); }
+.if-screen[data-zoom="monitor"] .if-svg { transform: translate(-35.6%, -16.5%) scale(1.95); }
+.if-mascot { transition: opacity .3s; }
+.if-screen[data-zoom] .if-mascot.on { opacity: 0; }
+.if-screen[data-zoom="monitor"] .if-strip { opacity: 0; }
+.if-strip { transition: opacity .3s; }
+
+/* the tab-priority step: sticky notes to drag into order, first on the left */
+.if-arrange-wrap { display: flex; flex-direction: column; align-items: center; gap: .8cqw; }
+.if-arrange-ends { display: flex; justify-content: space-between; width: 100%; font: 600 max(11px, 1cqw)/1 'Fredoka', sans-serif; opacity: .45; letter-spacing: 1px; text-transform: uppercase; }
+.if-arrange { display: flex; gap: 1cqw; justify-content: center; width: 100%; touch-action: none; }
+.if-card {
+  all: unset; box-sizing: border-box; position: relative; cursor: grab; flex: 1 1 0; max-width: 15cqw; min-height: 7.2cqw;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .3cqw; text-align: center;
+  padding: 1.3cqw .8cqw .8cqw; background: var(--note); border: 3px solid var(--ink); border-radius: .6cqw;
+  box-shadow: 0 4px 0 var(--ink); rotate: var(--tilt); user-select: none;
+  transition: translate .22s ease, rotate .15s, box-shadow .15s, scale .15s;
+}
+.if-card:hover, .if-card:focus-visible { rotate: 0deg; scale: 1.04; outline: none; }
+.if-card:focus-visible { box-shadow: 0 4px 0 var(--ink), 0 0 0 4px var(--lilac); }
+.if-card.dragging { cursor: grabbing; rotate: 3deg; scale: 1.08; z-index: 3; transition: rotate .15s, scale .15s; box-shadow: 0 10px 0 rgba(43, 43, 43, .35); }
+.if-card-pin { position: absolute; top: -.6cqw; left: 50%; translate: -50% 0; width: 1.3cqw; height: 1.3cqw; min-width: 11px; min-height: 11px; border-radius: 50%; background: #e85d5d; border: 2px solid var(--ink); }
+.if-card-num { font: 700 max(14px, 1.7cqw)/1 'Fredoka', sans-serif; color: var(--lilac); -webkit-text-stroke: .5px rgba(43, 43, 43, .3); }
+.if-card-lbl { font: 600 max(13px, 1.35cqw)/1.1 'Fredoka', sans-serif; }
+.if-card-hint { font: max(11px, 1cqw)/1.15 'Patrick Hand', sans-serif; opacity: .6; }
+
+/* behind the dialog box's top edge: where the companion pops up while the
+   camera is pushed in (the box's top border is the hiding line) */
+.if-box-peek {
+  position: absolute; right: 9%; bottom: calc(100% + 5px); width: max(64px, 7cqw); height: max(60px, 6.6cqw);
+  overflow: hidden; pointer-events: none;
+}
+.if-box-mascot {
+  position: absolute; left: 0; right: 0; bottom: 0; text-align: center;
+  font-size: max(40px, 4.8cqw); line-height: 1; transform: translateY(110%);
+  transition: transform .2s ease-in; filter: drop-shadow(0 4px 0 rgba(43, 43, 43, .18));
+}
+.if-box-mascot.up { transform: translateY(14%); transition: transform .45s cubic-bezier(.34, 1.7, .64, 1); }
+.if-box-say { position: absolute; right: 9%; bottom: calc(100% + 5px + max(52px, 5.8cqw)); width: max(64px, 7cqw); height: 0; pointer-events: none; }
+
+/* the light-to-dark slider */
+.if-slider { display: flex; flex-direction: column; align-items: center; gap: .8cqw; padding-top: .3cqw; }
+.if-lvl-row { display: flex; align-items: baseline; gap: 1.2cqw; }
+.if-lvl { font: 700 max(18px, 2.3cqw)/1.1 'Fredoka', sans-serif; color: var(--lilac); -webkit-text-stroke: 1px rgba(43, 43, 43, .25); }
+.if-lvl.pop { animation: if-lvl-pop .3s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes if-lvl-pop { from { transform: scale(.8); } }
+.if-lvl-name { font: max(14px, 1.5cqw)/1 'Patrick Hand', sans-serif; opacity: .7; }
+.if-range-row { display: flex; align-items: center; gap: 1cqw; width: 100%; }
+.if-end { flex: none; width: max(38px, 4.4cqw); height: max(38px, 4.4cqw); display: grid; place-items: center; filter: drop-shadow(0 3px 0 rgba(43, 43, 43, .25)); }
+.if-end svg { width: 100%; height: 100%; overflow: visible; }
+.if-end .sc-o, .if-end .sc-o * { stroke: var(--ink); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.if-end .sc-o [stroke="none"] { stroke: none; }
+.if-range-wrap { position: relative; flex: 1; }
+.if-range {
+  -webkit-appearance: none; appearance: none; width: 100%; height: max(16px, 1.6cqw); margin: 0; display: block;
+  border: 3px solid var(--ink); border-radius: 999px; background: var(--track, linear-gradient(to right, #fff, #111));
+  box-shadow: 0 3px 0 var(--ink); cursor: pointer; outline: none;
+}
+.if-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: max(26px, 2.8cqw); height: max(26px, 2.8cqw); border-radius: 50%;
+  background: #ffd166; border: 3px solid var(--ink); box-shadow: 0 3px 0 var(--ink); cursor: grab;
+}
+.if-range::-moz-range-thumb {
+  width: max(26px, 2.8cqw); height: max(26px, 2.8cqw); border-radius: 50%;
+  background: #ffd166; border: 3px solid var(--ink); box-shadow: 0 3px 0 var(--ink); cursor: grab;
+}
+.if-range:focus-visible::-webkit-slider-thumb { outline: 3px solid var(--lilac); outline-offset: 2px; }
+.if-ticks { display: flex; justify-content: space-between; padding: 4px max(13px, 1.4cqw) 0; pointer-events: none; }
+.if-ticks span { width: 3px; height: 7px; border-radius: 2px; background: var(--ink); opacity: .35; }
+.if-slide-go { margin-top: .3cqw; }
 @media (max-width: 720px) {
-  .if-box { width: 92%; padding: 22px 18px; }
-  .if-tag { font-size: 22px; top: -18px; }
+  .if-box { width: 92%; }
   .if-strip { display: none; }
 }
 
 /* ---- the coach ---- */
 .gd-layer { position: fixed; inset: 0; z-index: 800; pointer-events: none; --ink: #2b2b2b; --paper: #fffdf5; --lilac: #b98ce6; }
-.gd-layer.gd-nohole { background: rgba(20, 16, 10, .55); }
-.gd-hole {
-  position: fixed; border-radius: 14px; pointer-events: none;
-  box-shadow: 0 0 0 4px #ffd166, 0 0 0 7px var(--ink), 0 0 0 9999px rgba(20, 16, 10, .66);
-  transition: left .25s, top .25s, width .25s, height .25s;
+/* with nothing to point at, a soft wash so the bubble reads as the focus */
+.gd-layer.gd-nohole { background: rgba(20, 16, 10, .35); }
+/* the highlight: a warm glow behind the element itself — it moves with the
+   page because it IS the page */
+.gd-glow {
+  box-shadow: 0 0 0 3px #ffd166, 0 0 16px 6px rgba(255, 209, 102, .85), 0 0 46px 16px rgba(255, 160, 60, .45) !important;
+  animation: gd-glow 1.8s ease-in-out infinite !important;
+  transition: box-shadow .4s;
 }
+/* anything being pointed at is shown, even controls that normally only
+   appear on hover (a widget's pop-out button) — you can't find what's hidden */
+.gd-glow { opacity: 1 !important; visibility: visible !important; }
+.gd-glow.gd-round { border-radius: 14px; }
+/* a step that holds the page still */
+body.gd-locked #view, body.gd-locked .gantt-scroll { overflow: hidden !important; }
+/* once they're using it, the glow settles to a soft, steady outline */
+body.gd-calm .gd-glow { animation: none !important; box-shadow: 0 0 0 2px rgba(255, 209, 102, .55), 0 0 12px 3px rgba(255, 209, 102, .22) !important; }
+@keyframes gd-glow {
+  0%, 100% { box-shadow: 0 0 0 3px #ffd166, 0 0 14px 5px rgba(255, 209, 102, .8), 0 0 40px 12px rgba(255, 160, 60, .4); }
+  50% { box-shadow: 0 0 0 3px #ffd166, 0 0 22px 9px rgba(255, 209, 102, .95), 0 0 60px 22px rgba(255, 160, 60, .5); }
+}
+/* the mascot's hiding place: a box whose cut edge sits on the element's edge */
+.gd-peek { position: fixed; width: 58px; height: 52px; overflow: hidden; pointer-events: none; }
+.gd-peek .gd-mascot {
+  position: absolute; left: 0; width: 58px; text-align: center; font-size: 44px; line-height: 52px;
+  filter: drop-shadow(0 3px 0 rgba(43, 43, 43, .3));
+  transition: transform .5s cubic-bezier(.34, 1.56, .64, 1);
+}
+/* over the top edge: rises from behind; under the bottom edge: drops out, upside down */
+.gd-peek[data-from="top"] .gd-mascot { top: 0; transform: translateY(100%); }
+.gd-peek[data-from="top"].in .gd-mascot { transform: translateY(18%); animation: gd-peek-top 2.8s ease-in-out .6s infinite; }
+.gd-peek[data-from="bottom"] .gd-mascot { top: 0; transform: translateY(-100%) rotate(180deg); }
+.gd-peek[data-from="bottom"].in .gd-mascot { transform: translateY(-18%) rotate(180deg); animation: gd-peek-bot 2.8s ease-in-out .6s infinite; }
+@keyframes gd-peek-top { 0%, 100% { transform: translateY(18%) rotate(-4deg); } 50% { transform: translateY(8%) rotate(4deg); } }
+@keyframes gd-peek-bot { 0%, 100% { transform: translateY(-18%) rotate(176deg); } 50% { transform: translateY(-8%) rotate(184deg); } }
+.gd-say-anchor { position: fixed; width: 58px; height: 0; pointer-events: none; }
 .gd-bubble {
   position: fixed; pointer-events: auto; width: min(370px, calc(100vw - 24px));
   background: var(--paper); color: var(--ink); border: 4px solid var(--ink);
@@ -5468,14 +5627,22 @@ body.has-draft #toast-root { bottom: 92px; }
 .gd-bubble.gd-ok { background: #e2f7d6; }
 .gd-b-head { position: absolute; top: 6px; right: 10px; display: flex; align-items: center; gap: 6px; }
 .gd-b-title {
-  position: absolute; top: -17px; left: 18px; padding: 0 8px; background: var(--paper);
-  font: 700 21px/1.2 'Fredoka', sans-serif; color: var(--lilac);
+  position: absolute; top: 0; left: 16px; transform: translateY(-62%);
+  padding: 1px 12px; background: var(--paper); border: 3px solid var(--ink); border-radius: 999px; box-shadow: 0 3px 0 var(--ink);
+  font: 700 18px/1.2 'Fredoka', sans-serif; color: var(--lilac);
 }
 .gd-b-prog { margin-left: auto; font: 600 12px 'Fredoka', sans-serif; opacity: .5; }
 .gd-b-x { all: unset; cursor: pointer; opacity: .5; padding: 0 4px; font-size: 16px; }
 .gd-b-x:hover { opacity: 1; }
 .gd-b-text { margin-top: 2px; }
 .gd-b-wait { margin-top: 6px; font-size: 15px; opacity: .6; }
+.gd-b-face-row { display: flex; align-items: center; gap: 12px; }
+.gd-b-face { font-size: 46px; line-height: 1; animation: gd-face-hop 1.6s ease-in-out infinite; }
+@keyframes gd-face-hop { 0%, 100% { transform: translateY(0) rotate(-4deg); } 50% { transform: translateY(-4px) rotate(4deg); } }
+.gd-b-faced .gd-b-text { font-size: 22px; }
+.gd-b-faced { width: auto; min-width: 260px; }
+.jr-block.gd-typing::after { content: '▌'; color: var(--accent); animation: gd-blink 1s steps(1) infinite; }
+@keyframes gd-blink { 50% { opacity: 0; } }
 .gd-b-acts { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 12px; }
 .gd-b-acts button {
   border: 3px solid var(--ink); background: #fff; color: var(--ink); border-radius: 999px;
@@ -5484,16 +5651,6 @@ body.has-draft #toast-root { bottom: 92px; }
 .gd-b-acts button:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
 .gd-b-acts .gd-b-next { background: #ffd166; }
 .gd-b-acts .gd-b-show { background: #e6d4ff; }
-.gd-b-acts .gd-b-skip { margin-right: auto; }
-.gd-b-skip { transition: transform .35s cubic-bezier(.34, 1.56, .64, 1); position: relative; }
-.gd-mascot {
-  position: fixed; font-size: 46px; line-height: 1; pointer-events: none;
-  filter: drop-shadow(0 4px 0 rgba(43, 43, 43, .3));
-  transition: left .3s, top .3s;
-}
-.gd-mascot.pop { animation: gd-pop .45s cubic-bezier(.34, 1.56, .64, 1), gd-bob 2.6s ease-in-out .45s infinite; }
-@keyframes gd-pop { from { transform: translateY(30px) scale(.3); opacity: 0; } to { transform: none; opacity: 1; } }
-@keyframes gd-bob { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-5px) rotate(3deg); } }
 .gd-mascot-say {
   position: absolute; bottom: calc(100% + 8px); right: 0; white-space: nowrap;
   background: #fffdf5; color: #2b2b2b; font: 19px/1.2 'Patrick Hand', sans-serif; text-shadow: none;
