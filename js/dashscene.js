@@ -12,7 +12,7 @@
    window centred on the wall, behind everything:
      edit    the edit suite: two monitors, fairy lights, the wizard's ivy,
              a plant, a film reel, a little shelf with snapshots
-     loft    a brick loft office: a 3 m factory window, ceiling duct and
+     loft    a brick loft office: a 2.2 m factory window, ceiling duct and
              pendants, a filing cabinet, binders, a printer
      study   a sunset study: warm walls, a tall sunset window and sun
              shaft, a shelf with trailing pothos, a bookcase, a laptop
@@ -241,8 +241,10 @@ window.App = window.App || {};
       // brick courses, offset every other row, in a soft terracotta
       wall: `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="32"><rect width="64" height="32" fill="#e6c3b0"/><g fill="none" stroke="#f3dccf" stroke-width="2"><path d="M0 1H64M0 17H64M1 1V17M33 17V32"/></g></svg>')}") repeat, #e6c3b0`,
       floor: '#b9bec4', top: loftPipe,
-      // the big steel-framed factory window, 3 m wide, the city outside
-      back: () => piece('ds-window', '0 0 400 236', { h: 185, y: 70, cx: 0.5 }, `
+      // the steel-framed factory window, 2.2 m wide, the city outside. Every
+      // window's top stops at about 205 cm, so the wall above it is clear
+      // for the clock, poster and shelves (they hang from 222 cm up)
+      back: () => piece('ds-window', '0 0 400 236', { h: 130, y: 75, cx: 0.5 }, `
         <rect x="10" y="10" width="380" height="204" rx="6" fill="#5a6470"/>
         <rect class="ds-glass" x="24" y="24" width="352" height="176" fill="#bfe3f7"/>
         <g stroke="none"><ellipse cx="90" cy="64" rx="34" ry="10" fill="#fff"/><ellipse cx="270" cy="88" rx="26" ry="8" fill="#fff"/>
@@ -286,7 +288,7 @@ window.App = window.App || {};
       light: 'linear-gradient(118deg, transparent 52%, rgba(255, 186, 110, .5) 60%, rgba(255, 186, 110, .2) 72%, transparent 80%)',
       floor: '#8a6a6e',
       // the tall window the sun's coming in through, the city going gold
-      back: () => piece('ds-window', '0 0 230 250', { h: 170, y: 85, cx: 0.5 }, `
+      back: () => piece('ds-window', '0 0 230 250', { h: 120, y: 85, cx: 0.5 }, `
         <defs><linearGradient id="ds-sunset" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe2a8"/><stop offset=".6" stop-color="#ffb37a"/><stop offset="1" stop-color="#f28c6b"/></linearGradient></defs>
         <rect x="10" y="10" width="210" height="226" rx="6" fill="#fffdf5"/>
         <rect class="ds-glass" x="24" y="24" width="182" height="198" fill="url(#ds-sunset)"/>
@@ -375,7 +377,7 @@ window.App = window.App || {};
       wall: 'linear-gradient(180deg, #b4c1e8 0%, #a5b3df 100%)',
       floor: '#7f72bd',
       // the frosty window, moonlit, with pines outside
-      back: () => piece('ds-window', '0 0 300 236', { h: 160, y: 95, cx: 0.5 }, `
+      back: () => piece('ds-window', '0 0 300 236', { h: 115, y: 90, cx: 0.5 }, `
         <rect x="10" y="10" width="280" height="206" rx="6" fill="#fffdf5"/>
         <rect class="ds-glass" x="26" y="26" width="248" height="174" fill="#def5f4"/>
         <circle cx="220" cy="70" r="18" fill="#fffef0" stroke="none"/>
