@@ -2418,12 +2418,6 @@ window.App = window.App || {};
           prefRow('Hide completed episodes', 'hideDoneBoard', false, () => App.render())
         ],
         dashboard: () => [
-          prefRow('Room background', 'dashScene', true, () => App.dashScene.sync()),
-          selRow('Room', 'dashRoom', 'edit', App.dashScene.ROOMS, () => App.dashScene.rebuild()),
-          actionRow('Wall poster', [
-            { label: 'Change…', run: () => App.dashScene.pickPoster() },
-            { label: 'Reset', run: () => App.dashScene.resetPoster() }
-          ]),
           actionRow('Widget layout', [
             { label: 'Reset to default', run: () => {
               App.dashboard.restoreDefault();
@@ -2463,10 +2457,42 @@ window.App = window.App || {};
         el('button.prefs-btn', { onclick: (e) => { e.stopPropagation(); this.close(); App.guide.start({ redo: true }); } }, 'Start')
       ]);
 
+      /* On the Dashboard the room and the theme are one section, since the
+         theme sets the room's lighting: the room picker shares a row with
+         its on/off switch, and the picker and the wall poster row only
+         show while the room is on. */
+      const roomRows = [];
+      if (view === 'dashboard') {
+        const on = App.prefs.get('dashScene', true);
+        const toggle = () => { App.prefs.set('dashScene', !on); this.open(); App.dashScene.sync(); };
+        const inline = [];
+        if (on) {
+          const sel = el('select.prefs-select');
+          App.dashScene.ROOMS.forEach(o => {
+            const opt = document.createElement('option');
+            opt.value = o.v; opt.textContent = o.label;
+            if (o.v === App.prefs.get('dashRoom', 'edit')) opt.selected = true;
+            sel.appendChild(opt);
+          });
+          sel.addEventListener('click', e => e.stopPropagation());
+          sel.addEventListener('change', () => { App.prefs.set('dashRoom', sel.value); App.dashScene.rebuild(); });
+          inline.push(sel);
+        }
+        inline.push(el('span.switch' + (on ? '.on' : ''), { title: on ? 'Turn the room off' : 'Turn the room on', onclick: e => { e.stopPropagation(); toggle(); } }, el('span.knob')));
+        roomRows.push(el('.prefs-row', { style: { cursor: 'default' } }, [
+          el('.prefs-row-title', null, on ? 'Room' : 'Room background'),
+          el('.prefs-inline', null, inline)
+        ]));
+        if (on) roomRows.push(actionRow('Wall poster', [
+          { label: 'Change…', run: () => App.dashScene.pickPoster() },
+          { label: 'Reset', run: () => App.dashScene.resetPoster() }
+        ]));
+      }
+
       const pop = el('.prefs-pop', { onclick: e => e.stopPropagation() },
         [el('.prefs-title', null, label + ' preferences')]
           .concat(rows.length ? rows : [el('.prefs-note', null, 'No display options for this view.')])
-          .concat([el('.prefs-title.sep', null, 'Appearance'), themeRow])
+          .concat([el('.prefs-title.sep', null, roomRows.length ? 'Room & appearance' : 'Appearance')], roomRows, [themeRow])
           .concat(App.guide && !App.guide.running ? [el('.prefs-title.sep', null, 'Setup'), redoRow] : [])
           .concat(App.api.online ? [el('.prefs-title.sep', null, 'AI features'), byokRow] : []));
       const r = document.getElementById('brand-logo').getBoundingClientRect();
