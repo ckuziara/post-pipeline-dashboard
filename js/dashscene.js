@@ -12,7 +12,7 @@
    window centred on the wall, behind everything:
      edit    the edit suite: two monitors, fairy lights, the wizard's ivy,
              a plant, a film reel, a little shelf with snapshots
-     loft    a brick loft office: a 2.2 m factory window, ceiling duct and
+     loft    a brick loft office: a 1.9 m factory window, ceiling duct and
              pendants, a filing cabinet, binders, a printer
      study   a sunset study: warm walls, a tall sunset window and sun
              shaft, a shelf with trailing pothos, a bookcase, a laptop
@@ -80,6 +80,8 @@ window.App = window.App || {};
   const spec_aspect = n => { const v = n.getAttribute('viewBox').split(' ').map(Number); return v[2] / v[3]; };
   // floor-to-ceiling height the view's wall stands for, in cm
   const CEILING = 300;
+  const ROOM_W = 460;      // cm of room a wide view should span, at most…
+  const MAX_ZOOM = 1.35;   // …so long as that's no more than this past the height's scale
   const FLOOR_PX = 34;   // the strip of floor along the bottom (.ds-floor)
 
   /* The main desk, lower middle, 75 cm to the desktop, with whatever this
@@ -242,10 +244,10 @@ window.App = window.App || {};
       // brick courses, offset every other row, in a soft terracotta
       wall: `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="32"><rect width="64" height="32" fill="#e6c3b0"/><g fill="none" stroke="#f3dccf" stroke-width="2"><path d="M0 1H64M0 17H64M1 1V17M33 17V32"/></g></svg>')}") repeat, #e6c3b0`,
       floor: '#b9bec4', top: loftPipe,
-      // the steel-framed factory window, 2.2 m wide, the city outside. Every
-      // window's top stops at about 205 cm, so the wall above it is clear
-      // for the clock, poster and shelves (they hang from 222 cm up)
-      back: () => piece('ds-window', '0 0 400 236', { h: 130, y: 75, cx: 0.5 }, `
+      // the steel-framed factory window, 1.9 m wide, the city outside. Every
+      // window's top stops at about 185 cm, so the wall above it stays clear
+      // for the clock, poster and shelves even when a wide view zooms in
+      back: () => piece('ds-window', '0 0 400 236', { h: 110, y: 75, cx: 0.5 }, `
         <rect x="10" y="10" width="380" height="204" rx="6" fill="#5a6470"/>
         <rect class="ds-glass" x="24" y="24" width="352" height="176" fill="#bfe3f7"/>
         <g stroke="none"><ellipse cx="90" cy="64" rx="34" ry="10" fill="#fff"/><ellipse cx="270" cy="88" rx="26" ry="8" fill="#fff"/>
@@ -263,7 +265,7 @@ window.App = window.App || {};
             <rect x="500" y="164" width="30" height="36" rx="4" fill="#6b6f78"/><path d="M508 164 l-6 -24 M518 164 v-28 M526 164 l8 -22" style="stroke-width:4"/>`
         }) +
         // a row of binders on a 70 cm wall shelf
-        piece('ds-binders', '0 0 210 140', { h: 47, y: 226, right: 10 }, `
+        piece('ds-binders', '0 0 210 140', { band: true, h: 47, y: 226 }, `
           <rect x="0" y="118" width="210" height="12" rx="3" fill="#a07a58"/>
           ${['#3b4a6b', '#4a4a4a', '#6c9a5e', '#3b4a6b', '#c9a074'].map((c, i) =>
             `<rect x="${14 + i * 34}" y="${i === 4 ? 70 : 34}" width="28" height="${i === 4 ? 48 : 84}" rx="3" fill="${c}"/><rect x="${20 + i * 34}" y="${i === 4 ? 80 : 50}" width="16" height="10" rx="2" fill="#fffdf5" style="stroke-width:2"/>`).join('')}`) +
@@ -289,7 +291,7 @@ window.App = window.App || {};
       light: 'linear-gradient(118deg, transparent 52%, rgba(255, 186, 110, .5) 60%, rgba(255, 186, 110, .2) 72%, transparent 80%)',
       floor: '#8a6a6e',
       // the tall window the sun's coming in through, the city going gold
-      back: () => piece('ds-window', '0 0 230 250', { h: 120, y: 85, cx: 0.5 }, `
+      back: () => piece('ds-window', '0 0 230 250', { h: 105, y: 80, cx: 0.5 }, `
         <defs><linearGradient id="ds-sunset" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe2a8"/><stop offset=".6" stop-color="#ffb37a"/><stop offset="1" stop-color="#f28c6b"/></linearGradient></defs>
         <rect x="10" y="10" width="210" height="226" rx="6" fill="#fffdf5"/>
         <rect class="ds-glass" x="24" y="24" width="182" height="198" fill="url(#ds-sunset)"/>
@@ -356,7 +358,7 @@ window.App = window.App || {};
         piece('ds-notes-l', '0 0 120 300', { h: 60, y: 110, left: 2 }, notes([[20, 60, 34, 1], [70, 140, 26, 2], [24, 230, 30, 3]])) +
         piece('ds-notes-r', '0 0 120 300', { h: 55, y: 90, right: 3 }, notes([[60, 50, 30, 2], [20, 150, 26, 1], [70, 250, 32, 4]])) +
         // an 80 cm wall shelf: a speaker, records, a plant
-        piece('ds-mshelf', '0 0 270 170', { h: 50, y: 219, right: 6 }, `
+        piece('ds-mshelf', '0 0 270 170', { band: true, h: 50, y: 219 }, `
           <rect x="0" y="140" width="270" height="12" rx="3" fill="#a07a58"/>
           <rect x="16" y="64" width="60" height="76" rx="6" fill="#3b3b44"/><circle cx="46" cy="114" r="16" fill="#6b6f78"/><circle cx="46" cy="84" r="7" fill="#6b6f78"/>
           ${books(96, 140, ['#ff6f9c', '#8fb7e8', '#ffd166', '#6c9a5e'], 66)}
@@ -378,7 +380,7 @@ window.App = window.App || {};
       wall: 'linear-gradient(180deg, #b4c1e8 0%, #a5b3df 100%)',
       floor: '#7f72bd',
       // the frosty window, moonlit, with pines outside
-      back: () => piece('ds-window', '0 0 300 236', { h: 115, y: 90, cx: 0.5 }, `
+      back: () => piece('ds-window', '0 0 300 236', { h: 100, y: 85, cx: 0.5 }, `
         <rect x="10" y="10" width="280" height="206" rx="6" fill="#fffdf5"/>
         <rect class="ds-glass" x="26" y="26" width="248" height="174" fill="#def5f4"/>
         <circle cx="220" cy="70" r="18" fill="#fffef0" stroke="none"/>
@@ -574,12 +576,26 @@ window.App = window.App || {};
       if (!this.layer) return;
       const r = document.getElementById('view').getBoundingClientRect();
       Object.assign(this.layer.style, { top: r.top + 'px', left: r.left + 'px', width: r.width + 'px', height: r.height + 'px' });
-      // one scale for the whole room: the wall, floor to ceiling, is CEILING cm
-      const ppc = Math.max(1, (r.height - FLOOR_PX) / CEILING);
+      /* One scale for the whole room. From the height alone (the wall,
+         floor to ceiling, is CEILING cm) a wide 16:9 window shows a room
+         many metres across, with the desk and window lost in the middle; so
+         the scale also grows until about ROOM_W cm spans the width, up to
+         MAX_ZOOM times the height's. Past that the top of the wall runs off
+         the view, which is fine: things hung from the ceiling are cropped,
+         and the wall art is placed in pixels, not cm (hangArt). */
+      const byH = (r.height - FLOOR_PX) / CEILING;
+      const ppc = Math.max(1, Math.min(Math.max(byH, r.width / ROOM_W), byH * MAX_ZOOM));
+      this._ppc = ppc;
       this.layer.querySelectorAll('.ds-piece[data-spec]').forEach(n => {
         const sp = JSON.parse(n.dataset.spec);
         const h = sp.h * ppc, w = h * spec_aspect(n);
-        const st = { height: h + 'px', bottom: (FLOOR_PX + (sp.y || 0) * ppc) + 'px', top: 'auto' };
+        /* Things hung high (shelves, ivy: 140 cm up or more) hang from the
+           ceiling rather than stand on the floor, so when the room zooms in
+           on a wide view they stay up on the wall instead of running off the
+           top. Their drop below the ceiling uses the height's scale. */
+        const st = (sp.y || 0) >= 140 && !(sp.band || sp.art)
+          ? { height: h + 'px', top: Math.max(0, (CEILING - sp.y - sp.h) * byH) + 'px', bottom: 'auto' }
+          : { height: h + 'px', bottom: (FLOOR_PX + (sp.y || 0) * ppc) + 'px', top: 'auto' };
         if (!(sp.band || sp.art)) {
           if (sp.cx != null) st.left = (r.width * sp.cx - w / 2) + 'px';
           else if (sp.left != null) st.left = (sp.left * ppc) + 'px';
@@ -597,11 +613,13 @@ window.App = window.App || {};
       }
     },
 
-    /* Hang the clock and poster, and the room's own band pieces beside
-       them, as one group centred in the gap between the greeting and the
-       Edit button. Sizes are true to scale (place() has set each height);
-       when the group won't fit the gap, the room's pieces come down first,
-       then the clock and poster too. */
+    /* Hang the clock and poster in the right-hand corner of the band above
+       the widgets, just left of the Edit button, with the room's own band
+       pieces to their left. Sizes are to scale (place() set each height),
+       but the band is placed in pixels: hung from just under the ceiling
+       strip and never taller than the band, so a zoomed-in room can't push
+       them off the top. When the band is too narrow, the room's pieces come
+       down first, then the clock and poster too. */
     hangArt(vr) {
       const art = this.layer.querySelector('.ds-wallart');
       const all = [art].concat([...this.layer.querySelectorAll('.ds-band')]);
@@ -609,17 +627,53 @@ window.App = window.App || {};
       const tools = document.querySelector('.dash-tools');
       all.forEach(n => { n.style.display = 'none'; });
       if (!hi) return;
-      const a = hi.getBoundingClientRect(), right = tools ? tools.getBoundingClientRect().left : vr.right - 46;
-      const gap = right - a.right - 32, GAP = 22;
+      const a = hi.getBoundingClientRect(), right = tools ? tools.getBoundingClientRect().left - 16 : vr.right - 46;
+      const TOP = 30, GAP = 22, bandH = a.bottom - vr.top - TOP;
+      // fit the band's height; a hanging plant may trail down past it, behind the widgets
+      all.forEach(n => {
+        if (n.classList.contains('ds-hang')) return;
+        const h = parseFloat(n.style.height);
+        if (h > bandH) n.style.height = Math.max(40, bandH) + 'px';
+      });
       const wOf = n => parseFloat(n.style.height) * spec_aspect(n);
+      const room = right - a.right - 32;
       const show = all.slice();
       const width = () => show.reduce((t, n) => t + wOf(n), 0) + GAP * (show.length - 1);
-      while (show.length && width() > gap) show.pop();
+      while (show.length && width() > room) show.pop();
       if (!show.length) return;
-      // the room's pieces first, then the clock and poster nearest the middle
-      const order = show.slice(1).concat(show[0]);
-      let x = a.right - vr.left + 16 + (gap - width()) / 2;
-      order.forEach(n => { Object.assign(n.style, { display: '', left: x + 'px' }); x += wOf(n) + GAP; });
+      // and a room piece that would land on the window comes down too
+      const win = this.layer.querySelector('.ds-window');
+      if (win) {
+        const wb = win.getBoundingClientRect();
+        let x0 = right;
+        const keep = [];
+        show.forEach((n, i) => {
+          const w = wOf(n), box = { left: x0 - w, right: x0, top: vr.top + TOP, bottom: vr.top + TOP + parseFloat(n.style.height) };
+          const hits = !(box.right < wb.left || box.left > wb.right || box.bottom < wb.top || box.top > wb.bottom);
+          if (i === 0 || !hits) { keep.push(n); x0 -= w + GAP; }
+        });
+        show.length = 0; show.push(...keep);
+      }
+      // right to left: the clock and poster in the corner, then the room's pieces
+      let x = right - vr.left;
+      show.forEach(n => {
+        x -= wOf(n);
+        Object.assign(n.style, { display: '', left: x + 'px', top: TOP + 'px', bottom: 'auto' });
+        x -= GAP;
+      });
+      /* Anything else hung high that the band now covers (a tall shelf on
+         that side of the wall) drops to just below it, rather than sit
+         behind the clock. Hanging plants and ivy are left to trail in front,
+         as they would. */
+      const boxes = show.map(n => n.getBoundingClientRect());
+      this.layer.querySelectorAll('.ds-piece[data-spec]').forEach(n => {
+        const sp = JSON.parse(n.dataset.spec);
+        if (sp.band || sp.art || (sp.y || 0) < 140 || /ds-ivy|ds-hang/.test(n.getAttribute('class'))) return;
+        const b = n.getBoundingClientRect();
+        if (boxes.some(q => !(b.right < q.left || b.left > q.right || b.bottom < q.top || b.top > q.bottom))) {
+          n.style.top = (a.bottom - vr.top + 12) + 'px';
+        }
+      });
     },
 
     clock() {
