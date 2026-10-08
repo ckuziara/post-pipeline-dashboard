@@ -5867,6 +5867,19 @@ body.has-dash-scene .dash-empty-hint,
 body.has-dash-scene .dash-grid > .empty {
   background: color-mix(in srgb, var(--bg) 88%, transparent); border-radius: 12px;
 }
+/* depth of field: a blur that's nothing in the middle and grows toward the
+   edges, in two rings so the falloff is gradual rather than a hard band */
+.dash-scene .ds-dof { position: absolute; inset: 0; }
+.dash-scene .ds-dof-near {
+  -webkit-backdrop-filter: blur(1.5px); backdrop-filter: blur(1.5px);
+  -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 55%, #000 85%);
+          mask-image: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 55%, #000 85%);
+}
+.dash-scene .ds-dof-far {
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 78%, #000 110%);
+          mask-image: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 78%, #000 110%);
+}
 @media (prefers-reduced-motion: reduce) {
   .dash-scene .sc-vine, .dash-scene .sc-steam, .dash-scene .ds-bulb, .dash-scene .ds-note, .dash-scene .ds-led { animation: none; }
   .dash-scene #sc-poster { transition: none; }

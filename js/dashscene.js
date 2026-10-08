@@ -307,7 +307,10 @@ window.App = window.App || {};
       r.pieces() +
       // props are drawn solid (so nothing shows through them); this veil over
       // the whole room is what washes it out, so the widgets lead
-      '<div class="ds-wash"></div>';
+      '<div class="ds-wash"></div>' +
+      // depth of field: the room falls out of focus toward the edges, so the
+      // eye stays on the widgets in the middle (two rings, softer further out)
+      '<div class="ds-dof ds-dof-near"></div><div class="ds-dof ds-dof-far"></div>';
   }
 
   App.dashScene = {
