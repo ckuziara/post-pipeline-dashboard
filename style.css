@@ -5756,37 +5756,100 @@ body.gd-sandboxed #toolbar { outline: 2px dashed rgba(255, 209, 102, .5); outlin
 
 /* ======================================================================
    Dashboard backdrop (js/dashscene.js)
-   .dash-scene  the setup wizard's edit suite, living behind the Dashboard.
-                Same costume as the wizard (the .if-svg rules), sized to
-                #view and slipped under it at z-index -1; the poster on the
-                wall is the one thing in it you can click.
+   .dash-scene  the setup wizard's cozy hand as a frame around the Dashboard:
+                lights along the top, ivy down the sides, a plant and a reel
+                on a strip of floor, a clock and the poster above the tiles.
+                A plain washed-out wall in the middle, so the widgets lead.
+                Sized to #view and slipped under it at z-index -1.
+   .ds-*        its pieces
    ====================================================================== */
 .dash-scene {
   --ink: #2b2b2b;
   position: fixed; z-index: -1; overflow: hidden; pointer-events: none;
-  background: #f4ecd6;
 }
-.dash-scene .if-svg { transition: none; }
-.dash-scene #sc-poster { transition: transform .18s ease; }
-.dash-scene.poster-hot #sc-poster { transform: translateY(-6px) rotate(-1.5deg); }
+.dash-scene .ds-wall {
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 40%, #fbf8f0 0%, #f4eee0 70%, #eee5d0 100%);
+}
+.dash-scene .ds-light { position: absolute; inset: 0; }
+
+/* ---- lighting, by theme (data-mood, set in js/dashscene.js) ----
+   day       light themes: a bright wall, sun slanting in from a window, lights off
+   blackout  dark themes: a near-black suite, props in silhouette, a soft
+             monitor-blue bias glow behind the widgets
+   mood      colourful (expressive) themes: a warm lamp glow tinted by the
+             theme's accent, a dim vignette, and the fairy lights glowing */
+.dash-scene[data-mood="day"] .ds-light {
+  background:
+    linear-gradient(115deg, transparent 18%, rgba(255, 244, 205, .55) 30%, rgba(255, 244, 205, .2) 44%, transparent 52%),
+    linear-gradient(115deg, transparent 56%, rgba(255, 244, 205, .35) 64%, transparent 72%);
+}
+.dash-scene[data-mood="day"] .ds-bulb { animation: none; opacity: .55; }
+
+.dash-scene[data-mood="blackout"] .ds-wall { background: radial-gradient(ellipse at 50% 45%, #1d2030 0%, #12131a 60%, #0b0b10 100%); }
+.dash-scene[data-mood="blackout"] .ds-light { background: radial-gradient(ellipse 55% 45% at 50% 52%, rgba(120, 150, 255, .14), transparent 70%); }
+.dash-scene[data-mood="blackout"] .ds-piece { opacity: .5; filter: brightness(.38) saturate(.45); }
+.dash-scene[data-mood="blackout"] .ds-wallart { opacity: .7; filter: brightness(.55) saturate(.6); }
+.dash-scene[data-mood="blackout"] .ds-floor { background: #0e0f14; border-top-color: rgba(255, 255, 255, .06); }
+.dash-scene[data-mood="blackout"] .ds-bulb { animation: none; opacity: .35; }
+
+.dash-scene[data-mood="mood"] .ds-wall {
+  background: radial-gradient(ellipse 80% 70% at 50% 35%,
+    color-mix(in srgb, var(--accent) 22%, #ffd9a0) 0%,
+    color-mix(in srgb, var(--accent) 30%, #c98a6a) 55%,
+    color-mix(in srgb, var(--accent) 35%, #4a2e3c) 100%);
+}
+.dash-scene[data-mood="mood"] .ds-light { background: radial-gradient(ellipse at 50% 45%, transparent 45%, rgba(30, 14, 24, .4) 100%); }
+.dash-scene[data-mood="mood"] .ds-piece { opacity: .72; filter: saturate(.9) sepia(.15); }
+.dash-scene[data-mood="mood"] .ds-lights { opacity: 1; filter: none; }
+.dash-scene[data-mood="mood"] .ds-bulb { filter: drop-shadow(0 0 6px currentColor) brightness(1.15); color: #ffd166; }
+.dash-scene[data-mood="mood"] .ds-floor { background: color-mix(in srgb, var(--accent) 20%, #8a5a48); }
+
+/* every piece: the wizard's outlines, washed out so it sits back */
+.dash-scene .ds-piece {
+  position: absolute; inset: auto; width: auto; height: auto;
+  opacity: .62; filter: saturate(.7);
+}
+.dash-scene .ds-lights { top: 0; left: 0; width: 100%; height: 60px; }
+.dash-scene .ds-bulb { animation: ds-twinkle 3s ease-in-out infinite; }
+@keyframes ds-twinkle { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+.dash-scene .ds-ivy-r { top: 0; right: -18px; height: min(55%, 460px); aspect-ratio: 300 / 700; }
+.dash-scene .ds-ivy-l { top: 0; left: -18px; height: min(42%, 360px); aspect-ratio: 300 / 700; }
+.dash-scene .ds-floor {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 34px;
+  background: #e8d6b3; border-top: 4px solid rgba(43, 43, 43, .35); opacity: .75;
+}
+.dash-scene .ds-plant { left: 10px; bottom: 14px; height: 150px; aspect-ratio: 210 / 230; }
+.dash-scene .ds-reel { right: 14px; bottom: 16px; height: 118px; aspect-ratio: 300 / 235; }
+/* the band above the widgets: hung just under the lights, centred */
+/* placed by hangArt() in the gap between the greeting and the Edit button */
+.dash-scene .ds-wallart {
+  top: 26px; left: 50%; height: 112px; aspect-ratio: 365 / 255;
+  opacity: .8;
+}
+.dash-scene #sc-poster { transition: transform .18s ease; transform-box: fill-box; transform-origin: 50% 0; }
+.dash-scene.poster-hot #sc-poster { transform: translateY(-4px) rotate(-2deg); }
 .dash-scene #sc-poster.dsp-custom > :not(.dsp-art) { display: none; }
 .dash-scene .dsp-art image { image-rendering: pixelated; image-rendering: crisp-edges; }
 #view.dash-poster-hot { cursor: pointer; }
-/* the greeting has no tile of its own, so give its words one over the cream
-   wall — just the words, so the rest of the wall (and the poster) shows */
+/* room for the frame to show around the tiles, and for the wall art above them */
+body.has-dash-scene #view { padding: 44px 46px 62px; }
+body.has-dash-scene .dash-hello { min-height: 104px; }
+/* the greeting has no tile of its own, so give its words one over the wall —
+   just the words and the tools, so the wall art between them shows */
 body.has-dash-scene .dash-hello > :first-child,
 body.has-dash-scene .dash-tools {
   padding: 12px 16px; border-radius: 14px;
-  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, .12);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .1);
 }
 body.has-dash-scene .dash-tools { padding: 6px; }
 body.has-dash-scene .dash-empty-hint,
 body.has-dash-scene .dash-grid > .empty {
-  background: color-mix(in srgb, var(--bg) 84%, transparent); border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent); border-radius: 12px;
 }
 @media (prefers-reduced-motion: reduce) {
-  .dash-scene .sc-vine, .dash-scene .sc-steam { animation: none; }
+  .dash-scene .sc-vine, .dash-scene .sc-steam, .dash-scene .ds-bulb { animation: none; }
   .dash-scene #sc-poster { transition: none; }
 }

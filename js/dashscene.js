@@ -1,18 +1,25 @@
-/* Dashboard backdrop — the setup wizard's edit suite (js/guide.js sceneSVG),
-   living behind the Dashboard's widgets: the vine sways, the mug steams and
-   the wall clock keeps real time.
+/* Dashboard backdrop — the setup wizard's cozy hand, as a frame around the
+   Dashboard rather than a room behind it. The middle stays a plain, washed-
+   out wall, so the widgets are what you look at. The edges carry the
+   costume: fairy lights strung along the top, the wizard's ivy trailing
+   down both sides (js/guide.js ivySVG), a plant and a film reel with a
+   steaming mug on a strip of floor, and a little clock and film poster hung
+   in the band above the widgets. Each piece is its own SVG pinned to an
+   edge or corner, so the frame holds its shape at any window size. While
+   it's on, #view gets a wider margin so the frame shows around the tiles.
 
    One persistent layer, mounted once and only shown or hidden on render, so
    App.render()'s frequent rebuilds of #view never restart the animations.
    It sits at z-index -1 under #view, which has no background of its own, so
-   the room shows through the gaps between tiles and nothing in it can steal
-   a click.
+   nothing in it can steal a click.
 
-   The film poster on the wall is the one interactive piece: click it (or
-   Preferences → Wall poster) to pick an image, which is turned into pixel
-   art in the scene's own palette and kept on this device only. Because the
-   layer can't take clicks, #view's own clicks on bare background are tested
-   against the poster's on-screen box instead.
+   The film poster is the one interactive piece: click it (or Preferences →
+   Wall poster) to pick an image, which is turned into pixel art in the
+   scene's own palette and kept on this device only. Because the layer can't
+   take clicks, #view's own clicks on bare background are tested against the
+   poster's on-screen box instead.
+
+   Lighting follows the theme (see mood()): daytime, blackout or mood.
 
    Device-local prefs: dashScene (on/off, default on), dashPoster (the pixel
    art, a PNG data URL of a few KB). */
@@ -20,7 +27,7 @@ window.App = window.App || {};
 (function () {
   'use strict';
 
-  // poster frame in the scene's 1600×900 viewBox (see #sc-poster in guide.js)
+  // poster frame, in the wall-art piece's own viewBox (below)
   const PX = 1240, PY = 40, PW = 190, PH = 220;
   // pixel-art grid: the poster's aspect, coarse enough to read as pixels
   const GW = 38, GH = 44;
@@ -28,18 +35,81 @@ window.App = window.App || {};
   const PALETTE = ['#2b2b2b', '#4a4a4a', '#fffdf5', '#f4ecd6', '#e3c99b', '#c9a074', '#8fb7e8', '#5d6fd6',
     '#a06cd5', '#b98ce6', '#f7a6b8', '#ff6f9c', '#f28c6b', '#ffd166', '#7cb86a', '#6c9a5e']
     .map(h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)));
+  const BULBS = ['#ffd166', '#f7a6b8', '#8fb7e8', '#b98ce6', '#7cb86a', '#f28c6b'];
 
   const visible = () => App.state.view === 'dashboard' && App.prefs.get('dashScene', true) && !App.isPhone();
 
+  // one frame piece: the wizard's outline style (.if-svg .sc-o) in its own viewBox
+  const piece = (cls, viewBox, body, align) =>
+    `<svg class="if-svg ds-piece ${cls}" viewBox="${viewBox}" preserveAspectRatio="${align || 'xMidYMid meet'}" xmlns="http://www.w3.org/2000/svg"><g class="sc-o">${body}</g></svg>`;
+
+  function frameHTML() {
+    const ivy = App.guide.ivySVG();
+    return '<div class="ds-wall"></div><div class="ds-light"></div>' +
+      '<svg class="if-svg ds-piece ds-lights" xmlns="http://www.w3.org/2000/svg"></svg>' +
+      // ivy down the right edge, and its mirror image down the left
+      piece('ds-ivy-r', '1500 -10 300 700', ivy, 'xMaxYMin meet') +
+      piece('ds-ivy-l', '1500 -10 300 700', `<g transform="translate(3300 0) scale(-1 1)">${ivy}</g>`, 'xMinYMin meet') +
+      '<div class="ds-floor"></div>' +
+      // a plant, bottom left
+      piece('ds-plant', '1340 470 210 230', `
+        <path d="M1440 610 q-40 -70 10 -120 q10 60 -10 120 M1460 610 q10 -90 70 -110 q-20 70 -70 110 M1450 610 q-60 -40 -90 -100 q60 20 90 100" fill="#7cb86a"/>
+        <path d="M1410 600 h90 l-12 90 h-66Z" fill="#e8946b"/>`, 'xMinYMax meet') +
+      // a film reel and a steaming mug, bottom right
+      piece('ds-reel', '140 470 300 235', `
+        <circle cx="250" cy="600" r="96" fill="#5d6fd6"/>
+        <circle cx="250" cy="600" r="20" fill="#f4ecd6"/>
+        ${[0, 72, 144, 216, 288].map(a => `<circle cx="${250 + Math.cos(a * Math.PI / 180) * 54}" cy="${600 + Math.sin(a * Math.PI / 180) * 54}" r="20" fill="#f4ecd6"/>`).join('')}
+        <g transform="translate(-1080 172)">
+          <path d="M1440 470 h56 v40 a14 14 0 0 1 -14 14 h-28 a14 14 0 0 1 -14 -14Z" fill="#f28c6b"/>
+          <path d="M1496 480 a14 14 0 0 1 0 28" fill="none"/>
+          <path class="sc-steam" d="M1458 455 q-10 -16 0 -30 M1478 455 q-10 -16 0 -30" fill="none" stroke-width="4" opacity=".45"/>
+        </g>`, 'xMaxYMax meet') +
+      // wall art in the band above the widgets: the clock and the poster
+      piece('ds-wallart', '1080 25 365 255', `
+        <path d="M1150 70 V40" stroke-width="3" opacity=".5"/>
+        <g id="sc-clock" transform="translate(1150 140)">
+          <circle r="64" fill="#fffaf0"/>
+          <circle r="51" fill="none" stroke-width="3" opacity=".3"/>
+          <path d="M0 0 L0 -32" transform="rotate(0)" stroke-width="7"/>
+          <path d="M0 0 L0 -45" transform="rotate(0)" stroke-width="4"/>
+          <circle r="6" fill="#2b2b2b"/>
+        </g>
+        <g id="sc-poster">
+          <rect x="${PX}" y="${PY}" width="${PW}" height="${PH}" rx="10" fill="#8fb7e8"/>
+          <path d="M1262 225 L1310 160 L1345 200 L1375 170 L1410 225Z" fill="#6c9a5e"/>
+          <circle cx="1380" cy="100" r="22" fill="#ffd166"/>
+          <text x="1335" y="250" class="sc-t" text-anchor="middle" font-size="20">NOW SHOWING</text>
+        </g>`);
+  }
+
+  // a string of fairy lights the width of the view, drooping between pins
+  function lightsSVG(w) {
+    const span = 220, sag = 22, n = Math.max(1, Math.round(w / span)), step = w / n;
+    let d = 'M0 6', bulbs = '';
+    for (let i = 0; i < n; i++) {
+      const x0 = i * step, x1 = x0 + step;
+      d += ` Q${(x0 + x1) / 2} ${6 + sag * 2} ${x1} 6`;
+      // bulbs hang along the droop (a quadratic's y at t is 6 + 2·sag·2t(1−t))
+      [0.2, 0.5, 0.8].forEach((t, k) => {
+        const x = x0 + step * t, y = 6 + sag * 4 * t * (1 - t);
+        const c = BULBS[(i * 3 + k) % BULBS.length];
+        bulbs += `<g transform="translate(${x.toFixed(1)} ${y.toFixed(1)})"><rect x="-3" y="0" width="6" height="5" rx="1" fill="#4a4a4a" style="stroke-width:2"/>` +
+          `<ellipse class="ds-bulb" style="animation-delay:-${((i * 3 + k) * 0.7) % 3}s" cx="0" cy="12" rx="6" ry="8" fill="${c}"/></g>`;
+      });
+    }
+    return `<g class="sc-o"><path d="${d}" fill="none" style="stroke-width:2.5"/>${bulbs}</g>`;
+  }
+
   App.dashScene = {
-    layer: null, _tick: null,
+    layer: null, _tick: null, _lightsW: 0,
 
     mount() {
       if (this.layer) return;
       const layer = document.createElement('div');
       layer.className = 'dash-scene';
       layer.setAttribute('aria-hidden', 'true');
-      layer.innerHTML = App.guide.sceneSVG('dash-scene-svg');
+      layer.innerHTML = frameHTML();
       document.body.appendChild(layer);
       this.layer = layer;
       this.applyPoster();
@@ -64,9 +134,9 @@ window.App = window.App || {};
       this.layer.style.display = on ? '' : 'none';
       document.body.classList.toggle('has-dash-scene', on);
       if (on) {
+        this.layer.dataset.mood = this.mood();
         this.place();
         this.clock();
-        this.nameClapper();
         if (!this._tick) this._tick = setInterval(() => this.clock(), 30000);
       } else {
         if (this._tick) { clearInterval(this._tick); this._tick = null; }
@@ -76,11 +146,48 @@ window.App = window.App || {};
       }
     },
 
-    // fill exactly the area under #view, so the room isn't hidden behind the topbar
+    /* The room's lighting follows the theme: a daytime room for the plain
+       light theme, a blacked-out edit suite for the dark ones, and warm mood
+       lighting (tinted by the theme's accent) for the colourful, expressive
+       skins, whatever their mode. */
+    mood() {
+      const root = document.documentElement;
+      if (root.getAttribute('data-skin') === 'expressive') return 'mood';
+      return root.getAttribute('data-mode') === 'light' ? 'day' : 'blackout';
+    },
+
+    // fill exactly the area under #view, so the frame isn't hidden behind the topbar
     place() {
       if (!this.layer) return;
       const r = document.getElementById('view').getBoundingClientRect();
       Object.assign(this.layer.style, { top: r.top + 'px', left: r.left + 'px', width: r.width + 'px', height: r.height + 'px' });
+      this.hangArt(r);
+      const w = Math.round(r.width);
+      if (w && w !== this._lightsW) {
+        this._lightsW = w;
+        const svg = this.layer.querySelector('.ds-lights');
+        svg.setAttribute('viewBox', `0 0 ${w} 60`);
+        svg.innerHTML = lightsSVG(w);
+      }
+    },
+
+    /* Hang the clock and poster in the gap between the greeting and the
+       Edit button, centred, scaled down to fit a narrow gap and taken down
+       altogether when there's no wall left to hang them on. */
+    hangArt(vr) {
+      const art = this.layer.querySelector('.ds-wallart');
+      const hi = document.querySelector('.dash-hello > :first-child');
+      const tools = document.querySelector('.dash-tools');
+      if (!hi) { art.style.display = 'none'; return; }
+      const a = hi.getBoundingClientRect(), right = tools ? tools.getBoundingClientRect().left : vr.right - 46;
+      const gap = right - a.right - 32, ASPECT = 365 / 255;
+      const h = Math.min(112, gap / ASPECT);
+      if (h < 64) { art.style.display = 'none'; return; }
+      Object.assign(art.style, {
+        display: '', height: h + 'px',
+        left: (a.right - vr.left + 16 + (gap - h * ASPECT) / 2) + 'px',
+        top: Math.max(26, a.top - vr.top + a.height - h) + 'px'
+      });
     },
 
     clock() {
@@ -89,13 +196,6 @@ window.App = window.App || {};
       const now = new Date();
       hands[0].setAttribute('transform', `rotate(${((now.getHours() % 12) + now.getMinutes() / 60) * 30})`);
       hands[1].setAttribute('transform', `rotate(${now.getMinutes() * 6})`);
-    },
-
-    // the clapperboard credits whoever's looking at it
-    nameClapper() {
-      const t = this.layer.querySelector('#sc-clap-name');
-      const user = App.state.user;
-      if (t) t.textContent = 'DIR: ' + (user && user.name ? user.name.split(' ')[0].toUpperCase().slice(0, 10) : '?');
     },
 
     // is the pointer over the poster, on bare background (not a tile or control)?
