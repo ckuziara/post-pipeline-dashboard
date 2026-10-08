@@ -2456,8 +2456,9 @@ window.App = window.App || {};
 
       /* On the Dashboard the room and the theme are one section, since the
          theme sets the room's lighting: the room picker shares a row with
-         its on/off switch, and the picker and the wall poster row only
-         show while the room is on. */
+         its on/off switch, and the picker only shows while the room is on.
+         (The wall poster has no row: it's an easter egg — click the
+         picture on the wall to change it.) */
       const roomRows = [];
       if (view === 'dashboard') {
         const on = App.prefs.get('dashScene', true);
@@ -2468,10 +2469,6 @@ window.App = window.App || {};
         roomRows.push(el('.prefs-row', { style: { cursor: 'default' } }, [
           el('.prefs-row-title', null, on ? 'Room' : 'Room background'),
           el('.prefs-inline', null, inline)
-        ]));
-        if (on) roomRows.push(actionRow('Wall poster', [
-          { label: 'Change…', run: () => App.dashScene.pickPoster() },
-          { label: 'Reset', run: () => App.dashScene.resetPoster() }
         ]));
       }
 
