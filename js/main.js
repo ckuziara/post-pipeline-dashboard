@@ -2464,8 +2464,9 @@ window.App = window.App || {};
         const on = App.prefs.get('dashScene', true);
         const toggle = () => { App.prefs.set('dashScene', !on); this.open(); App.dashScene.sync(); };
         const inline = [];
-        if (on) inline.push(pickEl('Room', 'dashRoom', 'edit', App.dashScene.ROOMS, () => { App.dashScene.rebuild(); this.open(); }));
+        // the switch first, so the room picker's right edge lines up with Theme's below it
         inline.push(el('span.switch' + (on ? '.on' : ''), { title: on ? 'Turn the room off' : 'Turn the room on', onclick: e => { e.stopPropagation(); toggle(); } }, el('span.knob')));
+        if (on) inline.push(pickEl('Room', 'dashRoom', 'edit', App.dashScene.ROOMS, () => { App.dashScene.rebuild(); this.open(); }));
         roomRows.push(el('.prefs-row', { style: { cursor: 'default' } }, [
           el('.prefs-row-title', null, on ? 'Room' : 'Room background'),
           el('.prefs-inline', null, inline)
