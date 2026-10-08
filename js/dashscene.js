@@ -482,6 +482,7 @@ window.App = window.App || {};
       layer.innerHTML = frameHTML(this._room);
       document.body.appendChild(layer);
       this.layer = layer;
+      this.groundFloorProps();
       this.applyPoster();
       if (this._wired) return;
       this._wired = true;
@@ -495,6 +496,29 @@ window.App = window.App || {};
         this.layer.classList.toggle('poster-hot', hot);
         view.classList.toggle('dash-poster-hot', hot);
         view.title = hot ? 'Change the wall poster' : '';
+      });
+    },
+
+    /* Make everything that stands on the floor actually touch it. A prop's
+       drawing rarely reaches the very bottom of its viewBox, which left it
+       hovering; so once the room is on screen, trim each floor prop's
+       viewBox to the bottom of what's drawn (plus half the outline), and
+       shrink its height in cm by the same share, so its scale is unchanged. */
+    groundFloorProps() {
+      this.layer.querySelectorAll('.ds-piece[data-spec]').forEach(n => {
+        const sp = JSON.parse(n.dataset.spec);
+        if (sp.band || sp.art || sp.y) return;
+        const g = n.querySelector('g.sc-o');
+        let bb;
+        try { bb = g.getBBox(); } catch (e) { return; }
+        const [vx, vy, vw, vh] = n.getAttribute('viewBox').split(' ').map(Number);
+        const bottom = Math.min(vy + vh, bb.y + bb.height + 2.5);
+        if (!(bottom > vy) || bottom >= vy + vh - 0.5) return;
+        const nh = bottom - vy;
+        sp.h = sp.h * nh / vh;
+        n.setAttribute('viewBox', `${vx} ${vy} ${vw} ${nh}`);
+        n.style.aspectRatio = `${vw}/${nh}`;
+        n.dataset.spec = JSON.stringify(sp);
       });
     },
 
