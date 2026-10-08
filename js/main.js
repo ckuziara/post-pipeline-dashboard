@@ -2340,7 +2340,7 @@ window.App = window.App || {};
      settings that actually affect it (see viewRows below). */
   App.prefsMenu = {
     _pop: null,
-    close() { if (this._pop) { this._pop.remove(); this._pop = null; } },
+    close() { if (this._pop) { this._pop.remove(); this._pop = null; } App.filterMenu && App.filterMenu.close(); },
     toggle() { this._pop ? this.close() : this.open(); },
     open() {
       this.close();
@@ -2368,26 +2368,23 @@ window.App = window.App || {};
             }, o.label)))
         ]);
       };
-      // a <select> row — for settings with more options than a segmented
-      // control can hold at this width (themes)
-      const selRow = (title, key, def, options, onChange) => {
+      /* a dropdown — for settings with more options than a segmented
+         control can hold at this width (themes, rooms). The same popover
+         the toolbar filters use (App.choiceMenu), not the browser's own. */
+      const pickEl = (title, key, def, options, onChange) => {
         const cur = App.prefs.get(key, def);
-        const sel = el('select.prefs-select');
-        options.forEach(o => {
-          const opt = document.createElement('option');
-          opt.value = o.v; opt.textContent = o.label;
-          if (o.v === cur) opt.selected = true;
-          sel.appendChild(opt);
-        });
-        sel.addEventListener('click', e => e.stopPropagation());
-        sel.addEventListener('change', () => {
-          App.prefs.set(key, sel.value);
-          if (onChange) onChange(sel.value);
-        });
-        return el('.prefs-row', { style: { cursor: 'default' } }, [
-          el('.prefs-row-title', null, title), sel
-        ]);
+        const opt = options.find(o => o.v === cur) || options[0];
+        const btn = App.choiceMenu('prefs:' + key, opt.label, [options.map(o => ({
+          label: o.label, on: o.v === opt.v,
+          pick: () => { App.filterMenu.close(); App.prefs.set(key, o.v); if (onChange) onChange(o.v); else this.open(); }
+        }))], title);
+        btn.classList.add('prefs-pick');
+        return btn;
       };
+      const selRow = (title, key, def, options, onChange) =>
+        el('.prefs-row', { style: { cursor: 'default' } }, [
+          el('.prefs-row-title', null, title), pickEl(title, key, def, options, onChange)
+        ]);
 
       // a row of plain action buttons (no persisted switch) — for one-shot
       // commands like expand-all or resetting a layout
@@ -2418,12 +2415,6 @@ window.App = window.App || {};
           prefRow('Hide completed episodes', 'hideDoneBoard', false, () => App.render())
         ],
         dashboard: () => [
-          prefRow('Room background', 'dashScene', true, () => App.dashScene.sync()),
-          selRow('Room', 'dashRoom', 'edit', App.dashScene.ROOMS, () => App.dashScene.rebuild()),
-          actionRow('Wall poster', [
-            { label: 'Change…', run: () => App.dashScene.pickPoster() },
-            { label: 'Reset', run: () => App.dashScene.resetPoster() }
-          ]),
           actionRow('Widget layout', [
             { label: 'Reset to default', run: () => {
               App.dashboard.restoreDefault();
@@ -2463,10 +2454,29 @@ window.App = window.App || {};
         el('button.prefs-btn', { onclick: (e) => { e.stopPropagation(); this.close(); App.guide.start({ redo: true }); } }, 'Start')
       ]);
 
+      /* On the Dashboard the room and the theme are one section, since the
+         theme sets the room's lighting: the room picker shares a row with
+         its on/off switch, and the picker only shows while the room is on.
+         (The wall poster has no row: it's an easter egg — click the
+         picture on the wall to change it.) */
+      const roomRows = [];
+      if (view === 'dashboard') {
+        const on = App.prefs.get('dashScene', true);
+        const toggle = () => { App.prefs.set('dashScene', !on); this.open(); App.dashScene.sync(); };
+        const inline = [];
+        // the switch first, so the room picker's right edge lines up with Theme's below it
+        inline.push(el('span.switch' + (on ? '.on' : ''), { title: on ? 'Turn the room off' : 'Turn the room on', onclick: e => { e.stopPropagation(); toggle(); } }, el('span.knob')));
+        if (on) inline.push(pickEl('Room', 'dashRoom', 'edit', App.dashScene.ROOMS, () => { App.dashScene.rebuild(); this.open(); }));
+        roomRows.push(el('.prefs-row', { style: { cursor: 'default' } }, [
+          el('.prefs-row-title', null, on ? 'Room' : 'Room background'),
+          el('.prefs-inline', null, inline)
+        ]));
+      }
+
       const pop = el('.prefs-pop', { onclick: e => e.stopPropagation() },
         [el('.prefs-title', null, label + ' preferences')]
           .concat(rows.length ? rows : [el('.prefs-note', null, 'No display options for this view.')])
-          .concat([el('.prefs-title.sep', null, 'Appearance'), themeRow])
+          .concat([el('.prefs-title.sep', null, roomRows.length ? 'Room & appearance' : 'Appearance')], roomRows, [themeRow])
           .concat(App.guide && !App.guide.running ? [el('.prefs-title.sep', null, 'Setup'), redoRow] : [])
           .concat(App.api.online ? [el('.prefs-title.sep', null, 'AI features'), byokRow] : []));
       const r = document.getElementById('brand-logo').getBoundingClientRect();

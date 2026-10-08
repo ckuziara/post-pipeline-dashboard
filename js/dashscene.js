@@ -34,8 +34,9 @@
    It sits at z-index -1 under #view, which has no background of its own, so
    nothing in it can steal a click.
 
-   The film poster is the one interactive piece: click it (or Preferences →
-   Wall poster) to pick an image, which is turned into pixel art in the
+   The film poster is the one interactive piece, an easter egg with no
+   menu entry: click it to pick an image (Option/Alt-click restores the
+   stock poster), which is turned into pixel art in the
    scene's own palette and kept on this device only. Because the layer can't
    take clicks, #view's own clicks on bare background are tested against the
    poster's on-screen box instead.
@@ -488,14 +489,20 @@ window.App = window.App || {};
       this._wired = true;
       window.addEventListener('resize', () => this.place());
       const view = document.getElementById('view');
-      view.addEventListener('click', e => { if (this.overPoster(e)) this.pickPoster(); });
+      // the easter egg: click the picture to hang your own; Option/Alt-click
+      // to put the stock poster back
+      view.addEventListener('click', e => {
+        if (!this.overPoster(e)) return;
+        if (e.altKey) { if (App.prefs.get('dashPoster', null)) { this.resetPoster(); App.toast('The old poster’s back up'); } }
+        else this.pickPoster();
+      });
       view.addEventListener('mousemove', e => {
         const hot = this.overPoster(e);
         if (hot === this._hot) return;
         this._hot = hot;
         this.layer.classList.toggle('poster-hot', hot);
         view.classList.toggle('dash-poster-hot', hot);
-        view.title = hot ? 'Change the wall poster' : '';
+        // no tooltip — it's a secret; the lift on hover is the only hint
       });
     },
 
@@ -545,7 +552,7 @@ window.App = window.App || {};
         if (this._tick) { clearInterval(this._tick); this._tick = null; }
         if (this._hot) { this._hot = false; this.layer.classList.remove('poster-hot'); }
         const view = document.getElementById('view');
-        view.classList.remove('dash-poster-hot'); view.title = '';
+        view.classList.remove('dash-poster-hot');
       }
     },
 

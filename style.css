@@ -215,7 +215,6 @@
 :root[data-skin="expressive"] .adm-btn,
 :root[data-skin="expressive"] .btn-addshow,
 :root[data-skin="expressive"] .prefs-btn,
-:root[data-skin="expressive"] .prefs-select,
 :root[data-skin="expressive"] .prefs-seg,
 :root[data-skin="expressive"] .prefs-seg .seg,
 :root[data-skin="expressive"] .fld,
@@ -361,6 +360,10 @@ button { font-family: inherit; cursor: pointer; }
 .toolbar-seg { background: var(--bg-2); }
 .toolbar-seg .seg { padding: 6px 11px; font-size: 11.5px; }
 .prefs-actions { display: flex; gap: 6px; flex: none; }
+/* the filter dropdown, sized for a Preferences row */
+.prefs-pick { flex: none; max-width: 170px; font-size: 11.5px; font-weight: 700; }
+/* a control and its switch sharing one row (Room → picker + on/off) */
+.prefs-inline { display: flex; align-items: center; gap: 10px; flex: none; }
 .prefs-btn {
   border: 1px solid var(--border-2); background: var(--bg); color: var(--text-2);
   font-size: 11px; font-weight: 700; padding: 5px 10px; border-radius: 7px; cursor: pointer;
@@ -370,13 +373,6 @@ button { font-family: inherit; cursor: pointer; }
 .prefs-note { font-size: 12px; color: var(--text-3); padding: 4px 10px 10px; }
 /* a second section in the popover (Appearance) — ruled off from the rows above */
 .prefs-title.sep { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 10px; }
-.prefs-select {
-  flex: none; max-width: 160px; background: var(--bg); color: var(--text);
-  border: 1px solid var(--border-2); border-radius: 8px; padding: 5px 8px;
-  font-size: 11.5px; font-weight: 700; font-family: inherit; cursor: pointer;
-}
-.prefs-select:hover { border-color: var(--accent); }
-.prefs-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,108,255,.18); }
 
 /* Create Project steps — a little wider than a confirm, and scrollable when a
    department has a long template list */
@@ -578,7 +574,7 @@ button.ghost:disabled:hover { background: transparent; }
 .filter-multi-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .filter-multi-chev { font-size: 9px; color: var(--text-3); flex: none; }
 .filter-pop {
-  position: fixed; z-index: 950; min-width: 190px; max-height: 320px; overflow-y: auto;
+  position: fixed; z-index: 960; min-width: 190px; max-height: 320px; overflow-y: auto;
   background: var(--surface-2); border: 1px solid var(--border-2); border-radius: 12px;
   box-shadow: var(--shadow); padding: 6px; animation: pop-in .14s ease;
 }
@@ -591,6 +587,7 @@ button.ghost:disabled:hover { background: transparent; }
 .filter-pop-row.active { color: var(--accent); font-weight: 600; }
 .filter-pop-check { width: 14px; flex: none; color: var(--accent); font-weight: 700; }
 .filter-pop-sep { height: 1px; background: var(--border); margin: 4px 2px; }
+.filter-pop-row.disabled { opacity: .45; cursor: default; }
 .toolbar-label { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .6px; margin-right: -4px; }
 .legend { display: flex; gap: 13px; align-items: center; margin-left: auto; flex-wrap: wrap; }
 .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); }

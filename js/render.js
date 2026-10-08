@@ -593,9 +593,11 @@ window.App = window.App || {};
   /* Single-choice sibling of multiSelectEl: same trigger, same popover, same
      open-by-key survival across the rebuild — a tick instead of checkboxes.
      `sections` are lists of { label, tip, on, pick }, drawn with a rule
-     between them. */
-  function sortMenuEl(key, label, sections) {
-    const btn = el('button.filter.filter-multi', { type: 'button', title: 'Sort the episodes' }, [
+     between them. Shared as App.choiceMenu, so every single-choice
+     dropdown (the Preferences menu's too) is this one popover rather than
+     the browser's own <select>. */
+  function sortMenuEl(key, label, sections, title) {
+    const btn = el('button.filter.filter-multi', { type: 'button', title: title || 'Sort the episodes' }, [
       el('span.filter-multi-label', null, label),
       el('span.filter-multi-chev', null, '▾')
     ]);
@@ -623,6 +625,65 @@ window.App = window.App || {};
     if (App.filterMenu.openKey === key) draw();
     return btn;
   }
+  App.choiceMenu = sortMenuEl;
+
+  /* Every toolbar-style <select class="filter"> (Admin's ranges, kinds,
+     roles, departments) gets the same dropdown as the filters too, without
+     touching the code that builds it: the real <select> stays in the page,
+     hidden, so its .value and 'change' listeners work exactly as before,
+     and a filter-style button sits in its place. Picking sets the value and
+     fires 'change'. The button's label follows the select. */
+  let _selSeq = 0;
+  function enhanceSelect(sel) {
+    if (sel.dataset.enhanced) return;
+    sel.dataset.enhanced = '1';
+    const key = 'sel:' + (++_selSeq);
+    const label = el('span.filter-multi-label');
+    const btn = el('button.filter.filter-multi', { type: 'button' }, [label, el('span.filter-multi-chev', null, '▾')]);
+    if (sel.style.maxWidth) btn.style.maxWidth = sel.style.maxWidth;
+    const sync = () => {
+      const o = sel.options[sel.selectedIndex];
+      label.textContent = o ? o.textContent : '';
+      btn.title = sel.title || label.textContent;
+    };
+    const draw = () => {
+      if (App.filterMenu._pop) { App.filterMenu._pop.remove(); App.filterMenu._pop = null; }
+      const pop = el('.filter-pop', { onclick: e => e.stopPropagation() });
+      [...sel.options].forEach((o, i) => {
+        const on = i === sel.selectedIndex;
+        pop.appendChild(el('.filter-pop-row' + (on ? '.active' : '') + (o.disabled ? '.disabled' : ''), {
+          onclick: () => {
+            if (o.disabled) return;
+            App.filterMenu.close();
+            if (sel.selectedIndex === i) return;
+            sel.selectedIndex = i; sync();
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        }, [el('span.filter-pop-check', null, on ? '✓' : ''), el('span', null, o.textContent)]));
+      });
+      const r = btn.getBoundingClientRect();
+      pop.style.top = (r.bottom + 6) + 'px';
+      pop.style.left = Math.min(r.left, window.innerWidth - 200) + 'px';
+      document.body.appendChild(pop);
+      App.filterMenu._pop = pop;
+    };
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (App.filterMenu.openKey === key) App.filterMenu.close();
+      else { sync(); App.filterMenu.openKey = key; draw(); }
+    });
+    sel.addEventListener('change', sync);
+    new MutationObserver(sync).observe(sel, { childList: true, subtree: true, attributes: true });
+    sel.style.display = 'none';
+    sel.after(btn);
+    sync();
+  }
+  const enhanceIn = (root) => {
+    if (root.matches && root.matches('select.filter')) enhanceSelect(root);
+    if (root.querySelectorAll) root.querySelectorAll('select.filter').forEach(enhanceSelect);
+  };
+  new MutationObserver(muts => muts.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1) enhanceIn(n); })))
+    .observe(document.documentElement, { childList: true, subtree: true });
 
   let _t = null;
   function debouncedRender() { clearTimeout(_t); _t = setTimeout(App.render, 160); }
