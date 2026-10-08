@@ -343,12 +343,12 @@ window.App = window.App || {};
 
   // the edit suite, drawn in the same thick-outline, flat-pastel hand as the
   // rest of the costume. viewBox 1600×900; ids are what the wizard touches.
-  function sceneSVG() {
+  function sceneSVG(cls) {
     const now = new Date();
     const hA = ((now.getHours() % 12) + now.getMinutes() / 60) * 30, mA = now.getMinutes() * 6;
     const days = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
     return `
-<svg class="if-svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+<svg class="if-svg${cls ? ' ' + cls : ''}" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
   <g class="sc-o">
     <!-- wall + floor -->
     <rect x="-20" y="-20" width="1960" height="720" fill="#f4ecd6" stroke="none"/>
@@ -1917,4 +1917,6 @@ window.App = window.App || {};
       coach.close();
     }
   };
+  // the same room, borrowed as the Dashboard's backdrop (js/dashscene.js)
+  App.guide.sceneSVG = sceneSVG;
 })();
