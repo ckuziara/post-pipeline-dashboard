@@ -5765,12 +5765,16 @@ body.gd-sandboxed #toolbar { outline: 2px dashed rgba(255, 209, 102, .5); outlin
    .ds-*        its pieces
    ====================================================================== */
 .dash-scene {
-  --ink: #2b2b2b;
+  --ink: #55545c;   /* softer than the wizard's near-black outline */
   position: fixed; z-index: -1; overflow: hidden; pointer-events: none;
 }
 .dash-scene .ds-wall, .dash-scene .ds-roomlight, .dash-scene .ds-light, .dash-scene .ds-wash { position: absolute; inset: 0; }
 /* the wash: one veil over the whole room, in the room's light */
-.dash-scene .ds-wash { background: rgba(251, 248, 240, .4); }
+.dash-scene .ds-wash {
+  background: rgba(251, 248, 240, .52);
+  /* a soft overall blur too, so no outline reads crisp against the widgets */
+  -webkit-backdrop-filter: blur(.8px); backdrop-filter: blur(.8px);
+}
 .dash-scene .ds-wall { opacity: .9; }
 
 /* every piece: the wizard's outlines, washed out so it sits back */
@@ -5816,7 +5820,7 @@ body.gd-sandboxed #toolbar { outline: 2px dashed rgba(255, 209, 102, .5); outlin
 }
 .dash-scene[data-mood="blackout"] .ds-roomlight { opacity: .25; }
 .dash-scene[data-mood="blackout"] .ds-piece { filter: brightness(.45) saturate(.55); }
-.dash-scene[data-mood="blackout"] .ds-wash { background: rgba(9, 10, 16, .35); }
+.dash-scene[data-mood="blackout"] .ds-wash { background: rgba(9, 10, 16, .45); }
 .dash-scene[data-mood="blackout"] .ds-piece.ds-emit { filter: brightness(.95) saturate(.85); }
 /* windows let the moonlight in: the glass glows cool, and casts a little */
 .dash-scene[data-mood="blackout"] .ds-emit .ds-glass { filter: brightness(1.9) saturate(1.2) drop-shadow(0 0 18px rgba(170, 205, 255, .7)); }
@@ -5832,13 +5836,13 @@ body.gd-sandboxed #toolbar { outline: 2px dashed rgba(255, 209, 102, .5); outlin
     color-mix(in srgb, var(--accent) 14%, rgba(110, 60, 70, .14));
 }
 .dash-scene[data-mood="mood"] .ds-piece { filter: saturate(.9) sepia(.15); }
-.dash-scene[data-mood="mood"] .ds-wash { background: rgba(255, 228, 196, .22); }
+.dash-scene[data-mood="mood"] .ds-wash { background: rgba(255, 228, 196, .34); }
 .dash-scene[data-mood="mood"] .ds-top { filter: none; }
 .dash-scene[data-mood="mood"] .ds-bulb,
 .dash-scene[data-mood="mood"] .ds-glow { filter: drop-shadow(0 0 6px #ffd166) brightness(1.15); }
 
 .dash-scene[data-mood="neon"] .ds-piece { filter: none; }
-.dash-scene[data-mood="neon"] .ds-wash { background: rgba(16, 12, 22, .2); }
+.dash-scene[data-mood="neon"] .ds-wash { background: rgba(16, 12, 22, .3); }
 .dash-scene[data-mood="neon"] .ds-light { background: radial-gradient(ellipse 60% 40% at 50% 0%, rgba(255, 79, 134, .18), transparent 70%); }
 .dash-scene[data-mood="neon"] .ds-neon { filter: drop-shadow(0 0 4px #ff4f86) drop-shadow(0 0 12px #ff4f86); }
 .dash-scene[data-mood="neon"] .ds-led { filter: drop-shadow(0 0 3px currentColor); }
