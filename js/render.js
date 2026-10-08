@@ -157,6 +157,7 @@ window.App = window.App || {};
     else if (App.state.view === 'board') view.appendChild(App.board.render(episodes));
     else if (App.state.view === 'dashboard') view.appendChild(App.dashboard.render(episodes));
     else { view.appendChild(App.gantt.render(episodes)); App.gantt.afterMount(); }
+    App.dashScene && App.dashScene.sync();   // the edit-suite backdrop, Dashboard only
 
     if (phone) {
       /* Landing on a view (a tab tap, the phone redirect guard, or the very

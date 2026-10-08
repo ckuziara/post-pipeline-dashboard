@@ -2418,6 +2418,12 @@ window.App = window.App || {};
           prefRow('Hide completed episodes', 'hideDoneBoard', false, () => App.render())
         ],
         dashboard: () => [
+          prefRow('Room background', 'dashScene', true, () => App.dashScene.sync()),
+          selRow('Room', 'dashRoom', 'edit', App.dashScene.ROOMS, () => App.dashScene.rebuild()),
+          actionRow('Wall poster', [
+            { label: 'Change…', run: () => App.dashScene.pickPoster() },
+            { label: 'Reset', run: () => App.dashScene.resetPoster() }
+          ]),
           actionRow('Widget layout', [
             { label: 'Reset to default', run: () => {
               App.dashboard.restoreDefault();

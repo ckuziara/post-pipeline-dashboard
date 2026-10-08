@@ -1917,4 +1917,6 @@ window.App = window.App || {};
       coach.close();
     }
   };
+  // the room's hanging ivy, borrowed for the Dashboard's border (js/dashscene.js)
+  App.guide.ivySVG = ivySVG;
 })();

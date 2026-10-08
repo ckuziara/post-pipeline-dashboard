@@ -5753,3 +5753,138 @@ body.gd-sandboxed #toolbar { outline: 2px dashed rgba(255, 209, 102, .5); outlin
 .gd-adm-mascot { display: flex; align-items: center; gap: 12px; }
 .gd-adm-emoji { font-size: 22px; width: 32px; text-align: center; }
 .gd-adm-mlabel { flex: 1; }
+
+/* ======================================================================
+   Dashboard backdrop (js/dashscene.js)
+   .dash-scene  a cozy room drawn as a frame around the Dashboard, in the
+                setup wizard's hand: props hug the edges and corners, the
+                middle is plain wall, so the widgets lead. Which room is a
+                device pref; the wall and floor colours come from the room
+                (inline), and the lighting from the theme (data-mood).
+                Sized to #view and slipped under it at z-index -1.
+   .ds-*        its pieces
+   ====================================================================== */
+.dash-scene {
+  --ink: #55545c;   /* softer than the wizard's near-black outline */
+  position: fixed; z-index: -1; overflow: hidden; pointer-events: none;
+}
+.dash-scene .ds-wall, .dash-scene .ds-roomlight, .dash-scene .ds-light, .dash-scene .ds-wash { position: absolute; inset: 0; }
+/* the wash: one veil over the whole room, in the room's light */
+.dash-scene .ds-wash {
+  background: rgba(251, 248, 240, .52);
+  /* a soft overall blur too, so no outline reads crisp against the widgets */
+  -webkit-backdrop-filter: blur(.8px); backdrop-filter: blur(.8px);
+}
+.dash-scene .ds-wall { opacity: .9; }
+
+/* every piece: the wizard's outlines, washed out so it sits back */
+.dash-scene .ds-piece {
+  position: absolute; inset: auto; width: auto;
+  filter: saturate(.7);
+}
+.dash-scene .ds-top { top: 0; left: 0; width: 100%; height: 60px; }
+.dash-scene .ds-floor {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 34px;
+  border-top: 4px solid rgba(43, 43, 43, .3);
+}
+/* placed by hangArt() in the gap between the greeting and the Edit button */
+
+/* little lives */
+.dash-scene .ds-bulb { animation: ds-twinkle 3s ease-in-out infinite; }
+@keyframes ds-twinkle { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+.dash-scene .ds-note { animation: ds-drift 6s ease-in-out infinite; }
+@keyframes ds-drift { 0%, 100% { transform: translateY(0); opacity: .9; } 50% { transform: translateY(-10px); opacity: .5; } }
+.dash-scene .ds-led { animation: ds-blink 2s steps(2, jump-none) infinite; }
+@keyframes ds-blink { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+/* ---- lighting, by theme (data-mood, set in js/dashscene.js) ----
+   day       light themes: the room as drawn, sun slanting in, lights off
+   blackout  dark themes: the room blacked out, props in silhouette, a soft
+             monitor-blue bias glow behind the widgets; screens, windows
+             and lamps (.ds-emit) stay lit
+   mood      colourful (expressive) themes: a warm lamp glow tinted by the
+             theme's accent, a dim vignette, and the fairy lights glowing
+   neon      the synth studio's own night: dark, and everything that glows,
+             glows */
+.dash-scene[data-mood="day"] .ds-light {
+  background:
+    linear-gradient(115deg, transparent 18%, rgba(255, 244, 205, .5) 30%, rgba(255, 244, 205, .18) 44%, transparent 52%),
+    linear-gradient(115deg, transparent 56%, rgba(255, 244, 205, .3) 64%, transparent 72%);
+}
+.dash-scene[data-mood="day"] .ds-bulb { animation: none; opacity: .55; }
+
+.dash-scene[data-mood="blackout"] .ds-light {
+  background:
+    radial-gradient(ellipse 55% 45% at 50% 52%, rgba(120, 150, 255, .16), transparent 70%),
+    rgba(9, 10, 16, .72);
+}
+.dash-scene[data-mood="blackout"] .ds-roomlight { opacity: .25; }
+.dash-scene[data-mood="blackout"] .ds-piece { filter: brightness(.45) saturate(.55); }
+.dash-scene[data-mood="blackout"] .ds-wash { background: rgba(9, 10, 16, .45); }
+.dash-scene[data-mood="blackout"] .ds-piece.ds-emit { filter: brightness(.95) saturate(.85); }
+/* windows let the moonlight in: the glass glows cool, and casts a little */
+.dash-scene[data-mood="blackout"] .ds-emit .ds-glass { filter: brightness(1.9) saturate(1.2) drop-shadow(0 0 18px rgba(170, 205, 255, .7)); }
+.dash-scene[data-mood="blackout"] .ds-band.ds-emit { filter: brightness(1) saturate(.9); }
+.dash-scene[data-mood="blackout"] .ds-wallart { filter: brightness(.5) saturate(.6); }
+.dash-scene[data-mood="blackout"] .ds-floor { filter: brightness(.25); }
+.dash-scene[data-mood="blackout"] .ds-bulb { animation: none; opacity: .35; }
+
+.dash-scene[data-mood="mood"] .ds-light {
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 30%, color-mix(in srgb, var(--accent) 20%, rgba(255, 200, 130, .4)), transparent 75%),
+    radial-gradient(ellipse at 50% 45%, transparent 45%, rgba(40, 18, 30, .3) 100%),
+    color-mix(in srgb, var(--accent) 14%, rgba(110, 60, 70, .14));
+}
+.dash-scene[data-mood="mood"] .ds-piece { filter: saturate(.9) sepia(.15); }
+.dash-scene[data-mood="mood"] .ds-wash { background: rgba(255, 228, 196, .34); }
+.dash-scene[data-mood="mood"] .ds-top { filter: none; }
+.dash-scene[data-mood="mood"] .ds-bulb,
+.dash-scene[data-mood="mood"] .ds-glow { filter: drop-shadow(0 0 6px #ffd166) brightness(1.15); }
+
+.dash-scene[data-mood="neon"] .ds-piece { filter: none; }
+.dash-scene[data-mood="neon"] .ds-wash { background: rgba(16, 12, 22, .3); }
+.dash-scene[data-mood="neon"] .ds-light { background: radial-gradient(ellipse 60% 40% at 50% 0%, rgba(255, 79, 134, .18), transparent 70%); }
+.dash-scene[data-mood="neon"] .ds-neon { filter: drop-shadow(0 0 4px #ff4f86) drop-shadow(0 0 12px #ff4f86); }
+.dash-scene[data-mood="neon"] .ds-led { filter: drop-shadow(0 0 3px currentColor); }
+.dash-scene[data-mood="neon"] .ds-floor { border-top-color: rgba(255, 79, 134, .35); }
+.dash-scene[data-mood="neon"] .ds-wallart { filter: brightness(.7); }
+
+.dash-scene #sc-poster { transition: transform .18s ease; transform-box: fill-box; transform-origin: 50% 0; }
+.dash-scene.poster-hot #sc-poster { transform: translateY(-4px) rotate(-2deg); }
+.dash-scene #sc-poster.dsp-custom > :not(.dsp-art) { display: none; }
+.dash-scene .dsp-art image { image-rendering: pixelated; image-rendering: crisp-edges; }
+#view.dash-poster-hot { cursor: pointer; }
+/* room for the frame to show around the tiles, and for the wall art above them */
+body.has-dash-scene #view { padding: 44px 46px 62px; }
+body.has-dash-scene .dash-hello { min-height: 104px; }
+/* the greeting has no tile of its own, so give its words one over the wall —
+   just the words and the tools, so the wall art between them shows */
+body.has-dash-scene .dash-hello > :first-child,
+body.has-dash-scene .dash-tools {
+  padding: 12px 16px; border-radius: 14px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .1);
+}
+body.has-dash-scene .dash-tools { padding: 6px; }
+body.has-dash-scene .dash-empty-hint,
+body.has-dash-scene .dash-grid > .empty {
+  background: color-mix(in srgb, var(--bg) 88%, transparent); border-radius: 12px;
+}
+/* depth of field: a blur that's nothing in the middle and grows toward the
+   edges, in two rings so the falloff is gradual rather than a hard band */
+.dash-scene .ds-dof { position: absolute; inset: 0; }
+.dash-scene .ds-dof-near {
+  -webkit-backdrop-filter: blur(1.5px); backdrop-filter: blur(1.5px);
+  -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 55%, #000 85%);
+          mask-image: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 55%, #000 85%);
+}
+.dash-scene .ds-dof-far {
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 78%, #000 110%);
+          mask-image: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 78%, #000 110%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dash-scene .sc-vine, .dash-scene .sc-steam, .dash-scene .ds-bulb, .dash-scene .ds-note, .dash-scene .ds-led { animation: none; }
+  .dash-scene #sc-poster { transition: none; }
+}
