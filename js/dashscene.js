@@ -81,30 +81,92 @@ window.App = window.App || {};
   const CEILING = 300;
   const FLOOR_PX = 34;   // the strip of floor along the bottom (.ds-floor)
 
-  /* The main desk, lower middle: 160 cm wide and 75 cm to the desktop, with
-     an office chair pulled up in front of it and whatever this room keeps
-     on it. Drawn at 4 units to the centimetre (viewBox 640 × 500, so the
-     whole piece is 125 cm tall), floor at y=500, desktop at y=200. */
-  function desk(k) {
-    const c = Object.assign({ top: '#c9a074', leg: '#4a4a4a', ped: '#d8b48a', chair: '#3b3b44' }, k);
-    const screen = (x, w, h, fill, extra) =>   // a monitor standing on the desk, w × h in units
-      `<path d="M${x + w / 2 - 8} ${200} V${200 - 40} M${x + w / 2 - 34} 200 H${x + w / 2 + 18}" style="stroke-width:8"/>` +
-      `<rect x="${x}" y="${160 - h}" width="${w}" height="${h}" rx="8" fill="#3b3b44"/>` +
-      `<rect class="ds-glass" x="${x + 10}" y="${170 - h}" width="${w - 20}" height="${h - 20}" rx="4" fill="${fill}" style="stroke-width:3"/>` + (extra || '');
+  /* The main desk, lower middle, 75 cm to the desktop, with a proper office
+     chair pulled up in front of it and whatever this room keeps on it.
+     Drawn at 4 units to the centimetre with the floor at y=500 and the
+     desktop at y=200, so every desk piece is 125 cm tall and only its width
+     differs. Three kinds:
+       trestle  220 cm of wooden top on A-frame legs, with two drawer
+                pedestals (the music-room desk)
+       tapered  a 150 cm light top on dark, splayed, tapering legs (the
+                study desk)
+       frame    a 160 cm top on a black steel frame, a white filing
+                pedestal on casters to one side and a tower to the other
+                (the loft desk) */
+  const DESK_W = { trestle: 880, tapered: 600, frame: 640 };
+
+  // a monitor standing on the desktop: x, width and height in units
+  const screen = (x, w, h, fill, extra) =>
+    `<path d="M${x + w / 2} 200 V160 M${x + w / 2 - 30} 200 H${x + w / 2 + 30}" style="stroke-width:8"/>` +
+    `<rect x="${x}" y="${160 - h}" width="${w}" height="${h}" rx="8" fill="#3b3b44"/>` +
+    `<rect class="ds-glass" x="${x + 10}" y="${170 - h}" width="${w - 20}" height="${h - 20}" rx="4" fill="${fill}" style="stroke-width:3"/>` + (extra || '');
+
+  // three drawers stacked in a pedestal at x, w wide, from the desktop down
+  const drawers = (x, w, top, bottom, fill, handle) => {
+    const n = 3, gap = 10, dh = (bottom - top - gap * (n + 1)) / n;
+    return `<rect x="${x}" y="${top}" width="${w}" height="${bottom - top}" rx="5" fill="${fill}"/>` +
+      rep(n, i => `<rect x="${x + 10}" y="${top + gap + i * (dh + gap)}" width="${w - 20}" height="${dh}" rx="4" fill="${fill}" style="stroke-width:3"/>` +
+        `<rect x="${x + w / 2 - 22}" y="${top + gap + i * (dh + gap) + dh / 2 - 4}" width="44" height="8" rx="4" fill="${handle || '#e6e8eb'}" style="stroke-width:2"/>`);
+  };
+
+  /* A comfortable task chair, seen from behind at the desk: a contoured,
+     padded back with stitched channels and a lumbar curve, padded arms, a
+     deep seat cushion, a gas lift and a five-star base on casters. `tall`
+     makes it the high-back executive chair, with a headrest. cx is its
+     centre; 105 cm high (125 tall). */
+  function chair(cx, color, tall) {
+    const shade = `color-mix(in srgb, ${color} 78%, #000)`, lite = `color-mix(in srgb, ${color} 80%, #fff)`;
+    const top = tall ? 20 : 70;
     return `
-      ${c.items || ''}
-      ${c.screens ? c.screens(screen) : ''}
-      <rect x="20" y="200" width="600" height="18" rx="4" fill="${c.top}"/>
-      <rect x="44" y="218" width="16" height="282" fill="${c.leg}"/>
-      ${c.pedestal === false ? `<rect x="580" y="218" width="16" height="282" fill="${c.leg}"/>` :
-        `<rect x="440" y="218" width="160" height="282" rx="4" fill="${c.ped}"/>` +
-        rep(3, i => `<rect x="452" y="${230 + i * 90}" width="136" height="78" rx="4" fill="${c.ped}" style="stroke-width:3"/><rect x="500" y="${264 + i * 90}" width="40" height="8" rx="4" fill="#2b2b2b" style="stroke-width:2"/>`)}
-      <!-- the chair, in front: back 100 cm at the top, seat at 48 cm -->
-      <rect x="216" y="100" width="150" height="190" rx="28" fill="${c.chair}"/>
-      <rect x="196" y="300" width="190" height="32" rx="12" fill="${c.chair}"/>
-      <path d="M291 332 V448 M211 486 L291 448 L371 486 M291 448 V488" style="stroke-width:9"/>
-      ${[211, 291, 371].map(x => `<circle cx="${x}" cy="490" r="9" fill="#2b2b2b"/>`).join('')}`;
+      ${tall ? `<path d="M${cx - 48} ${top + 6} Q${cx} ${top - 10} ${cx + 48} ${top + 6} L${cx + 44} ${top + 46} Q${cx} ${top + 54} ${cx - 44} ${top + 46}Z" fill="${color}"/>` +
+        `<path d="M${cx - 10} ${top + 50} V${top + 70} M${cx + 10} ${top + 50} V${top + 70}" style="stroke-width:6"/>` : ''}
+      <path d="M${cx - 74} ${top + (tall ? 84 : 40)} Q${cx - 78} ${top + (tall ? 64 : 10)} ${cx - 40} ${top + (tall ? 60 : 6)} H${cx + 40} Q${cx + 78} ${top + (tall ? 64 : 10)} ${cx + 74} ${top + (tall ? 84 : 40)}
+               L${cx + 66} 236 Q${cx + 80} 262 ${cx + 60} 284 Q${cx} 300 ${cx - 60} 284 Q${cx - 80} 262 ${cx - 66} 236Z" fill="${color}"/>
+      <path d="M${cx - 52} ${top + (tall ? 92 : 48)} Q${cx} ${top + (tall ? 80 : 36)} ${cx + 52} ${top + (tall ? 92 : 48)} L${cx + 46} 232 Q${cx} 246 ${cx - 46} 232Z" style="fill:${lite};stroke-width:3"/>
+      <path d="M${cx - 18} ${top + (tall ? 88 : 44)} V238 M${cx + 18} ${top + (tall ? 88 : 44)} V238" fill="none" style="stroke:${shade};stroke-width:3"/>
+      <path d="M${cx - 60} 246 Q${cx} 262 ${cx + 60} 246" fill="none" style="stroke:${shade};stroke-width:4"/>
+      <!-- padded arms -->
+      <path d="M${cx - 100} 262 V316 M${cx + 100} 262 V316" style="stroke-width:9"/>
+      <rect x="${cx - 122}" y="248" width="46" height="18" rx="9" style="fill:${shade}"/>
+      <rect x="${cx + 76}" y="248" width="46" height="18" rx="9" style="fill:${shade}"/>
+      <!-- seat cushion, mechanism, gas lift -->
+      <rect x="${cx - 104}" y="300" width="208" height="38" rx="18" fill="${color}"/>
+      <path d="M${cx - 88} 310 H${cx + 88}" style="stroke:${lite};stroke-width:4"/>
+      <rect x="${cx - 30}" y="338" width="60" height="16" rx="5" fill="#3b3b44"/>
+      <rect x="${cx - 9}" y="354" width="18" height="96" rx="4" fill="#9aa1ab"/>
+      <!-- five-star base on casters -->
+      <path d="M${cx} 452 L${cx - 120} 474 M${cx} 452 L${cx + 120} 474 M${cx} 452 L${cx - 62} 484 M${cx} 452 L${cx + 62} 484 M${cx} 452 V480" style="stroke:#3b3b44;stroke-width:12"/>
+      ${[-120, 120, -62, 62, 0].map(dx => `<circle cx="${cx + dx}" cy="${dx === 0 ? 488 : dx % 120 === 0 ? 482 : 490}" r="10" fill="#2b2b2b"/>`).join('')}`;
   }
+
+  function deskPiece(k) {
+    const c = Object.assign({ style: 'tapered', top: '#c9a074', leg: '#3b3b44', ped: '#d8b48a', chair: '#3b3b44' }, k);
+    const W = DESK_W[c.style];
+    let frame = '';
+    if (c.style === 'trestle') {
+      frame = `<rect x="20" y="200" width="${W - 40}" height="22" rx="4" fill="${c.top}"/>` +
+        // A-frame legs at each end, with a stretcher
+        [70, W - 70].map(x => `<path d="M${x - 28} 222 L${x - 46} 500 M${x + 28} 222 L${x + 46} 500 M${x - 36} 380 H${x + 36}" style="stroke:${c.leg};stroke-width:16;stroke-linecap:butt"/>`).join('') +
+        drawers(170, 150, 222, 470, c.ped, '#e6e8eb') + drawers(W - 320, 150, 222, 470, c.ped, '#e6e8eb') +
+        `<path d="M180 470 v16 M310 470 v16 M${W - 310} 470 v16 M${W - 180} 470 v16" style="stroke-width:8"/>`;
+    } else if (c.style === 'tapered') {
+      frame = `<rect x="20" y="200" width="${W - 40}" height="16" rx="4" fill="${c.top}"/>` +
+        `<rect x="40" y="216" width="${W - 80}" height="14" fill="${c.top}" style="stroke-width:3"/>` +
+        // splayed, tapering legs
+        `<path d="M58 230 h26 l-24 270 h-12Z M${W - 84} 230 h26 l12 270 h-12Z" fill="${c.leg}"/>`;
+    } else {
+      frame = `<rect x="20" y="200" width="${W - 40}" height="18" rx="4" fill="${c.top}"/>` +
+        `<path d="M44 218 V500 M${W - 44} 218 V500 M44 232 H${W - 44}" style="stroke:${c.leg};stroke-width:14"/>` +
+        // white filing pedestal on casters, and a tower with vents
+        drawers(70, 120, 260, 470, c.ped, '#9aa1ab') + `<circle cx="84" cy="484" r="9" fill="#2b2b2b"/><circle cx="176" cy="484" r="9" fill="#2b2b2b"/>` +
+        `<rect x="${W - 190}" y="300" width="96" height="196" rx="6" fill="#2a2630"/>` +
+        rep(6, i => `<path d="M${W - 176} ${330 + i * 22} H${W - 108}" style="stroke:#4a4a4a;stroke-width:4"/>`) +
+        `<circle class="ds-led" cx="${W - 142}" cy="316" r="5" fill="#5ee7f0" style="stroke-width:1.5"/>`;
+    }
+    const body = (c.items || '') + (c.screens ? c.screens(screen) : '') + frame + chair(c.chairX || W / 2, c.chair, c.tall);
+    return piece('ds-desk', `0 0 ${W} 500`, { h: 125, cx: 0.5 }, body, { emit: true });
+  }
+
   const rep = (n, f) => Array.from({ length: n }, (_, i) => f(i)).join('');
   // a row of book spines standing on y, from x, in these colours
   const books = (x, y, cols, h) => {
@@ -178,13 +240,14 @@ window.App = window.App || {};
         <ellipse class="ds-glow" cx="209" cy="98" rx="6" ry="10" fill="#ffd166" style="stroke-width:2.5"/>`),
       pieces: () => {
         const ivy = App.guide.ivySVG();
-        return piece('ds-desk', '0 0 640 500', { h: 125, cx: 0.5 }, desk({
+        return deskPiece({
+          style: 'trestle', top: '#c08a55', leg: '#8f5f3a', ped: '#c9935e', chair: '#4a4a58',
           // two monitors: the timeline, and a viewer
-          screens: s => s(150, 200, 120, '#20222b',
-            `<g stroke="none"><rect x="172" y="62" width="70" height="10" rx="4" fill="#ff6f9c"/><rect x="200" y="80" width="90" height="10" rx="4" fill="#ffd166"/><rect x="240" y="98" width="70" height="10" rx="4" fill="#6cc24a"/><rect x="180" y="116" width="60" height="10" rx="4" fill="#8fb7e8"/></g>`) +
-            s(360, 180, 110, '#5d6fd6'),
-          items: `<path d="M520 200 h40 v-34 a10 10 0 0 0 -10 -10 h-20 a10 10 0 0 0 -10 10Z" fill="#f28c6b"/>`
-        }), { emit: true }) +
+          screens: s => s(250, 200, 120, '#20222b',
+            `<g stroke="none"><rect x="272" y="62" width="70" height="10" rx="4" fill="#ff6f9c"/><rect x="300" y="80" width="90" height="10" rx="4" fill="#ffd166"/><rect x="340" y="98" width="70" height="10" rx="4" fill="#6cc24a"/><rect x="280" y="116" width="60" height="10" rx="4" fill="#8fb7e8"/></g>`) +
+            s(470, 180, 110, '#5d6fd6'),
+          items: `<path d="M690 200 h40 v-34 a10 10 0 0 0 -10 -10 h-20 a10 10 0 0 0 -10 10Z" fill="#f28c6b"/>`
+        }) +
           piece('ds-ivy-r', '1500 -10 300 700', { h: 150, y: 150, right: -8 }, ivy, { align: 'xMaxYMin meet' }) +
           piece('ds-ivy-l', '1500 -10 300 700', { h: 120, y: 180, left: -8 }, `<g transform="translate(3300 0) scale(-1 1)">${ivy}</g>`, { align: 'xMinYMin meet' }) +
           piece('ds-plant', '1340 470 210 230', { h: 70, left: 6 }, `
@@ -218,14 +281,14 @@ window.App = window.App || {};
         <path d="M112 24 V200 M200 24 V200 M288 24 V200 M24 112 H376" style="stroke:#5a6470;stroke-width:7"/>
         <rect x="0" y="212" width="400" height="14" rx="3" fill="#8a939e"/>`, { emit: true }),
       pieces: () =>
-        piece('ds-desk', '0 0 640 500', { h: 125, cx: 0.5 }, desk({
-          top: '#d9b98f', ped: '#e6e8eb',
+        deskPiece({
+          style: 'frame', top: '#c9935e', leg: '#2b2b2b', ped: '#e6e8eb', chair: '#2f2f36', tall: true,
           screens: s => s(250, 220, 140, '#dfe8f2'),
           // an anglepoise lamp and a pen cup
           items: `<path d="M110 200 V150 L160 96" fill="none" style="stroke:#e6e8eb;stroke-width:8"/><path d="M90 200 h40" style="stroke-width:8"/>
             <path class="ds-glow" d="M150 80 l40 -14 l12 32 l-38 10Z" fill="#e6e8eb"/>
             <rect x="500" y="164" width="30" height="36" rx="4" fill="#6b6f78"/><path d="M508 164 l-6 -24 M518 164 v-28 M526 164 l8 -22" style="stroke-width:4"/>`
-        }), { emit: true }) +
+        }) +
         // a row of binders on a 70 cm wall shelf
         piece('ds-binders', '0 0 210 140', { h: 47, y: 226, right: 10 }, `
           <rect x="0" y="118" width="210" height="12" rx="3" fill="#a07a58"/>
@@ -261,14 +324,14 @@ window.App = window.App || {};
         <path d="M24 222 V178 h20 v-30 h22 v44 h18 v-56 h24 v40 h20 v-26 h24 v52 h22 v-18 h32 V222Z" fill="#c9787a" stroke="none" opacity=".85"/>
         <path d="M115 24 V222 M24 110 H206" style="stroke:#fffdf5;stroke-width:9"/>`, { emit: true }),
       pieces: () =>
-        piece('ds-desk', '0 0 640 500', { h: 125, cx: 0.5 }, desk({
-          top: '#c79a6c', leg: '#3b3b44', ped: '#b98a5e', chair: '#5f6a86',
+        deskPiece({
+          style: 'tapered', top: '#d9b98f', leg: '#2f3442', chair: '#4f5a78',
           // a laptop, the orange lamp, a little plant
           items: `<path d="M260 200 l20 -96 h150 l-20 96Z" fill="#9aa1ab"/><path class="ds-glass" d="M286 112 h132 l-16 78 h-132Z" fill="#fff4cf" style="stroke-width:3"/><path d="M230 200 h220" style="stroke-width:8"/>
             <path d="M120 200 V150 L160 96" fill="none" style="stroke:#e8946b;stroke-width:8"/><path d="M100 200 h40" style="stroke-width:8"/>
             <path class="ds-glow" d="M150 80 l40 -14 l12 32 l-38 10Z" fill="#f28c6b"/>
             <path d="M500 200 h40 l-5 -30 h-30Z" fill="#fffdf5"/><path d="M520 170 q-12 -26 0 -40 q10 20 0 40 M520 170 q10 -24 26 -28 q-6 22 -26 28" fill="#6c9a5e"/>`
-        }), { emit: true }) +
+        }) +
         // a 70 cm wall shelf of books with pothos trailing off it
         piece('ds-shelf', '0 0 270 260', { h: 73, y: 184, left: 4 }, `
           <rect x="0" y="96" width="250" height="14" rx="3" fill="#a07a58"/>
@@ -310,13 +373,13 @@ window.App = window.App || {};
           <path d="M70 136 C 50 186, 80 226, 60 296 M130 136 C 150 196, 120 236, 140 276 M100 142 C 104 196, 90 226, 100 256" fill="none" style="stroke:#5f9a57;stroke-width:3"/>
           ${leafy([[66, 166, 30], [58, 212, -30], [70, 256, 40], [62, 288, -20], [140, 172, -30], [128, 216, 20], [142, 260, -40], [98, 190, 60], [96, 236, -50], [80, 88, -30], [120, 86, 30]])}`),
       pieces: () =>
-        piece('ds-desk', '0 0 640 500', { h: 125, cx: 0.5 }, desk({
-          top: '#a8703f', ped: '#c08a55', pedestal: false,
-          // a monitor between two studio speakers, and a little keyboard
-          screens: s => s(220, 200, 120, '#fff4cf'),
-          items: `<rect x="90" y="110" width="70" height="90" rx="8" fill="#3b3b44"/><circle cx="125" cy="168" r="18" fill="#6b6f78"/><circle cx="125" cy="132" r="8" fill="#6b6f78"/>
-            <rect x="480" y="110" width="70" height="90" rx="8" fill="#3b3b44"/><circle cx="515" cy="168" r="18" fill="#6b6f78"/><circle cx="515" cy="132" r="8" fill="#6b6f78"/>`
-        }), { emit: true }) +
+        deskPiece({
+          style: 'trestle', top: '#b07a4c', leg: '#8f5f3a', ped: '#c08a55', chair: '#3b3b44',
+          // a monitor between two studio speakers
+          screens: s => s(340, 200, 120, '#fff4cf'),
+          items: `<rect x="210" y="110" width="70" height="90" rx="8" fill="#3b3b44"/><circle cx="245" cy="168" r="18" fill="#6b6f78"/><circle cx="245" cy="132" r="8" fill="#6b6f78"/>
+            <rect x="600" y="110" width="70" height="90" rx="8" fill="#3b3b44"/><circle cx="635" cy="168" r="18" fill="#6b6f78"/><circle cx="635" cy="132" r="8" fill="#6b6f78"/>`
+        }) +
         piece('ds-notes-l', '0 0 120 300', { h: 60, y: 110, left: 2 }, notes([[20, 60, 34, 1], [70, 140, 26, 2], [24, 230, 30, 3]])) +
         piece('ds-notes-r', '0 0 120 300', { h: 55, y: 90, right: 3 }, notes([[60, 50, 30, 2], [20, 150, 26, 1], [70, 250, 32, 4]])) +
         // an 80 cm wall shelf: a speaker, records, a plant
@@ -350,14 +413,14 @@ window.App = window.App || {};
         <path d="M150 26 V200 M26 113 H274" style="stroke:#fffdf5;stroke-width:10"/>
         <rect x="0" y="212" width="300" height="14" rx="3" fill="#e6e8f2"/>`, { emit: true }),
       pieces: () =>
-        piece('ds-desk', '0 0 640 500', { h: 125, cx: 0.5 }, desk({
-          top: '#e6e8f2', leg: '#cfd5ea', ped: '#f2f3f8', chair: '#ffc94a',
+        deskPiece({
+          style: 'tapered', top: '#f2f3f8', leg: '#cfd5ea', chair: '#ffc94a',
           // a wide curved monitor, headphones, a cactus, a mug
           screens: s => s(170, 300, 130, '#ffe9c4'),
           items: `<path d="M500 200 v-26 a24 24 0 0 1 48 0 v26" fill="none" style="stroke-width:7"/><rect x="494" y="180" width="14" height="22" rx="5" fill="#e6e8f2"/><rect x="540" y="180" width="14" height="22" rx="5" fill="#e6e8f2"/>
             <rect x="90" y="176" width="30" height="24" rx="4" fill="#e8946b"/><path d="M98 176 v-30 a7 7 0 0 1 14 0 v30" fill="#7cb86a"/>
             <path d="M140 200 h26 v-26 h-26Z" fill="#fffdf5"/>`
-        }), { emit: true }) +
+        }) +
         // three 60 cm floating shelves: books, a puzzle cube, a figure
         piece('ds-floats', '0 0 220 380', { h: 120, y: 145, right: 4 }, `
           ${rep(3, i => `<rect x="20" y="${110 + i * 120}" width="190" height="12" rx="3" fill="#fffdf5"/>`)}
@@ -379,13 +442,13 @@ window.App = window.App || {};
       wall: 'radial-gradient(ellipse at 50% 30%, #2a1f31 0%, #1b1622 60%, #120e17 100%)',
       floor: '#100d14', top: neonTube,
       pieces: () =>
-        piece('ds-desk', '0 0 640 500', { h: 125, cx: 0.5 }, desk({
-          top: '#2a2630', leg: '#3b3443', ped: '#2a2630', chair: '#3b3443', pedestal: false,
+        deskPiece({
+          style: 'frame', top: '#2a2630', leg: '#3b3443', ped: '#3b3443', chair: '#3b3443', tall: true,
           // a synth across the desk, LEDs lit
           items: `<rect x="110" y="150" width="420" height="50" rx="8" fill="#2a2630"/>
             ${rep(24, k => `<rect x="${124 + k * 16.5}" y="172" width="13" height="26" rx="2" fill="#e8e4ee" style="stroke-width:1.5"/>`)}
             ${rep(8, k => `<circle class="ds-led" style="animation-delay:-${k * 0.31}s" cx="${140 + k * 48}" cy="161" r="4" fill="${['#ff4f86', '#5ee7f0', '#ffd166'][k % 3]}" style="stroke-width:1.5"/>`)}`
-        }), { emit: true }) +
+        }) +
         // a 19-inch rack, 90 cm: four units of blinking LEDs and keys on top
         piece('ds-rack', '0 10 240 356', { h: 90, left: 4 }, `
           ${rep(4, i => `<rect x="10" y="${20 + i * 74}" width="190" height="64" rx="6" fill="#2a2630"/>` +
