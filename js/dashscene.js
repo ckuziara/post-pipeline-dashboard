@@ -284,9 +284,10 @@ window.App = window.App || {};
     return `<div class="ds-wall" style="background:${r.wall.replace(/"/g, '&quot;')}"></div>` +
       (r.light ? `<div class="ds-roomlight" style="background:${r.light}"></div>` : '') +
       '<div class="ds-light"></div>' +
+      // the floor goes down first, so every prop stands on it rather than in it
+      `<div class="ds-floor" style="background:${r.floor}"></div>` +
       '<svg class="if-svg ds-piece ds-top" xmlns="http://www.w3.org/2000/svg"></svg>' +
       r.pieces() +
-      `<div class="ds-floor" style="background:${r.floor}"></div>` +
       // wall art in the band beside the greeting: the clock and the poster
       piece('ds-wallart', '1080 25 365 255', 'top:26px;left:50%;height:112px', `
         <path d="M1150 70 V40" stroke-width="3" opacity=".5"/>
