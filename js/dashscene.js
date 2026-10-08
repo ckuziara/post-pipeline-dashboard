@@ -112,20 +112,34 @@ window.App = window.App || {};
       `<path class="ds-neon" d="${d.replace(/M-10 14/, 'M-10 22')}" transform="translate(0 8)" fill="none" style="stroke:#ff4f86;stroke-width:2;opacity:.55"/>`;
   }
 
-  /* ---- the rooms ---- */
+  /* ---- the rooms ----
+     Only three parts of the frame are ever really seen: the band above the
+     widgets (between the greeting and the Edit button), the side margins,
+     and the strip of floor. So each room's signature piece — a window, a
+     record, a sign — hangs in the band beside the clock and poster
+     (`band`, laid out by hangArt), side props are tall and narrow, and
+     floor props are short enough to stand in the bottom margin. */
   const ROOMS = {
     edit: {
       label: 'Edit suite',
       wall: 'radial-gradient(ellipse at 50% 40%, #fbf8f0 0%, #f4eee0 70%, #eee5d0 100%)',
       floor: '#e8d6b3', top: fairyLights,
+      // a little floating shelf: two snapshots and a candle
+      band: () => piece('ds-band', '0 0 260 180', '', `
+        <rect x="0" y="150" width="260" height="12" rx="3" fill="#c9a074"/>
+        <rect x="18" y="52" width="74" height="98" rx="4" fill="#fffdf5"/><rect x="28" y="62" width="54" height="66" fill="#8fb7e8" style="stroke-width:3"/>
+        <path d="M28 128 l18 -24 l14 14 l10 -10 l12 20Z" fill="#6c9a5e" style="stroke-width:2"/>
+        <rect x="108" y="84" width="64" height="66" rx="4" fill="#fffdf5" transform="rotate(4 140 117)"/><rect x="117" y="93" width="46" height="40" fill="#f7a6b8" transform="rotate(4 140 117)" style="stroke-width:3"/>
+        <rect x="196" y="110" width="26" height="40" rx="4" fill="#fffdf5"/>
+        <ellipse class="ds-glow" cx="209" cy="98" rx="6" ry="10" fill="#ffd166" style="stroke-width:2.5"/>`),
       pieces: () => {
         const ivy = App.guide.ivySVG();
         return piece('ds-ivy-r', '1500 -10 300 700', 'top:0;right:-18px;height:min(55%,460px)', ivy, { align: 'xMaxYMin meet' }) +
           piece('ds-ivy-l', '1500 -10 300 700', 'top:0;left:-18px;height:min(42%,360px)', `<g transform="translate(3300 0) scale(-1 1)">${ivy}</g>`, { align: 'xMinYMin meet' }) +
-          piece('ds-plant', '1340 470 210 230', 'left:10px;bottom:14px;height:150px', `
+          piece('ds-plant', '1340 470 210 230', 'left:10px;bottom:14px;height:96px', `
             <path d="M1440 610 q-40 -70 10 -120 q10 60 -10 120 M1460 610 q10 -90 70 -110 q-20 70 -70 110 M1450 610 q-60 -40 -90 -100 q60 20 90 100" fill="#7cb86a"/>
             <path d="M1410 600 h90 l-12 90 h-66Z" fill="#e8946b"/>`) +
-          piece('ds-reel', '140 470 300 235', 'right:14px;bottom:16px;height:118px', `
+          piece('ds-reel', '140 470 300 235', 'right:14px;bottom:16px;height:84px', `
             <circle cx="250" cy="600" r="96" fill="#5d6fd6"/>
             <circle cx="250" cy="600" r="20" fill="#f4ecd6"/>
             ${[0, 72, 144, 216, 288].map(a => `<circle cx="${250 + Math.cos(a * Math.PI / 180) * 54}" cy="${600 + Math.sin(a * Math.PI / 180) * 54}" r="20" fill="#f4ecd6"/>`).join('')}
@@ -142,25 +156,27 @@ window.App = window.App || {};
       // brick courses, offset every other row, in a soft terracotta
       wall: `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="32"><rect width="64" height="32" fill="#e6c3b0"/><g fill="none" stroke="#f3dccf" stroke-width="2"><path d="M0 1H64M0 17H64M1 1V17M33 17V32"/></g></svg>')}") repeat, #e6c3b0`,
       floor: '#b9bec4', top: loftPipe,
+      // the big steel-framed window, with the city outside
+      band: () => piece('ds-band', '0 0 400 236', '', `
+        <rect x="10" y="10" width="380" height="204" rx="6" fill="#5a6470"/>
+        <rect class="ds-glass" x="24" y="24" width="352" height="176" fill="#bfe3f7"/>
+        <g stroke="none"><ellipse cx="90" cy="64" rx="34" ry="10" fill="#fff"/><ellipse cx="270" cy="88" rx="26" ry="8" fill="#fff"/>
+        <path d="M24 200 V150 h22 v-28 h20 v40 h24 v-62 h26 v54 h18 v-34 h26 v66 h24 v-22 h22 v-44 h28 v58 h20 v-30 h24 v46 h26 v-20 h28 V200Z" fill="#98b6cc"/>
+        <path d="M40 30 L110 30 L40 120Z" fill="#fff" opacity=".35"/></g>
+        <path d="M112 24 V200 M200 24 V200 M288 24 V200 M24 112 H376" style="stroke:#5a6470;stroke-width:7"/>
+        <rect x="0" y="212" width="400" height="14" rx="3" fill="#8a939e"/>`, { emit: true }),
       pieces: () =>
-        piece('ds-window', '0 0 220 360', 'top:40px;left:-6px;height:min(46%,330px)', `
-          <rect x="10" y="10" width="200" height="336" rx="6" fill="#5a6470"/>
-          <rect class="ds-glass" x="24" y="24" width="172" height="308" fill="#bfe3f7"/>
-          <g stroke="none"><ellipse cx="80" cy="80" rx="30" ry="10" fill="#fff"/><ellipse cx="150" cy="120" rx="24" ry="8" fill="#fff"/>
-          <path d="M24 332 V260 h20 v-34 h18 v44 h22 v-70 h24 v62 h16 v-40 h24 v78 h22 v-24 h22 V332Z" fill="#98b6cc"/>
-          <path d="M40 40 L90 40 L40 140Z" fill="#fff" opacity=".35"/></g>
-          <path d="M110 24 V332 M24 178 H196" style="stroke:#5a6470;stroke-width:8"/>
-          <rect x="0" y="342" width="220" height="14" rx="3" fill="#8a939e"/>`, { emit: true }) +
         piece('ds-binders', '0 0 210 140', 'top:30px;right:14px;height:64px', `
           <rect x="0" y="118" width="210" height="12" rx="3" fill="#a07a58"/>
           ${['#3b4a6b', '#4a4a4a', '#6c9a5e', '#3b4a6b', '#c9a074'].map((c, i) =>
             `<rect x="${14 + i * 34}" y="${i === 4 ? 70 : 34}" width="28" height="${i === 4 ? 48 : 84}" rx="3" fill="${c}"/><rect x="${20 + i * 34}" y="${i === 4 ? 80 : 50}" width="16" height="10" rx="2" fill="#fffdf5" style="stroke-width:2"/>`).join('')}`) +
-        piece('ds-cabinet', '0 0 270 300', 'left:8px;bottom:14px;height:170px', `
-          <rect x="10" y="40" width="140" height="250" rx="8" fill="#c9a074"/>
-          ${rep(3, i => `<rect x="24" y="${54 + i * 78}" width="112" height="66" rx="5" fill="#d8b48a"/><rect x="66" y="${72 + i * 78}" width="28" height="8" rx="4" fill="#6b5844" style="stroke-width:2"/>`)}
-          <path d="M180 230 h70 l-8 60 h-54Z" fill="#6b6f78"/>
-          <path d="M215 230 q-30 -60 0 -110 q20 50 0 110 M215 230 q20 -70 50 -80 q-10 60 -50 80 M215 230 q-40 -30 -50 -80 q40 20 50 80" fill="#7cb86a"/>`) +
-        piece('ds-printer', '0 0 230 230', 'right:12px;bottom:14px;height:140px', `
+        // a squat two-drawer cabinet with a plant, and a printer on a stand
+        piece('ds-cabinet', '0 120 270 180', 'left:8px;bottom:14px;height:92px', `
+          <rect x="10" y="140" width="150" height="150" rx="8" fill="#c9a074"/>
+          ${rep(2, i => `<rect x="24" y="${154 + i * 66}" width="122" height="56" rx="5" fill="#d8b48a"/><rect x="71" y="${172 + i * 66}" width="28" height="8" rx="4" fill="#6b5844" style="stroke-width:2"/>`)}
+          <path d="M184 230 h70 l-8 60 h-54Z" fill="#6b6f78"/>
+          <path d="M219 230 q-30 -60 0 -100 q20 50 0 100 M219 230 q20 -70 46 -76 q-10 56 -46 76 M219 230 q-40 -30 -46 -76 q36 20 46 76" fill="#7cb86a"/>`) +
+        piece('ds-printer', '0 20 230 210', 'right:12px;bottom:14px;height:88px', `
           <rect x="30" y="110" width="180" height="114" rx="8" fill="#9aa1ab"/>
           <path d="M120 120 V214" style="stroke-width:3;opacity:.5"/>
           <rect x="48" y="60" width="144" height="50" rx="8" fill="#e6e8eb"/>
@@ -170,9 +186,18 @@ window.App = window.App || {};
 
     study: {
       label: 'Sunset study',
-      wall: 'linear-gradient(180deg, #c3cadd 0%, #b5bdd4 100%)',
-      light: 'linear-gradient(118deg, transparent 58%, rgba(255, 196, 130, .45) 64%, rgba(255, 196, 130, .18) 74%, transparent 80%)',
-      floor: '#8a7280',
+      // warm dusk plaster rather than cold slate, so the sunset reads warm
+      wall: 'linear-gradient(180deg, #e7cfc6 0%, #d9bdb9 100%)',
+      light: 'linear-gradient(118deg, transparent 52%, rgba(255, 186, 110, .5) 60%, rgba(255, 186, 110, .2) 72%, transparent 80%)',
+      floor: '#8a6a6e',
+      // the window the sun's coming in through, the city going gold
+      band: () => piece('ds-band', '0 0 230 250', '', `
+        <defs><linearGradient id="ds-sunset" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe2a8"/><stop offset=".6" stop-color="#ffb37a"/><stop offset="1" stop-color="#f28c6b"/></linearGradient></defs>
+        <rect x="10" y="10" width="210" height="226" rx="6" fill="#fffdf5"/>
+        <rect class="ds-glass" x="24" y="24" width="182" height="198" fill="url(#ds-sunset)"/>
+        <circle cx="150" cy="150" r="26" fill="#fff4cf" stroke="none"/>
+        <path d="M24 222 V178 h20 v-30 h22 v44 h18 v-56 h24 v40 h20 v-26 h24 v52 h22 v-18 h32 V222Z" fill="#c9787a" stroke="none" opacity=".85"/>
+        <path d="M115 24 V222 M24 110 H206" style="stroke:#fffdf5;stroke-width:9"/>`, { emit: true }),
       pieces: () =>
         piece('ds-shelf', '0 0 270 260', 'top:-14px;left:10px;height:150px', `
           <rect x="0" y="96" width="250" height="14" rx="3" fill="#a07a58"/>
@@ -182,34 +207,40 @@ window.App = window.App || {};
           <path d="M194 66 q-6 -26 10 -40 M194 66 q-18 -16 -26 -34" fill="none" style="stroke:#5f9a57;stroke-width:3"/>
           <path d="M190 100 C 200 150, 170 190, 196 250" fill="none" style="stroke:#5f9a57;stroke-width:3"/>
           ${leafy([[196, 130, 30], [182, 160, -20], [190, 196, 40], [184, 226, -30], [200, 18, -40], [168, 30, 20]], '#7cb86a')}`) +
-        piece('ds-bookcase', '0 0 190 440', 'right:0;bottom:14px;height:min(68%,500px)', `
-          <rect x="10" y="10" width="170" height="424" rx="8" fill="#b07a4c"/>
-          <rect x="24" y="24" width="142" height="396" rx="4" fill="#8f5f3a"/>
-          ${rep(4, i => `<rect x="24" y="${118 + i * 96}" width="142" height="10" fill="#b07a4c" style="stroke-width:3"/>`)}
-          ${books(30, 118, ['#fffdf5', '#5d6fd6', '#f7a6b8', '#ffd166', '#8fb7e8'], 70)}
-          ${books(40, 214, ['#6c9a5e', '#fffdf5', '#e8946b', '#4a4a4a'], 70)}
-          ${books(30, 310, ['#b98ce6', '#fffdf5', '#8fb7e8', '#f28c6b', '#c9a074'], 70)}
-          <rect x="34" y="350" width="122" height="62" rx="4" fill="#a8703f"/><circle cx="95" cy="380" r="5" fill="#2b2b2b"/>`) +
-        piece('ds-sidecab', '0 0 300 300', 'left:8px;bottom:14px;height:160px', `
-          <rect x="10" y="150" width="180" height="140" rx="8" fill="#5f6a86"/>
-          ${rep(2, i => `<rect x="24" y="${164 + i * 62}" width="152" height="50" rx="5" fill="#76819e"/><rect x="86" y="${184 + i * 62}" width="28" height="8" rx="4" fill="#2b2b2b" style="stroke-width:2"/>`)}
+        // just the bottom of the bookcase: a low shelf of books and a cupboard
+        piece('ds-bookcase', '0 214 190 220', 'right:6px;bottom:14px;height:100px', `
+          <rect x="10" y="214" width="170" height="220" rx="8" fill="#b07a4c"/>
+          <rect x="24" y="226" width="142" height="196" rx="4" fill="#8f5f3a"/>
+          <rect x="24" y="310" width="142" height="10" fill="#b07a4c" style="stroke-width:3"/>
+          ${books(30, 310, ['#b98ce6', '#fffdf5', '#8fb7e8', '#f28c6b', '#c9a074', '#6c9a5e'], 76)}
+          <rect x="34" y="330" width="122" height="82" rx="4" fill="#a8703f"/><circle cx="95" cy="370" r="5" fill="#2b2b2b"/>`) +
+        piece('ds-sidecab', '0 40 300 260', 'left:8px;bottom:14px;height:104px', `
+          <rect x="10" y="150" width="180" height="140" rx="8" fill="#7a6a86"/>
+          ${rep(2, i => `<rect x="24" y="${164 + i * 62}" width="152" height="50" rx="5" fill="#90819e"/><rect x="86" y="${184 + i * 62}" width="28" height="8" rx="4" fill="#2b2b2b" style="stroke-width:2"/>`)}
           <path d="M60 150 V110 L100 60" fill="none" style="stroke:#e8946b;stroke-width:6"/>
           <path class="ds-glow" d="M86 48 l36 -16 l14 30 l-34 12Z" fill="#f28c6b"/>
           <path d="M40 150 h50" style="stroke-width:6"/>
           <path d="M215 290 h70 l-8 -50 h-54Z" fill="#fffdf5"/>
-          <path d="M250 240 q-30 -50 0 -90 q20 40 0 90 M250 240 q20 -60 44 -66 q-10 50 -44 66 M250 240 q-34 -24 -44 -66 q34 16 44 66" fill="#6c9a5e"/>`)
+          <path d="M250 240 q-30 -50 0 -90 q20 40 0 90 M250 240 q20 -60 44 -66 q-10 50 -44 66 M250 240 q-34 -24 -44 -66 q34 16 44 66" fill="#6c9a5e"/>`, { emit: true })
     },
 
     music: {
       label: 'Music room',
       wall: 'linear-gradient(180deg, #ecd9ee 0%, #e2cbe6 100%)',
       floor: '#8e7fa3', top: fairyLights,
+      // a framed record, and the hanging plant beside it where it can be seen
+      band: () =>
+        piece('ds-band', '0 0 200 200', '', `
+          <rect x="10" y="10" width="180" height="180" rx="6" fill="#fffdf5"/>
+          <circle cx="100" cy="100" r="70" fill="#2b2b2b"/>
+          <g fill="none" style="stroke:#4a4a4a;stroke-width:2"><circle cx="100" cy="100" r="58"/><circle cx="100" cy="100" r="46"/><circle cx="100" cy="100" r="34"/></g>
+          <circle cx="100" cy="100" r="20" fill="#ff6f9c"/><circle cx="100" cy="100" r="4" fill="#fffdf5" style="stroke-width:2"/>`) +
+        piece('ds-band', '30 0 140 330', '', `
+          <path d="M100 0 V96" style="stroke-width:2.5"/>
+          <path d="M60 96 h80 l-10 46 h-60Z" fill="#f28c6b"/>
+          <path d="M70 136 C 50 186, 80 226, 60 296 M130 136 C 150 196, 120 236, 140 276 M100 142 C 104 196, 90 226, 100 256" fill="none" style="stroke:#5f9a57;stroke-width:3"/>
+          ${leafy([[66, 166, 30], [58, 212, -30], [70, 256, 40], [62, 288, -20], [140, 172, -30], [128, 216, 20], [142, 260, -40], [98, 190, 60], [96, 236, -50], [80, 88, -30], [120, 86, 30]])}`),
       pieces: () =>
-        piece('ds-hang', '0 0 200 330', 'top:30px;left:4px;height:min(36%,260px)', `
-          <path d="M100 0 V120" style="stroke-width:2.5"/>
-          <path d="M60 120 h80 l-10 46 h-60Z" fill="#f28c6b"/>
-          <path d="M70 160 C 50 210, 80 250, 60 320 M130 160 C 150 220, 120 260, 140 300 M100 166 C 104 220, 90 250, 100 280" fill="none" style="stroke:#5f9a57;stroke-width:3"/>
-          ${leafy([[66, 190, 30], [58, 236, -30], [70, 280, 40], [62, 312, -20], [140, 196, -30], [128, 240, 20], [142, 284, -40], [98, 214, 60], [96, 260, -50], [80, 112, -30], [120, 110, 30]])}`) +
         piece('ds-notes-l', '0 0 120 300', 'top:34%;left:4px;height:min(30%,220px)', notes([[20, 60, 34, 1], [70, 140, 26, 2], [24, 230, 30, 3]])) +
         piece('ds-notes-r', '0 0 120 300', 'top:44%;right:6px;height:min(26%,190px)', notes([[60, 50, 30, 2], [20, 150, 26, 1], [70, 250, 32, 4]])) +
         piece('ds-mshelf', '0 0 270 170', 'top:34px;right:10px;height:70px', `
@@ -218,10 +249,10 @@ window.App = window.App || {};
           ${books(96, 140, ['#ff6f9c', '#8fb7e8', '#ffd166', '#6c9a5e'], 66)}
           <path d="M190 140 h50 l-6 -30 h-38Z" fill="#e8946b"/>
           ${leafy([[204, 98, -40], [222, 92, 30], [214, 78, -10], [196, 84, 20]])}`) +
-        piece('ds-bigplant', '0 0 230 330', 'left:6px;bottom:12px;height:min(30%,200px)', `
+        piece('ds-bigplant', '0 60 230 270', 'left:6px;bottom:12px;height:110px', `
           <path d="M70 330 l-8 -80 h106 l-8 80Z" fill="#4a4a4a"/>
           <path d="M115 250 C 60 200, 40 120, 70 60 C 100 120, 110 190, 115 250Z M115 250 C 150 190, 190 150, 210 90 C 180 160, 150 210, 115 250Z M115 250 C 100 170, 130 90, 150 30 C 150 120, 130 190, 115 250Z M115 250 C 70 230, 30 200, 10 150 C 60 170, 90 210, 115 250Z" fill="#6c9a5e"/>`) +
-        piece('ds-tripod', '0 0 230 270', 'right:10px;bottom:12px;height:min(26%,170px)', `
+        piece('ds-tripod', '0 60 230 210', 'right:10px;bottom:12px;height:96px', `
           <path d="M150 120 L110 262 M150 120 L190 262 M150 120 V262" style="stroke-width:5"/>
           <rect x="120" y="70" width="60" height="50" rx="8" fill="#4a4a4a"/><circle cx="150" cy="95" r="14" fill="#8fb7e8"/>
           <rect x="10" y="150" width="80" height="112" rx="8" fill="#3b3b44"/><circle cx="50" cy="222" r="24" fill="#6b6f78"/><circle cx="50" cy="176" r="10" fill="#6b6f78"/>`)
@@ -231,48 +262,66 @@ window.App = window.App || {};
       label: 'Cool-blue den',
       wall: 'linear-gradient(180deg, #b4c1e8 0%, #a5b3df 100%)',
       floor: '#7f72bd',
+      // the frosty window, moonlit, with pines outside
+      band: () => piece('ds-band', '0 0 300 236', '', `
+        <rect x="10" y="10" width="280" height="206" rx="6" fill="#fffdf5"/>
+        <rect class="ds-glass" x="26" y="26" width="248" height="174" fill="#def5f4"/>
+        <circle cx="220" cy="70" r="18" fill="#fffef0" stroke="none"/>
+        <g stroke="none" fill="#7cc3b5"><path d="M50 200 l26 -100 l26 100Z"/><path d="M120 200 l18 -70 l18 70Z" opacity=".8"/><path d="M190 200 l24 -116 l24 116Z"/><path d="M240 200 l14 -52 l14 52Z" opacity=".8"/></g>
+        <path d="M150 26 V200 M26 113 H274" style="stroke:#fffdf5;stroke-width:10"/>
+        <rect x="0" y="212" width="300" height="14" rx="3" fill="#e6e8f2"/>`, { emit: true }),
       pieces: () =>
-        piece('ds-frost', '0 0 230 330', 'top:40px;left:-6px;height:min(44%,320px)', `
-          <rect x="10" y="10" width="210" height="300" rx="6" fill="#fffdf5"/>
-          <rect class="ds-glass" x="26" y="26" width="178" height="268" fill="#def5f4"/>
-          <g stroke="none" fill="#7cc3b5"><path d="M50 294 l24 -110 l24 110Z"/><path d="M120 294 l18 -80 l18 80Z" opacity=".8"/><path d="M160 294 l22 -130 l22 130Z"/></g>
-          <path d="M115 26 V294 M26 160 H204" style="stroke:#fffdf5;stroke-width:10"/>
-          <rect x="0" y="306" width="230" height="14" rx="3" fill="#e6e8f2"/>`, { emit: true }) +
         piece('ds-floats', '0 0 220 380', 'top:56px;right:8px;height:min(46%,330px)', `
           ${rep(3, i => `<rect x="20" y="${110 + i * 120}" width="190" height="12" rx="3" fill="#fffdf5"/>`)}
           ${books(40, 110, ['#5d6fd6', '#a85a5a', '#fffdf5'], 70)}
           <g transform="translate(140 64)"><rect width="44" height="44" rx="4" fill="#ffd166"/><path d="M15 0 V44 M29 0 V44 M0 15 H44 M0 29 H44" style="stroke-width:2"/><rect x="1" y="1" width="14" height="14" fill="#ff6f9c" stroke="none"/><rect x="29" y="29" width="14" height="14" fill="#5d6fd6" stroke="none"/></g>
           ${books(110, 230, ['#8fb7e8', '#a85a5a', '#6c9a5e', '#fffdf5'], 70)}
           <path d="M50 350 l14 -40 h24 l14 40Z" fill="#3b3b44"/><circle cx="76" cy="300" r="12" fill="#3b3b44"/>`) +
-        piece('ds-lowcase', '0 0 220 240', 'left:8px;bottom:14px;height:150px', `
+        piece('ds-lowcase', '0 110 220 130', 'left:8px;bottom:14px;height:84px', `
           <rect x="10" y="20" width="200" height="214" rx="8" fill="#fffdf5"/>
           <rect x="10" y="122" width="200" height="10" fill="#e6e8f2" style="stroke-width:3"/>
-          ${books(24, 122, ['#a85a5a', '#8fb7e8', '#6c9a5e', '#5d6fd6', '#f7a6b8', '#ffd166'], 86)}
-          ${books(30, 224, ['#5d6fd6', '#fffdf5', '#a85a5a'], 80)}
-          <rect x="120" y="170" width="70" height="54" rx="4" fill="#cfd5ea"/>`) +
-        piece('ds-chair', '0 0 230 270', 'right:16px;bottom:12px;height:min(26%,170px)', `
-          <path d="M60 30 h110 l14 120 h-138Z" fill="#f2b33d"/>
-          <path d="M30 150 h170 l-10 40 h-150Z" fill="#f6c45a"/>
-          <path d="M115 190 V230 M70 262 L115 230 L160 262" style="stroke-width:6"/>`)
+          ${books(30, 224, ['#5d6fd6', '#fffdf5', '#a85a5a', '#ffd166'], 80)}
+          <rect x="128" y="170" width="66" height="54" rx="4" fill="#cfd5ea"/>`) +
+        // the yellow chair, angled toward the room
+        piece('ds-chair', '0 0 240 250', 'right:16px;bottom:12px;height:104px', `
+          <path d="M70 20 h110 l18 120 h-146Z" fill="#ffc94a"/>
+          <path d="M78 34 h94 l12 92 h-118Z" fill="#ffd774" style="stroke-width:3"/>
+          <path d="M34 140 h176 l-12 42 h-152Z" fill="#ffd774"/>
+          <path d="M122 182 V214 M78 244 L122 214 L166 244" style="stroke-width:7"/>
+          <circle cx="78" cy="244" r="6" fill="#2b2b2b"/><circle cx="166" cy="244" r="6" fill="#2b2b2b"/>`)
     },
 
     neon: {
       label: 'Neon synth studio', mood: 'neon',
       wall: 'radial-gradient(ellipse at 50% 30%, #2a1f31 0%, #1b1622 60%, #120e17 100%)',
       floor: '#100d14', top: neonTube,
+      // an ON AIR sign, lit
+      band: () => piece('ds-band', '0 0 260 130', '', `
+        <rect x="10" y="20" width="240" height="96" rx="16" fill="#1d1824" style="stroke:#3b3443"/>
+        <rect class="ds-neon" x="22" y="32" width="216" height="72" rx="12" fill="none" style="stroke:#ff4f86;stroke-width:4"/>
+        <text class="ds-neon-t" x="130" y="82" text-anchor="middle" font-size="38" font-family="Fredoka, sans-serif" font-weight="600" fill="#ffc2d6" style="stroke:none;letter-spacing:4px">ON AIR</text>`, { emit: true }),
       pieces: () =>
-        piece('ds-rack', '0 0 260 440', 'left:0;bottom:14px;height:min(62%,440px)', `
-          ${rep(4, i => `<rect x="10" y="${20 + i * 74}" width="190" height="64" rx="6" fill="#2a2630"/>` +
-            rep(6, k => `<circle class="ds-led" style="animation-delay:-${(i * 6 + k) * 0.37 % 2}s" cx="${32 + k * 26}" cy="${42 + i * 74}" r="5" fill="${['#ff4f86', '#5ee7f0', '#ffd166'][(i + k) % 3]}" style="stroke-width:1.5"/>`) +
-            `<rect x="26" y="${60 + i * 74}" width="150" height="10" rx="3" fill="#3b3443" style="stroke-width:2"/>`)}
+        // the bottom of the rack: two units of blinking LEDs and the keys on top
+        piece('ds-rack', '0 166 240 200', 'left:0;bottom:14px;height:104px', `
+          ${rep(2, j => { const i = j + 2;
+            return `<rect x="10" y="${20 + i * 74}" width="190" height="64" rx="6" fill="#2a2630"/>` +
+              rep(6, k => `<circle class="ds-led" style="animation-delay:-${(i * 6 + k) * 0.37 % 2}s" cx="${32 + k * 26}" cy="${42 + i * 74}" r="5" fill="${['#ff4f86', '#5ee7f0', '#ffd166'][(i + k) % 3]}" style="stroke-width:1.5"/>`) +
+              `<rect x="26" y="${60 + i * 74}" width="150" height="10" rx="3" fill="#3b3443" style="stroke-width:2"/>`; })}
           <rect x="0" y="320" width="230" height="38" rx="6" fill="#2a2630"/>
-          ${rep(14, k => `<rect x="${10 + k * 15}" y="326" width="12" height="26" rx="2" fill="#e8e4ee" style="stroke-width:1.5"/>`)}
-          <ellipse cx="226" cy="390" rx="30" ry="40" fill="#e9d8b8" transform="rotate(-16 226 390)"/>
-          <path d="M236 350 L268 190" style="stroke:#6b5844;stroke-width:9"/>`, { emit: true }) +
-        piece('ds-monitors', '0 0 280 400', 'right:0;bottom:14px;height:min(56%,400px)', `
-          ${[[40, 40], [110, 160]].map(([x, y], i) => `<rect x="${x}" y="${y}" width="160" height="104" rx="8" fill="#22252e"/>` +
-            `<rect class="ds-screen" x="${x + 10}" y="${y + 10}" width="140" height="84" rx="4" fill="#5ee7f0" style="stroke-width:2"/>` +
-            `<path d="M${x + 18} ${y + 52} ${rep(8, k => `l8 ${(k % 2 ? 1 : -1) * (10 + (k * 7 + i * 5) % 18)} l8 ${(k % 2 ? -1 : 1) * (10 + (k * 7 + i * 5) % 18)}`)}" fill="none" style="stroke:#1d5a66;stroke-width:3"/>`).join('')}
+          ${rep(14, k => `<rect x="${10 + k * 15}" y="326" width="12" height="26" rx="2" fill="#e8e4ee" style="stroke-width:1.5"/>`)}`, { emit: true }) +
+        // one monitor on a low desk speaker: a soft dashboard, not a scope
+        piece('ds-monitors', '90 140 190 260', 'right:0;bottom:14px;height:120px', `
+          <rect x="110" y="160" width="160" height="104" rx="8" fill="#22252e"/>
+          <rect class="ds-screen" x="120" y="170" width="140" height="84" rx="4" fill="#173244" style="stroke-width:2"/>
+          <g stroke="none">
+            <rect x="128" y="178" width="40" height="6" rx="3" fill="#7fd8e6" opacity=".6"/>
+            <rect x="128" y="190" width="26" height="4" rx="2" fill="#7fd8e6" opacity=".3"/>
+            ${[20, 32, 26, 40, 30].map((h, k) => `<rect x="${130 + k * 9}" y="${244 - h}" width="6" height="${h}" rx="2" fill="#5ee7f0" opacity=".55"/>`).join('')}
+            <circle cx="232" cy="212" r="16" fill="none" style="stroke:#5ee7f0;stroke-width:5;opacity:.25"/>
+            <path d="M232 196 a16 16 0 0 1 15 21" fill="none" style="stroke:#7fd8e6;stroke-width:5;stroke-linecap:round;opacity:.8"/>
+          </g>
+          <path d="M180 236 q10 -16 20 -6 t20 -8" fill="none" style="stroke:#a8eef5;stroke-width:2.5;opacity:.7"/>
+          <path d="M184 264 L178 288 H202 L196 264" fill="#3b3443"/>
           <rect x="120" y="300" width="150" height="94" rx="8" fill="#2a2630"/>
           <circle cx="160" cy="346" r="22" fill="#3b3443"/><circle cx="226" cy="346" r="22" fill="#3b3443"/>`, { emit: true })
     }
@@ -282,8 +331,8 @@ window.App = window.App || {};
 
   function frameHTML(r) {
     return `<div class="ds-wall" style="background:${r.wall.replace(/"/g, '&quot;')}"></div>` +
-      (r.light ? `<div class="ds-roomlight" style="background:${r.light}"></div>` : '') +
       '<div class="ds-light"></div>' +
+      (r.light ? `<div class="ds-roomlight" style="background:${r.light}"></div>` : '') +
       // the floor goes down first, so every prop stands on it rather than in it
       `<div class="ds-floor" style="background:${r.floor}"></div>` +
       '<svg class="if-svg ds-piece ds-top" xmlns="http://www.w3.org/2000/svg"></svg>' +
@@ -304,6 +353,7 @@ window.App = window.App || {};
           <circle cx="1380" cy="100" r="22" fill="#ffd166"/>
           <text x="1335" y="250" class="sc-t" text-anchor="middle" font-size="20">NOW SHOWING</text>
         </g>`) +
+      (r.band ? r.band() : '') +
       r.pieces() +
       // props are drawn solid (so nothing shows through them); this veil over
       // the whole room is what washes it out, so the widgets lead
@@ -396,22 +446,37 @@ window.App = window.App || {};
       }
     },
 
-    /* Hang the clock and poster in the gap between the greeting and the
-       Edit button, centred, scaled down to fit a narrow gap and taken down
-       altogether when there's no wall left to hang them on. */
+    /* Hang the clock and poster, and the room's own band pieces beside
+       them, as one group centred in the gap between the greeting and the
+       Edit button. The group scales down to fit a narrow gap; when even that
+       won't do, the room's pieces come down first, then the clock and
+       poster too. */
     hangArt(vr) {
       const art = this.layer.querySelector('.ds-wallart');
+      const extras = [...this.layer.querySelectorAll('.ds-band')];
+      const all = [art].concat(extras);
       const hi = document.querySelector('.dash-hello > :first-child');
       const tools = document.querySelector('.dash-tools');
-      if (!hi) { art.style.display = 'none'; return; }
+      all.forEach(n => { n.style.display = 'none'; });
+      if (!hi) return;
       const a = hi.getBoundingClientRect(), right = tools ? tools.getBoundingClientRect().left : vr.right - 46;
-      const gap = right - a.right - 32, ASPECT = 365 / 255;
-      const h = Math.min(112, gap / ASPECT);
-      if (h < 64) { art.style.display = 'none'; return; }
-      Object.assign(art.style, {
-        display: '', height: h + 'px',
-        left: (a.right - vr.left + 16 + (gap - h * ASPECT) / 2) + 'px',
-        top: Math.max(26, a.top - vr.top + a.height - h) + 'px'
+      const gap = right - a.right - 32, GAP = 22, MAX = 112, MIN = 64;
+      const aspect = n => { const v = n.getAttribute('viewBox').split(' ').map(Number); return v[2] / v[3]; };
+      let show = all.slice(), h = 0;
+      while (show.length) {
+        h = Math.min(MAX, (gap - GAP * (show.length - 1)) / show.reduce((t, n) => t + aspect(n), 0));
+        if (h >= MIN) break;
+        show.pop();
+      }
+      if (!show.length) return;
+      const width = show.reduce((t, n) => t + aspect(n) * h, 0) + GAP * (show.length - 1);
+      // the room's piece first, then the clock and poster — the poster stays nearest the middle
+      const order = show.slice(1).concat(show[0]);
+      let x = a.right - vr.left + 16 + (gap - width) / 2;
+      const top = Math.max(26, a.top - vr.top + a.height - h);
+      order.forEach(n => {
+        Object.assign(n.style, { display: '', height: h + 'px', left: x + 'px', top: top + 'px' });
+        x += aspect(n) * h + GAP;
       });
     },
 

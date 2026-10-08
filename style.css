@@ -5815,20 +5815,22 @@ body.gd-sandboxed #toolbar { outline: 2px dashed rgba(255, 209, 102, .5); outlin
     rgba(9, 10, 16, .72);
 }
 .dash-scene[data-mood="blackout"] .ds-roomlight { opacity: .25; }
-.dash-scene[data-mood="blackout"] .ds-piece { filter: brightness(.3) saturate(.45); }
+.dash-scene[data-mood="blackout"] .ds-piece { filter: brightness(.45) saturate(.55); }
 .dash-scene[data-mood="blackout"] .ds-wash { background: rgba(9, 10, 16, .35); }
-.dash-scene[data-mood="blackout"] .ds-piece.ds-emit { filter: brightness(.8) saturate(.8); }
-.dash-scene[data-mood="blackout"] .ds-emit .ds-glass,
-.dash-scene[data-mood="blackout"] .ds-emit .ds-screen { filter: brightness(1.5) drop-shadow(0 0 10px #7fa6ff); }
+.dash-scene[data-mood="blackout"] .ds-piece.ds-emit { filter: brightness(.95) saturate(.85); }
+/* windows let the moonlight in: the glass glows cool, and casts a little */
+.dash-scene[data-mood="blackout"] .ds-emit .ds-glass { filter: brightness(1.9) saturate(1.2) drop-shadow(0 0 18px rgba(170, 205, 255, .7)); }
+.dash-scene[data-mood="blackout"] .ds-emit .ds-screen { filter: brightness(1.6) drop-shadow(0 0 14px #9fc0ff); }
+.dash-scene[data-mood="blackout"] .ds-band.ds-emit { filter: brightness(1) saturate(.9); }
 .dash-scene[data-mood="blackout"] .ds-wallart { filter: brightness(.5) saturate(.6); }
 .dash-scene[data-mood="blackout"] .ds-floor { filter: brightness(.25); }
 .dash-scene[data-mood="blackout"] .ds-bulb { animation: none; opacity: .35; }
 
 .dash-scene[data-mood="mood"] .ds-light {
   background:
-    radial-gradient(ellipse 70% 60% at 50% 30%, color-mix(in srgb, var(--accent) 25%, rgba(255, 196, 120, .45)), transparent 75%),
-    radial-gradient(ellipse at 50% 45%, transparent 40%, rgba(40, 18, 30, .45) 100%),
-    color-mix(in srgb, var(--accent) 22%, rgba(90, 40, 60, .3));
+    radial-gradient(ellipse 70% 60% at 50% 30%, color-mix(in srgb, var(--accent) 20%, rgba(255, 200, 130, .4)), transparent 75%),
+    radial-gradient(ellipse at 50% 45%, transparent 45%, rgba(40, 18, 30, .3) 100%),
+    color-mix(in srgb, var(--accent) 14%, rgba(110, 60, 70, .14));
 }
 .dash-scene[data-mood="mood"] .ds-piece { filter: saturate(.9) sepia(.15); }
 .dash-scene[data-mood="mood"] .ds-wash { background: rgba(255, 228, 196, .22); }
@@ -5840,7 +5842,8 @@ body.gd-sandboxed #toolbar { outline: 2px dashed rgba(255, 209, 102, .5); outlin
 .dash-scene[data-mood="neon"] .ds-wash { background: rgba(16, 12, 22, .2); }
 .dash-scene[data-mood="neon"] .ds-light { background: radial-gradient(ellipse 60% 40% at 50% 0%, rgba(255, 79, 134, .18), transparent 70%); }
 .dash-scene[data-mood="neon"] .ds-neon { filter: drop-shadow(0 0 4px #ff4f86) drop-shadow(0 0 12px #ff4f86); }
-.dash-scene[data-mood="neon"] .ds-screen { filter: drop-shadow(0 0 10px #5ee7f0); }
+.dash-scene[data-mood="neon"] .ds-screen { filter: drop-shadow(0 0 8px rgba(94, 231, 240, .45)); }
+.dash-scene[data-mood="neon"] .ds-neon-t { filter: drop-shadow(0 0 4px #ff4f86) drop-shadow(0 0 10px #ff4f86); }
 .dash-scene[data-mood="neon"] .ds-led { filter: drop-shadow(0 0 3px currentColor); }
 .dash-scene[data-mood="neon"] .ds-floor { border-top-color: rgba(255, 79, 134, .35); }
 .dash-scene[data-mood="neon"] .ds-wallart { filter: brightness(.7); }
