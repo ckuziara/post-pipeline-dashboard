@@ -287,8 +287,8 @@ window.App = window.App || {};
       // the floor goes down first, so every prop stands on it rather than in it
       `<div class="ds-floor" style="background:${r.floor}"></div>` +
       '<svg class="if-svg ds-piece ds-top" xmlns="http://www.w3.org/2000/svg"></svg>' +
-      r.pieces() +
-      // wall art in the band beside the greeting: the clock and the poster
+      // the clock and the poster, in the band beside the greeting — hung
+      // before the props, so the hanging plants trail in front of them
       piece('ds-wallart', '1080 25 365 255', 'top:26px;left:50%;height:112px', `
         <path d="M1150 70 V40" stroke-width="3" opacity=".5"/>
         <g id="sc-clock" transform="translate(1150 140)">
@@ -303,7 +303,11 @@ window.App = window.App || {};
           <path d="M1262 225 L1310 160 L1345 200 L1375 170 L1410 225Z" fill="#6c9a5e"/>
           <circle cx="1380" cy="100" r="22" fill="#ffd166"/>
           <text x="1335" y="250" class="sc-t" text-anchor="middle" font-size="20">NOW SHOWING</text>
-        </g>`);
+        </g>`) +
+      r.pieces() +
+      // props are drawn solid (so nothing shows through them); this veil over
+      // the whole room is what washes it out, so the widgets lead
+      '<div class="ds-wash"></div>';
   }
 
   App.dashScene = {
