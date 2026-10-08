@@ -2340,7 +2340,7 @@ window.App = window.App || {};
      settings that actually affect it (see viewRows below). */
   App.prefsMenu = {
     _pop: null,
-    close() { if (this._pop) { this._pop.remove(); this._pop = null; } },
+    close() { if (this._pop) { this._pop.remove(); this._pop = null; } App.filterMenu && App.filterMenu.close(); },
     toggle() { this._pop ? this.close() : this.open(); },
     open() {
       this.close();
@@ -2368,26 +2368,23 @@ window.App = window.App || {};
             }, o.label)))
         ]);
       };
-      // a <select> row — for settings with more options than a segmented
-      // control can hold at this width (themes)
-      const selRow = (title, key, def, options, onChange) => {
+      /* a dropdown — for settings with more options than a segmented
+         control can hold at this width (themes, rooms). The same popover
+         the toolbar filters use (App.choiceMenu), not the browser's own. */
+      const pickEl = (title, key, def, options, onChange) => {
         const cur = App.prefs.get(key, def);
-        const sel = el('select.prefs-select');
-        options.forEach(o => {
-          const opt = document.createElement('option');
-          opt.value = o.v; opt.textContent = o.label;
-          if (o.v === cur) opt.selected = true;
-          sel.appendChild(opt);
-        });
-        sel.addEventListener('click', e => e.stopPropagation());
-        sel.addEventListener('change', () => {
-          App.prefs.set(key, sel.value);
-          if (onChange) onChange(sel.value);
-        });
-        return el('.prefs-row', { style: { cursor: 'default' } }, [
-          el('.prefs-row-title', null, title), sel
-        ]);
+        const opt = options.find(o => o.v === cur) || options[0];
+        const btn = App.choiceMenu('prefs:' + key, opt.label, [options.map(o => ({
+          label: o.label, on: o.v === opt.v,
+          pick: () => { App.filterMenu.close(); App.prefs.set(key, o.v); if (onChange) onChange(o.v); else this.open(); }
+        }))], title);
+        btn.classList.add('prefs-pick');
+        return btn;
       };
+      const selRow = (title, key, def, options, onChange) =>
+        el('.prefs-row', { style: { cursor: 'default' } }, [
+          el('.prefs-row-title', null, title), pickEl(title, key, def, options, onChange)
+        ]);
 
       // a row of plain action buttons (no persisted switch) — for one-shot
       // commands like expand-all or resetting a layout
@@ -2466,18 +2463,7 @@ window.App = window.App || {};
         const on = App.prefs.get('dashScene', true);
         const toggle = () => { App.prefs.set('dashScene', !on); this.open(); App.dashScene.sync(); };
         const inline = [];
-        if (on) {
-          const sel = el('select.prefs-select');
-          App.dashScene.ROOMS.forEach(o => {
-            const opt = document.createElement('option');
-            opt.value = o.v; opt.textContent = o.label;
-            if (o.v === App.prefs.get('dashRoom', 'edit')) opt.selected = true;
-            sel.appendChild(opt);
-          });
-          sel.addEventListener('click', e => e.stopPropagation());
-          sel.addEventListener('change', () => { App.prefs.set('dashRoom', sel.value); App.dashScene.rebuild(); });
-          inline.push(sel);
-        }
+        if (on) inline.push(pickEl('Room', 'dashRoom', 'edit', App.dashScene.ROOMS, () => { App.dashScene.rebuild(); this.open(); }));
         inline.push(el('span.switch' + (on ? '.on' : ''), { title: on ? 'Turn the room off' : 'Turn the room on', onclick: e => { e.stopPropagation(); toggle(); } }, el('span.knob')));
         roomRows.push(el('.prefs-row', { style: { cursor: 'default' } }, [
           el('.prefs-row-title', null, on ? 'Room' : 'Room background'),
