@@ -14,8 +14,8 @@
              speakers, a shelf, a tripod
      night   a cool-blue den: a frosty window with pines, floating shelves,
              a low bookcase, a yellow chair
-     neon    a synth studio: neon tube along the ceiling, racks with
-             blinking LEDs, a guitar, glowing monitors. Always after dark.
+     neon    a synth studio: neon tube along the ceiling, a rack with
+             blinking LEDs and keys. Always after dark.
 
    Lighting follows the theme (see mood()), on top of whichever room:
    daytime for the light theme, a blackout suite for the dark ones, warm
@@ -295,11 +295,6 @@ window.App = window.App || {};
       label: 'Neon synth studio', mood: 'neon',
       wall: 'radial-gradient(ellipse at 50% 30%, #2a1f31 0%, #1b1622 60%, #120e17 100%)',
       floor: '#100d14', top: neonTube,
-      // an ON AIR sign, lit
-      band: () => piece('ds-band', '0 0 260 130', '', `
-        <rect x="10" y="20" width="240" height="96" rx="16" fill="#1d1824" style="stroke:#3b3443"/>
-        <rect class="ds-neon" x="22" y="32" width="216" height="72" rx="12" fill="none" style="stroke:#ff4f86;stroke-width:4"/>
-        <text class="ds-neon-t" x="130" y="82" text-anchor="middle" font-size="38" font-family="Fredoka, sans-serif" font-weight="600" fill="#ffc2d6" style="stroke:none;letter-spacing:4px">ON AIR</text>`, { emit: true }),
       pieces: () =>
         // the bottom of the rack: two units of blinking LEDs and the keys on top
         piece('ds-rack', '0 166 240 200', 'left:0;bottom:14px;height:104px', `
@@ -308,22 +303,7 @@ window.App = window.App || {};
               rep(6, k => `<circle class="ds-led" style="animation-delay:-${(i * 6 + k) * 0.37 % 2}s" cx="${32 + k * 26}" cy="${42 + i * 74}" r="5" fill="${['#ff4f86', '#5ee7f0', '#ffd166'][(i + k) % 3]}" style="stroke-width:1.5"/>`) +
               `<rect x="26" y="${60 + i * 74}" width="150" height="10" rx="3" fill="#3b3443" style="stroke-width:2"/>`; })}
           <rect x="0" y="320" width="230" height="38" rx="6" fill="#2a2630"/>
-          ${rep(14, k => `<rect x="${10 + k * 15}" y="326" width="12" height="26" rx="2" fill="#e8e4ee" style="stroke-width:1.5"/>`)}`, { emit: true }) +
-        // one monitor on a low desk speaker: a soft dashboard, not a scope
-        piece('ds-monitors', '90 140 190 260', 'right:0;bottom:14px;height:120px', `
-          <rect x="110" y="160" width="160" height="104" rx="8" fill="#22252e"/>
-          <rect class="ds-screen" x="120" y="170" width="140" height="84" rx="4" fill="#173244" style="stroke-width:2"/>
-          <g stroke="none">
-            <rect x="128" y="178" width="40" height="6" rx="3" fill="#7fd8e6" opacity=".6"/>
-            <rect x="128" y="190" width="26" height="4" rx="2" fill="#7fd8e6" opacity=".3"/>
-            ${[20, 32, 26, 40, 30].map((h, k) => `<rect x="${130 + k * 9}" y="${244 - h}" width="6" height="${h}" rx="2" fill="#5ee7f0" opacity=".55"/>`).join('')}
-            <circle cx="232" cy="212" r="16" fill="none" style="stroke:#5ee7f0;stroke-width:5;opacity:.25"/>
-            <path d="M232 196 a16 16 0 0 1 15 21" fill="none" style="stroke:#7fd8e6;stroke-width:5;stroke-linecap:round;opacity:.8"/>
-          </g>
-          <path d="M180 236 q10 -16 20 -6 t20 -8" fill="none" style="stroke:#a8eef5;stroke-width:2.5;opacity:.7"/>
-          <path d="M184 264 L178 288 H202 L196 264" fill="#3b3443"/>
-          <rect x="120" y="300" width="150" height="94" rx="8" fill="#2a2630"/>
-          <circle cx="160" cy="346" r="22" fill="#3b3443"/><circle cx="226" cy="346" r="22" fill="#3b3443"/>`, { emit: true })
+          ${rep(14, k => `<rect x="${10 + k * 15}" y="326" width="12" height="26" rx="2" fill="#e8e4ee" style="stroke-width:1.5"/>`)}`, { emit: true })
     }
   };
   const ROOM_LIST = Object.keys(ROOMS).map(v => ({ v, label: ROOMS[v].label }));
