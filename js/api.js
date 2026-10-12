@@ -94,7 +94,7 @@ window.App = window.App || {};
       if (App.state.sandbox) return;     // the tour's board isn't to be swapped out from under it
       if (this._pushTimer || this._pushing || document.hidden) return;
       const ae = document.activeElement;
-      if (ae && ae.classList && (ae.classList.contains('jr-block') || ae.classList.contains('pn-note-input'))) return;
+      if (ae && ae.classList && (ae.classList.contains('jr-block') || ae.classList.contains('pn-note-input') || ae.classList.contains('dsum-notes'))) return;
       if (v <= this.version) return;
       const data = await this.pull();
       if (data) { App.state.data = App.migrate(data); App.render(); }
