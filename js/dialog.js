@@ -34,6 +34,7 @@ window.App = window.App || {};
       // away without saving. Hooking it here (rather than on each dialog's close
       // button) catches Esc, a backdrop click and the ✕ alike; a successful save
       // closes its own flow first, so this only ever sees genuine drop-offs.
+      App.board && App.board.closePop && App.board.closePop();   // a status popover opened from the dialog
       this._ov.remove(); this._ov = null; document.removeEventListener('keydown', this._esc);
       if (App.combo && App.combo._close) App.combo._close();    // a type-to-filter list left open
       App.track && App.track.abandonOpenFlows && App.track.abandonOpenFlows();
@@ -504,12 +505,14 @@ window.App = window.App || {};
     };
     const enter = () => {
       if (opts.locked) return;
+      // a row with its own picker (Status) opens that instead of the inline control
+      if (opts.onOpen) { opts.onOpen(display, refresh); return; }
       display.style.display = 'none'; editWrap.style.display = '';
       const f = editWrap.querySelector('input,select,textarea');
       if (f) { f.focus(); if (f.select && f.type === 'text') f.select(); }
     };
     const leave = () => { editWrap.style.display = 'none'; display.style.display = ''; refresh(); };
-    display.addEventListener('click', enter);
+    display.addEventListener('click', e => { if (opts.onOpen) e.stopPropagation(); enter(); });
     display.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enter(); } });
     // collapse once focus leaves the whole edit group (covers multi-input rows)…
     editWrap.addEventListener('focusout', () => setTimeout(() => { if (editWrap.style.display !== 'none' && !editWrap.contains(document.activeElement)) leave(); }, 0));
@@ -631,6 +634,8 @@ window.App = window.App || {};
             locked: !canName, hint: canName ? null : 'Only Producers and Managers can rename a task'
           }),
           editRow('Status', statusSel, statusDisplay, {
+            // the Board's status popover, one click away — applied on Save like the other fields
+            onOpen: (anchor, refresh) => App.board.openStatusChoices(anchor, statusSel.value, (sk) => { statusSel.value = sk; refresh(); }),
             locked: lockedApproved || !canTouch,
             hint: !canTouch ? 'Only the ' + App.dept(su.dept).label + ' team can update this task’s status'
               : lockedApproved ? 'Only Producer, Director or Manager can change an approved task'

@@ -450,6 +450,23 @@ window.App = window.App || {};
       this.placePop(pop, r);
     },
 
+    /* The same status list, for a picker that isn't a Board cell (the Edit
+       Task dialog): marks the current status and hands the choice back
+       rather than writing it. Raised above the modal by .in-modal. */
+    openStatusChoices(anchor, current, onPick) {
+      this.closePop();
+      const pop = el('.status-pop.in-modal');
+      App.statusOptionsFor(App.state.role).forEach(sk => {
+        const s = App.STATUSES[sk];
+        pop.appendChild(el('button.status-opt' + (sk === current ? '.on' : ''), {
+          style: { background: s.color, color: s.ink },
+          onclick: (e) => { e.stopPropagation(); this.closePop(); onPick(sk); }
+        }, s.label));
+      });
+      pop.addEventListener('click', e => e.stopPropagation());
+      this.placePop(pop, anchor.getBoundingClientRect());
+    },
+
     /* Owner picker. Owners are staff of the task's own department (the Edit
        Task rule). For a selection, one list per department the selection
        covers — picking someone assigns them the selected tasks in their
