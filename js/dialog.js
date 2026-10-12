@@ -634,8 +634,14 @@ window.App = window.App || {};
             locked: !canName, hint: canName ? null : 'Only Producers and Managers can rename a task'
           }),
           editRow('Status', statusSel, statusDisplay, {
-            // the Board's status popover, one click away — applied on Save like the other fields
-            onOpen: (anchor, refresh) => App.board.openStatusChoices(anchor, statusSel.value, (sk) => { statusSel.value = sk; refresh(); }),
+            /* the Board's status popover, one click away, and applied at once
+               like the Board. setStatus can refuse (Ready for Review needs its
+               upload), so the row shows whatever the task actually holds after. */
+            onOpen: (anchor, refresh) => App.board.openStatusChoices(anchor, statusSel.value, (sk) => {
+              App.setStatus(epId, key, sk);
+              const now = App.subitem(App.state.data.episodes.find(e => e.id === epId), key);
+              statusSel.value = now ? now.status : sk; refresh();
+            }),
             locked: lockedApproved || !canTouch,
             hint: !canTouch ? 'Only the ' + App.dept(su.dept).label + ' team can update this task’s status'
               : lockedApproved ? 'Only Producer, Director or Manager can change an approved task'
