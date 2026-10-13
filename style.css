@@ -6010,6 +6010,13 @@ button.dsum-due-btn:hover { border-color: var(--border-2); }
   white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 .dsum-tick-label.today { color: var(--accent); font-weight: 700; }
+.dsum-tick-label.after-break { transform: none; padding-left: 2px; z-index: 2; }
+/* axis breaks: time cut out of the middle, drawn as a zig-zag band */
+.dsum-lane-breaks { position: absolute; top: -4px; bottom: -4px; left: 110px; right: 0; z-index: 2; pointer-events: none; }
+.dsum-lane-break, .dsum-axis-break { position: absolute; top: 0; bottom: 0; background: var(--surface-2); display: flex; justify-content: space-between; }
+.dsum-axis-break { bottom: -1px; z-index: 1; }
+.dsum-lane-break svg, .dsum-axis-break svg { width: 5px; height: 100%; flex: none; }
+.dsum-lane-break svg polyline, .dsum-axis-break svg polyline { fill: none; stroke: var(--text-3); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
 /* key dates: a line through the chart, a labelled flag below it */
 .dsum-lane-mark { position: absolute; top: -4px; bottom: -4px; width: 0; transform: translateX(-0.5px); }
 .dsum-lane-keys-row { margin-left: 110px; margin-top: 6px; }

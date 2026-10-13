@@ -408,25 +408,65 @@ window.App = window.App || {};
       const todayIso = App.isoDate(App.today());
       const winStart = [todayIso, isoOf(r.added) || todayIso].sort()[1];
       const deps = rec.deps.slice(0, 6);
-      /* The range always holds every key date (today, the upload, both due
-         dates, the next start); only the long tails — the task's own start
-         and its dependants' ends — are trimmed so the scale stays readable. */
+      /* The range holds every key date (today, the upload, both due dates,
+         the next start) and every bar end. Long empty stretches between
+         them are cut out below rather than trimmed off the ends. */
       const keyIsos = [todayIso, isoOf(r.added), su.due, r.due, deps[0] && deps[0].start].filter(Boolean);
-      const tailLo = [su.start, App.shiftIso(r.due, -21)].sort()[1];
-      const tailHi = [deps.map(d => d.due).sort().pop() || r.due, App.shiftIso(r.due, 28)].sort()[0];
-      const from = App.shiftIso(keyIsos.concat(tailLo).sort()[0], -1);
-      const to = App.shiftIso(keyIsos.concat(tailHi).sort().pop(), 1);
-      const span = App.diffDays(to, from) + 1;
-      const pct = (iso) => Math.max(0, Math.min(100, App.diffDays(iso, from) / span * 100));
-      const bar = (a, b, style, cls, label) => el('.dsum-lane-bar' + (cls || ''), {
-        style: Object.assign({ left: pct(a) + '%', width: Math.max(1.5, pct(App.shiftIso(b, 1)) - pct(a)) + '%' }, style)
-      }, label ? el('span', null, label) : null);
+      const barEnds = [su.start, su.due].concat(...deps.map(d => [d.start, d.due]));
+      const from = App.shiftIso(keyIsos.concat(barEnds).sort()[0], -1);
+      const to = App.shiftIso(keyIsos.concat(barEnds).sort().pop(), 1);
+      /* ---- the scale, with breaks ----
+         A cut that went up a month early would otherwise squash everything
+         that matters into slivers at either end. So only the days around
+         something worth seeing are drawn — each key date and each bar's ends,
+         a couple of days either side — and any longer empty stretch between
+         them is cut out and drawn as a zig-zag break. Positions are % of
+         the track. */
+      const TRACK_PX = 520 - 28 - 110;            // popover width − padding − label column
+      const PAD = 2, MIN_GAP = 6, BREAK_PX = 18;
+      const clampIso = (iso) => iso < from ? from : iso > to ? to : iso;
+      const points = keyIsos.concat(barEnds).map(clampIso).sort();
+      const segs = [];
+      points.forEach(p => {
+        const a = clampIso(App.shiftIso(p, -PAD)), b = clampIso(App.shiftIso(p, PAD));
+        const last = segs[segs.length - 1];
+        if (last && App.diffDays(a, last.b) <= MIN_GAP) { if (b > last.b) last.b = b; }
+        else segs.push({ a, b });
+      });
+      const nBreaks = segs.length - 1;
+      const visDays = segs.reduce((n, g) => n + App.diffDays(g.b, g.a) + 1, 0);
+      const dayPx = (TRACK_PX - nBreaks * BREAK_PX) / visDays;
+      const dayU = dayPx / TRACK_PX * 100, breakU = BREAK_PX / TRACK_PX * 100;
+      let x = 0;
+      segs.forEach((g, i) => {
+        g.x = x; x += (App.diffDays(g.b, g.a) + 1) * dayU;
+        g.end = x;
+        if (i < nBreaks) { g.breakX = x; x += breakU; }
+      });
+      // where a day sits: its start, its end, its centre — or, for a day that
+      // was cut out, the middle of the break it fell into
+      const place = (iso) => {
+        if (iso <= segs[0].a) return { s: 0, e: iso < segs[0].a ? 0 : dayU };
+        for (let i = 0; i < segs.length; i++) {
+          const g = segs[i];
+          if (iso >= g.a && iso <= g.b) { const s0 = g.x + App.diffDays(iso, g.a) * dayU; return { s: s0, e: s0 + dayU }; }
+          if (i < nBreaks && iso > g.b && iso < segs[i + 1].a) { const c = g.breakX + breakU / 2; return { s: c, e: c }; }
+        }
+        return { s: 100, e: 100 };
+      };
+      const mid = (iso) => { const p = place(iso); return (p.s + p.e) / 2; };
+      const bar = (a, b, style, cls) => {
+        const s0 = place(a).s, e0 = place(b).e;
+        return el('.dsum-lane-bar' + (cls || ''), { style: Object.assign({ left: s0 + '%', width: Math.max(1.2, e0 - s0) + '%' }, style) });
+      };
+      const eachDay = (fn) => segs.forEach((g, gi) => {
+        for (let i = 0, n = App.diffDays(g.b, g.a); i <= n; i++) fn(App.shiftIso(g.a, i), i, gi);
+      });
 
       const days = el('.dsum-lane-days');
-      for (let i = 0; i < span; i++) {
-        const iso = App.shiftIso(from, i);
-        if (cal.isOff(iso, { review: true })) days.appendChild(el('.dsum-lane-off', { style: { left: (i / span * 100) + '%', width: (100 / span) + '%' } }));
-      }
+      eachDay(iso => {
+        if (cal.isOff(iso, { review: true })) days.appendChild(el('.dsum-lane-off', { style: { left: place(iso).s + '%', width: dayU + '%' } }));
+      });
       const left = this.workDays(cal, winStart, r.due);
       const lines = [
         el('.dsum-lane-row', null, [el('.dsum-lane-label', null, su.name),
@@ -446,31 +486,43 @@ window.App = window.App || {};
       if (rec.deps.length > deps.length) lines.push(el('.dsum-lane-more', null, '+' + (rec.deps.length - deps.length) + ' more waiting on it'));
 
       /* ---- the date axis ----
-         A tick for every day, a stronger one for each Monday, and a date
-         label as often as the width allows. The labels name the month
-         whenever it changes, so a range across two months still reads. */
-      const TRACK_PX = 520 - 28 - 110;            // popover width − padding − label column
-      const dayPx = TRACK_PX / span;
+         A tick for every day drawn, a stronger one for each Monday, and a
+         date label as often as the width allows. The first day after a
+         break always names its month, so the jump reads at a glance. */
       const every = Math.max(1, Math.ceil(26 / dayPx));
-      const mid = (iso) => (App.diffDays(iso, from) + 0.5) / span * 100;   // centre of that day's cell
       const at = (f) => ({ left: 'calc(110px + (100% - 110px) * ' + (f / 100) + ')' });
       const axis = el('.dsum-lane-axis');
-      const todayIdx = App.diffDays(todayIso, from);
+      const todayX = mid(todayIso);
       let lastMonth = null;
-      for (let i = 0; i < span; i++) {
-        const iso = App.shiftIso(from, i);
+      eachDay((iso, i, gi) => {
         const d = App.parseDate(iso);
-        const monday = d.getDay() === 1;
-        axis.appendChild(el('.dsum-tick' + (monday ? '.week' : '') + (iso === todayIso ? '.today' : ''),
-          { style: { left: mid(iso) + '%' } }));
-        // Today is always labelled; a regular label that would crowd it gives way
-        if (iso === todayIso || (i % every === 0 && Math.abs(i - todayIdx) >= every)) {
+        const x0 = mid(iso);
+        axis.appendChild(el('.dsum-tick' + (d.getDay() === 1 ? '.week' : '') + (iso === todayIso ? '.today' : ''),
+          { style: { left: x0 + '%' } }));
+        const isToday = iso === todayIso;
+        const clearOfToday = Math.abs(x0 - todayX) >= every * dayU;
+        // the month label after a break is wider than a day number — give it room
+        const clearOfBreak = !(gi > 0 && i > 0 && i <= every);
+        if (isToday || (i % every === 0 && clearOfToday && clearOfBreak)) {
           const month = d.getMonth();
-          const text = month !== lastMonth ? App.fmtDate(iso) : String(d.getDate());
+          const text = month !== lastMonth || (i === 0 && gi > 0) ? App.fmtDate(iso) : String(d.getDate());
           lastMonth = month;
-          axis.appendChild(el('.dsum-tick-label' + (iso === todayIso ? '.today' : ''), { style: { left: mid(iso) + '%' } }, text));
+          // the first day after a break starts at the break's edge rather than
+          // centring on it, so the break doesn't cover half the label
+          const afterBreak = i === 0 && gi > 0;
+          axis.appendChild(el('.dsum-tick-label' + (isToday ? '.today' : '') + (afterBreak ? '.after-break' : ''),
+            { style: { left: (afterBreak ? place(iso).s : x0) + '%' } }, text));
         }
-      }
+      });
+      // the breaks themselves: a gap in the axis, and a zig-zag band through the chart
+      const ZIG = '<svg viewBox="0 0 10 100" preserveAspectRatio="none"><polyline points="2,0 8,6.25 2,12.5 8,18.75 2,25 8,31.25 2,37.5 8,43.75 2,50 8,56.25 2,62.5 8,68.75 2,75 8,81.25 2,87.5 8,93.75 2,100"/></svg>';
+      const breaks = el('.dsum-lane-breaks');
+      segs.slice(0, nBreaks).forEach((g, i) => {
+        const skipped = App.diffDays(segs[i + 1].a, g.b) - 1;
+        const tip = skipped + ' day' + (skipped === 1 ? '' : 's') + ' skipped (' + App.fmtDate(App.shiftIso(g.b, 1)) + ' – ' + App.fmtDate(App.shiftIso(segs[i + 1].a, -1)) + ')';
+        axis.appendChild(el('.dsum-axis-break', { style: { left: g.breakX + '%', width: breakU + '%' }, html: ZIG + ZIG }));
+        breaks.appendChild(el('.dsum-lane-break', { style: { left: g.breakX + '%', width: breakU + '%' }, title: tip, html: ZIG + ZIG }));
+      });
 
       /* ---- key dates ----
          The handful of days that decide the review: when the cut arrived,
@@ -506,7 +558,7 @@ window.App = window.App || {};
       });
       keyStrip.style.height = (Math.max(1, levels.length) * 18) + 'px';
 
-      const body = el('.dsum-lane-body', null, [days].concat(lines));
+      const body = el('.dsum-lane-body', null, [days].concat(lines, [breaks]));
       keys.forEach(k => body.appendChild(el('.dsum-lane-mark.k-' + k.cls, { style: at(mid(k.iso)) })));
 
       const pop = el('.dsum-lane', null, [
