@@ -1272,6 +1272,9 @@ body.gantt-shift .subrow:not(.head) { cursor: pointer; user-select: none; }
   color: #11131a; text-align: center; min-height: 36px; display: flex; align-items: center; justify-content: center;
 }
 .status-opt:hover { filter: brightness(1.1); outline: 2px solid rgba(255,255,255,.28); }
+/* opened from the Edit Task dialog — above .modal-overlay (400) */
+.status-pop.in-modal { z-index: 420; }
+.status-opt.on { outline: 2px solid rgba(255,255,255,.55); }
 .pop-note { font-size: 10px; color: var(--text-3); padding: 4px 6px 2px; border-top: 1px solid var(--border); margin-top: 2px; }
 /* owner picker — the status picker's shell, a person per row */
 .owner-pop { width: 220px; max-height: min(420px, 70vh); overflow-y: auto; gap: 2px; }

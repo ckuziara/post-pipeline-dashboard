@@ -401,7 +401,10 @@ window.App = window.App || {};
     },
 
     // ---- status picker popup ----
-    closePop() { if (this._pop) { this._pop.remove(); this._pop = null; } },
+    closePop() {
+      if (this._pop) { this._pop.remove(); this._pop = null; }
+      if (this._popEsc) { document.removeEventListener('keydown', this._popEsc, true); this._popEsc = null; }
+    },
     /* A task that's part of a selection of two or more speaks for the whole
        selection: its status and owner pickers change every selected task. */
     selTargets(ep, key) {
@@ -448,6 +451,26 @@ window.App = window.App || {};
         blocked ? 'Waiting on: ' + (App.pTask(ep, key) || { deps: [] }).deps.filter(d => (ep.statuses[d] || 'not_started') !== 'approved').map(d => App.taskNameFor(ep, d)).join(', ')
         : startable ? '✓ All dependencies approved — ready to start' : 'Dependencies approved'));
       this.placePop(pop, r);
+    },
+
+    /* The same status list, for a picker that isn't a Board cell (the Edit
+       Task dialog): marks the current status and hands the choice back
+       rather than writing it. Raised above the modal by .in-modal. */
+    openStatusChoices(anchor, current, onPick) {
+      this.closePop();
+      const pop = el('.status-pop.in-modal');
+      App.statusOptionsFor(App.state.role).forEach(sk => {
+        const s = App.STATUSES[sk];
+        pop.appendChild(el('button.status-opt' + (sk === current ? '.on' : ''), {
+          style: { background: s.color, color: s.ink },
+          onclick: (e) => { e.stopPropagation(); this.closePop(); onPick(sk); }
+        }, s.label));
+      });
+      pop.addEventListener('click', e => e.stopPropagation());
+      this.placePop(pop, anchor.getBoundingClientRect());
+      // Esc closes just this menu: caught on the way down, before the dialog's own Esc closes the dialog
+      this._popEsc = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); e.preventDefault(); this.closePop(); anchor.focus(); } };
+      document.addEventListener('keydown', this._popEsc, true);
     },
 
     /* Owner picker. Owners are staff of the task's own department (the Edit
