@@ -512,9 +512,44 @@ window.App = window.App || {};
       grid.style.height = Math.max(layout.length ? 0 : 240, Math.max(0, ...layout.map(t => t.row + t.h)) + GAP) + 'px';
       this.wireDrag(grid);
       if (this._editing) this.wireResize(grid);
+      else requestAnimationFrame(() => this.fitFullWidth(grid, layout));
       wrap.appendChild(grid);
       this.paintPops(m);
       return wrap;
+    },
+
+    /* A widget that spans the whole width shrinks to the height its content
+       needs, up to the height set for it in edit mode — so a short Daily
+       Summary or an empty calendar doesn't leave a tall empty card, and
+       whatever's below moves up. Measured once it's on screen, by letting
+       the card size to its content for a moment. Only outside edit mode:
+       while editing, every tile shows its full chosen size, since that's
+       the limit being set. Nothing here is saved. */
+    fitFullWidth(grid, layout) {
+      if (!grid.isConnected || this._editing) return;
+      const MIN = 116;   // the card's own min-height (.widget)
+      let changed = false;
+      const fitted = layout.map(t => {
+        const f = Object.assign({}, t);
+        if (t.w !== COLS || this.popped(t.id)) return f;
+        const cell = grid.querySelector('.dw[data-wid="' + t.id + '"]');
+        const card = cell && cell.querySelector('.widget');
+        const body = card && card.querySelector('.widget-body');
+        if (!body) return f;
+        const keep = [cell.style.height, card.style.height, body.style.flex, body.style.overflow];
+        cell.style.height = 'auto'; card.style.height = 'auto'; body.style.flex = 'none'; body.style.overflow = 'visible';
+        const need = Math.max(MIN, card.offsetHeight) + GAP;
+        [cell.style.height, card.style.height, body.style.flex, body.style.overflow] = keep;
+        if (need < t.h) { f.h = need; changed = true; }
+        return f;
+      });
+      if (!changed) return;
+      compact(fitted);
+      fitted.forEach(t => {
+        const c = grid.querySelector('.dw[data-wid="' + t.id + '"]');
+        if (c) Object.assign(c.style, this.rectStyle(t));
+      });
+      grid.style.height = (Math.max(0, ...fitted.map(t => t.row + t.h)) + GAP) + 'px';
     },
 
     // the gap a popped widget leaves behind: same rect, so nothing reflows,
