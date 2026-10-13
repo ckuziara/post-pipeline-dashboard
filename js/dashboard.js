@@ -659,7 +659,8 @@ window.App = window.App || {};
        overflow. `.dw-narrow` swaps in a denser layout below a width
        threshold — see the widget builders below, which key off `t.w`
        directly for anything wider or richer. In edit mode the tile becomes
-       the drag handle and grows thin edge and corner zones; the body goes
+       the drag handle (all of it, not just the grip) and grows thin edge
+       and corner zones; the body goes
        inert so arranging can't touch a widget's content. */
     cell(t, m, popped) {
       const built = this[t.id](m, t);        // -> { title, sub, body, bare }
@@ -680,7 +681,7 @@ window.App = window.App || {};
       cell.appendChild(el('.widget', null, [
         el('.widget-head', null, [
           el('.dw-head-l', null, [
-            (editing ? el('span.dw-grip', { title: 'Drag to move — drop anywhere, even empty space' }, '⠿') : null),
+            (editing ? el('span.dw-grip', { title: 'Drag anywhere on the widget to move it — drop anywhere, even empty space' }, '⠿') : null),
             el('.widget-title', null, built.title)
           ]),
           el('.dw-head-r', null, [
@@ -821,10 +822,13 @@ window.App = window.App || {};
     wireDrag(grid) {
       let d = null;
 
+      /* A tile moves from anywhere on it, not just its ⠿ grip: only the
+         resize edges and corners (wireResize takes those) and the remove
+         button are left out, so rearranging doesn't need a precise aim. */
       grid.addEventListener('pointerdown', (e) => {
-        const grip = e.target.closest('.dw-grip');
-        if (!grip) return;
-        const cellEl = grip.closest('.dw');
+        if (e.button !== 0) return;
+        const cellEl = e.target.closest('.dw.dw-editable');
+        if (!cellEl || e.target.closest('.dw-edge, .dw-corner, button')) return;
         e.preventDefault();
         const layout = this.getLayout();
         const tile = layout.find(t => t.id === cellEl.dataset.wid);
@@ -836,7 +840,7 @@ window.App = window.App || {};
           colPx: gridRect.width / COLS, lastCol: tile.col, lastRow: tile.row
         };
         cellEl.classList.add('dw-dragging');
-        try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+        try { cellEl.setPointerCapture(e.pointerId); } catch (err) {}
       });
 
       grid.addEventListener('pointermove', (e) => {
