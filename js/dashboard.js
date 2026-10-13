@@ -234,27 +234,41 @@ window.App = window.App || {};
     return layout;
   }
 
-  /* Resizing into a neighbour shrinks it before anything is pushed: each
-     tile the resized one now overlaps gives up the overlap from its facing
-     edge (its far edge stays put), down to its own minimum size. Only what
-     it can't give up is left for resolveCollisions to push. */
+  /* Resizing into a neighbour makes room in this order: first the
+     neighbour slides into whatever empty space it has on its far side (up
+     to the next tile, or the grid's edge); then it shrinks from its facing
+     edge, far edge staying put, down to its own minimum size; only what's
+     left after both is pushed, by resolveCollisions. */
   function shrinkNeighbours(layout, movedId, dir) {
     const cur = layout.find(w => w.id === movedId);
+    const across = (a, b) => !(a.col + a.w <= b.col || b.col + b.w <= a.col);   // share columns
+    const along = (a, b) => !(a.row + a.h <= b.row || b.row + b.h <= a.row);    // share rows
     layout.forEach(w => {
       if (w === cur || !rectsOverlap(cur, w)) return;
       const lim = WIDGETS[w.id] || { minW: 1, minH: 60 };
+      const others = layout.filter(o => o !== w && o !== cur);
+      let need;
       if (dir === 'r') {
-        const s = Math.min((cur.col + cur.w) - w.col, w.w - lim.minW);
-        if (s > 0) { w.col += s; w.w -= s; }
+        need = (cur.col + cur.w) - w.col;
+        const wall = Math.min(COLS, ...others.filter(o => along(o, w) && o.col >= w.col + w.w).map(o => o.col));
+        const slide = Math.min(need, wall - (w.col + w.w)); if (slide > 0) { w.col += slide; need -= slide; }
+        const s = Math.min(need, w.w - lim.minW); if (s > 0) { w.col += s; w.w -= s; }
       } else if (dir === 'l') {
-        const s = Math.min((w.col + w.w) - cur.col, w.w - lim.minW);
-        if (s > 0) w.w -= s;
+        need = (w.col + w.w) - cur.col;
+        const wall = Math.max(0, ...others.filter(o => along(o, w) && o.col + o.w <= w.col).map(o => o.col + o.w));
+        const slide = Math.min(need, w.col - wall); if (slide > 0) { w.col -= slide; need -= slide; }
+        const s = Math.min(need, w.w - lim.minW); if (s > 0) w.w -= s;
       } else if (dir === 'b') {
-        const s = Math.min((cur.row + cur.h) - w.row, w.h - lim.minH);
-        if (s > 0) { w.row += s; w.h -= s; }
+        need = (cur.row + cur.h) - w.row;
+        const below = others.filter(o => across(o, w) && o.row >= w.row + w.h).map(o => o.row - GAP);
+        const wall = below.length ? Math.min(...below) : Infinity;   // nothing below: open floor
+        const slide = Math.min(need, wall - (w.row + w.h)); if (slide > 0) { w.row += slide; need -= slide; }
+        const s = Math.min(need, w.h - lim.minH); if (s > 0) { w.row += s; w.h -= s; }
       } else if (dir === 't') {
-        const s = Math.min((w.row + w.h) - cur.row, w.h - lim.minH);
-        if (s > 0) w.h -= s;
+        need = (w.row + w.h) - cur.row;
+        const wall = Math.max(0, ...others.filter(o => across(o, w) && o.row + o.h <= w.row).map(o => o.row + o.h + GAP));
+        const slide = Math.min(need, w.row - wall); if (slide > 0) { w.row -= slide; need -= slide; }
+        const s = Math.min(need, w.h - lim.minH); if (s > 0) w.h -= s;
       }
     });
     return layout;
@@ -745,8 +759,9 @@ window.App = window.App || {};
        Only the grabbed edge moves — the opposite edge stays put, so dragging
        the LEFT edge out grows the tile leftward instead of just widening it
        from a fixed left edge, and likewise for every other edge. Whatever
-       that growth now overlaps shrinks first, from its facing edge, down to
-       its minimum (shrinkNeighbours); only what it can't give up is pushed
+       that growth now overlaps first slides into any empty space beyond it,
+       then shrinks from its facing edge down to its minimum
+       (shrinkNeighbours); only what it can't give up is pushed
        further along the same axis (see resolveCollisions), cascading through however many tiles are in the
        way; a push that would run off the grid instead drops the tile below.
        Width moves in whole columns (tracking the cursor 1:1 against the
