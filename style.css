@@ -5932,6 +5932,7 @@ body.has-dash-scene .dash-grid > .empty {
 .dsum-link { max-width: 180px; }
 .dsum-url { color: var(--accent); text-decoration: none; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dsum-url:hover { text-decoration: underline; }
+.dsum-url.muted { color: var(--text-2); }
 .dsum-send {
   white-space: nowrap; background: rgba(91,108,255,.16); color: #b3bcff; border: 0; border-radius: 6px;
   font: inherit; font-size: 11px; font-weight: 700; padding: 3px 9px; cursor: pointer;

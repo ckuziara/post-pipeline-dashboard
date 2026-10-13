@@ -66,6 +66,44 @@ window.App = window.App || {};
 
   const isoOf = (ts) => ts ? App.isoDate(new Date(ts)) : null;
 
+  /* A link reads as where it goes — "Frame.io Link" — not as a URL. The
+     address itself is one hover (tooltip) or right-click (copy) away. */
+  const HOSTS = [
+    [/(^|\.)(f\.io|frame\.io)$/, 'Frame.io'], [/(^|\.)drive\.google\.com$|(^|\.)docs\.google\.com$/, 'Google Drive'],
+    [/(^|\.)dropbox\.com$/, 'Dropbox'], [/(^|\.)box\.com$/, 'Box'], [/(^|\.)vimeo\.com$/, 'Vimeo'],
+    [/(^|\.)(youtube\.com|youtu\.be)$/, 'YouTube'], [/(^|\.)(wetransfer\.com|we\.tl)$/, 'WeTransfer'],
+    [/(^|\.)ibmaspera\.com$|(^|\.)asperafiles\.com$/, 'Aspera'], [/(^|\.)sharepoint\.com$/, 'SharePoint']
+  ];
+  function linkLabel(url) {
+    let host = '';
+    try { host = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return 'Link'; }
+    const known = HOSTS.find(([re]) => re.test(host));
+    const name = known ? known[1] : host.charAt(0).toUpperCase() + host.slice(1);
+    return name + ' Link';
+  }
+
+  /* Right-click copies a cell's text — the full URL for a link, the full
+     date for a date — the way the sheet let people copy a cell. */
+  function copyOnRightClick(node, text, what) {
+    node.addEventListener('contextmenu', (e) => {
+      if (!text) return;
+      e.preventDefault(); e.stopPropagation();
+      const done = () => App.toast('Copied ' + what + ' — ' + text);
+      const fallback = () => {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); done(); } catch (err) { App.toast('Couldn’t copy', true); }
+        ta.remove();
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+      else fallback();
+    });
+    return node;
+  }
+  // "13 Oct 2026" — unambiguous once it's pasted somewhere without the table's context
+  const fullDate = (iso) => iso ? App.parseDate(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+
   App.dailySummary = {
     get(id) { const d = App.state.data.dailySummary; return (d && d[id]) || {}; },
 
@@ -288,8 +326,10 @@ window.App = window.App || {};
           : el('td.dsum-rev.off', { title: p.name + ' isn’t a Director on ' + show.name })));
       }
 
-      cells.push(el('td.dsum-date', null, r.added ? App.fmtDate(isoOf(r.added)) : el('span.dsum-muted', null, '—')));
-      cells.push(el('td.dsum-due', null, this.dueCell(r, o.edit, todayIso)));
+      cells.push(r.added
+        ? copyOnRightClick(el('td.dsum-date', { title: 'Right-click to copy' }, App.fmtDate(isoOf(r.added))), fullDate(isoOf(r.added)), 'date')
+        : el('td.dsum-date', null, el('span.dsum-muted', null, '—')));
+      cells.push(copyOnRightClick(el('td.dsum-due', null, this.dueCell(r, o.edit, todayIso)), fullDate(r.due), 'date'));
       cells.push(el('td', null, this.choice(r, 'priority', PRIORITIES, o.edit)));
       cells.push(el('td', null, this.choice(r, 'qc', QC, o.edit)));
       cells.push(el('td.dsum-notes-cell', null, this.notesCell(r, o.edit)));
@@ -299,15 +339,21 @@ window.App = window.App || {};
     linkCell(r, edit) {
       const url = r.rev && r.rev.frameUrl;
       if (url) {
-        return el('a.dsum-url', { href: url, target: '_blank', rel: 'noopener noreferrer', title: url, onclick: e => e.stopPropagation() },
-          url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, ''));
+        return copyOnRightClick(el('a.dsum-url', { href: url, target: '_blank', rel: 'noopener noreferrer',
+          title: url + ' — right-click to copy', onclick: e => e.stopPropagation() }, linkLabel(url)), url, 'link');
       }
       // not sent yet: the coordinator's next move is right here
       if (edit && r.su.status === 'review') {
         return el('button.dsum-send', { title: 'Make the Frame.io review and send it to the Director',
           onclick: (e) => { e.stopPropagation(); App.reviewFlow.sendDialog(r.ep, r.su); } }, 'Send →');
       }
-      return el('span.dsum-muted', null, r.newest ? r.newest.name : 'nothing uploaded');
+      // not sent yet and not ours to send: what was uploaded, named the same way
+      if (r.newest && r.newest.url) {
+        return copyOnRightClick(el('a.dsum-url.muted', { href: r.newest.url, target: '_blank', rel: 'noopener noreferrer',
+          title: r.newest.url + ' — right-click to copy', onclick: e => e.stopPropagation() }, linkLabel(r.newest.url)), r.newest.url, 'link');
+      }
+      return r.newest ? copyOnRightClick(el('span.dsum-muted', { title: r.newest.name }, r.newest.name), r.newest.name, 'file name')
+        : el('span.dsum-muted', null, 'nothing uploaded');
     },
 
     pill(text, tone, extra) { return el('span.dsum-pill.dsum-t-' + tone + (extra || ''), null, text); },
