@@ -6013,6 +6013,8 @@ button.dsum-due-btn:hover { border-color: var(--border-2); }
 .dsum-tick-label.after-break { transform: none; padding-left: 2px; z-index: 2; }
 /* axis breaks: time cut out of the middle, drawn as a zig-zag band */
 .dsum-lane-breaks { position: absolute; top: 0; bottom: -4px; left: 110px; right: 0; z-index: 2; pointer-events: none; }
+/* masks the axis line where time is cut out — a plain gap, no zig-zag */
+.dsum-axis-gap { position: absolute; bottom: -1px; height: 3px; background: var(--surface-2); }
 .dsum-lane-break { position: absolute; top: 0; bottom: 0; background: var(--surface-2); display: flex; justify-content: space-between; }
 .dsum-lane-break svg { width: 5px; height: 100%; flex: none; }
 .dsum-lane-break svg polyline { fill: none; stroke: var(--text-3); stroke-width: 1.2; vector-effect: non-scaling-stroke; }

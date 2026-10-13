@@ -514,12 +514,13 @@ window.App = window.App || {};
             { style: { left: (afterBreak ? place(iso).s : x0) + '%' } }, text));
         }
       });
-      // the breaks themselves: a zig-zag band through the chart (the axis just leaves a gap)
+      // the breaks themselves: a clean cut in the axis line, a zig-zag band through the chart
       const ZIG = '<svg viewBox="0 0 10 100" preserveAspectRatio="none"><polyline points="2,0 8,6.25 2,12.5 8,18.75 2,25 8,31.25 2,37.5 8,43.75 2,50 8,56.25 2,62.5 8,68.75 2,75 8,81.25 2,87.5 8,93.75 2,100"/></svg>';
       const breaks = el('.dsum-lane-breaks');
       segs.slice(0, nBreaks).forEach((g, i) => {
         const skipped = App.diffDays(segs[i + 1].a, g.b) - 1;
         const tip = skipped + ' day' + (skipped === 1 ? '' : 's') + ' skipped (' + App.fmtDate(App.shiftIso(g.b, 1)) + ' – ' + App.fmtDate(App.shiftIso(segs[i + 1].a, -1)) + ')';
+        axis.appendChild(el('.dsum-axis-gap', { style: { left: g.breakX + '%', width: breakU + '%' } }));
         breaks.appendChild(el('.dsum-lane-break', { style: { left: g.breakX + '%', width: breakU + '%' }, title: tip, html: ZIG + ZIG }));
       });
 
