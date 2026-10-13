@@ -2415,4 +2415,77 @@ window.App = window.App || {};
     root.appendChild(t);
     setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, isError ? 5000 : 2800);
   };
+
+  /* ---- Right-click to copy ----
+     Right-clicking table data or a link copies it: a cell's value, a link's
+     address. Where the cell already has its own right-click menu (a Board
+     selection, a Kick Off), that menu gets a Copy item at the top instead,
+     for the cell the click landed on. Anywhere else, the browser's own menu. Text boxes keep the browser's own menu,
+     so paste still works there.
+
+     App.copy is the one way to put text on the clipboard; its toast shows a
+     short form of what was copied, never a long link or path in full. */
+  App.copy = function (text, what) {
+    text = String(text == null ? '' : text);
+    if (!text) return;
+    const short = text.length > 48 ? text.slice(0, 45) + '…' : text;
+    const done = () => App.toast('Copied ' + (what ? what + ' ' : '') + '“' + short + '”');
+    const fallback = () => {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (err) { App.toast('Couldn’t copy', true); }
+      ta.remove();
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+    else fallback();
+  };
+
+  /* What a right-click on `node` means to copy, if anything: only table
+     data and links. An element's own data-copy if it sets one, a link's
+     address, or the text of the table cell it's in: a real <td>, a cell of
+     the Board's task grid, an Admin or Reviews table cell. Header cells and
+     everything that isn't a table keep the browser's own menu. */
+  const TABLE_CELL = 'td, .cell, .rvq-cell, [role="cell"], [role="gridcell"]';
+  App.fieldText = function (node) {
+    const n = node && node.nodeType === 1 ? node : node && node.parentElement;
+    if (!n || n.closest('#toast-root')) return null;
+    const own = n.closest('[data-copy]');
+    if (own) return { text: own.dataset.copy, what: own.dataset.copyWhat || '' };
+    const a = n.closest('a[href]');
+    if (a && /^(https?:|mailto:|file:)/i.test(a.getAttribute('href') || '')) return { text: a.href, what: 'link' };
+    const cell = n.closest(TABLE_CELL);
+    if (!cell || cell.closest('thead, th, .head, .adm-thead')) return null;
+    const t = (cell.innerText || '').trim();
+    if (!t || t.length > 300) return null;
+    return { text: t.replace(/\s*\n\s*/g, ' · '), what: '' };
+  };
+
+  (function wireRightClickCopy() {
+    const editable = (t) => t.closest && t.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]');
+    let last = null;   // the field the latest right-click landed on, for a menu that opens in response
+    // capture: seen before any of the app's own menus handle the click
+    document.addEventListener('contextmenu', (e) => {
+      last = editable(e.target) ? null : Object.assign({ at: Date.now() }, App.fieldText(e.target) || {});
+    }, true);
+    // bubble: nothing else claimed this right-click, so it's a plain copy
+    document.addEventListener('contextmenu', (e) => {
+      if (e.defaultPrevented || editable(e.target)) return;
+      if (!last || !last.text) return;
+      e.preventDefault();
+      App.copy(last.text, last.what);
+    });
+    // an app menu that opened for this right-click gets Copy at the top
+    new MutationObserver(muts => muts.forEach(m => m.addedNodes.forEach(menu => {
+      if (menu.nodeType !== 1 || !menu.classList.contains('ctx-menu') || menu.querySelector('.ctx-copy')) return;
+      if (!last || !last.text || Date.now() - last.at > 1500) return;
+      const field = last;
+      const short = field.text.length > 30 ? field.text.slice(0, 28) + '…' : field.text;
+      const item = App.el('button.ctx-item.ctx-copy', { type: 'button', onclick: (ev) => {
+        ev.stopPropagation(); menu.remove(); App.copy(field.text, field.what);
+      } }, [App.el('span.ctx-item-lbl', null, 'Copy'), App.el('span.ctx-item-sub', null, short)]);
+      menu.insertBefore(App.el('.ctx-sep'), menu.firstChild);
+      menu.insertBefore(item, menu.firstChild);
+    }))).observe(document.body || document.documentElement, { childList: true });
+  })();
 })();
