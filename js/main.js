@@ -2134,12 +2134,12 @@ window.App = window.App || {};
   // ---- role preset ----
   App.setRole = function (role) {
     App.state.role = role;
-    const r = App.role(role), f = App.state.filters;
+    const f = App.state.filters;
     f.person = [];
     // every role lands on the Dashboard — it's the personal starting point
     // (own priorities, journal, roll-ups) whatever the role goes on to do
     App.state.view = 'dashboard';
-    f.dept = r.dept ? [r.dept] : [];
+    f.dept = App.roleDefaultDepts(role);
     App.render();
   };
 
@@ -2162,9 +2162,9 @@ window.App = window.App || {};
        while gaining a Manager's reach. See App.rolePerm. */
     App.state.subRoles = App.isManager(person) ? ['manager'] : [];
     App.state.baseRole = App.state.role;
-    const r = App.role(App.state.role);
     App.state.view = 'dashboard';
-    if (r.dept) App.state.filters.dept = [r.dept];
+    const startDepts = App.roleDefaultDepts(App.state.role);
+    if (startDepts.length) App.state.filters.dept = startDepts;
     // the name they chose in setup, over the directory's
     const prof = App.profile && App.profile.get();
     if (prof && prof.name) App.state.user.name = prof.name;

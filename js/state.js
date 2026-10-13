@@ -149,10 +149,15 @@ window.App = window.App || {};
     { key: 'animation', label: 'Animation',       ico: 'film', dept: 'animation', hint: 'Animation department tasks' },
     { key: 'audio',     label: 'Audio Post',      ico: 'headphones', dept: 'audio',     hint: 'Audio Post department tasks' },
     { key: 'video',     label: 'Video Post',      ico: 'camera', dept: 'video',     hint: 'Video Post department tasks' },
-    { key: 'ops',       label: 'Post Operations', ico: 'package', dept: 'ops', editSchedule: true, hint: 'Post Operations tasks & scheduling' },
+    { key: 'ops',       label: 'Post Operations', ico: 'package', dept: 'ops', editSchedule: true, allDepts: true, hint: 'Post Operations tasks & scheduling' },
     { key: 'qc',        label: 'QC',              ico: 'checkBadge', dept: 'qc',        hint: 'QC tasks' }
   ];
   App.role = (k) => App.ROLES.find(r => r.key === k) || App.ROLES[0];
+  /* The department filter a role starts with. A department lead starts on
+     their own department; Post Operations coordinates across all of them
+     (reviews, scheduling, deliveries), so it starts on every department
+     (`allDepts`) while still owning only its own tasks. */
+  App.roleDefaultDepts = (k) => { const r = App.role(k); return r.dept && !r.allDepts ? [r.dept] : []; };
   // Role capabilities are data-driven (Admin → Access Control) with the ROLES
   // flags above as the defaults until an admin overrides them.
   /* ---- sub-roles ----
