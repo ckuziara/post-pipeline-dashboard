@@ -2433,20 +2433,13 @@ window.App = window.App || {};
         review: 'Reviews', admin: 'Admin' })[view] || 'Quick';
       const rows = viewRows[view] ? viewRows[view]() : [];
 
-      // Appearance applies to the whole tracker, so it sits in its own section
-      // below the view-scoped rows and shows up on every tab.
+      // The theme applies to the whole tracker, but it's set from the
+      // Dashboard's menu, in Room & appearance, since it also lights the room.
       const themeRow = selRow('Theme', 'theme', 'midnight', App.THEMES, () => {
         App.applyTheme();
         this.open();        // rebuild the popover so it repaints in the new palette
         App.render();       // anything that samples the palette (timeline labels)
       });
-
-      // Not view-scoped, and not tied to any episode/task, so it gets its own
-      // section below Appearance rather than a slot in viewRows.
-      const byokRow = el('.prefs-row', { onclick: () => { this.close(); App.byokKey.open(); } }, [
-        el('.prefs-row-title', null, 'Your Gemini API key'),
-        el('button.prefs-btn', { onclick: (e) => { e.stopPropagation(); this.close(); App.byokKey.open(); } }, 'Manage')
-      ]);
 
       // the setup wizard, again — with the answers already given filled in
       const redoRow = el('.prefs-row', { onclick: () => { this.close(); App.guide.start({ redo: true }); } }, [
@@ -2476,9 +2469,9 @@ window.App = window.App || {};
       const pop = el('.prefs-pop', { onclick: e => e.stopPropagation() },
         [el('.prefs-title', null, label + ' preferences')]
           .concat(rows.length ? rows : [el('.prefs-note', null, 'No display options for this view.')])
-          .concat([el('.prefs-title.sep', null, roomRows.length ? 'Room & appearance' : 'Appearance')], roomRows, [themeRow])
-          .concat(App.guide && !App.guide.running ? [el('.prefs-title.sep', null, 'Setup'), redoRow] : [])
-          .concat(App.api.online ? [el('.prefs-title.sep', null, 'AI features'), byokRow] : []));
+          // the theme lives with the room on the Dashboard, and only there
+          .concat(view === 'dashboard' ? [el('.prefs-title.sep', null, 'Room & appearance')].concat(roomRows, [themeRow]) : [])
+          .concat(App.guide && !App.guide.running ? [el('.prefs-title.sep', null, 'Setup'), redoRow] : []));
       const r = document.getElementById('brand-logo').getBoundingClientRect();
       pop.style.top = (r.bottom + 8) + 'px';
       pop.style.left = Math.max(8, r.left) + 'px';
