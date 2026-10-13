@@ -672,12 +672,12 @@ async function directoryEntry(email) {
 async function hasBoardAccess(email) {
   return isAdminEmail(email) || !!(await directoryEntry(email));
 }
-/* Who may accept or deny: bootstrap admins, Producers and Managers (base
-   role or the Manager sub-role) — the people the Admin page is for. */
+/* Who may accept or deny: bootstrap admins, Producers, Post Operations and
+   Managers (base role or the Manager sub-role) — the people the Admin page is for. */
 async function canReviewAccess(email) {
   if (isAdminEmail(email)) return true;
   const p = await directoryEntry(email);
-  return !!(p && (p.role === 'producer' || p.role === 'manager' || p.manager));
+  return !!(p && (p.role === 'producer' || p.role === 'ops' || p.role === 'manager' || p.manager));
 }
 
 /* Contextual task chat. Postgres only — there is no file backend, so chat is

@@ -141,7 +141,7 @@ window.App = window.App || {};
      Operations also owns scheduling (across every department, since that's the
      coordinating job), so it carries editSchedule without editAll. */
   App.ROLES = [
-    { key: 'producer',  label: 'Producer',        ico: 'clapper', approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, resourceView: 'all', hint: 'Full access — all tasks, shows & admin' },
+    { key: 'producer',  label: 'Producer',        ico: 'clapper', selectTasks: true, approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, resourceView: 'all', hint: 'Full access — all tasks, shows & admin' },
     { key: 'manager',   label: 'Manager',         ico: 'compass', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, resourceView: 'all', manageResources: true, hint: 'Oversight, approvals & admin' },
     { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, reviewQueue: true, kickOff: true, resourceView: 'none', hint: 'Review & approve cuts' },
     { key: 'creative',  label: 'Creative',        ico: 'pencil', dept: 'creative',  hint: 'Creative department tasks' },
@@ -149,7 +149,11 @@ window.App = window.App || {};
     { key: 'animation', label: 'Animation',       ico: 'film', dept: 'animation', hint: 'Animation department tasks' },
     { key: 'audio',     label: 'Audio Post',      ico: 'headphones', dept: 'audio',     hint: 'Audio Post department tasks' },
     { key: 'video',     label: 'Video Post',      ico: 'camera', dept: 'video',     hint: 'Video Post department tasks' },
-    { key: 'ops',       label: 'Post Operations', ico: 'package', dept: 'ops', editSchedule: true, allDepts: true, hint: 'Post Operations tasks & scheduling' },
+    // Post Operations (the Post Production Coordinators) run the slate day to
+    // day alongside the Producer, so they hold every Producer right — while
+    // keeping their department, so they still own Post Ops tasks and get the
+    // Post Ops dashboard. allDepts: they start on every department, not just theirs.
+    { key: 'ops',       label: 'Post Operations', ico: 'package', dept: 'ops', allDepts: true, selectTasks: true, approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, resourceView: 'all', hint: 'Producer-level access — all tasks, shows & admin' },
     { key: 'qc',        label: 'QC',              ico: 'checkBadge', dept: 'qc',        hint: 'QC tasks' }
   ];
   App.role = (k) => App.ROLES.find(r => r.key === k) || App.ROLES[0];
@@ -233,9 +237,9 @@ window.App = window.App || {};
   App.canRemoveTask   = (k) => App.rolePerm(k, 'removeTask', App.role(k).removeTask);
   App.canEditSchedule = (k) => App.rolePerm(k, 'editSchedule', App.role(k).editSchedule);
   /* Highlighting tasks — Shift+click, the sweep, Opt+Shift, the ruler's Select
-     Tasks — is the Producer's alone. Every other shortcut only changes what's
+     Tasks — is the Producer's and Post Operations' alone. Every other shortcut only changes what's
      on screen (open/close, filters, lists, the ruler), so it works for all. */
-  App.canSelectTasks  = (k) => k === 'producer';
+  App.canSelectTasks  = (k) => !!App.role(k).selectTasks;
   // choosing which tasks need a Kick Off, and ticking them done — Producer and Director by default
   App.canSetKickOff   = (k) => App.rolePerm(k, 'kickOff', App.role(k).kickOff);
   /* ---- resourcing ----
