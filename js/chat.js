@@ -290,7 +290,7 @@ window.App = window.App || {};
         box.appendChild(el('.chat-pins', null, pins.map(p =>
           el('.chat-pin', null, [
             el('a.chat-pin-link', { href: p.url, target: '_blank', rel: 'noopener',
-              title: p.url + (p.created_by_name ? '\nPinned by ' + p.created_by_name : '') },
+              title: p.created_by_name ? 'Pinned by ' + p.created_by_name : null },
               [App.icon('link'), ' ' + (p.display_name || p.url)]),
             el('button.chat-pin-x', { title: 'Remove this pin',
               onclick: () => App.api.removeChatReference(taskIdOf(m.epId, m.taskKey), p.id)
@@ -380,7 +380,7 @@ window.App = window.App || {};
   function chip(r) {
     if (!r || typeof r !== 'object') return el('span.chat-ref', null, String(r));
     if (r.kind === 'lucidlink') {
-      return el('a.chat-ref.link', { href: r.url, target: '_blank', rel: 'noopener', title: r.url },
+      return el('a.chat-ref.link', { href: r.url, target: '_blank', rel: 'noopener' },
         [App.icon('link'), ' ' + (r.url.split('/').filter(Boolean).pop() || 'LucidLink')]);
     }
     if (r.kind === 'task') {

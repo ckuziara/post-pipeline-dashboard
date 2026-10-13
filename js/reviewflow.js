@@ -244,7 +244,7 @@ window.App = window.App || {};
           App.icon(a.kind === 'link' ? 'link' : 'clapper', { cls: 'ws-ic' }),
           a.kind === 'link'
             ? el('a.ws-name', { href: a.url, target: '_blank', rel: 'noopener noreferrer' }, a.name)
-            : el('span.ws-name', a.path ? { title: a.path } : null, a.name),
+            : el('span.ws-name', null, a.name),
           el('span.ws-meta', null, [a.sizeLabel, a.byName].filter(Boolean).join(' · ')),
           (canEdit && !phone && !sentUrl)
             ? el('button.ws-x', { title: 'Remove', onclick: () => App.reviewUploads.remove(ep.id, su.key, a.id) }, '✕')
@@ -404,7 +404,7 @@ window.App = window.App || {};
         items.forEach(a => {
           const row = a.path
             ? el('button.ws-item', {
-                title: 'Open the folder this sits in — ' + a.path,
+                title: 'Open the folder this sits in',
                 onclick: () => this._revealPath(ep, su, a.path)
               })
             : el('.ws-item.static');

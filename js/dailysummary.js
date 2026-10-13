@@ -340,7 +340,7 @@ window.App = window.App || {};
       const url = r.rev && r.rev.frameUrl;
       if (url) {
         return copyOnRightClick(el('a.dsum-url', { href: url, target: '_blank', rel: 'noopener noreferrer',
-          title: url + ' — right-click to copy', onclick: e => e.stopPropagation() }, linkLabel(url)), url, 'link');
+          title: 'Right-click to copy the link', onclick: e => e.stopPropagation() }, linkLabel(url)), url, 'link');
       }
       // not sent yet: the coordinator's next move is right here
       if (edit && r.su.status === 'review') {
@@ -350,7 +350,7 @@ window.App = window.App || {};
       // not sent yet and not ours to send: what was uploaded, named the same way
       if (r.newest && r.newest.url) {
         return copyOnRightClick(el('a.dsum-url.muted', { href: r.newest.url, target: '_blank', rel: 'noopener noreferrer',
-          title: r.newest.url + ' — right-click to copy', onclick: e => e.stopPropagation() }, linkLabel(r.newest.url)), r.newest.url, 'link');
+          title: 'Right-click to copy the link', onclick: e => e.stopPropagation() }, linkLabel(r.newest.url)), r.newest.url, 'link');
       }
       return r.newest ? copyOnRightClick(el('span.dsum-muted', { title: r.newest.name }, r.newest.name), r.newest.name, 'file name')
         : el('span.dsum-muted', null, 'nothing uploaded');

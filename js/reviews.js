@@ -280,7 +280,7 @@ window.App = window.App || {};
     const up = uploadedAt(ep, su);
     return [
       href
-        ? el('a.rvq-linkbtn', { href, target: '_blank', rel: 'noopener', title: 'Open ' + link },
+        ? el('a.rvq-linkbtn', { href, target: '_blank', rel: 'noopener', title: 'Open the cut in a new tab' },
             [App.icon('link'), ' Watch the cut'])
         : el('.rvq-val.rvq-none', null, 'No review link'),
       up ? el('.rvq-val.rvq-uploaded', null, 'Uploaded ' + App.fmtDate(String(up).slice(0, 10))) : null
