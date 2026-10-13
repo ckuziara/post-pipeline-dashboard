@@ -1988,8 +1988,11 @@ window.App = window.App || {};
   /* ---- production folders on the LucidLink master directory ----
      Admin → Workflow → Storage holds the path; it lives in shared board state so
      the whole team resolves the same root. */
+  // set here if either this device is connected (Setup → Connect to
+  // Workspace) or an admin has set a board-wide fallback
   App.masterPathSet = () => !!(App.api && App.api.online &&
-    App.state.data && App.state.data.storage && App.state.data.storage.masterPath);
+    ((App.devicePath && App.devicePath.get()) ||
+     (App.state.data && App.state.data.storage && App.state.data.storage.masterPath)));
 
   App.setMasterPath = function (p) {
     if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change the master directory', true); return; }
@@ -2433,19 +2436,22 @@ window.App = window.App || {};
         review: 'Reviews', admin: 'Admin' })[view] || 'Quick';
       const rows = viewRows[view] ? viewRows[view]() : [];
 
-      // Appearance applies to the whole tracker, so it sits in its own section
-      // below the view-scoped rows and shows up on every tab.
+      // The theme applies to the whole tracker, but it's set from the
+      // Dashboard's menu, in Room & appearance, since it also lights the room.
       const themeRow = selRow('Theme', 'theme', 'midnight', App.THEMES, () => {
         App.applyTheme();
         this.open();        // rebuild the popover so it repaints in the new palette
         App.render();       // anything that samples the palette (timeline labels)
       });
 
-      // Not view-scoped, and not tied to any episode/task, so it gets its own
-      // section below Appearance rather than a slot in viewRows.
-      const byokRow = el('.prefs-row', { onclick: () => { this.close(); App.byokKey.open(); } }, [
-        el('.prefs-row-title', null, 'Your Gemini API key'),
-        el('button.prefs-btn', { onclick: (e) => { e.stopPropagation(); this.close(); App.byokKey.open(); } }, 'Manage')
+      // this device's PRODUCTION folder — per device, since every machine mounts it somewhere else
+      const wsPath = App.devicePath.get();
+      const wsRow = el('.prefs-row', { onclick: () => { this.close(); App.connectWorkspace.open(); } }, [
+        el('div', null, [
+          el('.prefs-row-title', null, 'Connect to Workspace'),
+          el('.prefs-row-sub', { title: wsPath || '' }, wsPath ? wsPath : 'Not connected on this device')
+        ]),
+        el('button.prefs-btn', { onclick: (e) => { e.stopPropagation(); this.close(); App.connectWorkspace.open(); } }, wsPath ? 'Change' : 'Connect')
       ]);
 
       // the setup wizard, again — with the answers already given filled in
@@ -2476,9 +2482,10 @@ window.App = window.App || {};
       const pop = el('.prefs-pop', { onclick: e => e.stopPropagation() },
         [el('.prefs-title', null, label + ' preferences')]
           .concat(rows.length ? rows : [el('.prefs-note', null, 'No display options for this view.')])
-          .concat([el('.prefs-title.sep', null, roomRows.length ? 'Room & appearance' : 'Appearance')], roomRows, [themeRow])
-          .concat(App.guide && !App.guide.running ? [el('.prefs-title.sep', null, 'Setup'), redoRow] : [])
-          .concat(App.api.online ? [el('.prefs-title.sep', null, 'AI features'), byokRow] : []));
+          // the theme lives with the room on the Dashboard, and only there
+          .concat(view === 'dashboard' ? [el('.prefs-title.sep', null, 'Room & appearance')].concat(roomRows, [themeRow]) : [])
+          .concat([el('.prefs-title.sep', null, 'Setup'), wsRow])
+          .concat(App.guide && !App.guide.running ? [redoRow] : []));
       const r = document.getElementById('brand-logo').getBoundingClientRect();
       pop.style.top = (r.bottom + 8) + 'px';
       pop.style.left = Math.max(8, r.left) + 'px';

@@ -345,6 +345,11 @@ button { font-family: inherit; cursor: pointer; }
 }
 .prefs-row:hover { background: var(--hover); }
 .prefs-row-title { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+/* a quiet second line under a row's title (Setup → Connect to Workspace shows the path) */
+.prefs-row-sub { font-size: 11px; color: var(--text-3); max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; font-family: ui-monospace, monospace; }
+/* Connect to Workspace: the result of checking the path */
+.cw-status { font-size: 12px; color: var(--text-2); min-height: 16px; margin-top: 4px; }
+.cw-status.bad { color: var(--danger); }
 .prefs-seg { display: flex; gap: 3px; flex: none; background: var(--bg); border: 1px solid var(--border-2); border-radius: 8px; padding: 2px; }
 .prefs-seg .seg {
   border: 0; background: transparent; color: var(--text-2); font-size: 11px; font-weight: 700;

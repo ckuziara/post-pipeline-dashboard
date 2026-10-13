@@ -1026,6 +1026,36 @@ function openNatively(target) {
    without a real filesystem — so that's the default; only a caller that
    explicitly opts in via `allowMissingMaster` gets a context back instead
    of an error when the mount isn't there. */
+/* The production folder for THIS request.
+
+   The PRODUCTION folder is mounted at a different path on every machine
+   (/Volumes/LucidLink/… on one, /Volumes/Studio/… on another), so a single
+   board-wide path can only ever be right for one of them. Each device can
+   therefore send its own, from Setup → Connect to Workspace, as the
+   X-Workspace-Path header (URI-encoded, since a path may hold non-ASCII).
+
+   Honoured only from this machine itself (loopback): that's the local
+   server or companion running on the very Mac that has the mount, which is
+   the only place a device path means anything. The hosted board sits
+   behind a proxy, so it never sees a loopback peer and never acts on one —
+   a browser can't point a remote server at a path of its choosing. The
+   client only sends the header to localhost in the first place.
+
+   Order: this device's path, then the launcher's MASTER_PATH, then the
+   board-wide path an admin set in Admin → Workflow → Storage. */
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+function devicePath(req) {
+  const raw = req && req.headers && req.headers['x-workspace-path'];
+  if (!raw) return '';
+  if (!LOOPBACK.has((req.socket && req.socket.remoteAddress) || '')) return '';
+  let p = '';
+  try { p = decodeURIComponent(String(raw)).trim(); } catch (e) { return ''; }
+  return path.isAbsolute(p) ? p.replace(/\/+$/, '') || '/' : '';
+}
+function masterFor(req, data) {
+  return devicePath(req) || ENV.MASTER_PATH || (data && data.storage && data.storage.masterPath) || '';
+}
+
 async function resolveTaskContext(body, opts) {
   /* Companion requests carry their own identity instead of looking it up.
 
@@ -1052,11 +1082,11 @@ async function resolveTaskContext(body, opts) {
     data = board && board.data;
     if (!data) return { error: 'no board state yet' };
   }
-  const masterPath = ENV.MASTER_PATH || (data && data.storage && data.storage.masterPath) || '';
+  const masterPath = masterFor(opts && opts.req, data);
   let masterOk = true, masterError = null;
   if (!masterPath) {
     masterOk = false;
-    masterError = 'No master directory set — an admin can set one in Admin → Workflow → Storage';
+    masterError = 'No production folder set — connect this device in Setup → Connect to Workspace';
   } else if (!path.isAbsolute(masterPath)) {
     masterOk = false;
     masterError = 'Master directory must be an absolute path';
@@ -1219,7 +1249,7 @@ const server = http.createServer(async (req, res) => {
        companion simply isn't running. */
     if (req.method === 'OPTIONS' && applyCompanionCors(req, res)) {
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Companion-Code');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Companion-Code, X-Workspace-Path');
       res.setHeader('Access-Control-Allow-Private-Network', 'true');
       res.setHeader('Access-Control-Max-Age', '600');
       res.writeHead(204); return res.end();
@@ -1232,11 +1262,10 @@ const server = http.createServer(async (req, res) => {
        nothing more. No path, no board data, no identity — a probe runs
        before anyone has signed in. */
     if (route === 'GET /api/companion/ping') {
-      const masterPath = ENV.MASTER_PATH || '';
       let masterOk = false;
       try {
         const board = await storage.get();
-        const p = masterPath || (board && board.data && board.data.storage && board.data.storage.masterPath) || '';
+        const p = masterFor(req, board && board.data);
         masterOk = !!p && path.isAbsolute(p) && fs.existsSync(p);
       } catch (e) { masterOk = false; }
       /* Discovery must work before pairing, or there'd be no way to learn
@@ -1787,7 +1816,7 @@ const server = http.createServer(async (req, res) => {
         // the one caller that keeps going without a mounted master directory,
         // rather than failing the whole request the way every other
         // task-workspace route still does.
-        const ctx = await resolveTaskContext(body, { allowMissingMaster: true, companion: !!companionOrigin(req) });
+        const ctx = await resolveTaskContext(body, { allowMissingMaster: true, companion: !!companionOrigin(req), req });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { data, masterPath, masterOk, masterError, show, ep, pipeline, paths } = ctx;
         const task = pipeline.find(t => t.key === body.taskKey);
@@ -1855,7 +1884,7 @@ const server = http.createServer(async (req, res) => {
          copies it in under a versioned name. Never overwrites. */
       if (route === 'POST /api/task/project') {
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show, ep, paths } = ctx;
         const workAbs = folders.resolveIn(masterPath, show, paths.work);
@@ -1886,7 +1915,7 @@ const server = http.createServer(async (req, res) => {
          machine (their normal setup); otherwise returns the path to copy. */
       if (route === 'POST /api/task/open') {
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show, paths } = ctx;
         const which = body.which === 'publish' ? paths.publish
@@ -1919,10 +1948,10 @@ const server = http.createServer(async (req, res) => {
          a 40GB master in whatever app claims .mxf. */
       if (route === 'POST /api/task/reveal') {
         const body = JSON.parse(await readBody(req) || '{}');
-        let masterPath = ENV.MASTER_PATH || '';
+        let masterPath = devicePath(req) || ENV.MASTER_PATH || '';
         if (!masterPath && !companionOrigin(req)) {
           const board = await storage.get();
-          masterPath = (board && board.data && board.data.storage && board.data.storage.masterPath) || '';
+          masterPath = masterFor(req, board && board.data);
         }
         if (!masterPath || !path.isAbsolute(masterPath) || !fs.existsSync(masterPath)) {
           return sendJson(res, 400, { error: 'This machine has no master directory to look in' });
@@ -1947,7 +1976,7 @@ const server = http.createServer(async (req, res) => {
          still sitting in Mezzanine and reports honestly. */
       if (route === 'POST /api/task/promote') {
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show, paths } = ctx;
         const mezz = folders.resolveIn(masterPath, show, paths.mezzanine);
@@ -1997,7 +2026,7 @@ const server = http.createServer(async (req, res) => {
          volume", which relocates a file already on the mount. */
       if (route === 'POST /api/task/deliver/prepare') {
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show, paths } = ctx;
         // Deliveries go to Mezzanine, NOT Publish — they only become assets for
@@ -2089,7 +2118,7 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 403, { error: 'Only admins can add templates' });
         }
         const body = JSON.parse(await readBody(req) || '{}');
-        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req) });
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show } = ctx;
 
@@ -2143,8 +2172,8 @@ const server = http.createServer(async (req, res) => {
         const { data } = await storage.get();
         if (!data) return sendJson(res, 400, { error: 'no board state yet' });
 
-        const masterPath = ENV.MASTER_PATH || (data.storage && data.storage.masterPath) || '';
-        if (!masterPath) return sendJson(res, 400, { error: 'No master directory set — add one in Admin → Workflow → Storage' });
+        const masterPath = masterFor(req, data);
+        if (!masterPath) return sendJson(res, 400, { error: 'No production folder set — connect this device in Setup → Connect to Workspace' });
         // A relative path would resolve against the server's working directory and
         // quietly build the tree inside the app folder. Demand an absolute one.
         if (!path.isAbsolute(masterPath)) {
