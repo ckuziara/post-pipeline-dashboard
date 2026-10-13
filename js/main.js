@@ -1988,8 +1988,11 @@ window.App = window.App || {};
   /* ---- production folders on the LucidLink master directory ----
      Admin → Workflow → Storage holds the path; it lives in shared board state so
      the whole team resolves the same root. */
+  // set here if either this device is connected (Setup → Connect to
+  // Workspace) or an admin has set a board-wide fallback
   App.masterPathSet = () => !!(App.api && App.api.online &&
-    App.state.data && App.state.data.storage && App.state.data.storage.masterPath);
+    ((App.devicePath && App.devicePath.get()) ||
+     (App.state.data && App.state.data.storage && App.state.data.storage.masterPath)));
 
   App.setMasterPath = function (p) {
     if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change the master directory', true); return; }
@@ -2441,6 +2444,16 @@ window.App = window.App || {};
         App.render();       // anything that samples the palette (timeline labels)
       });
 
+      // this device's PRODUCTION folder — per device, since every machine mounts it somewhere else
+      const wsPath = App.devicePath.get();
+      const wsRow = el('.prefs-row', { onclick: () => { this.close(); App.connectWorkspace.open(); } }, [
+        el('div', null, [
+          el('.prefs-row-title', null, 'Connect to Workspace'),
+          el('.prefs-row-sub', { title: wsPath || '' }, wsPath ? wsPath : 'Not connected on this device')
+        ]),
+        el('button.prefs-btn', { onclick: (e) => { e.stopPropagation(); this.close(); App.connectWorkspace.open(); } }, wsPath ? 'Change' : 'Connect')
+      ]);
+
       // the setup wizard, again — with the answers already given filled in
       const redoRow = el('.prefs-row', { onclick: () => { this.close(); App.guide.start({ redo: true }); } }, [
         el('.prefs-row-title', null, 'Redo Setup Wizard'),
@@ -2471,7 +2484,8 @@ window.App = window.App || {};
           .concat(rows.length ? rows : [el('.prefs-note', null, 'No display options for this view.')])
           // the theme lives with the room on the Dashboard, and only there
           .concat(view === 'dashboard' ? [el('.prefs-title.sep', null, 'Room & appearance')].concat(roomRows, [themeRow]) : [])
-          .concat(App.guide && !App.guide.running ? [el('.prefs-title.sep', null, 'Setup'), redoRow] : []));
+          .concat([el('.prefs-title.sep', null, 'Setup'), wsRow])
+          .concat(App.guide && !App.guide.running ? [redoRow] : []));
       const r = document.getElementById('brand-logo').getBoundingClientRect();
       pop.style.top = (r.bottom + 8) + 'px';
       pop.style.left = Math.max(8, r.left) + 'px';

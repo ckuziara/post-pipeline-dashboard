@@ -961,6 +961,65 @@ window.App = window.App || {};
      any episode/task, so it gets its own top-level entry point rather than
      living under editTask. Status is re-fetched each time it opens rather than
      cached, since usedToday/dailyLimit drift outside this dialog. */
+  /* Setup → Connect to Workspace: paste where the PRODUCTION folder is
+     mounted on this device. Per device on purpose — it's at a different
+     path on every machine — so it's kept in this browser only (App.devicePath)
+     and sent just to the local server or companion on this machine. Saving
+     checks the path through whichever local server can reach it. */
+  App.connectWorkspace = {
+    open() {
+      const el = App.el;
+      const cur = App.devicePath.get();
+      const input = el('input.fld', { type: 'text', value: cur, spellcheck: 'false', autocomplete: 'off',
+        placeholder: '/Volumes/LucidLink/PRODUCTIONS', style: { fontFamily: 'ui-monospace, monospace' } });
+      const status = el('.cw-status');
+      const say = (kind, text) => { status.className = 'cw-status' + (kind ? ' ' + kind : ''); status.textContent = text; };
+      if (cur) say('', 'Connected on this device.');
+
+      const check = async (p) => {
+        // only a server on this machine can see the folder: the local one, or the companion
+        const local = !(App.companion && App.companion.wanted && App.companion.wanted());
+        let reachable = local;
+        if (!local && App.companion) { try { await App.companion.ensure(); reachable = App.companion.available(); } catch (e) { reachable = false; } }
+        if (!reachable) return { ok: null };
+        // the browser falls back to the nearest folder that exists, so check it opened THIS one
+        try {
+          const r = await App.api.browse(p);
+          const want = p.replace(/\/+$/, '') || '/', got = String(r.path || '').replace(/\/+$/, '') || '/';
+          return got === want ? { ok: true } : { ok: false, msg: 'There’s no folder at that path on this device.' };
+        }
+        catch (e) { return { ok: false, msg: 'Couldn’t open that folder: ' + e.message }; }
+      };
+
+      const save = async () => {
+        const raw = input.value.trim().replace(/^['"]|['"]$/g, '');
+        if (!raw) { App.devicePath.set(''); App.modal.close(); App.toast('Workspace disconnected on this device'); App.render(); return; }
+        if (raw[0] !== '/') { say('bad', 'That needs to be a full path starting with “/”, e.g. /Volumes/LucidLink/PRODUCTIONS.'); return; }
+        say('', 'Checking…');
+        const r = await check(raw);
+        if (r.ok === false) { say('bad', r.msg); return; }
+        App.devicePath.set(raw);
+        App.modal.close();
+        App.toast(r.ok ? 'Connected to the workspace on this device' : 'Saved — it’ll be checked once the local companion is running');
+        App.render();
+      };
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+
+      const body = el('div', null, [
+        el('.pop-note', null, 'Paste where the PRODUCTION folder is on this computer. It’s mounted somewhere different on every machine, so each device connects on its own, and this path stays in this browser.'),
+        field('PRODUCTION folder', input, 'In Finder, select the folder and press ⌥⌘C (Copy as Pathname), then paste it here.'),
+        status
+      ]);
+      const footer = [
+        cur ? el('button.btn-ghost', { onclick: () => { input.value = ''; save(); } }, 'Disconnect') : null,
+        el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
+        el('button.btn-primary', { onclick: save }, [App.icon('save'), ' Save'])
+      ];
+      App.modal.open(card('folderOpen', 'Connect to Workspace', 'Link this device to the PRODUCTION folder', body, footer));
+      setTimeout(() => input.focus(), 30);
+    }
+  };
+
   App.byokKey = {
     open() {
       const el = App.el;

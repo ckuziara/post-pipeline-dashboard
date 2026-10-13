@@ -8,6 +8,41 @@ window.App = window.App || {};
 (function () {
   'use strict';
 
+  /* This device's PRODUCTION folder (Setup → Connect to Workspace). The
+     folder is mounted at a different path on every machine, so it's kept
+     per device (localStorage via App.prefs), never in board state. */
+  App.devicePath = {
+    get() { return (App.prefs && App.prefs.get('workspacePath', '')) || ''; },
+    set(p) {
+      const clean = String(p || '').trim().replace(/^['"]|['"]$/g, '').replace(/\/+$/, '');
+      App.prefs.set('workspacePath', clean);
+      App.companion && App.companion.reset && App.companion.reset();   // re-probe with the new path
+      return clean;
+    }
+  };
+
+  /* Send that path along with every API call to a server on THIS machine —
+     the local server, or the companion on localhost — as X-Workspace-Path,
+     so file work (folders, uploads, versions, reveal) lands in this device's
+     own copy of the PRODUCTION folder. Never sent anywhere else: the hosted
+     board has no mount, and a local path is nothing it needs to know. The
+     server only honours it from loopback too (see devicePath() there). */
+  const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    const dp = App.devicePath.get();
+    if (dp && typeof input === 'string') {
+      let url = null;
+      try { url = new URL(input, location.href); } catch (e) { url = null; }
+      if (url && LOCAL_HOSTS.includes(url.hostname) && url.pathname.startsWith('/api/')) {
+        const headers = new Headers((init && init.headers) || undefined);
+        headers.set('X-Workspace-Path', encodeURIComponent(dp));
+        init = Object.assign({}, init, { headers });
+      }
+    }
+    return nativeFetch(input, init);
+  };
+
   App.api = {
     online: false,       // a backend answered /api/me
     me: null,            // {email,name,picture,admin} when signed in

@@ -762,7 +762,7 @@ window.App = window.App || {};
     const card = el('.adm-permcard');
     card.appendChild(el('.adm-permcard-head', null, [
       el('.adm-permcard-title', null, 'Production master directory'),
-      el('.adm-permcard-desc', null, 'The LucidLink (or mounted) folder new shows are created under. Adding a show builds its whole structure straight away — shared libraries, production folders, and every episode’s department tree.')
+      el('.adm-permcard-desc', null, 'The LucidLink (or mounted) folder new shows are created under. Adding a show builds its whole structure straight away — shared libraries, production folders, and every episode’s department tree. This is the team-wide fallback: the folder is mounted at a different path on each machine, so each person connects their own device in Setup → Connect to Workspace, and that path wins on their device.')
     ]));
 
     const input = el('input.fld', { type: 'text', value: cur, spellcheck: 'false',
