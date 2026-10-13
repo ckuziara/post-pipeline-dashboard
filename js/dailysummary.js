@@ -408,12 +408,14 @@ window.App = window.App || {};
       const todayIso = App.isoDate(App.today());
       const winStart = [todayIso, isoOf(r.added) || todayIso].sort()[1];
       const deps = rec.deps.slice(0, 6);
-      let from = [su.start, todayIso, winStart].sort()[0];
-      let to = [su.due, r.due].concat(deps.map(d => d.due)).sort().pop();
-      from = App.shiftIso(from, -1); to = App.shiftIso(to, 1);
-      // keep it readable: a fortnight either side of the review at most
-      const lo = App.shiftIso(r.due, -21), hi = App.shiftIso(r.due, 28);
-      if (from < lo) from = lo; if (to > hi) to = hi;
+      /* The range always holds every key date (today, the upload, both due
+         dates, the next start); only the long tails — the task's own start
+         and its dependants' ends — are trimmed so the scale stays readable. */
+      const keyIsos = [todayIso, isoOf(r.added), su.due, r.due, deps[0] && deps[0].start].filter(Boolean);
+      const tailLo = [su.start, App.shiftIso(r.due, -21)].sort()[1];
+      const tailHi = [deps.map(d => d.due).sort().pop() || r.due, App.shiftIso(r.due, 28)].sort()[0];
+      const from = App.shiftIso(keyIsos.concat(tailLo).sort()[0], -1);
+      const to = App.shiftIso(keyIsos.concat(tailHi).sort().pop(), 1);
       const span = App.diffDays(to, from) + 1;
       const pct = (iso) => Math.max(0, Math.min(100, App.diffDays(iso, from) / span * 100));
       const bar = (a, b, style, cls, label) => el('.dsum-lane-bar' + (cls || ''), {
@@ -443,17 +445,78 @@ window.App = window.App || {};
       ])));
       if (rec.deps.length > deps.length) lines.push(el('.dsum-lane-more', null, '+' + (rec.deps.length - deps.length) + ' more waiting on it'));
 
+      /* ---- the date axis ----
+         A tick for every day, a stronger one for each Monday, and a date
+         label as often as the width allows. The labels name the month
+         whenever it changes, so a range across two months still reads. */
+      const TRACK_PX = 520 - 28 - 110;            // popover width − padding − label column
+      const dayPx = TRACK_PX / span;
+      const every = Math.max(1, Math.ceil(26 / dayPx));
+      const mid = (iso) => (App.diffDays(iso, from) + 0.5) / span * 100;   // centre of that day's cell
+      const at = (f) => ({ left: 'calc(110px + (100% - 110px) * ' + (f / 100) + ')' });
+      const axis = el('.dsum-lane-axis');
+      const todayIdx = App.diffDays(todayIso, from);
+      let lastMonth = null;
+      for (let i = 0; i < span; i++) {
+        const iso = App.shiftIso(from, i);
+        const d = App.parseDate(iso);
+        const monday = d.getDay() === 1;
+        axis.appendChild(el('.dsum-tick' + (monday ? '.week' : '') + (iso === todayIso ? '.today' : ''),
+          { style: { left: mid(iso) + '%' } }));
+        // Today is always labelled; a regular label that would crowd it gives way
+        if (iso === todayIso || (i % every === 0 && Math.abs(i - todayIdx) >= every)) {
+          const month = d.getMonth();
+          const text = month !== lastMonth ? App.fmtDate(iso) : String(d.getDate());
+          lastMonth = month;
+          axis.appendChild(el('.dsum-tick-label' + (iso === todayIso ? '.today' : ''), { style: { left: mid(iso) + '%' } }, text));
+        }
+      }
+
+      /* ---- key dates ----
+         The handful of days that decide the review: when the cut arrived,
+         today, the date the plan gave it, the feedback date, and when the
+         next task needs it. Same-day ones share a marker; labels that would
+         collide step down onto another line. */
+      const keys = [];
+      const addKey = (iso, label, cls) => {
+        if (!iso || iso < from || iso > to) return;
+        const k = keys.find(x => x.iso === iso);
+        if (k) { k.labels.push(label); if (cls === 'due' || cls === 'today') k.cls = cls; }
+        else keys.push({ iso, labels: [label], cls });
+      };
+      if (r.added) addKey(isoOf(r.added), 'Uploaded', 'up');
+      addKey(su.due, 'Planned due', 'plan');
+      if (rec.deps[0]) addKey(rec.deps[0].start, rec.deps[0].name + ' starts', 'next');
+      addKey(r.due, r.extra.feedbackDue ? 'Feedback due' : 'Feedback due (suggested)', 'due');
+      addKey(todayIso, 'Today', 'today');
+      keys.sort((a, b) => a.iso < b.iso ? -1 : 1);
+      const levels = [];
+      const keyStrip = el('.dsum-lane-keys');
+      keys.forEach(k => {
+        const text = k.labels.join(' · ') + ' — ' + App.fmtDate(k.iso);
+        const x = mid(k.iso);
+        const wPct = (text.length * 5.6 + 14) / TRACK_PX * 100;
+        // centred on its day, but kept inside the track
+        const lx = Math.max(0, Math.min(100 - wPct, x - wPct / 2));
+        let lvl = levels.findIndex(end => end <= lx - 1);
+        if (lvl < 0) { lvl = levels.length; levels.push(0); }
+        levels[lvl] = lx + wPct;
+        k.lvl = lvl;
+        keyStrip.appendChild(el('.dsum-key.k-' + k.cls, { style: { left: lx + '%', top: (lvl * 18) + 'px' } }, text));
+      });
+      keyStrip.style.height = (Math.max(1, levels.length) * 18) + 'px';
+
       const body = el('.dsum-lane-body', null, [days].concat(lines));
-      if (todayIso >= from && todayIso <= to) body.appendChild(el('.dsum-lane-today', { style: { left: 'calc(110px + (100% - 110px) * ' + (pct(todayIso) / 100) + ')' } }));
-      body.appendChild(el('.dsum-lane-due', { style: { left: 'calc(110px + (100% - 110px) * ' + (pct(App.shiftIso(r.due, 1)) / 100) + ')' } }));
+      keys.forEach(k => body.appendChild(el('.dsum-lane-mark.k-' + k.cls, { style: at(mid(k.iso)) })));
 
       const pop = el('.dsum-lane', null, [
         el('.dsum-lane-head', null, [
           el('strong', null, r.ep.code + ' · ' + r.name),
           el('span', null, (deps.length ? deps.length + ' task' + (deps.length === 1 ? '' : 's') + ' waiting on it' : 'nothing waits on it'))
         ]),
-        el('.dsum-lane-scale', null, [el('span', null, App.fmtDate(from)), el('span', null, App.fmtDate(to))]),
+        el('.dsum-lane-axis-row', null, axis),
         body,
+        el('.dsum-lane-keys-row', null, keyStrip),
         el('.dsum-lane-foot', null, (r.extra.feedbackDue ? 'Due ' + App.fmtDate(r.due) + ' (set by hand) · suggested ' + App.fmtDate(rec.date)
           : 'Suggested ' + App.fmtDate(rec.date)) + ' — ' + this.basisText(r))
       ]);

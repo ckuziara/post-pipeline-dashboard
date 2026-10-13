@@ -5980,13 +5980,12 @@ button.dsum-due-btn:hover { border-color: var(--border-2); }
 
 /* hover: the review window against what's waiting on it */
 .dsum-lane {
-  position: fixed; z-index: 970; width: 440px; max-width: calc(100vw - 16px); pointer-events: none;
+  position: fixed; z-index: 970; width: 520px; max-width: calc(100vw - 16px); pointer-events: none;
   background: var(--surface-2); border: 1px solid var(--border-2); border-radius: 12px; box-shadow: var(--shadow);
   padding: 12px 14px; font-size: 11px; color: var(--text-2); animation: pop-in .12s ease;
 }
 .dsum-lane-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .dsum-lane-head strong { color: var(--text); font-size: 12px; }
-.dsum-lane-scale { display: flex; justify-content: space-between; margin-left: 110px; color: var(--text-3); font-size: 10px; margin-bottom: 3px; }
 .dsum-lane-body { position: relative; }
 .dsum-lane-days { position: absolute; top: 0; bottom: 0; left: 110px; right: 0; }
 .dsum-lane-off { position: absolute; top: 0; bottom: 0; background: var(--hover); }
@@ -6000,8 +5999,32 @@ button.dsum-due-btn:hover { border-color: var(--border-2); }
   border: 1px solid var(--st-review);
 }
 .dsum-lane-bar.review.late { background: rgba(255,91,110,.4); border-color: #ff5b6e; }
-.dsum-lane-today, .dsum-lane-due { position: absolute; top: -2px; bottom: -2px; width: 0; }
-.dsum-lane-today { border-left: 2px solid var(--accent); }
-.dsum-lane-due { border-left: 1px dashed var(--st-review); }
+/* the date axis: day ticks, Monday ticks taller, labels as width allows */
+.dsum-lane-axis-row { margin-left: 110px; }
+.dsum-lane-axis { position: relative; height: 24px; border-bottom: 1px solid var(--border-2); margin-bottom: 4px; }
+.dsum-tick { position: absolute; bottom: 0; width: 1px; height: 4px; background: var(--border-2); }
+.dsum-tick.week { height: 8px; background: var(--text-3); }
+.dsum-tick.today { height: 10px; width: 2px; background: var(--accent); }
+.dsum-tick-label {
+  position: absolute; top: 0; transform: translateX(-50%); font-size: 10px; color: var(--text-3);
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.dsum-tick-label.today { color: var(--accent); font-weight: 700; }
+/* key dates: a line through the chart, a labelled flag below it */
+.dsum-lane-mark { position: absolute; top: -4px; bottom: -4px; width: 0; transform: translateX(-0.5px); }
+.dsum-lane-keys-row { margin-left: 110px; margin-top: 6px; }
+.dsum-lane-keys { position: relative; }
+.dsum-key {
+  position: absolute; height: 16px; line-height: 16px; padding: 0 6px; border-radius: 4px; white-space: nowrap;
+  font-size: 10px; font-weight: 600; background: var(--hover); color: var(--text-2);
+}
+.dsum-lane-mark.k-today { border-left: 2px solid var(--accent); }
+.dsum-key.k-today { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+.dsum-lane-mark.k-due { border-left: 2px dashed var(--st-review); }
+.dsum-key.k-due { background: rgba(162,93,220,.22); color: var(--st-review); }
+.dsum-lane-mark.k-plan { border-left: 1px dashed var(--text-3); }
+.dsum-lane-mark.k-up { border-left: 1px dotted var(--text-3); }
+.dsum-lane-mark.k-next { border-left: 1px dashed var(--st-in_progress); }
+.dsum-key.k-next { background: rgba(253,171,61,.16); color: var(--st-in_progress); }
 .dsum-lane-more { margin-left: 110px; color: var(--text-3); padding-top: 2px; }
 .dsum-lane-foot { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--text-2); line-height: 1.4; }
