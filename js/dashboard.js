@@ -1095,7 +1095,22 @@ window.App = window.App || {};
         const next = d.layout.map(t => Object.assign({}, t));
         const moved = next.find(t => t.id === d.id);
         moved.col = col; moved.row = row;
-        resolveCollisions(next, d.id, 'b');   // shove anything in the way down to make room
+        /* Dragging down mirrors dragging up exactly. Up: the moment the
+           dragged tile touches one above, that tile is pushed below it.
+           Down: the moment it touches one below, that tile hops above it —
+           rather than being shoved further down, which compaction would undo
+           by pulling the dragged tile straight back up. */
+        const hopped = new Set();
+        if (row > d.tile.row) {
+          next.forEach(o => {
+            if (o === moved || !rectsOverlap(o, moved)) return;
+            o.row = row - 0.5;   // just ahead of the dragged tile, so compaction stacks it above
+            hopped.add(o);
+          });
+        }
+        // shove anything else in the way down to make room (the hopped tiles sit this out)
+        resolveCollisions(next.filter(o => !hopped.has(o)), d.id, 'b');
+        compact(next);                        // and show where everything will settle
         d.preview = next;
 
         next.forEach(t => {
