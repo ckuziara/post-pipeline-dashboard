@@ -150,10 +150,12 @@ window.App = window.App || {};
     { key: 'audio',     label: 'Audio Post',      ico: 'headphones', dept: 'audio',     hint: 'Audio Post department tasks' },
     { key: 'video',     label: 'Video Post',      ico: 'camera', dept: 'video',     hint: 'Video Post department tasks' },
     // Post Operations (the Post Production Coordinators) run the slate day to
-    // day alongside the Producer, so they hold every Producer right — while
-    // keeping their department, so they still own Post Ops tasks and get the
-    // Post Ops dashboard. allDepts: they start on every department, not just theirs.
-    { key: 'ops',       label: 'Post Operations', ico: 'package', dept: 'ops', allDepts: true, selectTasks: true, approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, resourceView: 'all', hint: 'Producer-level access — all tasks, shows & admin' },
+    // day alongside the Producer, so they hold the Producer's working rights —
+    // everything except `admin` (the Admin and Planning tabs, and studio
+    // settings), which stays with Producers and Managers. They keep their
+    // department, so they still own Post Ops tasks and get the Post Ops
+    // dashboard. allDepts: they start on every department, not just theirs.
+    { key: 'ops',       label: 'Post Operations', ico: 'package', dept: 'ops', allDepts: true, selectTasks: true, approve: true, editAll: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, resourceView: 'all', hint: 'Producer-level access to all tasks & shows (no Admin)' },
     { key: 'qc',        label: 'QC',              ico: 'checkBadge', dept: 'qc',        hint: 'QC tasks' }
   ];
   App.role = (k) => App.ROLES.find(r => r.key === k) || App.ROLES[0];
