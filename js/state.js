@@ -2417,11 +2417,10 @@ window.App = window.App || {};
   };
 
   /* ---- Right-click to copy ----
-     Wherever it can, right-clicking a field copies it: a task name, a date,
-     an owner, a code, a link's address. Where something already has its own
-     right-click menu (Timeline bars, Board selections, Kick Offs, the
-     pipeline diagram), that menu gets a Copy item at the top instead, for
-     the field the click landed on. Text boxes keep the browser's own menu,
+     Right-clicking table data or a link copies it: a cell's value, a link's
+     address. Where the cell already has its own right-click menu (a Board
+     selection, a Kick Off), that menu gets a Copy item at the top instead,
+     for the cell the click landed on. Anywhere else, the browser's own menu. Text boxes keep the browser's own menu,
      so paste still works there.
 
      App.copy is the one way to put text on the clipboard; its toast shows a
@@ -2442,28 +2441,24 @@ window.App = window.App || {};
     else fallback();
   };
 
-  /* What a right-click on `node` means to copy: an element's own data-copy
-     if it sets one, a link's address, an image's alt text, or else the text
-     of the field itself — the nearest element with a little text in it,
-     looking past icons. Nothing for big containers (a whole widget, a whole
-     row of a table) or empty space: there's no one field to copy there. */
+  /* What a right-click on `node` means to copy, if anything: only table
+     data and links. An element's own data-copy if it sets one, a link's
+     address, or the text of the table cell it's in: a real <td>, a cell of
+     the Board's task grid, an Admin or Reviews table cell. Header cells and
+     everything that isn't a table keep the browser's own menu. */
+  const TABLE_CELL = 'td, .cell, .rvq-cell, [role="cell"], [role="gridcell"]';
   App.fieldText = function (node) {
-    let n = node && node.nodeType === 1 ? node : node && node.parentElement;
+    const n = node && node.nodeType === 1 ? node : node && node.parentElement;
     if (!n || n.closest('#toast-root')) return null;
     const own = n.closest('[data-copy]');
     if (own) return { text: own.dataset.copy, what: own.dataset.copyWhat || '' };
     const a = n.closest('a[href]');
     if (a && /^(https?:|mailto:|file:)/i.test(a.getAttribute('href') || '')) return { text: a.href, what: 'link' };
-    if (n.tagName === 'IMG' && n.alt) return { text: n.alt, what: '' };
-    for (let i = 0; n && i < 4; i++, n = n.parentElement) {
-      if (n === document.body || n.id === 'app' || n.id === 'view') return null;
-      if (n.closest('svg') && n.tagName !== 'svg') continue;   // an icon: look at what holds it
-      const t = (n.innerText || '').trim();
-      if (!t) continue;
-      if (t.length > 300) return null;
-      return { text: t.replace(/\s*\n\s*/g, ' · '), what: '' };
-    }
-    return null;
+    const cell = n.closest(TABLE_CELL);
+    if (!cell || cell.closest('thead, th, .head, .adm-thead')) return null;
+    const t = (cell.innerText || '').trim();
+    if (!t || t.length > 300) return null;
+    return { text: t.replace(/\s*\n\s*/g, ' · '), what: '' };
   };
 
   (function wireRightClickCopy() {
