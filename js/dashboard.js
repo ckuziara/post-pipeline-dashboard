@@ -135,6 +135,41 @@ window.App = window.App || {};
   };
 
 
+  /* Roles with a layout of their own, laid out by hand on the board and
+     built in here: these stand in for their kind's hand above. A team
+     default saved on the board (data.dashDefaults) still wins over both. */
+  const ROLE_LAYOUTS = {
+    producer: [
+      { id: 'dailySummary', col: 0, row: 0, w: 12, h: 500 },
+      { id: 'atRisk',       col: 0, row: 512, w: 6, h: 430 },
+      { id: 'journal',      col: 6, row: 512, w: 6, h: 430 },
+      { id: 'directorCal',  col: 0, row: 954, w: 12, h: 346 },
+      { id: 'upcoming',     col: 0, row: 1312, w: 5, h: 500 },
+      { id: 'teamLoad',     col: 5, row: 1312, w: 7, h: 304 },
+      { id: 'delivered',    col: 5, row: 1628, w: 7, h: 184 }
+    ],
+    manager: [
+      { id: 'teamLoad',  col: 0, row: 0, w: 7, h: 430 },
+      { id: 'journal',   col: 7, row: 0, w: 5, h: 430 },
+      { id: 'upcoming',  col: 0, row: 442, w: 6, h: 572 },
+      { id: 'atRisk',    col: 6, row: 442, w: 6, h: 380 },
+      { id: 'delivered', col: 6, row: 834, w: 6, h: 180 }
+    ],
+    director: [
+      { id: 'directorCal', col: 0, row: 0, w: 12, h: 358 },
+      { id: 'atRisk',      col: 0, row: 370, w: 6, h: 436 },
+      { id: 'journal',     col: 6, row: 370, w: 6, h: 436 },
+      { id: 'upcoming',    col: 0, row: 818, w: 6, h: 524 },
+      { id: 'delivered',   col: 6, row: 818, w: 6, h: 164 }
+    ],
+    creative: [
+      { id: 'priority',  col: 0, row: 0, w: 6, h: 696 },
+      { id: 'journal',   col: 6, row: 0, w: 6, h: 516 },
+      { id: 'delivered', col: 6, row: 528, w: 6, h: 168 }
+    ]
+  };
+  const builtInFor = (role) => ROLE_LAYOUTS[role] || LAYOUTS[layoutKind(role)];
+
   /* Most widgets belong to a layout. Review Uploads belongs to a JOB: it's the
      Post Operations coordinator's desk — the queue of cuts waiting to be sent
      to the Director (js/reviewflow.js) — so it's dealt to that one department
@@ -160,6 +195,8 @@ window.App = window.App || {};
   // a dropped-in widget's starting size: what its own hand-laid layout gives
   // it, if any layout has it, else half the page at a comfortable height
   const defaultRect = (id) => {
+    const own = builtInFor(App.state.role).find(x => x.id === id);
+    if (own) return { w: own.w, h: own.h };
     for (const k of Object.keys(LAYOUTS)) {
       const t = LAYOUTS[k].find(x => x.id === id);
       if (t) return { w: t.w, h: t.h };
@@ -494,7 +531,8 @@ window.App = window.App || {};
       const placed = this.placed();
       const ids = placed
         ? this.getLayout().slice().sort((a, b) => a.row - b.row || a.col - b.col).map(t => t.id)
-        : widgetFor(LAYOUTS[layoutKind(App.state.role)]).map(t => t.id);
+        : (this.teamDefault() || widgetFor(builtInFor(App.state.role))).slice()
+            .sort((a, b) => a.row - b.row || a.col - b.col).map(t => t.id);
       const stack = el('.dash-phone');
       ids.forEach(id => {
         const built = this[id](m, { w: 4, h: phoneRows(id) });
@@ -545,6 +583,48 @@ window.App = window.App || {};
       App.prefs.set(this.layoutKey(), null);
       App.toast('Saved as the default Dashboard for ' + label);
     },
+    /* Copy this role's layout to other roles as their team default, in one
+       go: a popover of every other role to tick, then Copy. Each copy is
+       the same arrangement; widgets a role can't have are simply left out
+       when that role reads it (teamDefault). */
+    copyMenu(btn) {
+      const key = 'dash:copy';
+      if (App.filterMenu.openKey === key) { App.filterMenu.close(); return; }
+      App.filterMenu.close();
+      App.filterMenu.openKey = key;
+      const from = App.state.role, picked = new Set();
+      const pop = el('.filter-pop', { onclick: e => e.stopPropagation() });
+      pop.appendChild(el('.dash-copy-title', null, 'Copy this layout to'));
+      const go = el('button.btn-primary.dash-copy-go', { type: 'button', disabled: true, onclick: () => {
+        if (!picked.size) return;
+        const layout = this.getLayout().map(t => ({ id: t.id, col: t.col, row: t.row, w: t.w, h: t.h }));
+        const names = [...picked].map(r => App.role(r).label);
+        App.mutate(d => {
+          const next = Object.assign({}, d.dashDefaults);
+          picked.forEach(r => { next[r] = layout.map(t => Object.assign({}, t)); });
+          d.dashDefaults = next;
+        }, 'Dashboard default copied from ' + App.role(from).label + ' to ' + names.join(', '));
+        App.filterMenu.close();
+        App.toast('Copied to ' + names.join(', '));
+      } }, 'Copy');
+      App.ROLES.filter(r => r.key !== from).forEach(r => {
+        const box = el('input', { type: 'checkbox' });
+        const row = el('label.filter-pop-row', null, [box, el('span', null, r.label)]);
+        box.addEventListener('change', () => {
+          box.checked ? picked.add(r.key) : picked.delete(r.key);
+          go.disabled = !picked.size;
+          go.textContent = picked.size ? 'Copy to ' + picked.size : 'Copy';
+        });
+        pop.appendChild(row);
+      });
+      pop.appendChild(el('.filter-pop-sep'));
+      pop.appendChild(go);
+      const r = btn.getBoundingClientRect();
+      pop.style.top = (r.bottom + 6) + 'px';
+      pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 220)) + 'px';
+      document.body.appendChild(pop);
+      App.filterMenu._pop = pop;
+    },
     clearTeamDefault() {
       const role = App.state.role, label = App.role(role).label;
       App.mutate(d => { const next = Object.assign({}, d.dashDefaults); delete next[role]; d.dashDefaults = next; }, 'Dashboard default for ' + label + ' cleared');
@@ -553,7 +633,7 @@ window.App = window.App || {};
 
     getLayout() {
       const placed = this.placed();
-      let dflt = this.teamDefault() || widgetFor(LAYOUTS[layoutKind(App.state.role)]);
+      let dflt = this.teamDefault() || widgetFor(builtInFor(App.state.role));
       // a hand-picked set (the widget tray) replaces the role's default hand
       if (placed) dflt = placed.map(id => Object.assign({ id, col: 0, row: 0 }, defaultRect(id)));
       const saved = App.prefs.get(this.layoutKey(), null);
@@ -723,6 +803,10 @@ window.App = window.App || {};
             title: 'Everyone in ' + App.role(App.state.role).label + ' starts from this layout, and Reset goes back to it',
             onclick: () => this.saveTeamDefault()
           }, 'Save as default for ' + App.role(App.state.role).label) : null),
+          (editing && this.canSetTeamDefault() ? el('button.ghost', {
+            title: 'Make this layout the default for other roles too',
+            onclick: (e) => { e.stopPropagation(); this.copyMenu(e.currentTarget); }
+          }, 'Copy to…') : null),
           el('button' + (editing ? '.btn-primary' : '.ghost'), {
             title: editing ? 'Finish editing the layout' : 'Move and resize widgets',
             onclick: () => this.toggleEdit()

@@ -588,6 +588,10 @@ button.ghost:disabled:hover { background: transparent; }
 .filter-pop-check { width: 14px; flex: none; color: var(--accent); font-weight: 700; }
 .filter-pop-sep { height: 1px; background: var(--border); margin: 4px 2px; }
 .filter-pop-row.disabled { opacity: .45; cursor: default; }
+/* Dashboard → Copy to… (js/dashboard.js copyMenu) */
+.dash-copy-title { font-size: 10px; font-weight: 800; color: var(--text-3); text-transform: uppercase; letter-spacing: .6px; padding: 6px 10px 4px; }
+.dash-copy-go { display: block; width: calc(100% - 8px); margin: 4px; }
+.dash-copy-go:disabled { opacity: .5; cursor: default; }
 .toolbar-label { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .6px; margin-right: -4px; }
 .legend { display: flex; gap: 13px; align-items: center; margin-left: auto; flex-wrap: wrap; }
 .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); }
