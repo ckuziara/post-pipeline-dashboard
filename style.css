@@ -5905,7 +5905,7 @@ body.has-dash-scene .dash-grid > .empty {
   padding: 0 10px; height: 30px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
 }
 .dsum-table th:last-child { border-right: 0; }
-.dsum-table th.dsum-group { text-align: center; color: var(--text); background: var(--surface-3, var(--surface-2)); }
+.dsum-table th.dsum-group { text-align: center; color: var(--text); }
 .dsum-table.two-tier tr.dsum-sub th { top: 31px; text-align: center; font-weight: 600; }
 .dsum-table.two-tier th.dsum-group { border-bottom: 1px solid var(--border); }
 .dsum-sortable { cursor: pointer; user-select: none; }
