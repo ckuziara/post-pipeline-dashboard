@@ -304,7 +304,7 @@ window.App = window.App || {};
       const wrap = el('.ws-block');
       wrap.appendChild(el('.ws-head', null, [
         el('.modal-section-title', { style: { margin: '0' } }, [App.icon('mixer'), ' Project']),
-        el('span.ws-path', d.masterOk ? { title: d.absolute.work } : null, d.deliverable + '/')
+        el('span.ws-path', null, d.deliverable + '/')
       ]));
 
       /* Every project action needs a real filesystem to create, list or open
@@ -713,7 +713,6 @@ window.App = window.App || {};
         if (has) {
           const list = el('.ws-list');
           (items || []).forEach(f => list.appendChild(el('button.ws-item', {
-            title: f.path,
             onclick: () => this._openDep(dep, f.name)
           }, [
             App.icon(iconFor(f.name, f.dir), { cls: 'ws-ic' }),
@@ -722,7 +721,7 @@ window.App = window.App || {};
             el('span.ws-go', null, '↗')
           ])));
           links.forEach(l => list.appendChild(el('a.ws-item', {
-            href: l.url, target: '_blank', rel: 'noopener noreferrer', title: l.url
+            href: l.url, target: '_blank', rel: 'noopener noreferrer'
           }, [
             App.icon('link', { cls: 'ws-ic' }),
             el('span.ws-name', null, l.url.replace(/^https?:\/\//, '')),
@@ -758,7 +757,7 @@ window.App = window.App || {};
       const wrap = el('.ws-block');
       wrap.appendChild(el('.ws-head', null, [
         el('.modal-section-title', { style: { margin: '0' } }, [App.icon('upload'), ' Deliver']),
-        el('span.ws-path', d.masterOk ? { title: d.absolute.mezzanine } : null, '!!_Mezzanine/' + d.deliverable + '/')
+        el('span.ws-path', null, '!!_Mezzanine/' + d.deliverable + '/')
       ]));
 
       const canEdit = App.canEditTask(App.state.role, su);

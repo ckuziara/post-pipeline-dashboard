@@ -281,7 +281,7 @@ window.App = window.App || {};
           if (a.sizeLabel) meta.push(a.sizeLabel);
           meta.push(a.byName, App.fmtDate(a.at.slice(0, 10)));
           if (a.kind !== 'folder' && a.folder) meta.push(a.folder);
-          catEl.appendChild(el('.su-file', { title: a.link }, [
+          catEl.appendChild(el('.su-file', null, [
             App.icon(a.kind === 'link' ? 'link' : a.kind === 'folder' ? 'folder' : 'file', { cls: 'su-file-kind' }),
             el('.su-file-main', null, [
               el('.su-file-name', null, a.name),
