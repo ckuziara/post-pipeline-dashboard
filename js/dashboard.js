@@ -135,8 +135,9 @@ window.App = window.App || {};
   };
 
 
-  /* Roles with a layout of their own, laid out by hand on the board and
-     built in here: these stand in for their kind's hand above. A team
+  /* Every role's own layout, laid out by hand on the board (Save as
+     default / Copy to…) and built in here: these stand in for their kind's
+     hand above, which is now only the fallback for a role added later. A team
      default saved on the board (data.dashDefaults) still wins over both. */
   const ROLE_LAYOUTS = {
     producer: [
@@ -167,7 +168,26 @@ window.App = window.App || {};
       { id: 'journal',   col: 6, row: 0, w: 6, h: 516 },
       { id: 'delivered', col: 6, row: 528, w: 6, h: 168 }
     ]
+,
+    ops: [
+      { id: 'dailySummary',  col: 0, row: 0, w: 12, h: 500 },
+      { id: 'reviewUploads', col: 0, row: 512, w: 6, h: 504 },
+      { id: 'journal',       col: 6, row: 512, w: 6, h: 504 },
+      { id: 'teamLoad',      col: 0, row: 1028, w: 12, h: 400 },
+      { id: 'upcoming',      col: 0, row: 1440, w: 7, h: 452 },
+      { id: 'delivered',     col: 7, row: 1440, w: 5, h: 196 },
+      { id: 'pipeline',      col: 7, row: 1648, w: 5, h: 244 },
+      { id: 'atRisk',        col: 0, row: 1904, w: 7, h: 430 },
+      { id: 'deptLoad',      col: 7, row: 1904, w: 5, h: 256 }
+    ],
+    qc: [
+      { id: 'priority', col: 0, row: 0, w: 6, h: 504 },
+      { id: 'journal',  col: 6, row: 0, w: 6, h: 504 },
+      { id: 'teamLoad', col: 0, row: 516, w: 12, h: 340 }
+    ]
   };
+  // Music, Animation, Audio Post and Video Post share Creative's layout
+  ['music', 'animation', 'audio', 'video'].forEach(r => { ROLE_LAYOUTS[r] = ROLE_LAYOUTS.creative; });
   const builtInFor = (role) => ROLE_LAYOUTS[role] || LAYOUTS[layoutKind(role)];
 
   /* Most widgets belong to a layout. Review Uploads belongs to a JOB: it's the
