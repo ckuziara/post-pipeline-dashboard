@@ -105,32 +105,35 @@ window.App = window.App || {};
      This is the one arrangement hand-laid out rather than derived; every
      other layout a person sees is this one plus whatever they've dragged. */
   const LAYOUTS = {
+    // tiles side by side share one height, so every row ends level
     oversight: [
       { id: 'atRisk',    col: 0, row: 0,   w: 6, h: 430 },
-      { id: 'journal',   col: 6, row: 0,   w: 6, h: 420 },
-      { id: 'pipeline',  col: 0, row: 442, w: 4, h: 175 },
+      { id: 'journal',   col: 6, row: 0,   w: 6, h: 430 },
+      { id: 'pipeline',  col: 0, row: 442, w: 4, h: 340 },
       { id: 'teamLoad',  col: 4, row: 442, w: 4, h: 340 },
-      { id: 'deptLoad',  col: 8, row: 442, w: 4, h: 130 },
-      { id: 'upcoming',  col: 0, row: 794, w: 6, h: 400 },
-      { id: 'delivered', col: 6, row: 794, w: 6, h: 150 }
+      { id: 'deptLoad',  col: 8, row: 442, w: 4, h: 340 },
+      { id: 'upcoming',  col: 0, row: 794, w: 6, h: 320 },
+      { id: 'delivered', col: 6, row: 794, w: 6, h: 320 }
     ],
     review: [
-      // Priority across the top; At Risk over Upcoming on the left, Journal over Delivered on the right
+      // the Director's Priority across the top; At Risk beside Journal, Upcoming beside Delivered
       { id: 'directorCal', col: 0, row: 0,   w: 12, h: 346 },
       { id: 'atRisk',      col: 0, row: 358, w: 6,  h: 400 },
-      { id: 'journal',     col: 6, row: 358, w: 6,  h: 396 },
-      { id: 'delivered',   col: 6, row: 766, w: 3,  h: 120 },
-      { id: 'upcoming',    col: 0, row: 770, w: 6,  h: 400 }
+      { id: 'journal',     col: 6, row: 358, w: 6,  h: 400 },
+      { id: 'upcoming',    col: 0, row: 770, w: 6,  h: 320 },
+      { id: 'delivered',   col: 6, row: 770, w: 6,  h: 320 }
     ],
     dept: [
       // Post Operations only (WIDGET_WHEN) — everyone else's hand compacts up past it
       { id: 'dailySummary', col: 0, row: 0, w: 12, h: 440 },
-      { id: 'priority',  col: 0, row: 452, w: 6, h: 250 },
+      { id: 'priority',  col: 0, row: 452, w: 6, h: 420 },
       { id: 'journal',   col: 6, row: 452, w: 6, h: 420 },
-      { id: 'reviewUploads', col: 0, row: 714, w: 6, h: 300 },
-      { id: 'delivered', col: 0, row: 1026, w: 4, h: 150 }
+      // Review Uploads is Post Operations only; Delivered sits under it there, under Priority for everyone else
+      { id: 'reviewUploads', col: 0, row: 884, w: 6, h: 300 },
+      { id: 'delivered', col: 0, row: 1196, w: 6, h: 300 }
     ]
   };
+
 
   /* Most widgets belong to a layout. Review Uploads belongs to a JOB: it's the
      Post Operations coordinator's desk — the queue of cuts waiting to be sent
@@ -517,9 +520,40 @@ window.App = window.App || {};
        since it was saved; anything the role gets that isn't in the save
        (newly added since) drops in below everything else rather than being
        left out. */
+    /* A team default: the layout an admin arranged for this role and saved
+       for everyone in it ("Save as default for …" in edit mode). It lives in
+       the board data (data.dashDefaults, keyed by role), so it syncs to the
+       whole team, and it stands in for the built-in hand (LAYOUTS) as the
+       starting point and as what Reset goes back to. Widgets the role can't
+       have (or that no longer exist) are dropped on the way out. */
+    teamDefault(role) {
+      const all = App.state.data && App.state.data.dashDefaults;
+      const list = all && all[role || App.state.role];
+      if (!Array.isArray(list) || !list.length) return null;
+      const avail = availableWidgets();
+      const out = list.filter(t => WIDGETS[t.id] && avail.includes(t.id)).map(t => ({ id: t.id, col: t.col, row: t.row, w: t.w, h: t.h }));
+      return out.length ? out : null;
+    },
+    // only someone signed in as an admin may set a team's default, whoever they're viewing as
+    canSetTeamDefault() { return App.isAdminRole(App.state.baseRole || App.state.role); },
+    saveTeamDefault() {
+      const role = App.state.role, label = App.role(role).label;
+      const layout = this.getLayout().map(t => ({ id: t.id, col: t.col, row: t.row, w: t.w, h: t.h }));
+      App.mutate(d => { d.dashDefaults = Object.assign({}, d.dashDefaults, { [role]: layout }); }, 'Dashboard default for ' + label);
+      // this device's own copy is now the same thing; drop it so Reset and the team match
+      App.prefs.set(this.placedKey(), null);
+      App.prefs.set(this.layoutKey(), null);
+      App.toast('Saved as the default Dashboard for ' + label);
+    },
+    clearTeamDefault() {
+      const role = App.state.role, label = App.role(role).label;
+      App.mutate(d => { const next = Object.assign({}, d.dashDefaults); delete next[role]; d.dashDefaults = next; }, 'Dashboard default for ' + label + ' cleared');
+      App.toast(label + ' is back on the built-in default');
+    },
+
     getLayout() {
       const placed = this.placed();
-      let dflt = widgetFor(LAYOUTS[layoutKind(App.state.role)]);
+      let dflt = this.teamDefault() || widgetFor(LAYOUTS[layoutKind(App.state.role)]);
       // a hand-picked set (the widget tray) replaces the role's default hand
       if (placed) dflt = placed.map(id => Object.assign({ id, col: 0, row: 0 }, defaultRect(id)));
       const saved = App.prefs.get(this.layoutKey(), null);
@@ -680,6 +714,15 @@ window.App = window.App || {};
             title: 'Put every widget back to its default size and position',
             onclick: () => this.restoreDefault()
           }, 'Reset layout') : null),
+          // admins: make this arrangement the starting Dashboard for everyone in the role being viewed
+          (editing && this.canSetTeamDefault() && this.teamDefault() ? el('button.ghost', {
+            title: 'Go back to the built-in default for ' + App.role(App.state.role).label,
+            onclick: () => this.clearTeamDefault()
+          }, 'Clear team default') : null),
+          (editing && this.canSetTeamDefault() ? el('button.ghost', {
+            title: 'Everyone in ' + App.role(App.state.role).label + ' starts from this layout, and Reset goes back to it',
+            onclick: () => this.saveTeamDefault()
+          }, 'Save as default for ' + App.role(App.state.role).label) : null),
           el('button' + (editing ? '.btn-primary' : '.ghost'), {
             title: editing ? 'Finish editing the layout' : 'Move and resize widgets',
             onclick: () => this.toggleEdit()
