@@ -330,12 +330,23 @@ window.App = window.App || {};
     },
 
     /* ------------------------------------- Post Operations' dashboard widget */
+    /* Post Operations' desk takes reviews from EVERY department, but their
+       role opens with the department filter on Ops (and m.subs honours it),
+       which would leave the desk empty. So the review widgets read each
+       episode in view whole — the show filter still applies, the department
+       and owner filters don't. */
+    allSubs(m) {
+      const out = [];
+      m.episodes.forEach(ep => App.subitems(ep).forEach(su => out.push({ ep, su })));
+      return out;
+    },
+
     /* Everything at Ready for Review that hasn't been passed on yet. This is a
        queue of work for the coordinator, so it empties as they clear it —
        sending one takes it off this list and puts it on the Director's. */
     pending(m) {
       const out = [];
-      m.subs.forEach(x => {
+      this.allSubs(m).forEach(x => {
         if (x.su.status !== 'review') return;
         if (App.review.sent(x.ep.id, x.su.key)) return;
         out.push(x);

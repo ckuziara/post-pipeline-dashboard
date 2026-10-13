@@ -384,8 +384,9 @@ window.App = window.App || {};
     const deep = '#task=' + encodeURIComponent(ep.id + '::' + su.key);
     let html = '<strong>' + esc(ep.code + ' · ' + su.name) + '</strong> — ' + esc(text)
       + ' <a href="' + esc(deep) + '">task</a>';
-    const href = link && safeHref(link.link);
-    if (href) html += ' · <a href="' + esc(href) + '" target="_blank" rel="noopener">' + esc(link.name) + '</a>';
+    // `link` is the review's Frame.io URL — a plain string
+    const href = link && safeHref(link);
+    if (href) html += ' · <a href="' + esc(href) + '" target="_blank" rel="noopener">Frame.io</a>';
     return html;
   }
 })();

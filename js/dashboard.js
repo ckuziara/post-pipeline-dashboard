@@ -59,7 +59,9 @@ window.App = window.App || {};
     upcoming:  { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
     teamLoad:  { minW: 3, maxW: 12, minH: 130, maxH: 900, itemPx: 38, headPx: 52 },
     reviewUploads: { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
-    directorCal: { minW: 3, maxW: 12, minH: 260, maxH: 900, itemPx: 22, headPx: 120 }
+    directorCal: { minW: 3, maxW: 12, minH: 260, maxH: 900, itemPx: 22, headPx: 120 },
+    // a sheet, not a list: it scrolls inside its tile rather than counting rows
+    dailySummary: { minW: 6, maxW: 12, minH: 220, maxH: 1400 }
   };
   // how many data rows this widget shows at this height — grows continuously
   // rather than at three breakpoints; widgets without itemPx aren't scaled
@@ -121,10 +123,12 @@ window.App = window.App || {};
       { id: 'upcoming',    col: 0, row: 770, w: 6,  h: 400 }
     ],
     dept: [
-      { id: 'priority',  col: 0, row: 0,   w: 6, h: 250 },
-      { id: 'journal',   col: 6, row: 0,   w: 6, h: 420 },
-      { id: 'reviewUploads', col: 0, row: 262, w: 6, h: 300 },
-      { id: 'delivered', col: 0, row: 574, w: 4, h: 150 }
+      // Post Operations only (WIDGET_WHEN) — everyone else's hand compacts up past it
+      { id: 'dailySummary', col: 0, row: 0, w: 12, h: 440 },
+      { id: 'priority',  col: 0, row: 452, w: 6, h: 250 },
+      { id: 'journal',   col: 6, row: 452, w: 6, h: 420 },
+      { id: 'reviewUploads', col: 0, row: 714, w: 6, h: 300 },
+      { id: 'delivered', col: 0, row: 1026, w: 4, h: 150 }
     ]
   };
 
@@ -136,6 +140,10 @@ window.App = window.App || {};
      theirs to clear is just noise. */
   const WIDGET_WHEN = {
     reviewUploads: () => App.roleDept(App.state.role) === 'ops',
+    // Post Operations' review sheet (js/dailysummary.js) — theirs by default,
+    // and in the tray for producers and managers who cover for them
+    dailySummary: () => App.roleDept(App.state.role) === 'ops' ||
+      (App.isAdminRole(App.state.role) && App.canApprove(App.state.role)),
     // the Director's own to-dos are the Kick Offs they run
     directorCal: () => App.canSetKickOff(App.state.role)
   };
@@ -160,7 +168,8 @@ window.App = window.App || {};
   const WIDGET_TITLE = {
     priority: 'Priority', atRisk: 'At Risk', journal: 'Journal', delivered: 'Delivered Episodes',
     pipeline: 'Pipeline Status', deptLoad: 'Department Workload', upcoming: 'Upcoming Deliveries',
-    teamLoad: 'Team Workload', reviewUploads: 'Review Uploads', directorCal: 'Priority'
+    teamLoad: 'Team Workload', reviewUploads: 'Review Uploads', directorCal: 'Priority',
+    dailySummary: 'Daily Summary'
   };
 
   function layoutKind(role) {
@@ -1153,6 +1162,9 @@ window.App = window.App || {};
         body: App.reviewFlow.widget(m, t, capOf('reviewUploads', t.h))
       };
     },
+
+    // Post Operations' review sheet — all of it lives in js/dailysummary.js
+    dailySummary(m, t) { return App.dailySummary.widget(m, t); },
 
     journal() {
       return { title: 'Journal', sub: 'your daily notes', body: App.journal.render(), bare: true };
