@@ -33,6 +33,7 @@ window.App = window.App || {};
   const COLS = 12;          // columns in the grid — matches .dash-grid's math
   const GAP = 12;           // px gutter between tiles, inset from each cell's raw rect
   const HEIGHT_STEP = 12;   // px per resize step — fine-grained relative to a whole column
+  const SNAP = 18;          // px within which a resized edge latches to a neighbour's (wireResize)
 
   /* Per-widget geometry limits. Width is in twelfths of the page (1-12);
      height is px. Both are continuous — a drag can land on any column or
@@ -724,8 +725,10 @@ window.App = window.App || {};
        Width moves in whole columns (tracking the cursor 1:1 against the
        grid's own column width); height moves in small HEIGHT_STEP px steps
        — finer resolution than width, since a stray few px of height rarely
-       matters but a stray column visibly misaligns the grid. A corner drags
-       both axes and pushes on both. */
+       matters but a stray column visibly misaligns the grid. A top or bottom
+       edge also latches to a side-by-side neighbour's when it comes within
+       SNAP px, so tiles in a row end level. A corner drags both axes and
+       pushes on both. */
     wireResize(grid) {
       let d = null;
 
@@ -767,10 +770,26 @@ window.App = window.App || {};
           t.col = clamp(t.col + (t.w - nw), 0, COLS - nw);
           t.w = nw;
         }
-        if (grab.indexOf('b') >= 0) t.h = clamp(t.h + dRows, w.minH, w.maxH);
+        /* Latch: an edge that comes within SNAP px of a side-by-side
+           neighbour's matching edge (bottom to bottom, top to top) locks to
+           it, so tiles beside each other line up instead of ending a few px
+           apart. Neighbours above or below in the same columns don't count:
+           those get pushed, not lined up with. */
+        const beside = d.start.filter(o => o.id !== d.id && (o.col + o.w <= t.col || o.col >= t.col + t.w));
+        const latch = (v, edges) => {
+          let best = v, gap = SNAP + 1;
+          edges.forEach(x => { const g = Math.abs(x - v); if (g < gap) { gap = g; best = x; } });
+          return gap <= SNAP ? best : v;
+        };
+        if (grab.indexOf('b') >= 0) {
+          const bottom = latch(t.row + t.h + dRows, beside.map(o => o.row + o.h));
+          t.h = clamp(bottom - t.row, w.minH, w.maxH);
+        }
         if (grab.indexOf('t') >= 0) {
-          const nh = clamp(t.h - dRows, w.minH, w.maxH);
-          t.row = Math.max(0, t.row + (t.h - nh));
+          const bottom = t.row + t.h;
+          const top = Math.max(0, latch(t.row + dRows, beside.map(o => o.row)));
+          const nh = clamp(bottom - top, w.minH, w.maxH);
+          t.row = Math.max(0, bottom - nh);
           t.h = nh;
         }
         if (grab.indexOf('r') >= 0) resolveCollisions(next, d.id, 'r');
