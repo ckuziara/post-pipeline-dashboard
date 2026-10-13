@@ -33,6 +33,7 @@ window.App = window.App || {};
   const COLS = 12;          // columns in the grid — matches .dash-grid's math
   const GAP = 12;           // px gutter between tiles, inset from each cell's raw rect
   const HEIGHT_STEP = 12;   // px per resize step — fine-grained relative to a whole column
+  const SNAP = 18;          // px within which a resized edge latches to a neighbour's (wireResize)
 
   /* Per-widget geometry limits. Width is in twelfths of the page (1-12);
      height is px. Both are continuous — a drag can land on any column or
@@ -231,6 +232,49 @@ window.App = window.App || {};
       });
     }
     return layout;
+  }
+
+  /* Resizing into a neighbour makes room in this order: first the
+     neighbour slides into whatever empty space it has on its far side (up
+     to the next tile, or the grid's edge); then it shrinks from its facing
+     edge, far edge staying put, down to its own minimum size. Returns what
+     it couldn't make room for, so the resize can stop there rather than
+     push or swap tiles around (wireResize). */
+  function shrinkNeighbours(layout, movedId, dir) {
+    const cur = layout.find(w => w.id === movedId);
+    let left = 0;   // the most any neighbour still overlaps once it's slid and shrunk all it can
+    const across = (a, b) => !(a.col + a.w <= b.col || b.col + b.w <= a.col);   // share columns
+    const along = (a, b) => !(a.row + a.h <= b.row || b.row + b.h <= a.row);    // share rows
+    layout.forEach(w => {
+      if (w === cur || !rectsOverlap(cur, w)) return;
+      const lim = WIDGETS[w.id] || { minW: 1, minH: 60 };
+      const others = layout.filter(o => o !== w && o !== cur);
+      let need;
+      if (dir === 'r') {
+        need = (cur.col + cur.w) - w.col;
+        const wall = Math.min(COLS, ...others.filter(o => along(o, w) && o.col >= w.col + w.w).map(o => o.col));
+        const slide = Math.min(need, wall - (w.col + w.w)); if (slide > 0) { w.col += slide; need -= slide; }
+        const s = Math.min(need, w.w - lim.minW); if (s > 0) { w.col += s; w.w -= s; need -= s; }
+      } else if (dir === 'l') {
+        need = (w.col + w.w) - cur.col;
+        const wall = Math.max(0, ...others.filter(o => along(o, w) && o.col + o.w <= w.col).map(o => o.col + o.w));
+        const slide = Math.min(need, w.col - wall); if (slide > 0) { w.col -= slide; need -= slide; }
+        const s = Math.min(need, w.w - lim.minW); if (s > 0) { w.w -= s; need -= s; }
+      } else if (dir === 'b') {
+        need = (cur.row + cur.h) - w.row;
+        const below = others.filter(o => across(o, w) && o.row >= w.row + w.h).map(o => o.row - GAP);
+        const wall = below.length ? Math.min(...below) : Infinity;   // nothing below: open floor
+        const slide = Math.min(need, wall - (w.row + w.h)); if (slide > 0) { w.row += slide; need -= slide; }
+        const s = Math.min(need, w.h - lim.minH); if (s > 0) { w.row += s; w.h -= s; need -= s; }
+      } else if (dir === 't') {
+        need = (w.row + w.h) - cur.row;
+        const wall = Math.max(0, ...others.filter(o => across(o, w) && o.row + o.h <= w.row).map(o => o.row + o.h + GAP));
+        const slide = Math.min(need, w.row - wall); if (slide > 0) { w.row -= slide; need -= slide; }
+        const s = Math.min(need, w.h - lim.minH); if (s > 0) { w.h -= s; need -= s; }
+      }
+      left = Math.max(left, need);
+    });
+    return left;
   }
 
   function clampTile(t) {
@@ -659,7 +703,8 @@ window.App = window.App || {};
        overflow. `.dw-narrow` swaps in a denser layout below a width
        threshold — see the widget builders below, which key off `t.w`
        directly for anything wider or richer. In edit mode the tile becomes
-       the drag handle and grows thin edge and corner zones; the body goes
+       the drag handle (all of it, not just the grip) and grows thin edge
+       and corner zones; the body goes
        inert so arranging can't touch a widget's content. */
     cell(t, m, popped) {
       const built = this[t.id](m, t);        // -> { title, sub, body, bare }
@@ -680,7 +725,7 @@ window.App = window.App || {};
       cell.appendChild(el('.widget', null, [
         el('.widget-head', null, [
           el('.dw-head-l', null, [
-            (editing ? el('span.dw-grip', { title: 'Drag to move — drop anywhere, even empty space' }, '⠿') : null),
+            (editing ? el('span.dw-grip', { title: 'Drag anywhere on the widget to move it — drop anywhere, even empty space' }, '⠿') : null),
             el('.widget-title', null, built.title)
           ]),
           el('.dw-head-r', null, [
@@ -717,14 +762,16 @@ window.App = window.App || {};
        Only the grabbed edge moves — the opposite edge stays put, so dragging
        the LEFT edge out grows the tile leftward instead of just widening it
        from a fixed left edge, and likewise for every other edge. Whatever
-       that growth now overlaps gets pushed further along the same axis (see
-       resolveCollisions), cascading through however many tiles are in the
-       way; a push that would run off the grid instead drops the tile below.
+       that growth now overlaps first slides into any empty space beyond it,
+       then shrinks from its facing edge down to its minimum
+       (shrinkNeighbours); a neighbour that can do neither stops the resize
+       there, so a resize never shoves tiles around or swaps them.
        Width moves in whole columns (tracking the cursor 1:1 against the
        grid's own column width); height moves in small HEIGHT_STEP px steps
        — finer resolution than width, since a stray few px of height rarely
-       matters but a stray column visibly misaligns the grid. A corner drags
-       both axes and pushes on both. */
+       matters but a stray column visibly misaligns the grid. A top or bottom
+       edge also latches to a side-by-side neighbour's when it comes within
+       SNAP px, so tiles in a row end level. A corner drags both axes. */
     wireResize(grid) {
       let d = null;
 
@@ -766,16 +813,45 @@ window.App = window.App || {};
           t.col = clamp(t.col + (t.w - nw), 0, COLS - nw);
           t.w = nw;
         }
-        if (grab.indexOf('b') >= 0) t.h = clamp(t.h + dRows, w.minH, w.maxH);
+        /* Latch: an edge that comes within SNAP px of a side-by-side
+           neighbour's matching edge (bottom to bottom, top to top) locks to
+           it, so tiles beside each other line up instead of ending a few px
+           apart. Neighbours above or below in the same columns don't count:
+           those get pushed, not lined up with. */
+        const beside = d.start.filter(o => o.id !== d.id && (o.col + o.w <= t.col || o.col >= t.col + t.w));
+        const latch = (v, edges) => {
+          let best = v, gap = SNAP + 1;
+          edges.forEach(x => { const g = Math.abs(x - v); if (g < gap) { gap = g; best = x; } });
+          return gap <= SNAP ? best : v;
+        };
+        if (grab.indexOf('b') >= 0) {
+          const bottom = latch(t.row + t.h + dRows, beside.map(o => o.row + o.h));
+          t.h = clamp(bottom - t.row, w.minH, w.maxH);
+        }
         if (grab.indexOf('t') >= 0) {
-          const nh = clamp(t.h - dRows, w.minH, w.maxH);
-          t.row = Math.max(0, t.row + (t.h - nh));
+          const bottom = t.row + t.h;
+          const top = Math.max(0, latch(t.row + dRows, beside.map(o => o.row)));
+          const nh = clamp(bottom - top, w.minH, w.maxH);
+          t.row = Math.max(0, bottom - nh);
           t.h = nh;
         }
-        if (grab.indexOf('r') >= 0) resolveCollisions(next, d.id, 'r');
-        if (grab.indexOf('l') >= 0) resolveCollisions(next, d.id, 'l');
-        if (grab.indexOf('b') >= 0) resolveCollisions(next, d.id, 'b');
-        if (grab.indexOf('t') >= 0) resolveCollisions(next, d.id, 't');
+        /* Neighbours slide, then shrink, to make room. One that's fully
+           shrunk is a wall: the resize stops at it rather than pushing it
+           or dropping it below, which reads as tiles swapping. Measure what
+           can't be made room for on a scratch copy, pull this tile's edge
+           back by that much, and make room again for the shorter reach. */
+        ['r', 'l', 'b', 't'].forEach(dir => {
+          if (grab.indexOf(dir) < 0) return;
+          const trial = next.map(x => Object.assign({}, x));
+          const over = shrinkNeighbours(trial, d.id, dir);
+          if (over > 0) {
+            if (dir === 'r') t.w -= over;
+            if (dir === 'l') { t.col += over; t.w -= over; }
+            if (dir === 'b') t.h -= over;
+            if (dir === 't') { t.row += over; t.h -= over; }
+          }
+          shrinkNeighbours(next, d.id, dir);
+        });
 
         d.to = next;
         // live preview: every tile the push touched moves, not just the one
@@ -821,10 +897,13 @@ window.App = window.App || {};
     wireDrag(grid) {
       let d = null;
 
+      /* A tile moves from anywhere on it, not just its ⠿ grip: only the
+         resize edges and corners (wireResize takes those) and the remove
+         button are left out, so rearranging doesn't need a precise aim. */
       grid.addEventListener('pointerdown', (e) => {
-        const grip = e.target.closest('.dw-grip');
-        if (!grip) return;
-        const cellEl = grip.closest('.dw');
+        if (e.button !== 0) return;
+        const cellEl = e.target.closest('.dw.dw-editable');
+        if (!cellEl || e.target.closest('.dw-edge, .dw-corner, button')) return;
         e.preventDefault();
         const layout = this.getLayout();
         const tile = layout.find(t => t.id === cellEl.dataset.wid);
@@ -836,7 +915,7 @@ window.App = window.App || {};
           colPx: gridRect.width / COLS, lastCol: tile.col, lastRow: tile.row
         };
         cellEl.classList.add('dw-dragging');
-        try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+        try { cellEl.setPointerCapture(e.pointerId); } catch (err) {}
       });
 
       grid.addEventListener('pointermove', (e) => {
