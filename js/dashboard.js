@@ -237,10 +237,12 @@ window.App = window.App || {};
   /* Resizing into a neighbour makes room in this order: first the
      neighbour slides into whatever empty space it has on its far side (up
      to the next tile, or the grid's edge); then it shrinks from its facing
-     edge, far edge staying put, down to its own minimum size; only what's
-     left after both is pushed, by resolveCollisions. */
+     edge, far edge staying put, down to its own minimum size. Returns what
+     it couldn't make room for, so the resize can stop there rather than
+     push or swap tiles around (wireResize). */
   function shrinkNeighbours(layout, movedId, dir) {
     const cur = layout.find(w => w.id === movedId);
+    let left = 0;   // the most any neighbour still overlaps once it's slid and shrunk all it can
     const across = (a, b) => !(a.col + a.w <= b.col || b.col + b.w <= a.col);   // share columns
     const along = (a, b) => !(a.row + a.h <= b.row || b.row + b.h <= a.row);    // share rows
     layout.forEach(w => {
@@ -252,26 +254,27 @@ window.App = window.App || {};
         need = (cur.col + cur.w) - w.col;
         const wall = Math.min(COLS, ...others.filter(o => along(o, w) && o.col >= w.col + w.w).map(o => o.col));
         const slide = Math.min(need, wall - (w.col + w.w)); if (slide > 0) { w.col += slide; need -= slide; }
-        const s = Math.min(need, w.w - lim.minW); if (s > 0) { w.col += s; w.w -= s; }
+        const s = Math.min(need, w.w - lim.minW); if (s > 0) { w.col += s; w.w -= s; need -= s; }
       } else if (dir === 'l') {
         need = (w.col + w.w) - cur.col;
         const wall = Math.max(0, ...others.filter(o => along(o, w) && o.col + o.w <= w.col).map(o => o.col + o.w));
         const slide = Math.min(need, w.col - wall); if (slide > 0) { w.col -= slide; need -= slide; }
-        const s = Math.min(need, w.w - lim.minW); if (s > 0) w.w -= s;
+        const s = Math.min(need, w.w - lim.minW); if (s > 0) { w.w -= s; need -= s; }
       } else if (dir === 'b') {
         need = (cur.row + cur.h) - w.row;
         const below = others.filter(o => across(o, w) && o.row >= w.row + w.h).map(o => o.row - GAP);
         const wall = below.length ? Math.min(...below) : Infinity;   // nothing below: open floor
         const slide = Math.min(need, wall - (w.row + w.h)); if (slide > 0) { w.row += slide; need -= slide; }
-        const s = Math.min(need, w.h - lim.minH); if (s > 0) { w.row += s; w.h -= s; }
+        const s = Math.min(need, w.h - lim.minH); if (s > 0) { w.row += s; w.h -= s; need -= s; }
       } else if (dir === 't') {
         need = (w.row + w.h) - cur.row;
         const wall = Math.max(0, ...others.filter(o => across(o, w) && o.row + o.h <= w.row).map(o => o.row + o.h + GAP));
         const slide = Math.min(need, w.row - wall); if (slide > 0) { w.row -= slide; need -= slide; }
-        const s = Math.min(need, w.h - lim.minH); if (s > 0) w.h -= s;
+        const s = Math.min(need, w.h - lim.minH); if (s > 0) { w.h -= s; need -= s; }
       }
+      left = Math.max(left, need);
     });
-    return layout;
+    return left;
   }
 
   function clampTile(t) {
@@ -761,16 +764,14 @@ window.App = window.App || {};
        from a fixed left edge, and likewise for every other edge. Whatever
        that growth now overlaps first slides into any empty space beyond it,
        then shrinks from its facing edge down to its minimum
-       (shrinkNeighbours); only what it can't give up is pushed
-       further along the same axis (see resolveCollisions), cascading through however many tiles are in the
-       way; a push that would run off the grid instead drops the tile below.
+       (shrinkNeighbours); a neighbour that can do neither stops the resize
+       there, so a resize never shoves tiles around or swaps them.
        Width moves in whole columns (tracking the cursor 1:1 against the
        grid's own column width); height moves in small HEIGHT_STEP px steps
        — finer resolution than width, since a stray few px of height rarely
        matters but a stray column visibly misaligns the grid. A top or bottom
        edge also latches to a side-by-side neighbour's when it comes within
-       SNAP px, so tiles in a row end level. A corner drags both axes and
-       pushes on both. */
+       SNAP px, so tiles in a row end level. A corner drags both axes. */
     wireResize(grid) {
       let d = null;
 
@@ -834,11 +835,22 @@ window.App = window.App || {};
           t.row = Math.max(0, bottom - nh);
           t.h = nh;
         }
-        // neighbours shrink to make room first; only what they can't give is pushed
+        /* Neighbours slide, then shrink, to make room. One that's fully
+           shrunk is a wall: the resize stops at it rather than pushing it
+           or dropping it below, which reads as tiles swapping. Measure what
+           can't be made room for on a scratch copy, pull this tile's edge
+           back by that much, and make room again for the shorter reach. */
         ['r', 'l', 'b', 't'].forEach(dir => {
           if (grab.indexOf(dir) < 0) return;
+          const trial = next.map(x => Object.assign({}, x));
+          const over = shrinkNeighbours(trial, d.id, dir);
+          if (over > 0) {
+            if (dir === 'r') t.w -= over;
+            if (dir === 'l') { t.col += over; t.w -= over; }
+            if (dir === 'b') t.h -= over;
+            if (dir === 't') { t.row += over; t.h -= over; }
+          }
           shrinkNeighbours(next, d.id, dir);
-          resolveCollisions(next, d.id, dir);
         });
 
         d.to = next;
