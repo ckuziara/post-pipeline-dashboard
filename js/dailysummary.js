@@ -88,16 +88,7 @@ window.App = window.App || {};
     node.addEventListener('contextmenu', (e) => {
       if (!text) return;
       e.preventDefault(); e.stopPropagation();
-      const done = () => App.toast('Copied ' + what + ' — ' + text);
-      const fallback = () => {
-        const ta = document.createElement('textarea');
-        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-        document.body.appendChild(ta); ta.select();
-        try { document.execCommand('copy'); done(); } catch (err) { App.toast('Couldn’t copy', true); }
-        ta.remove();
-      };
-      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
-      else fallback();
+      App.copy(text, what);
     });
     return node;
   }
