@@ -33,6 +33,7 @@ window.App = window.App || {};
   const COLS = 12;          // columns in the grid — matches .dash-grid's math
   const GAP = 12;           // px gutter between tiles, inset from each cell's raw rect
   const HEIGHT_STEP = 12;   // px per resize step — fine-grained relative to a whole column
+  const SNAP = 18;          // px within which a resized edge latches to a neighbour's (wireResize)
 
   /* Per-widget geometry limits. Width is in twelfths of the page (1-12);
      height is px. Both are continuous — a drag can land on any column or
@@ -58,7 +59,9 @@ window.App = window.App || {};
     upcoming:  { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
     teamLoad:  { minW: 3, maxW: 12, minH: 130, maxH: 900, itemPx: 38, headPx: 52 },
     reviewUploads: { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
-    directorCal: { minW: 3, maxW: 12, minH: 260, maxH: 900, itemPx: 22, headPx: 120 }
+    directorCal: { minW: 3, maxW: 12, minH: 260, maxH: 900, itemPx: 22, headPx: 120 },
+    // a sheet, not a list: it scrolls inside its tile rather than counting rows
+    dailySummary: { minW: 6, maxW: 12, minH: 220, maxH: 1400 }
   };
   // how many data rows this widget shows at this height — grows continuously
   // rather than at three breakpoints; widgets without itemPx aren't scaled
@@ -102,30 +105,90 @@ window.App = window.App || {};
      This is the one arrangement hand-laid out rather than derived; every
      other layout a person sees is this one plus whatever they've dragged. */
   const LAYOUTS = {
+    // tiles side by side share one height, so every row ends level
     oversight: [
       { id: 'atRisk',    col: 0, row: 0,   w: 6, h: 430 },
-      { id: 'journal',   col: 6, row: 0,   w: 6, h: 420 },
-      { id: 'pipeline',  col: 0, row: 442, w: 4, h: 175 },
+      { id: 'journal',   col: 6, row: 0,   w: 6, h: 430 },
+      { id: 'pipeline',  col: 0, row: 442, w: 4, h: 340 },
       { id: 'teamLoad',  col: 4, row: 442, w: 4, h: 340 },
-      { id: 'deptLoad',  col: 8, row: 442, w: 4, h: 130 },
-      { id: 'upcoming',  col: 0, row: 794, w: 6, h: 400 },
-      { id: 'delivered', col: 6, row: 794, w: 6, h: 150 }
+      { id: 'deptLoad',  col: 8, row: 442, w: 4, h: 340 },
+      { id: 'upcoming',  col: 0, row: 794, w: 6, h: 320 },
+      { id: 'delivered', col: 6, row: 794, w: 6, h: 320 }
     ],
     review: [
-      // Priority across the top; At Risk over Upcoming on the left, Journal over Delivered on the right
+      // the Director's Priority across the top; At Risk beside Journal, Upcoming beside Delivered
       { id: 'directorCal', col: 0, row: 0,   w: 12, h: 346 },
       { id: 'atRisk',      col: 0, row: 358, w: 6,  h: 400 },
-      { id: 'journal',     col: 6, row: 358, w: 6,  h: 396 },
-      { id: 'delivered',   col: 6, row: 766, w: 3,  h: 120 },
-      { id: 'upcoming',    col: 0, row: 770, w: 6,  h: 400 }
+      { id: 'journal',     col: 6, row: 358, w: 6,  h: 400 },
+      { id: 'upcoming',    col: 0, row: 770, w: 6,  h: 320 },
+      { id: 'delivered',   col: 6, row: 770, w: 6,  h: 320 }
     ],
     dept: [
-      { id: 'priority',  col: 0, row: 0,   w: 6, h: 250 },
-      { id: 'journal',   col: 6, row: 0,   w: 6, h: 420 },
-      { id: 'reviewUploads', col: 0, row: 262, w: 6, h: 300 },
-      { id: 'delivered', col: 0, row: 574, w: 4, h: 150 }
+      // Post Operations only (WIDGET_WHEN) — everyone else's hand compacts up past it
+      { id: 'dailySummary', col: 0, row: 0, w: 12, h: 440 },
+      { id: 'priority',  col: 0, row: 452, w: 6, h: 420 },
+      { id: 'journal',   col: 6, row: 452, w: 6, h: 420 },
+      // Review Uploads is Post Operations only; Delivered sits under it there, under Priority for everyone else
+      { id: 'reviewUploads', col: 0, row: 884, w: 6, h: 300 },
+      { id: 'delivered', col: 0, row: 1196, w: 6, h: 300 }
     ]
   };
+
+
+  /* Every role's own layout, laid out by hand on the board (Save as
+     default / Copy to…) and built in here: these stand in for their kind's
+     hand above, which is now only the fallback for a role added later. A team
+     default saved on the board (data.dashDefaults) still wins over both. */
+  const ROLE_LAYOUTS = {
+    producer: [
+      { id: 'dailySummary', col: 0, row: 0, w: 12, h: 500 },
+      { id: 'atRisk',       col: 0, row: 512, w: 6, h: 430 },
+      { id: 'journal',      col: 6, row: 512, w: 6, h: 430 },
+      { id: 'directorCal',  col: 0, row: 954, w: 12, h: 346 },
+      { id: 'upcoming',     col: 0, row: 1312, w: 5, h: 500 },
+      { id: 'teamLoad',     col: 5, row: 1312, w: 7, h: 304 },
+      { id: 'delivered',    col: 5, row: 1628, w: 7, h: 184 }
+    ],
+    manager: [
+      { id: 'teamLoad',  col: 0, row: 0, w: 7, h: 430 },
+      { id: 'journal',   col: 7, row: 0, w: 5, h: 430 },
+      { id: 'upcoming',  col: 0, row: 442, w: 6, h: 572 },
+      { id: 'atRisk',    col: 6, row: 442, w: 6, h: 380 },
+      { id: 'delivered', col: 6, row: 834, w: 6, h: 180 }
+    ],
+    director: [
+      { id: 'directorCal', col: 0, row: 0, w: 12, h: 358 },
+      { id: 'atRisk',      col: 0, row: 370, w: 6, h: 436 },
+      { id: 'journal',     col: 6, row: 370, w: 6, h: 436 },
+      { id: 'upcoming',    col: 0, row: 818, w: 6, h: 524 },
+      { id: 'delivered',   col: 6, row: 818, w: 6, h: 164 }
+    ],
+    creative: [
+      { id: 'priority',  col: 0, row: 0, w: 6, h: 696 },
+      { id: 'journal',   col: 6, row: 0, w: 6, h: 516 },
+      { id: 'delivered', col: 6, row: 528, w: 6, h: 168 }
+    ]
+,
+    ops: [
+      { id: 'dailySummary',  col: 0, row: 0, w: 12, h: 500 },
+      { id: 'reviewUploads', col: 0, row: 512, w: 6, h: 504 },
+      { id: 'journal',       col: 6, row: 512, w: 6, h: 504 },
+      { id: 'teamLoad',      col: 0, row: 1028, w: 12, h: 400 },
+      { id: 'upcoming',      col: 0, row: 1440, w: 7, h: 452 },
+      { id: 'delivered',     col: 7, row: 1440, w: 5, h: 196 },
+      { id: 'pipeline',      col: 7, row: 1648, w: 5, h: 244 },
+      { id: 'atRisk',        col: 0, row: 1904, w: 7, h: 430 },
+      { id: 'deptLoad',      col: 7, row: 1904, w: 5, h: 256 }
+    ],
+    qc: [
+      { id: 'priority', col: 0, row: 0, w: 6, h: 504 },
+      { id: 'journal',  col: 6, row: 0, w: 6, h: 504 },
+      { id: 'teamLoad', col: 0, row: 516, w: 12, h: 340 }
+    ]
+  };
+  // Music, Animation, Audio Post and Video Post share Creative's layout
+  ['music', 'animation', 'audio', 'video'].forEach(r => { ROLE_LAYOUTS[r] = ROLE_LAYOUTS.creative; });
+  const builtInFor = (role) => ROLE_LAYOUTS[role] || LAYOUTS[layoutKind(role)];
 
   /* Most widgets belong to a layout. Review Uploads belongs to a JOB: it's the
      Post Operations coordinator's desk — the queue of cuts waiting to be sent
@@ -135,6 +198,10 @@ window.App = window.App || {};
      theirs to clear is just noise. */
   const WIDGET_WHEN = {
     reviewUploads: () => App.roleDept(App.state.role) === 'ops',
+    // Post Operations' review sheet (js/dailysummary.js) — theirs by default,
+    // and in the tray for producers and managers who cover for them
+    dailySummary: () => App.roleDept(App.state.role) === 'ops' ||
+      (App.isAdminRole(App.state.role) && App.canApprove(App.state.role)),
     // the Director's own to-dos are the Kick Offs they run
     directorCal: () => App.canSetKickOff(App.state.role)
   };
@@ -148,6 +215,8 @@ window.App = window.App || {};
   // a dropped-in widget's starting size: what its own hand-laid layout gives
   // it, if any layout has it, else half the page at a comfortable height
   const defaultRect = (id) => {
+    const own = builtInFor(App.state.role).find(x => x.id === id);
+    if (own) return { w: own.w, h: own.h };
     for (const k of Object.keys(LAYOUTS)) {
       const t = LAYOUTS[k].find(x => x.id === id);
       if (t) return { w: t.w, h: t.h };
@@ -159,7 +228,8 @@ window.App = window.App || {};
   const WIDGET_TITLE = {
     priority: 'Priority', atRisk: 'At Risk', journal: 'Journal', delivered: 'Delivered Episodes',
     pipeline: 'Pipeline Status', deptLoad: 'Department Workload', upcoming: 'Upcoming Deliveries',
-    teamLoad: 'Team Workload', reviewUploads: 'Review Uploads', directorCal: 'Priority'
+    teamLoad: 'Team Workload', reviewUploads: 'Review Uploads', directorCal: 'Priority',
+    dailySummary: 'Daily Summary'
   };
 
   function layoutKind(role) {
@@ -231,6 +301,49 @@ window.App = window.App || {};
       });
     }
     return layout;
+  }
+
+  /* Resizing into a neighbour makes room in this order: first the
+     neighbour slides into whatever empty space it has on its far side (up
+     to the next tile, or the grid's edge); then it shrinks from its facing
+     edge, far edge staying put, down to its own minimum size. Returns what
+     it couldn't make room for, so the resize can stop there rather than
+     push or swap tiles around (wireResize). */
+  function shrinkNeighbours(layout, movedId, dir) {
+    const cur = layout.find(w => w.id === movedId);
+    let left = 0;   // the most any neighbour still overlaps once it's slid and shrunk all it can
+    const across = (a, b) => !(a.col + a.w <= b.col || b.col + b.w <= a.col);   // share columns
+    const along = (a, b) => !(a.row + a.h <= b.row || b.row + b.h <= a.row);    // share rows
+    layout.forEach(w => {
+      if (w === cur || !rectsOverlap(cur, w)) return;
+      const lim = WIDGETS[w.id] || { minW: 1, minH: 60 };
+      const others = layout.filter(o => o !== w && o !== cur);
+      let need;
+      if (dir === 'r') {
+        need = (cur.col + cur.w) - w.col;
+        const wall = Math.min(COLS, ...others.filter(o => along(o, w) && o.col >= w.col + w.w).map(o => o.col));
+        const slide = Math.min(need, wall - (w.col + w.w)); if (slide > 0) { w.col += slide; need -= slide; }
+        const s = Math.min(need, w.w - lim.minW); if (s > 0) { w.col += s; w.w -= s; need -= s; }
+      } else if (dir === 'l') {
+        need = (w.col + w.w) - cur.col;
+        const wall = Math.max(0, ...others.filter(o => along(o, w) && o.col + o.w <= w.col).map(o => o.col + o.w));
+        const slide = Math.min(need, w.col - wall); if (slide > 0) { w.col -= slide; need -= slide; }
+        const s = Math.min(need, w.w - lim.minW); if (s > 0) { w.w -= s; need -= s; }
+      } else if (dir === 'b') {
+        need = (cur.row + cur.h) - w.row;
+        const below = others.filter(o => across(o, w) && o.row >= w.row + w.h).map(o => o.row - GAP);
+        const wall = below.length ? Math.min(...below) : Infinity;   // nothing below: open floor
+        const slide = Math.min(need, wall - (w.row + w.h)); if (slide > 0) { w.row += slide; need -= slide; }
+        const s = Math.min(need, w.h - lim.minH); if (s > 0) { w.row += s; w.h -= s; need -= s; }
+      } else if (dir === 't') {
+        need = (w.row + w.h) - cur.row;
+        const wall = Math.max(0, ...others.filter(o => across(o, w) && o.row + o.h <= w.row).map(o => o.row + o.h + GAP));
+        const slide = Math.min(need, w.row - wall); if (slide > 0) { w.row -= slide; need -= slide; }
+        const s = Math.min(need, w.h - lim.minH); if (s > 0) { w.h -= s; need -= s; }
+      }
+      left = Math.max(left, need);
+    });
+    return left;
   }
 
   function clampTile(t) {
@@ -438,7 +551,8 @@ window.App = window.App || {};
       const placed = this.placed();
       const ids = placed
         ? this.getLayout().slice().sort((a, b) => a.row - b.row || a.col - b.col).map(t => t.id)
-        : widgetFor(LAYOUTS[layoutKind(App.state.role)]).map(t => t.id);
+        : (this.teamDefault() || widgetFor(builtInFor(App.state.role))).slice()
+            .sort((a, b) => a.row - b.row || a.col - b.col).map(t => t.id);
       const stack = el('.dash-phone');
       ids.forEach(id => {
         const built = this[id](m, { w: 4, h: phoneRows(id) });
@@ -464,9 +578,82 @@ window.App = window.App || {};
        since it was saved; anything the role gets that isn't in the save
        (newly added since) drops in below everything else rather than being
        left out. */
+    /* A team default: the layout an admin arranged for this role and saved
+       for everyone in it ("Save as default for …" in edit mode). It lives in
+       the board data (data.dashDefaults, keyed by role), so it syncs to the
+       whole team, and it stands in for the built-in hand (LAYOUTS) as the
+       starting point and as what Reset goes back to. Widgets the role can't
+       have (or that no longer exist) are dropped on the way out. */
+    teamDefault(role) {
+      const all = App.state.data && App.state.data.dashDefaults;
+      const list = all && all[role || App.state.role];
+      if (!Array.isArray(list) || !list.length) return null;
+      const avail = availableWidgets();
+      const out = list.filter(t => WIDGETS[t.id] && avail.includes(t.id)).map(t => ({ id: t.id, col: t.col, row: t.row, w: t.w, h: t.h }));
+      return out.length ? out : null;
+    },
+    // only someone signed in as an admin may set a team's default, whoever they're viewing as
+    canSetTeamDefault() { return App.isAdminRole(App.state.baseRole || App.state.role); },
+    saveTeamDefault() {
+      const role = App.state.role, label = App.role(role).label;
+      const layout = this.getLayout().map(t => ({ id: t.id, col: t.col, row: t.row, w: t.w, h: t.h }));
+      App.mutate(d => { d.dashDefaults = Object.assign({}, d.dashDefaults, { [role]: layout }); }, 'Dashboard default for ' + label);
+      // this device's own copy is now the same thing; drop it so Reset and the team match
+      App.prefs.set(this.placedKey(), null);
+      App.prefs.set(this.layoutKey(), null);
+      App.toast('Saved as the default Dashboard for ' + label);
+    },
+    /* Copy this role's layout to other roles as their team default, in one
+       go: a popover of every other role to tick, then Copy. Each copy is
+       the same arrangement; widgets a role can't have are simply left out
+       when that role reads it (teamDefault). */
+    copyMenu(btn) {
+      const key = 'dash:copy';
+      if (App.filterMenu.openKey === key) { App.filterMenu.close(); return; }
+      App.filterMenu.close();
+      App.filterMenu.openKey = key;
+      const from = App.state.role, picked = new Set();
+      const pop = el('.filter-pop', { onclick: e => e.stopPropagation() });
+      pop.appendChild(el('.dash-copy-title', null, 'Copy this layout to'));
+      const go = el('button.btn-primary.dash-copy-go', { type: 'button', disabled: true, onclick: () => {
+        if (!picked.size) return;
+        const layout = this.getLayout().map(t => ({ id: t.id, col: t.col, row: t.row, w: t.w, h: t.h }));
+        const names = [...picked].map(r => App.role(r).label);
+        App.mutate(d => {
+          const next = Object.assign({}, d.dashDefaults);
+          picked.forEach(r => { next[r] = layout.map(t => Object.assign({}, t)); });
+          d.dashDefaults = next;
+        }, 'Dashboard default copied from ' + App.role(from).label + ' to ' + names.join(', '));
+        App.filterMenu.close();
+        App.toast('Copied to ' + names.join(', '));
+      } }, 'Copy');
+      App.ROLES.filter(r => r.key !== from).forEach(r => {
+        const box = el('input', { type: 'checkbox' });
+        const row = el('label.filter-pop-row', null, [box, el('span', null, r.label)]);
+        box.addEventListener('change', () => {
+          box.checked ? picked.add(r.key) : picked.delete(r.key);
+          go.disabled = !picked.size;
+          go.textContent = picked.size ? 'Copy to ' + picked.size : 'Copy';
+        });
+        pop.appendChild(row);
+      });
+      pop.appendChild(el('.filter-pop-sep'));
+      pop.appendChild(go);
+      const r = btn.getBoundingClientRect();
+      pop.style.top = (r.bottom + 6) + 'px';
+      pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 220)) + 'px';
+      document.body.appendChild(pop);
+      App.filterMenu._pop = pop;
+    },
+    clearTeamDefault() {
+      const role = App.state.role, label = App.role(role).label;
+      App.mutate(d => { const next = Object.assign({}, d.dashDefaults); delete next[role]; d.dashDefaults = next; }, 'Dashboard default for ' + label + ' cleared');
+      App.toast(label + ' is back on the built-in default');
+    },
+
     getLayout() {
       const placed = this.placed();
-      let dflt = widgetFor(LAYOUTS[layoutKind(App.state.role)]);
+      let dflt = this.teamDefault() || widgetFor(builtInFor(App.state.role));
       // a hand-picked set (the widget tray) replaces the role's default hand
       if (placed) dflt = placed.map(id => Object.assign({ id, col: 0, row: 0 }, defaultRect(id)));
       const saved = App.prefs.get(this.layoutKey(), null);
@@ -627,6 +814,19 @@ window.App = window.App || {};
             title: 'Put every widget back to its default size and position',
             onclick: () => this.restoreDefault()
           }, 'Reset layout') : null),
+          // admins: make this arrangement the starting Dashboard for everyone in the role being viewed
+          (editing && this.canSetTeamDefault() && this.teamDefault() ? el('button.ghost', {
+            title: 'Go back to the built-in default for ' + App.role(App.state.role).label,
+            onclick: () => this.clearTeamDefault()
+          }, 'Clear team default') : null),
+          (editing && this.canSetTeamDefault() ? el('button.ghost', {
+            title: 'Everyone in ' + App.role(App.state.role).label + ' starts from this layout, and Reset goes back to it',
+            onclick: () => this.saveTeamDefault()
+          }, 'Save as default for ' + App.role(App.state.role).label) : null),
+          (editing && this.canSetTeamDefault() ? el('button.ghost', {
+            title: 'Make this layout the default for other roles too',
+            onclick: (e) => { e.stopPropagation(); this.copyMenu(e.currentTarget); }
+          }, 'Copy to…') : null),
           el('button' + (editing ? '.btn-primary' : '.ghost'), {
             title: editing ? 'Finish editing the layout' : 'Move and resize widgets',
             onclick: () => this.toggleEdit()
@@ -659,7 +859,8 @@ window.App = window.App || {};
        overflow. `.dw-narrow` swaps in a denser layout below a width
        threshold — see the widget builders below, which key off `t.w`
        directly for anything wider or richer. In edit mode the tile becomes
-       the drag handle and grows thin edge and corner zones; the body goes
+       the drag handle (all of it, not just the grip) and grows thin edge
+       and corner zones; the body goes
        inert so arranging can't touch a widget's content. */
     cell(t, m, popped) {
       const built = this[t.id](m, t);        // -> { title, sub, body, bare }
@@ -680,7 +881,7 @@ window.App = window.App || {};
       cell.appendChild(el('.widget', null, [
         el('.widget-head', null, [
           el('.dw-head-l', null, [
-            (editing ? el('span.dw-grip', { title: 'Drag to move — drop anywhere, even empty space' }, '⠿') : null),
+            (editing ? el('span.dw-grip', { title: 'Drag anywhere on the widget to move it — drop anywhere, even empty space' }, '⠿') : null),
             el('.widget-title', null, built.title)
           ]),
           el('.dw-head-r', null, [
@@ -717,14 +918,16 @@ window.App = window.App || {};
        Only the grabbed edge moves — the opposite edge stays put, so dragging
        the LEFT edge out grows the tile leftward instead of just widening it
        from a fixed left edge, and likewise for every other edge. Whatever
-       that growth now overlaps gets pushed further along the same axis (see
-       resolveCollisions), cascading through however many tiles are in the
-       way; a push that would run off the grid instead drops the tile below.
+       that growth now overlaps first slides into any empty space beyond it,
+       then shrinks from its facing edge down to its minimum
+       (shrinkNeighbours); a neighbour that can do neither stops the resize
+       there, so a resize never shoves tiles around or swaps them.
        Width moves in whole columns (tracking the cursor 1:1 against the
        grid's own column width); height moves in small HEIGHT_STEP px steps
        — finer resolution than width, since a stray few px of height rarely
-       matters but a stray column visibly misaligns the grid. A corner drags
-       both axes and pushes on both. */
+       matters but a stray column visibly misaligns the grid. A top or bottom
+       edge also latches to a side-by-side neighbour's when it comes within
+       SNAP px, so tiles in a row end level. A corner drags both axes. */
     wireResize(grid) {
       let d = null;
 
@@ -766,16 +969,45 @@ window.App = window.App || {};
           t.col = clamp(t.col + (t.w - nw), 0, COLS - nw);
           t.w = nw;
         }
-        if (grab.indexOf('b') >= 0) t.h = clamp(t.h + dRows, w.minH, w.maxH);
+        /* Latch: an edge that comes within SNAP px of a side-by-side
+           neighbour's matching edge (bottom to bottom, top to top) locks to
+           it, so tiles beside each other line up instead of ending a few px
+           apart. Neighbours above or below in the same columns don't count:
+           those get pushed, not lined up with. */
+        const beside = d.start.filter(o => o.id !== d.id && (o.col + o.w <= t.col || o.col >= t.col + t.w));
+        const latch = (v, edges) => {
+          let best = v, gap = SNAP + 1;
+          edges.forEach(x => { const g = Math.abs(x - v); if (g < gap) { gap = g; best = x; } });
+          return gap <= SNAP ? best : v;
+        };
+        if (grab.indexOf('b') >= 0) {
+          const bottom = latch(t.row + t.h + dRows, beside.map(o => o.row + o.h));
+          t.h = clamp(bottom - t.row, w.minH, w.maxH);
+        }
         if (grab.indexOf('t') >= 0) {
-          const nh = clamp(t.h - dRows, w.minH, w.maxH);
-          t.row = Math.max(0, t.row + (t.h - nh));
+          const bottom = t.row + t.h;
+          const top = Math.max(0, latch(t.row + dRows, beside.map(o => o.row)));
+          const nh = clamp(bottom - top, w.minH, w.maxH);
+          t.row = Math.max(0, bottom - nh);
           t.h = nh;
         }
-        if (grab.indexOf('r') >= 0) resolveCollisions(next, d.id, 'r');
-        if (grab.indexOf('l') >= 0) resolveCollisions(next, d.id, 'l');
-        if (grab.indexOf('b') >= 0) resolveCollisions(next, d.id, 'b');
-        if (grab.indexOf('t') >= 0) resolveCollisions(next, d.id, 't');
+        /* Neighbours slide, then shrink, to make room. One that's fully
+           shrunk is a wall: the resize stops at it rather than pushing it
+           or dropping it below, which reads as tiles swapping. Measure what
+           can't be made room for on a scratch copy, pull this tile's edge
+           back by that much, and make room again for the shorter reach. */
+        ['r', 'l', 'b', 't'].forEach(dir => {
+          if (grab.indexOf(dir) < 0) return;
+          const trial = next.map(x => Object.assign({}, x));
+          const over = shrinkNeighbours(trial, d.id, dir);
+          if (over > 0) {
+            if (dir === 'r') t.w -= over;
+            if (dir === 'l') { t.col += over; t.w -= over; }
+            if (dir === 'b') t.h -= over;
+            if (dir === 't') { t.row += over; t.h -= over; }
+          }
+          shrinkNeighbours(next, d.id, dir);
+        });
 
         d.to = next;
         // live preview: every tile the push touched moves, not just the one
@@ -821,10 +1053,13 @@ window.App = window.App || {};
     wireDrag(grid) {
       let d = null;
 
+      /* A tile moves from anywhere on it, not just its ⠿ grip: only the
+         resize edges and corners (wireResize takes those) and the remove
+         button are left out, so rearranging doesn't need a precise aim. */
       grid.addEventListener('pointerdown', (e) => {
-        const grip = e.target.closest('.dw-grip');
-        if (!grip) return;
-        const cellEl = grip.closest('.dw');
+        if (e.button !== 0) return;
+        const cellEl = e.target.closest('.dw.dw-editable');
+        if (!cellEl || e.target.closest('.dw-edge, .dw-corner, button')) return;
         e.preventDefault();
         const layout = this.getLayout();
         const tile = layout.find(t => t.id === cellEl.dataset.wid);
@@ -836,7 +1071,7 @@ window.App = window.App || {};
           colPx: gridRect.width / COLS, lastCol: tile.col, lastRow: tile.row
         };
         cellEl.classList.add('dw-dragging');
-        try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+        try { cellEl.setPointerCapture(e.pointerId); } catch (err) {}
       });
 
       grid.addEventListener('pointermove', (e) => {
@@ -1074,6 +1309,9 @@ window.App = window.App || {};
         body: App.reviewFlow.widget(m, t, capOf('reviewUploads', t.h))
       };
     },
+
+    // Post Operations' review sheet — all of it lives in js/dailysummary.js
+    dailySummary(m, t) { return App.dailySummary.widget(m, t); },
 
     journal() {
       return { title: 'Journal', sub: 'your daily notes', body: App.journal.render(), bare: true };
