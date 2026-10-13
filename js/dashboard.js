@@ -234,6 +234,32 @@ window.App = window.App || {};
     return layout;
   }
 
+  /* Resizing into a neighbour shrinks it before anything is pushed: each
+     tile the resized one now overlaps gives up the overlap from its facing
+     edge (its far edge stays put), down to its own minimum size. Only what
+     it can't give up is left for resolveCollisions to push. */
+  function shrinkNeighbours(layout, movedId, dir) {
+    const cur = layout.find(w => w.id === movedId);
+    layout.forEach(w => {
+      if (w === cur || !rectsOverlap(cur, w)) return;
+      const lim = WIDGETS[w.id] || { minW: 1, minH: 60 };
+      if (dir === 'r') {
+        const s = Math.min((cur.col + cur.w) - w.col, w.w - lim.minW);
+        if (s > 0) { w.col += s; w.w -= s; }
+      } else if (dir === 'l') {
+        const s = Math.min((w.col + w.w) - cur.col, w.w - lim.minW);
+        if (s > 0) w.w -= s;
+      } else if (dir === 'b') {
+        const s = Math.min((cur.row + cur.h) - w.row, w.h - lim.minH);
+        if (s > 0) { w.row += s; w.h -= s; }
+      } else if (dir === 't') {
+        const s = Math.min((w.row + w.h) - cur.row, w.h - lim.minH);
+        if (s > 0) w.h -= s;
+      }
+    });
+    return layout;
+  }
+
   function clampTile(t) {
     const w = WIDGETS[t.id];
     t.w = clamp(t.w, w.minW, w.maxW);
@@ -719,8 +745,9 @@ window.App = window.App || {};
        Only the grabbed edge moves — the opposite edge stays put, so dragging
        the LEFT edge out grows the tile leftward instead of just widening it
        from a fixed left edge, and likewise for every other edge. Whatever
-       that growth now overlaps gets pushed further along the same axis (see
-       resolveCollisions), cascading through however many tiles are in the
+       that growth now overlaps shrinks first, from its facing edge, down to
+       its minimum (shrinkNeighbours); only what it can't give up is pushed
+       further along the same axis (see resolveCollisions), cascading through however many tiles are in the
        way; a push that would run off the grid instead drops the tile below.
        Width moves in whole columns (tracking the cursor 1:1 against the
        grid's own column width); height moves in small HEIGHT_STEP px steps
@@ -792,10 +819,12 @@ window.App = window.App || {};
           t.row = Math.max(0, bottom - nh);
           t.h = nh;
         }
-        if (grab.indexOf('r') >= 0) resolveCollisions(next, d.id, 'r');
-        if (grab.indexOf('l') >= 0) resolveCollisions(next, d.id, 'l');
-        if (grab.indexOf('b') >= 0) resolveCollisions(next, d.id, 'b');
-        if (grab.indexOf('t') >= 0) resolveCollisions(next, d.id, 't');
+        // neighbours shrink to make room first; only what they can't give is pushed
+        ['r', 'l', 'b', 't'].forEach(dir => {
+          if (grab.indexOf(dir) < 0) return;
+          shrinkNeighbours(next, d.id, dir);
+          resolveCollisions(next, d.id, dir);
+        });
 
         d.to = next;
         // live preview: every tile the push touched moves, not just the one
