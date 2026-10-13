@@ -344,7 +344,7 @@ window.App = window.App || {};
       }
       // not sent yet: the coordinator's next move is right here
       if (edit && r.su.status === 'review') {
-        return el('button.dsum-send', { title: 'Make the Frame.io review and send it to the Director',
+        return el('button.dsum-send', { title: 'Set up the review and send it to the Director',
           onclick: (e) => { e.stopPropagation(); App.reviewFlow.sendDialog(r.ep, r.su); } }, 'Send →');
       }
       // not sent yet and not ours to send: what was uploaded, named the same way

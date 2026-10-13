@@ -386,7 +386,7 @@ window.App = window.App || {};
       + ' <a href="' + esc(deep) + '">task</a>';
     // `link` is the review's Frame.io URL — a plain string
     const href = link && safeHref(link);
-    if (href) html += ' · <a href="' + esc(href) + '" target="_blank" rel="noopener">Frame.io</a>';
+    if (href) html += ' · <a href="' + esc(href) + '" target="_blank" rel="noopener">review link</a>';
     return html;
   }
 })();

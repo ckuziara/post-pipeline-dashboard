@@ -138,7 +138,7 @@ window.App = window.App || {};
        than as one more attachment to go looking for. */
     send(epId, taskKey, raw) {
       const url = cleanUrl(raw);
-      if (!url) { App.toast('Paste the Frame.io review link first', true); return false; }
+      if (!url) { App.toast('Paste the review link first', true); return false; }
       const u = me();
       App.mutate(d => {
         d.reviews = d.reviews || {};
@@ -203,7 +203,7 @@ window.App = window.App || {};
       if (canEdit && !phone) {
         const drop = el('.ws-drop', null, [
           el('.ws-drop-main', null, [App.icon('upload'), '  Drop the cut here for review']),
-          el('.ws-drop-sub', null, 'Post Operations picks it up from here, makes the Frame.io review and sends it to the Director')
+          el('.ws-drop-sub', null, 'Post Operations picks it up from here, sets up the review and sends it to the Director')
         ]);
         ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => {
           e.preventDefault(); e.stopPropagation(); drop.classList.add('over');
@@ -263,7 +263,7 @@ window.App = window.App || {};
         ? 'Sent for review — the Director has this on their Reviews tab.'
         : items.length
           ? (su.status === 'review'
-            ? 'Post Operations will make the Frame.io review and send it to the Director.'
+            ? 'Post Operations will set up the review and send it to the Director.'
             : 'Set this task to Ready for Review to put it on Post Operations’ desk.')
           : 'Nothing here yet. A task can’t be set to Ready for Review until the cut is up.'));
       return wrap;
@@ -425,7 +425,7 @@ window.App = window.App || {};
         onclick: () => this._revealPath(ep, su, null)
       }, [App.icon('folderOpen'), ' Open folder']);
 
-      const input = el('input.fld', { type: 'text', placeholder: 'https://frame.io/…', style: { width: '100%' } });
+      const input = el('input.fld', { type: 'text', placeholder: 'Paste the review link', style: { width: '100%' } });
       const send = () => {
         if (!App.review.send(ep.id, su.key, input.value)) { input.focus(); return; }
         App.modal.close();
@@ -451,9 +451,9 @@ window.App = window.App || {};
           ]),
           items.length ? assets : el('.ws-note', null,
             'Nothing was uploaded for this task — its status came from its dates rather than from someone putting a cut up. Chase the department, or send a link you have anyway.'),
-          el('.modal-section-title', { style: { marginTop: '16px' } }, [App.icon('link'), ' Frame.io Link']),
+          el('.modal-section-title', { style: { marginTop: '16px' } }, [App.icon('link'), ' Review Link']),
           input,
-          el('.fld-hint', null, 'Make the Frame.io review from the file above, then paste its URL here. This is the link the Director clicks.')
+          el('.fld-hint', null, 'Set up the review from the file above, then paste its link here. This is the link the Director clicks.')
         ]),
         el('.modal-foot', null, [
           el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
