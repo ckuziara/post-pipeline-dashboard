@@ -119,21 +119,35 @@ function makeSlackBridge({ chat, storage, sseEmit, appUrl }) {
     });
   }
 
-  /* The task's Slack thread as a link people can open — what the chat
+  /* The task's Slack thread as links people can open — what the chat
      buttons go to. Creating the thread here is the same thing the first
      mirrored message would do, so a task nobody has talked about yet still
-     has somewhere to land. Permalinks never change, so each is looked up once
-     per server run. null = this task's show doesn't post to Slack. */
+     has somewhere to land.
+       url  the web permalink (opens a browser tab, which hands off to Slack)
+       app  a slack:// link straight into the desktop app, no tab. Slack only
+            documents slack://channel; `message`/`thread_ts` on it are what
+            the desktop app honours in practice to land on the thread.
+     Permalinks never change and the workspace id is fixed, so each is
+     looked up once per server run. null = this task's show doesn't post
+     to Slack. */
   const permalinks = new Map();
+  let teamId = null;
   async function threadLink(episodeId, taskKey) {
     const thread = await ensureThread(episodeId, taskKey);
     if (!thread) return null;
-    const k = thread.slack_channel_id + '/' + thread.slack_thread_ts;
+    const channel = thread.slack_channel_id, ts = thread.slack_thread_ts;
+    const k = channel + '/' + ts;
     if (!permalinks.has(k)) {
-      const r = await web.chat.getPermalink({ channel: thread.slack_channel_id, message_ts: thread.slack_thread_ts });
+      const r = await web.chat.getPermalink({ channel, message_ts: ts });
       permalinks.set(k, r.permalink);
     }
-    return permalinks.get(k);
+    if (!teamId) {
+      try { teamId = (await web.auth.test()).team_id || null; } catch (e) { /* the web link still works */ }
+    }
+    const app = teamId
+      ? 'slack://channel?' + new URLSearchParams({ team: teamId, id: channel, message: ts, thread_ts: ts })
+      : null;
+    return { url: permalinks.get(k), app };
   }
 
   async function mirrorMessage(episodeId, taskKey, msg) {
