@@ -21,7 +21,9 @@
 
    The one thing that can't be derived is the middle stage: a sent review
    looks identical whether nobody has opened it yet or a director is halfway
-   through watching it. That's what "Start review" writes. */
+   through watching it. The Reviews tab no longer offers "Start review" —
+   Directors would rather not broadcast that they've started — so rows go
+   from waiting straight to Approve or Send Feedback. */
 window.App = window.App || {};
 (function () {
   'use strict';
@@ -64,6 +66,11 @@ window.App = window.App || {};
   // paranoia for older/imported rows: only ever build an href for a scheme we
   // put there ourselves (App.review.send forces http/https)
   const safeHref = (u) => /^https?:\/\//i.test(String(u || '')) ? String(u) : null;
+
+  /* The cut a row is about: V1 is the first pass, and each revision sent
+     (App.requestRevision) makes the next one V2, V3… */
+  const version = (ep, su) => 'V' + (App.revisionsUsed(ep, su.key) + 1);
+  const taskLabel = (ep, su) => su.name + ' ' + version(ep, su);
 
   /* ---------------------------------------------------------------- rows */
   function collect(episodes) {
@@ -303,7 +310,7 @@ window.App = window.App || {};
       ] : null) : null,
       // 1. the task
       el('.rvq-cell.rvq-task', null, [
-        el('.rvq-task-name', null, su.name),
+        el('.rvq-task-name', null, [su.name, ' ', el('span.rvq-ver', null, version(ep, su))]),
         el('.rvq-task-sub', null, [
           prio ? el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color) }, title: show.name + ' · ' + (ep.title || '') }, ep.code) : null,
           el('span.dept-chip', null, [el('span.dot', { style: { background: dep.color } }), dep.label]),
@@ -311,7 +318,7 @@ window.App = window.App || {};
         ])
       ]),
       // 2. the link to the cut  (+ 4. when it went up, under it)
-      el('.rvq-cell.rvq-link', null, linkCell(ep, su, link)),
+      linkCell(ep, su, link),
       // 3. where the review has got to
       el('.rvq-cell.rvq-stage', null,
         el('span.rvq-pill', { style: { background: st.color, color: App.pickInk(st.color) } }, st.label)),
@@ -349,13 +356,44 @@ window.App = window.App || {};
   function linkCell(ep, su, link) {
     const href = safeHref(link);
     const up = uploadedAt(ep, su);
-    return [
+    const cell = el('.rvq-cell.rvq-link', null, el('.rvq-link-text', null, [
       href
-        ? el('a.rvq-linkbtn', { href, target: '_blank', rel: 'noopener', title: 'Open the cut in a new tab' },
-            [App.icon('link'), ' Watch the cut'])
+        ? el('a.rvq-linkbtn', { href, target: '_blank', rel: 'noopener', title: 'Open the cut in a new tab — ' + href },
+            [App.icon('link'), ' ' + (App.linkLabel ? App.linkLabel(href) : 'Watch the cut')])
         : el('.rvq-val.rvq-none', null, 'No review link'),
       up ? el('.rvq-val.rvq-uploaded', null, 'Uploaded ' + App.fmtDate(String(up).slice(0, 10))) : null
-    ];
+    ]));
+    if (href) withThumb(cell, href);
+    return cell;
+  }
+
+  /* ----------------------------------------------------------- thumbnail
+     The preview image the review link publishes, looked up by the server
+     (/api/link-preview: Frame.io links only). Nothing is shown until there
+     is an image — a link without one just stays text — and the lookup is
+     remembered for the session, so re-renders draw it straight away. It's
+     added to the cell when it arrives rather than by re-rendering the tab,
+     which would close an open note or interrupt a drag. */
+  const thumbs = new Map();   // href -> image url | null | Promise
+  function withThumb(cell, href) {
+    const known = thumbs.get(href);
+    if (typeof known === 'string') { addThumb(cell, href, known); return; }
+    if (known === null) return;
+    if (!known) {
+      thumbs.set(href, fetch('/api/link-preview?url=' + encodeURIComponent(href))
+        .then(r => r.ok ? r.json() : {}).catch(() => ({}))
+        .then(d => { const img = typeof d.image === 'string' && /^https:\/\//.test(d.image) ? d.image : null; thumbs.set(href, img); return img; }));
+    }
+    thumbs.get(href).then(img => { if (img && cell.isConnected) addThumb(cell, href, img); });
+  }
+  function addThumb(cell, href, src) {
+    if (cell.querySelector('.rvq-thumb')) return;
+    const img = el('img', { src, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
+    // a broken image takes the thumbnail away rather than leaving an empty frame
+    img.addEventListener('error', () => { thumbs.set(href, null); a.remove(); cell.classList.remove('has-thumb'); });
+    const a = el('a.rvq-thumb', { href, target: '_blank', rel: 'noopener', title: 'Open the cut in a new tab', tabindex: '-1' }, img);
+    cell.insertBefore(a, cell.firstChild);
+    cell.classList.add('has-thumb');
   }
 
   function actions(x, link) {
@@ -377,31 +415,54 @@ window.App = window.App || {};
       onclick: (e) => { e.stopPropagation(); noteBox(e.currentTarget, x, link); }
     }, App.icon('note')));
 
-    if (x.stage === 'waiting') {
-      out.push(el('button.rvq-mini.go', { onclick: () => App.review.start(ep.id, su.key) }, 'Start review'));
-    }
     if (x.stage !== 'done') {
       out.push(el('button.rvq-mini.ok', { onclick: () => App.setStatus(ep.id, su.key, 'approved') }, '✓ Approve'));
       out.push(revisionButton(ep, su));
+    } else {
+      /* a signed-off row keeps the button, now saying so. Not `disabled`:
+         a disabled button never receives the right-click that reverses it. */
+      out.push(el('button.rvq-mini.ok.approved', {
+        type: 'button', 'aria-disabled': 'true',
+        title: App.canApprove(App.state.role) ? 'Approved — right-click to reverse' : 'This task has been approved',
+        oncontextmenu: (e) => approvedMenu(e, ep, su)
+      }, '✓ Approved'));
     }
     return out;
+  }
+
+  /* Right-click on ✓ Approved. Only for roles that can approve: taking an
+     approval back is the same right as giving it (App.reverseApproval). */
+  function approvedMenu(e, ep, su) {
+    e.preventDefault(); e.stopPropagation();
+    if (!App.canApprove(App.state.role)) return;
+    const close = () => { menu.remove(); document.removeEventListener('mousedown', off, true); document.removeEventListener('keydown', esc, true); };
+    const off = (ev) => { if (!menu.contains(ev.target)) close(); };
+    const esc = (ev) => { if (ev.key === 'Escape') close(); };
+    const menu = el('.ctx-menu.no-copy', null, [
+      el('button.ctx-item', { type: 'button', onclick: () => { close(); App.reverseApproval(ep.id, su.key); } },
+        [el('span.ctx-item-lbl', null, 'Reverse Approval'), el('span.ctx-item-sub', null, taskLabel(ep, su))])
+    ]);
+    document.body.appendChild(menu);
+    menu.style.top = Math.min(e.clientY + 2, window.innerHeight - menu.offsetHeight - 8) + 'px';
+    menu.style.left = Math.min(e.clientX + 2, window.innerWidth - menu.offsetWidth - 8) + 'px';
+    setTimeout(() => { document.addEventListener('mousedown', off, true); document.addEventListener('keydown', esc, true); }, 0);
   }
 
   /* Reviews' "Send back", replaced: a Director spends one of the task's
      budgeted revisions rather than bouncing it for an open-ended redo. The
      count on the button is the whole point — it's what tells a Director this
-     is the last one before they need another way to fix things. Disabled at
-     zero rather than hidden, so a task with no revisions left still shows
-     why the option isn't there. */
+     is the last one before the schedule has to absorb extra passes. At zero
+     it still works — feedback is never blocked — and the tooltip says the
+     pass is over budget. */
   function revisionButton(ep, su) {
     const { max, used, left } = App.taskRevisions(ep, su.key);
     return el('button.rvq-mini.warn', {
-      disabled: left <= 0,
-      title: max
-        ? (left ? 'Revision ' + (used + 1) + ' of ' + max : 'All ' + max + ' revision' + (max === 1 ? '' : 's') + ' already used')
-        : 'This task has no revisions configured in its pipeline',
-      onclick: () => { if (left > 0) App.requestRevision(ep.id, su.key); }
-    }, max ? '↺ Revision (' + left + ')' : '↺ No revisions');
+      title: left
+        ? 'Send feedback — revision ' + (used + 1) + ' of ' + max
+        : max ? 'Send feedback — all ' + max + ' budgeted revision' + (max === 1 ? '' : 's') + ' already used, so this one is extra'
+          : 'Send feedback — this task has no revisions budgeted, so this one is extra',
+      onclick: () => App.requestRevision(ep.id, su.key)
+    }, max ? '↺ Send Feedback (' + left + ')' : '↺ Send Feedback');
   }
 
   /* ---------------------------------------------------------------- note */
@@ -427,7 +488,7 @@ window.App = window.App || {};
       App.toast('Added to today’s journal');
     };
     const pop = el('.rvq-note-pop', { onclick: (e) => e.stopPropagation() }, [
-      el('.rvq-note-head', null, ep.code + ' · ' + su.name),
+      el('.rvq-note-head', null, ep.code + ' · ' + taskLabel(ep, su)),
       ta,
       el('.rvq-note-foot', null, [
         el('span.rvq-note-hint', null, link ? 'Saved with a link to the review' : 'Saved with a link to the task'),
@@ -453,7 +514,7 @@ window.App = window.App || {};
      what makes the journal entry still useful a week later. */
   function noteHtml(ep, su, link, text) {
     const deep = '#task=' + encodeURIComponent(ep.id + '::' + su.key);
-    let html = '<strong>' + esc(ep.code + ' · ' + su.name) + '</strong> — ' + esc(text)
+    let html = '<strong>' + esc(ep.code + ' · ' + taskLabel(ep, su)) + '</strong> — ' + esc(text)
       + ' <a href="' + esc(deep) + '">task</a>';
     // `link` is the review's Frame.io URL — a plain string
     const href = link && safeHref(link);

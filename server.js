@@ -1130,6 +1130,57 @@ async function resolveTaskContext(body, opts) {
 }
 
 /* ------------------------------------------------------------- helpers ---- */
+/* ---- Review link thumbnails ------------------------------------------------
+   The Reviews tab shows the preview image a review link publishes (its
+   og:image, the picture Slack shows when the link is pasted). Fetched here,
+   not in the browser, because those pages don't allow cross-origin reads.
+
+   Only Frame.io hosts are fetched: this is the server requesting a URL
+   someone typed, so an open list would let the board probe anything the
+   server can reach. Every redirect hop is checked against the same list.
+   Results (including "no image") are cached for a few hours, so a busy
+   Reviews tab doesn't refetch on every render. */
+const PREVIEW_HOSTS = /(^|\.)(frame\.io|f\.io)$/i;
+const PREVIEW_TTL = 6 * 60 * 60 * 1000;
+const previewCache = new Map();   // url -> { image, at }
+function previewAllowed(u) {
+  try { const x = new URL(u); return x.protocol === 'https:' && PREVIEW_HOSTS.test(x.hostname); } catch { return false; }
+}
+function metaContent(html, names) {
+  for (const n of names) {
+    // property= / name= in either order around content=
+    const re1 = new RegExp('<meta[^>]+(?:property|name)=["\']' + n + '["\'][^>]*content=["\']([^"\']+)["\']', 'i');
+    const re2 = new RegExp('<meta[^>]+content=["\']([^"\']+)["\'][^>]*(?:property|name)=["\']' + n + '["\']', 'i');
+    const m = html.match(re1) || html.match(re2);
+    if (m) return m[1].replace(/&amp;/g, '&');
+  }
+  return null;
+}
+async function linkPreview(raw) {
+  const hit = previewCache.get(raw);
+  if (hit && Date.now() - hit.at < PREVIEW_TTL) return hit.image;
+  let image = null;
+  try {
+    let u = raw;
+    for (let hop = 0; hop < 5 && previewAllowed(u); hop++) {
+      const r = await fetch(u, {
+        redirect: 'manual', signal: AbortSignal.timeout(6000),
+        headers: { 'user-agent': 'Mozilla/5.0 (compatible; PostPipelineBot/1.0; link preview)', accept: 'text/html' }
+      });
+      if (r.status >= 300 && r.status < 400 && r.headers.get('location')) { u = new URL(r.headers.get('location'), u).href; continue; }
+      if (!r.ok || !/html/i.test(r.headers.get('content-type') || '')) break;
+      // the head is all we need; stop reading big pages early
+      const html = (await r.text()).slice(0, 512 * 1024);
+      const img = metaContent(html, ['og:image:secure_url', 'og:image', 'twitter:image', 'twitter:image:src']);
+      if (img) { const abs = new URL(img, u); if (abs.protocol === 'https:') image = abs.href; }
+      break;
+    }
+  } catch { /* unreachable, timed out or malformed: no thumbnail */ }
+  previewCache.set(raw, { image, at: Date.now() });
+  if (previewCache.size > 500) previewCache.delete(previewCache.keys().next().value);
+  return image;
+}
+
 function sendJson(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(obj));
@@ -1451,6 +1502,12 @@ const server = http.createServer(async (req, res) => {
 
       if (route === 'GET /api/state') return sendJson(res, 200, await storage.get());
       if (route === 'GET /api/version') return sendJson(res, 200, { version: await storage.version() });
+
+      if (route === 'GET /api/link-preview') {
+        const target = String(url.searchParams.get('url') || '');
+        if (!previewAllowed(target)) return sendJson(res, 200, { image: null });
+        return sendJson(res, 200, { image: await linkPreview(target) });
+      }
 
       /* ---- access requests (Admin → User Directory) ---- */
       if (url.pathname.startsWith('/api/admin/access-requests')) {

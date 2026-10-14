@@ -115,6 +115,19 @@ window.App = window.App || {};
     if (status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
   };
 
+  /* Take an approval back (right-click ✓ Approved on the Reviews tab): the
+     task returns to Ready for Review. Approving needed an approver, so
+     undoing it does too. Skips the Ready for Review upload gate on purpose —
+     the task already passed review once; this only reopens it. */
+  App.reverseApproval = function (epId, key) {
+    const g = guardEdit(epId, key); if (!g) return;
+    if (!App.canApprove(App.state.role)) { App.toast('Only Producer, Director or Manager can reverse an approval', true); return; }
+    if (g.su.status !== 'approved') return;
+    App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = 'review'; App.refreshReadiness(e); App.syncBatch(d, e, key); }, 'reversing the approval');
+    App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: 'approved', to: 'review', reversed: true });
+    App.toast('Approval reversed — ' + g.su.name + ' is back to ' + App.status('review').label);
+  };
+
   /* The same two changes for a whole selection at once (the Board's
      Shift-selection), as ONE undo step. Each task meets the rules it would
      one at a time — the role may edit it, Approved needs an approver, an
@@ -552,18 +565,21 @@ window.App = window.App || {};
   App.requestRevision = function (epId, key, opts) {
     const g = guardEdit(epId, key); if (!g) return;
     const { max, days, used, left } = App.taskRevisions(g.ep, key);
-    if (left <= 0) {
-      App.toast(max ? 'No revisions left for “' + g.su.name + '”' : '“' + g.su.name + '” has no revisions budgeted', true);
-      return;
-    }
-
-    const revDays = days[used] || 1;
-    // the next version starts straight after the current one — exactly the
-    // slot the schedule reserved (see App.schedulePipeline), in working days
-    // when the show keeps a calendar
+    /* A spent (or empty) budget doesn't stop feedback: a Director can always
+       send a task back. Past the budget there's no reserved slot, so the
+       extra pass takes the last configured revision's length (1 day if none)
+       straight after the current due date. */
+    const over = left <= 0;
+    const revDays = days[used] || days[days.length - 1] || 1;
+    // within budget the next version starts straight after the current one —
+    // exactly the slot the schedule reserved (see App.schedulePipeline), in
+    // working days when the show keeps a calendar
     const cal = App.showCalendar(g.ep.showId);
+    const who = { dept: g.su.dept, person: g.su.assignee };
     const newDue = cal
-      ? App.revisionSteps(App.revTask(g.ep, key), g.su.due, cal, { dept: g.su.dept, person: g.su.assignee }, used, { now: true }).revs[0].due
+      ? (over
+        ? cal.addWork(cal.nextWork(App.shiftIso(g.su.due, 1), who), revDays, who)
+        : App.revisionSteps(App.revTask(g.ep, key), g.su.due, cal, who, used, { now: true }).revs[0].due)
       : App.shiftIso(g.su.due, App.REVIEW_DAYS + revDays);
     const impact = App.scheduleImpact(g.ep, key, g.su.start, newDue);
     if (impact.deny) { App.toast(impact.deny.text + ' — nothing changed', true); return; }
@@ -596,8 +612,8 @@ window.App = window.App || {};
       days: revDays, due: g.su.due + '→' + newDue
     });
     const leftNow = left - 1;
-    App.toast('Revision ' + (used + 1) + ' of ' + max + ' requested for “' + g.su.name + '” — due ' + App.fmtDate(newDue) +
-      (leftNow > 0 ? ' · ' + leftNow + ' left' : ' · none left'));
+    App.toast('Revision sent for “' + g.su.name + '” — due ' + App.fmtDate(newDue) +
+      (over ? (max ? ' · over its budget of ' + max : ' · none were budgeted') : leftNow > 0 ? ' · ' + leftNow + ' left' : ' · none left'));
   };
 
   /* Change how long one planned version (V2, V3…) runs, for this episode

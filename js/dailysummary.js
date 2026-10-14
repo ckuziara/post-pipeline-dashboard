@@ -81,6 +81,8 @@ window.App = window.App || {};
     const name = known ? known[1] : host.charAt(0).toUpperCase() + host.slice(1);
     return name + ' Link';
   }
+  // shared with the Reviews tab, so a link reads the same everywhere
+  App.linkLabel = linkLabel;
 
   /* Right-click copies a cell's text — the full URL for a link, the full
      date for a date — the way the sheet let people copy a cell. */
