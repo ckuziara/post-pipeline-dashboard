@@ -2405,7 +2405,8 @@ window.App = window.App || {};
     return node;
   };
 
-  App.toast = function (msg, isError) {
+  // opts.ms keeps a toast up longer — for one with a link in it to click
+  App.toast = function (msg, isError, opts) {
     const root = document.getElementById('toast-root');
     if (!root) return;
     // error toasts get the warning mark here rather than every caller
@@ -2413,7 +2414,8 @@ window.App = window.App || {};
     const t = App.el('div.toast' + (isError ? '.error' : ''), null,
       isError ? [App.icon('warn'), ' ' + msg] : msg);
     root.appendChild(t);
-    setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, isError ? 5000 : 2800);
+    setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); },
+      (opts && opts.ms) || (isError ? 5000 : 2800));
   };
 
   /* ---- Right-click to copy ----

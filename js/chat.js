@@ -445,18 +445,46 @@ window.App = window.App || {};
     return routes.some(r => r.showId === ep.showId && (r.deptKey == null || r.deptKey === dept));
   };
 
+  /* Straight into the Slack desktop app, with no browser tab left behind.
+     A slack:// link is handed to the OS through a hidden frame, so this page
+     never navigates. Nothing reports whether the app actually opened, so the
+     window losing focus is the signal: if it hasn't within a few seconds
+     (no desktop app, or the browser's "Open Slack?" prompt was declined), a
+     toast offers the thread in the browser instead — a click there is a
+     fresh gesture, so that tab isn't popup-blocked. */
+  const slackLinks = new Map();   // taskId → { url, app }; they never change
+  function launchSlackApp(link) {
+    let left = false;
+    const onBlur = () => { left = true; };
+    window.addEventListener('blur', onBlur, { once: true });
+    const frame = el('iframe', { style: { display: 'none' } });
+    frame.src = link.app;
+    document.body.appendChild(frame);
+    setTimeout(() => {
+      frame.remove();
+      window.removeEventListener('blur', onBlur);
+      if (left || document.visibilityState === 'hidden') return;
+      App.toast(el('span', null, ['Slack didn’t open. ',
+        el('a', { href: link.url, target: '_blank', rel: 'noopener', style: { color: 'inherit', fontWeight: 700 } },
+          'Open the thread in your browser')]), false, { ms: 9000 });
+    }, 3000);
+  }
+
   App.openTaskChat = function (epId, taskKey) {
     const ep = App.state.data.episodes.find(e => e.id === epId);
     const inApp = () => App.editTask.open(epId, taskKey, { tab: 'chat' });
     if (!ep || !App.slackRouted(ep, taskKey)) return inApp();
-    /* The tab opens now, inside the click, and is pointed at Slack once the
-       link arrives — a window opened after an await is a blocked popup. */
-    const win = window.open('', '_blank');
-    App.api.chatSlackLink(taskIdOf(epId, taskKey)).then(r => {
+    const id = taskIdOf(epId, taskKey);
+    const go = (link) => {
+      if (link.app) launchSlackApp(link);
+      else window.open(link.url, '_blank', 'noopener');   // no workspace id: the web link is all there is
+    };
+    if (slackLinks.has(id)) return go(slackLinks.get(id));
+    App.api.chatSlackLink(id).then(r => {
       if (!r.url) throw new Error('This task isn’t linked to Slack');
-      if (win) win.location.href = r.url; else location.href = r.url;
+      slackLinks.set(id, r);
+      go(r);
     }).catch(e => {
-      if (win) win.close();
       App.toast(e.message + ' — opening the discussion here instead', true);
       inApp();
     });

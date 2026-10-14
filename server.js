@@ -1582,9 +1582,9 @@ const server = http.createServer(async (req, res) => {
         const me = await chat.upsertUser({ email: s.email, fullName: s.name || '' });
 
         if (route.startsWith('GET') && taskChat[2] === 'slack') {
-          if (!slack) return sendJson(res, 200, { url: null });
+          if (!slack) return sendJson(res, 200, { url: null, app: null });
           try {
-            return sendJson(res, 200, { url: await slack.threadLink(episodeId, taskKey) });
+            return sendJson(res, 200, (await slack.threadLink(episodeId, taskKey)) || { url: null, app: null });
           } catch (e) {
             console.error('[slack] thread link failed:', e.data ? e.data.error : e.message);
             return sendJson(res, 502, { error: 'Slack didn’t answer — try again in a moment.' });
