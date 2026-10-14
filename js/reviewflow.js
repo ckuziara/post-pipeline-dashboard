@@ -150,6 +150,23 @@ window.App = window.App || {};
       return true;
     },
 
+    /* Pin a review to the day it'll be watched, from the Director's Priority
+       calendar (drag a chip onto a day), or unpin it with null. Stored on the
+       review record, so everyone sees the same plan; the calendar's planner
+       (App.reviews.open) places pinned reviews first and plans the rest
+       around them. */
+    canPin(role) { return App.canSeeReviewQueue(role) || App.canPrioritiseReviews(role); },
+    pin(epId, taskKey, iso) {
+      if (!this.canPin(App.state.role)) { App.toast('Only the Director or a Producer can plan reviews', true); return; }
+      App.mutate(d => {
+        d.reviews = d.reviews || {};
+        const k = KEY(epId, taskKey);
+        const next = Object.assign({}, d.reviews[k]);
+        if (iso) next.planDate = iso; else delete next.planDate;
+        d.reviews[k] = next;
+      }, iso ? 'Plan review' : 'Unpin review');
+    },
+
     /* Claiming a review, from the Director's tab. No un-claim: the two ways
        out are in the same row — approve it, or spend a revision. */
     start(epId, taskKey) {
