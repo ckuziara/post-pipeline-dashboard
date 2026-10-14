@@ -156,31 +156,66 @@ window.App = window.App || {};
     },
 
     /* ------------------------------------------- the suggested due date ----
-       A review can run as long as nothing downstream is waiting on it. So the
-       suggestion is the last working review day before the earliest
-       dependant starts — never earlier than the task's own due date (that's
-       the day the plan already gave it), and never in the past. Working days
-       are the show's calendar for a Director review: weekends, holidays and
-       the Directors' own time off. */
-    calFor(show) { return App.showCalendar(show) || App.makeCalendar({}, null); },
+       A review can run as long as nothing downstream is waiting on it — but
+       the version under review is rarely the last. If it comes back for
+       changes, every version still in the task's revision budget has to fit
+       before the next task starts (the schedule plans for that worst case;
+       see App.schedulePipeline). So the suggestion works backwards from the
+       earliest dependant's start (or, with none, the end of the task's own
+       reserve): place each remaining version, latest first, on its
+       department's working days, keep any review time planned between them
+       (revGaps), and the feedback for THIS version is due the last working
+       review day before the first of them. The final version gets everything
+       up to the dependant. Never earlier than the task's own due date, never
+       in the past. */
+        calFor(show) { return App.showCalendar(show) || App.makeCalendar({}, null); },
     dependants(ep, su) {
       return App.subitems(ep).filter(o => (o.deps || []).indexOf(su.key) >= 0)
         .sort((a, b) => a.start < b.start ? -1 : a.start > b.start ? 1 : 0);
     },
     recommend(ep, su) {
       const cal = this.calFor(App.show(ep.showId));
-      const who = { review: true };
+      const review = { review: true };
+      const work = { dept: su.dept, person: su.assignee };
       const todayIso = App.isoDate(App.today());
       const deps = this.dependants(ep, su);
-      let date = su.due, basis = 'due';
-      if (deps.length) {
-        let x = App.shiftIso(deps[0].start, -1), g = 0;
-        while (cal.isOff(x, who) && g++ < 60) x = App.shiftIso(x, -1);
-        if (x > date) { date = x; basis = 'dependant'; }
+      // the last working day strictly before `iso`, for whoever's calendar
+      const before = (iso, who) => { let x = App.shiftIso(iso, -1), g = 0; while (cal.isOff(x, who) && g++ < 60) x = App.shiftIso(x, -1); return x; };
+
+      const t = App.revTask(ep, su.key);
+      const { max, days, used } = App.taskRevisions(ep, su.key);
+      const anchor = deps.length ? deps[0].start : App.shiftIso(App.plannedRevisions(ep, su).end, 1);
+      // the versions still to come, placed as late as they can go
+      const reserved = [];
+      let at = anchor;
+      if (su.status !== 'approved') {
+        for (let r = max - 1; r >= used; r--) {
+          const n = Math.max(1, days[r] || 1);
+          const end = before(at, work);
+          let start = end;
+          for (let i = 1; i < n; i++) start = before(start, work);
+          reserved.unshift({ label: 'V' + (r + 2), start, due: end });
+          at = start;
+          // review time planned before a LATER version belongs to that version's review
+          if (r > used) for (let g = App.revGap(t, r); g > 0; g--) at = before(at, work);
+        }
       }
+      let date = before(at, review), basis = deps.length ? 'dependant' : 'reserve';
+      if (date < su.due) { date = su.due; basis = 'due'; }       // no slack left: the plan's own date
       let late = false;
-      if (date < todayIso) { date = cal.nextWork(todayIso, who); late = true; }
-      return { date, basis, late, deps, cal };
+      if (date < todayIso) { date = cal.nextWork(todayIso, review); late = true; }
+      /* Without the slack, the latest-possible placement above would sit
+         before the feedback even arrives — so show the versions where they'd
+         really fall, straight after the feedback date, and how far past the
+         next task's start that runs. */
+      let overrun = 0;
+      if ((basis === 'due' || late) && reserved.length) {
+        const fwd = App.revisionSteps(t, date, cal, work, used).revs;
+        reserved.splice(0, reserved.length, ...fwd.map(v => ({ label: v.label, start: v.start, due: v.due })));
+        const last = reserved[reserved.length - 1].due;
+        if (last >= anchor) overrun = this.workDays(cal, anchor, last);
+      }
+      return { date, basis, late, deps, cal, reserved, overrun };
     },
 
     // working review days from `fromIso` to `toIso`, both included
@@ -428,10 +463,21 @@ window.App = window.App || {};
     },
 
     basisText(r) {
-      const d = r.rec.deps[0];
-      if (r.rec.late) return 'the planned date has passed, so the next working day';
-      if (r.rec.basis === 'dependant') return 'the day before ' + d.name + ' starts';
-      return d ? 'its own due date (' + d.name + ' already starts by then)' : 'its own due date — nothing waits on it';
+      const { deps, reserved, basis, late } = r.rec;
+      const d = deps[0];
+      const until = d ? d.name + ' starts' : 'the end of its planned reserve';
+      const versions = reserved.length === 1 ? reserved[0].label
+        : reserved.length ? reserved[0].label + '–' + reserved[reserved.length - 1].label : '';
+      const over = r.rec.overrun
+        ? ' — if it comes back, ' + versions + ' would run ' + r.rec.overrun + ' working day' + (r.rec.overrun === 1 ? '' : 's') + ' past ' + (d ? d.name + '’s start' : 'its reserve')
+        : '';
+      if (late) return 'the planned date has passed, so the next working day' + over;
+      if (basis === 'due') return reserved.length
+        ? 'its own due date' + (over || ' — no slack left before ' + until)
+        : 'its own due date' + (d ? ' (' + d.name + ' already starts by then)' : ' — nothing waits on it');
+      return reserved.length
+        ? 'leaves room for ' + versions + ' before ' + until
+        : 'the final version — the day before ' + until;
     },
 
     /* ---- hover: the review window against what's waiting on it ----
@@ -449,7 +495,7 @@ window.App = window.App || {};
          the next start) and every bar end. Long empty stretches between
          them are cut out below rather than trimmed off the ends. */
       const keyIsos = [todayIso, isoOf(r.added), su.due, r.due, deps[0] && deps[0].start].filter(Boolean);
-      const barEnds = [su.start, su.due].concat(...deps.map(d => [d.start, d.due]));
+      const barEnds = [su.start, su.due].concat(...deps.map(d => [d.start, d.due]), ...rec.reserved.map(v => [v.start, v.due]));
       const from = App.shiftIso(keyIsos.concat(barEnds).sort()[0], -1);
       const to = App.shiftIso(keyIsos.concat(barEnds).sort().pop(), 1);
       /* ---- the scale, with breaks ----
@@ -516,6 +562,12 @@ window.App = window.App || {};
             ? bar(winStart, r.due, null, '.review')
             : bar(r.due, r.due, null, '.review.late'))])
       ];
+      // the versions still to come if this one goes back — where they'd have to sit
+      const depColor = App.dept(su.dept).color;
+      rec.reserved.forEach(v => lines.push(el('.dsum-lane-row.reserved', null, [
+        el('.dsum-lane-label', { title: v.label + ' — held in reserve in case this version comes back for changes' }, v.label + ' · reserved'),
+        el('.dsum-lane-track', null, bar(v.start, v.due, { borderColor: depColor, background: 'color-mix(in srgb, ' + depColor + ' 22%, transparent)' }, '.reserve'))
+      ])));
       deps.forEach(d => lines.push(el('.dsum-lane-row', null, [
         el('.dsum-lane-label', { title: d.name }, d.name),
         el('.dsum-lane-track', null, bar(d.start, d.due, { background: App.dept(d.dept).color }))

@@ -6011,6 +6011,9 @@ button.dsum-due-btn:hover { border-color: var(--border-2); }
   background: repeating-linear-gradient(135deg, rgba(162,93,220,.55) 0 5px, rgba(162,93,220,.32) 5px 10px);
   border: 1px solid var(--st-review);
 }
+/* versions still in the revision budget, placed as late as they can go */
+.dsum-lane-bar.reserve { border: 1px dashed; }
+.dsum-lane-row.reserved .dsum-lane-label { color: var(--text-3); }
 .dsum-lane-bar.review.late { background: rgba(255,91,110,.4); border-color: #ff5b6e; }
 /* the date axis: day ticks, Monday ticks taller, labels as width allows */
 .dsum-lane-axis-row { margin-left: 110px; }
