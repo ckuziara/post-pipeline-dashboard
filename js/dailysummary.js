@@ -480,48 +480,62 @@ window.App = window.App || {};
         : 'the final version — the day before ' + until;
     },
 
-    /* ---- hover: the review window against what's waiting on it ----
-       A small timeline of just this task and its dependants, so the
-       coordinator can see how much room there is before choosing a date. */
+    /* ---- hover: the gap the reviewer has ----
+       One strip, drawn the way the Timeline draws it: the tail end of the
+       version under review on the left (its department's colour, ringed in
+       its status), the start of whatever comes next on the right — the next
+       version if there are any left in the budget (striped, like the
+       Timeline's planned revisions), otherwise the next task — and the gap
+       between them, which is the reviewer's: the time to watch it, make
+       notes, or approve it. Long empty stretches are cut out (zig-zag). */
     showLane(anchor, r) {
       this.hideLane();
       if (App.filterMenu.openKey === 'dsum:due:' + r.id) return;
       const { su, rec } = r;
       const cal = rec.cal;
       const todayIso = App.isoDate(App.today());
-      const winStart = [todayIso, isoOf(r.added) || todayIso].sort()[1];
-      /* While versions are still in the budget, what matters is the next one
-         — so that's what's drawn, and the next task stays off the chart (the
-         note underneath still names it). Once this is the final version, the
-         next task is the thing it has to land before, so it's shown instead.
-         Later versions still count towards the suggested date either way. */
+      const TAIL = 3;                                   // calendar days of each bar to show
+      const dep = App.dept(su.dept);
+      const st = App.status(su.status);
+      const uploadIso = isoOf(r.added);
+
+      // left: the version's tail — it's done when the cut is in, if that was early
+      const tailEnd = uploadIso && uploadIso < su.due ? uploadIso : su.due;
+      const tailStart = [su.start, App.shiftIso(tailEnd, -(TAIL - 1))].sort()[1];
+      // right: the next version if there's one left, else the next task
       const nextVer = rec.reserved[0] || null;
-      const deps = nextVer ? [] : rec.deps.slice(0, 6);
-      /* The range holds every key date (today, the upload, both due dates,
-         the next start) and every bar end. Long empty stretches between
-         them are cut out below rather than trimmed off the ends. */
-      const keyIsos = [todayIso, isoOf(r.added), su.due, r.due, deps[0] && deps[0].start].filter(Boolean);
-      const barEnds = [su.start, su.due].concat(...deps.map(d => [d.start, d.due]), nextVer ? [nextVer.start, nextVer.due] : []);
-      const from = App.shiftIso(keyIsos.concat(barEnds).sort()[0], -1);
-      const to = App.shiftIso(keyIsos.concat(barEnds).sort().pop(), 1);
+      const nextTask = nextVer ? null : (rec.deps[0] || null);
+      // "V3" → "V03", the way the sheet (and the Name column) writes versions
+      const verLabel = nextVer ? 'V' + nextVer.label.slice(1).padStart(2, '0') : null;
+      const right = nextVer
+        ? { label: su.name + ' ' + verLabel, sub: 'if sent back', start: nextVer.start, due: nextVer.due, color: dep.color, rev: true }
+        : nextTask
+          ? { label: nextTask.name, sub: 'next task', start: nextTask.start, due: nextTask.due, color: App.dept(nextTask.dept).color, rev: false }
+          : null;
+      const headEnd = right ? [right.due, App.shiftIso(right.start, TAIL - 1)].sort()[0] : null;
+      const gapStart = App.shiftIso(tailEnd, 1);
+      const gapEnd = right ? App.shiftIso(right.start, -1) : r.due;
+
       /* ---- the scale, with breaks ----
-         A cut that went up a month early would otherwise squash everything
-         that matters into slivers at either end. So only the days around
-         something worth seeing are drawn — each key date and each bar's ends,
-         a couple of days either side — and any longer empty stretch between
-         them is cut out and drawn as a zig-zag break. Positions are % of
-         the track. */
-      const TRACK_PX = 520 - 28 - 110;            // popover width − padding − label column
+         Only the days around something worth seeing are drawn — the two bar
+         ends, today, the upload and the feedback date — and any longer empty
+         stretch between them is cut out and drawn as a zig-zag break.
+         Positions are % of the strip. */
+      const pts = [tailStart, tailEnd, todayIso, r.due, uploadIso, right && right.start, headEnd].filter(Boolean).sort();
+      const from = App.shiftIso(pts[0], -1);
+      const to = App.shiftIso(pts[pts.length - 1], right ? 0 : 2);
+      const TRACK_PX = 520 - 28;                        // popover width − padding
       const PAD = 2, MIN_GAP = 6, BREAK_PX = 18;
       const clampIso = (iso) => iso < from ? from : iso > to ? to : iso;
-      const points = keyIsos.concat(barEnds).map(clampIso).sort();
       const segs = [];
-      points.forEach(p => {
+      pts.map(clampIso).forEach(p => {
         const a = clampIso(App.shiftIso(p, -PAD)), b = clampIso(App.shiftIso(p, PAD));
         const last = segs[segs.length - 1];
         if (last && App.diffDays(a, last.b) <= MIN_GAP) { if (b > last.b) last.b = b; }
         else segs.push({ a, b });
       });
+      // the strip runs exactly from the first drawn day of the tail to the last of the head
+      segs[0].a = from; segs[segs.length - 1].b = to;
       const nBreaks = segs.length - 1;
       const visDays = segs.reduce((n, g) => n + App.diffDays(g.b, g.a) + 1, 0);
       const dayPx = (TRACK_PX - nBreaks * BREAK_PX) / visDays;
@@ -529,11 +543,8 @@ window.App = window.App || {};
       let x = 0;
       segs.forEach((g, i) => {
         g.x = x; x += (App.diffDays(g.b, g.a) + 1) * dayU;
-        g.end = x;
         if (i < nBreaks) { g.breakX = x; x += breakU; }
       });
-      // where a day sits: its start, its end, its centre — or, for a day that
-      // was cut out, the middle of the break it fell into
       const place = (iso) => {
         if (iso <= segs[0].a) return { s: 0, e: iso < segs[0].a ? 0 : dayU };
         for (let i = 0; i < segs.length; i++) {
@@ -544,48 +555,48 @@ window.App = window.App || {};
         return { s: 100, e: 100 };
       };
       const mid = (iso) => { const p = place(iso); return (p.s + p.e) / 2; };
-      const bar = (a, b, style, cls) => {
-        const s0 = place(a).s, e0 = place(b).e;
-        return el('.dsum-lane-bar' + (cls || ''), { style: Object.assign({ left: s0 + '%', width: Math.max(1.2, e0 - s0) + '%' }, style) });
-      };
+      const span = (a, b) => { const s0 = place(a).s, e0 = place(b).e; return { left: s0 + '%', width: Math.max(1.2, e0 - s0) + '%' }; };
       const eachDay = (fn) => segs.forEach((g, gi) => {
         for (let i = 0, n = App.diffDays(g.b, g.a); i <= n; i++) fn(App.shiftIso(g.a, i), i, gi);
       });
 
-      const days = el('.dsum-lane-days');
+      // ---- the strip ----
+      const strip = el('.dsum-strip');
       eachDay(iso => {
-        if (cal.isOff(iso, { review: true })) days.appendChild(el('.dsum-lane-off', { style: { left: place(iso).s + '%', width: dayU + '%' } }));
+        if (cal.isOff(iso, { review: true })) strip.appendChild(el('.dsum-lane-off', { style: { left: place(iso).s + '%', width: dayU + '%' } }));
       });
-      const left = this.workDays(cal, winStart, r.due);
-      const lines = [
-        el('.dsum-lane-row', null, [el('.dsum-lane-label', null, su.name),
-          el('.dsum-lane-track', null, bar(su.start, su.due, { background: App.status(su.status).color }))]),
-        // the days left sit in the label: the bar itself can be a sliver
-        el('.dsum-lane-row.win', null, [
-          el('.dsum-lane-label', { title: left + ' working review day' + (left === 1 ? '' : 's') + ' left' },
-            winStart <= r.due ? 'Review · ' + left + 'd' : 'Review · overdue'),
-          el('.dsum-lane-track', null, winStart <= r.due
-            ? bar(winStart, r.due, null, '.review')
-            : bar(r.due, r.due, null, '.review.late'))])
-      ];
-      // the next version, if this one goes back — where it would have to sit
-      const depColor = App.dept(su.dept).color;
-      if (nextVer) lines.push(el('.dsum-lane-row.reserved', null, [
-        el('.dsum-lane-label', { title: nextVer.label + ' — held in reserve in case this version comes back for changes' }, nextVer.label + ' · if sent back'),
-        el('.dsum-lane-track', null, bar(nextVer.start, nextVer.due, { borderColor: depColor, background: 'color-mix(in srgb, ' + depColor + ' 22%, transparent)' }, '.reserve'))
-      ]));
-      deps.forEach(d => lines.push(el('.dsum-lane-row', null, [
-        el('.dsum-lane-label', { title: d.name }, d.name),
-        el('.dsum-lane-track', null, bar(d.start, d.due, { background: App.dept(d.dept).color }))
-      ])));
-      if (!nextVer && rec.deps.length > deps.length) lines.push(el('.dsum-lane-more', null, '+' + (rec.deps.length - deps.length) + ' more waiting on it'));
+      const gapDays = gapEnd >= gapStart ? this.workDays(cal, gapStart, gapEnd) : 0;
+      const leftDays = gapEnd >= todayIso ? this.workDays(cal, todayIso > gapStart ? todayIso : gapStart, gapEnd) : 0;
+      if (gapEnd >= gapStart) strip.appendChild(el('.dsum-strip-gap', { style: span(gapStart, gapEnd) }));
+      // the version under review: its department's colour, ringed in its status — as on the Timeline
+      strip.appendChild(el('.dsum-strip-bar.tail', {
+        style: Object.assign(span(tailStart, tailEnd), { background: dep.color, color: App.pickInk(dep.color), outlineColor: st.color })
+      }, el('span', null, r.name.replace(/^.*\s(V\d+)$/i, '$1'))));
+      if (right) {
+        const head = el('.dsum-strip-bar.head' + (right.rev ? '.rev' : ''), {
+          style: Object.assign(span(right.start, headEnd), right.rev ? {} : { background: right.color, color: App.pickInk(right.color) })
+        }, el('span', null, right.rev ? verLabel : right.label));
+        if (right.rev) head.style.setProperty('--rp-c', right.color);
+        strip.appendChild(head);
+      }
+      // today and the feedback date, as lines through the strip
+      const marks = [];
+      if (todayIso >= from && todayIso <= to) marks.push(['today', todayIso]);
+      if (r.due >= from && r.due <= to) marks.push(['due', r.due]);
+      marks.forEach(([cls, iso]) => strip.appendChild(el('.dsum-lane-mark.k-' + cls, { style: { left: mid(iso) + '%' } })));
 
-      /* ---- the date axis ----
-         A tick for every day drawn, a stronger one for each Monday, and a
-         date label as often as the width allows. The first day after a
-         break always names its month, so the jump reads at a glance. */
+      // captions: what's on the left, the gap, what's on the right
+      const caps = el('.dsum-strip-caps', null, [
+        el('.dsum-cap.left', { style: { left: place(tailStart).s + '%' } }, [el('strong', null, r.name), el('span', null, tailEnd < su.due ? 'uploaded ' + App.fmtDate(tailEnd) + ' · due ' + App.fmtDate(su.due) : 'due ' + App.fmtDate(su.due))]),
+        right ? el('.dsum-cap.right', { style: { right: (100 - place(headEnd).e) + '%' } }, [el('strong', null, right.label), el('span', null, right.sub + ' · starts ' + App.fmtDate(right.start))]) : null
+      ]);
+      const gapCap = el('.dsum-strip-gapcap', null, gapEnd < gapStart
+        ? 'No gap — ' + (right ? right.label + ' starts before this is due' : 'nothing waits on it')
+        : [el('strong', null, 'Review gap · ' + gapDays + ' working day' + (gapDays === 1 ? '' : 's')),
+           todayIso > gapEnd ? el('span.late', null, ' · past') : todayIso >= gapStart ? el('span', null, ' · ' + leftDays + ' left') : null]);
+
+      /* ---- the date axis ---- */
       const every = Math.max(1, Math.ceil(26 / dayPx));
-      const at = (f) => ({ left: 'calc(110px + (100% - 110px) * ' + (f / 100) + ')' });
       const axis = el('.dsum-lane-axis');
       const todayX = mid(todayIso);
       let lastMonth = null;
@@ -596,34 +607,25 @@ window.App = window.App || {};
           { style: { left: x0 + '%' } }));
         const isToday = iso === todayIso;
         const clearOfToday = Math.abs(x0 - todayX) >= every * dayU;
-        // the month label after a break is wider than a day number — give it room
         const clearOfBreak = !(gi > 0 && i > 0 && i <= every);
         if (isToday || (i % every === 0 && clearOfToday && clearOfBreak)) {
           const month = d.getMonth();
           const text = month !== lastMonth || (i === 0 && gi > 0) ? App.fmtDate(iso) : String(d.getDate());
           lastMonth = month;
-          // the first day after a break starts at the break's edge rather than
-          // centring on it, so the break doesn't cover half the label
           const afterBreak = i === 0 && gi > 0;
           axis.appendChild(el('.dsum-tick-label' + (isToday ? '.today' : '') + (afterBreak ? '.after-break' : ''),
             { style: { left: (afterBreak ? place(iso).s : x0) + '%' } }, text));
         }
       });
-      // the breaks themselves: a clean cut in the axis line, a zig-zag band through the chart
       const ZIG = '<svg viewBox="0 0 10 100" preserveAspectRatio="none"><polyline points="2,0 8,6.25 2,12.5 8,18.75 2,25 8,31.25 2,37.5 8,43.75 2,50 8,56.25 2,62.5 8,68.75 2,75 8,81.25 2,87.5 8,93.75 2,100"/></svg>';
-      const breaks = el('.dsum-lane-breaks');
       segs.slice(0, nBreaks).forEach((g, i) => {
         const skipped = App.diffDays(segs[i + 1].a, g.b) - 1;
         const tip = skipped + ' day' + (skipped === 1 ? '' : 's') + ' skipped (' + App.fmtDate(App.shiftIso(g.b, 1)) + ' – ' + App.fmtDate(App.shiftIso(segs[i + 1].a, -1)) + ')';
         axis.appendChild(el('.dsum-axis-gap', { style: { left: g.breakX + '%', width: breakU + '%' } }));
-        breaks.appendChild(el('.dsum-lane-break', { style: { left: g.breakX + '%', width: breakU + '%' }, title: tip, html: ZIG + ZIG }));
+        strip.appendChild(el('.dsum-lane-break', { style: { left: g.breakX + '%', width: breakU + '%' }, title: tip, html: ZIG + ZIG }));
       });
 
-      /* ---- key dates ----
-         The handful of days that decide the review: when the cut arrived,
-         today, the date the plan gave it, the feedback date, and when the
-         next task needs it. Same-day ones share a marker; labels that would
-         collide step down onto another line. */
+      /* ---- key dates under the strip ---- */
       const keys = [];
       const addKey = (iso, label, cls) => {
         if (!iso || iso < from || iso > to) return;
@@ -631,38 +633,32 @@ window.App = window.App || {};
         if (k) { k.labels.push(label); if (cls === 'due' || cls === 'today') k.cls = cls; }
         else keys.push({ iso, labels: [label], cls });
       };
-      if (r.added) addKey(isoOf(r.added), 'Uploaded', 'up');
-      addKey(su.due, 'Planned due', 'plan');
-      if (deps[0]) addKey(deps[0].start, deps[0].name + ' starts', 'next');
-      addKey(r.due, r.extra.feedbackDue ? 'Feedback due' : 'Feedback due (suggested)', 'due');
+      if (uploadIso) addKey(uploadIso, 'Uploaded', 'up');
       addKey(todayIso, 'Today', 'today');
+      addKey(r.due, r.extra.feedbackDue ? 'Feedback due' : 'Feedback due (suggested)', 'due');
       keys.sort((a, b) => a.iso < b.iso ? -1 : 1);
       const levels = [];
       const keyStrip = el('.dsum-lane-keys');
       keys.forEach(k => {
         const text = k.labels.join(' · ') + ' — ' + App.fmtDate(k.iso);
-        const x = mid(k.iso);
         const wPct = (text.length * 5.6 + 14) / TRACK_PX * 100;
-        // centred on its day, but kept inside the track
-        const lx = Math.max(0, Math.min(100 - wPct, x - wPct / 2));
+        const lx = Math.max(0, Math.min(100 - wPct, mid(k.iso) - wPct / 2));
         let lvl = levels.findIndex(end => end <= lx - 1);
         if (lvl < 0) { lvl = levels.length; levels.push(0); }
         levels[lvl] = lx + wPct;
-        k.lvl = lvl;
         keyStrip.appendChild(el('.dsum-key.k-' + k.cls, { style: { left: lx + '%', top: (lvl * 18) + 'px' } }, text));
       });
       keyStrip.style.height = (Math.max(1, levels.length) * 18) + 'px';
-
-      const body = el('.dsum-lane-body', null, [days].concat(lines, [breaks]));
-      keys.forEach(k => body.appendChild(el('.dsum-lane-mark.k-' + k.cls, { style: at(mid(k.iso)) })));
 
       const pop = el('.dsum-lane', null, [
         el('.dsum-lane-head', null, [
           el('strong', null, r.ep.code + ' · ' + r.name),
           el('span', null, (rec.deps.length ? rec.deps.length + ' task' + (rec.deps.length === 1 ? '' : 's') + ' waiting on it' : 'nothing waits on it'))
         ]),
+        caps,
         el('.dsum-lane-axis-row', null, axis),
-        body,
+        strip,
+        gapCap,
         el('.dsum-lane-keys-row', null, keyStrip),
         el('.dsum-lane-foot', null, (r.extra.feedbackDue ? 'Due ' + App.fmtDate(r.due) + ' (set by hand) · suggested ' + App.fmtDate(rec.date)
           : 'Suggested ' + App.fmtDate(rec.date)) + ' — ' + this.basisText(r))
