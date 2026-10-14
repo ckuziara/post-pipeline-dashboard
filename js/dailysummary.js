@@ -495,7 +495,10 @@ window.App = window.App || {};
          the next start) and every bar end. Long empty stretches between
          them are cut out below rather than trimmed off the ends. */
       const keyIsos = [todayIso, isoOf(r.added), su.due, r.due, deps[0] && deps[0].start].filter(Boolean);
-      const barEnds = [su.start, su.due].concat(...deps.map(d => [d.start, d.due]), ...rec.reserved.map(v => [v.start, v.due]));
+      // only the version this review would trigger is drawn; later ones still
+      // count towards the suggested date, they just aren't worth a row here
+      const nextVer = rec.reserved[0] || null;
+      const barEnds = [su.start, su.due].concat(...deps.map(d => [d.start, d.due]), nextVer ? [nextVer.start, nextVer.due] : []);
       const from = App.shiftIso(keyIsos.concat(barEnds).sort()[0], -1);
       const to = App.shiftIso(keyIsos.concat(barEnds).sort().pop(), 1);
       /* ---- the scale, with breaks ----
@@ -562,12 +565,12 @@ window.App = window.App || {};
             ? bar(winStart, r.due, null, '.review')
             : bar(r.due, r.due, null, '.review.late'))])
       ];
-      // the versions still to come if this one goes back — where they'd have to sit
+      // the next version, if this one goes back — where it would have to sit
       const depColor = App.dept(su.dept).color;
-      rec.reserved.forEach(v => lines.push(el('.dsum-lane-row.reserved', null, [
-        el('.dsum-lane-label', { title: v.label + ' — held in reserve in case this version comes back for changes' }, v.label + ' · reserved'),
-        el('.dsum-lane-track', null, bar(v.start, v.due, { borderColor: depColor, background: 'color-mix(in srgb, ' + depColor + ' 22%, transparent)' }, '.reserve'))
-      ])));
+      if (nextVer) lines.push(el('.dsum-lane-row.reserved', null, [
+        el('.dsum-lane-label', { title: nextVer.label + ' — held in reserve in case this version comes back for changes' }, nextVer.label + ' · if sent back'),
+        el('.dsum-lane-track', null, bar(nextVer.start, nextVer.due, { borderColor: depColor, background: 'color-mix(in srgb, ' + depColor + ' 22%, transparent)' }, '.reserve'))
+      ]));
       deps.forEach(d => lines.push(el('.dsum-lane-row', null, [
         el('.dsum-lane-label', { title: d.name }, d.name),
         el('.dsum-lane-track', null, bar(d.start, d.due, { background: App.dept(d.dept).color }))
