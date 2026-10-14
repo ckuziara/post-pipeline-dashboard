@@ -203,7 +203,7 @@ window.App = window.App || {};
 
       const bodyEls = [
         el('.vc-inline-row', null, [
-          el('span.vc-badge', { style: { background: st.color + '22', color: st.color, borderColor: st.color + '55' } },
+          el('span.vc-badge', { style: { background: st.color + '22', color: App.textInk(st.color), borderColor: st.color + '55' } },
             [el('span.vc-dot', { style: { background: st.color } }), st.label]),
           el('span.vc-inline-ver', null, 'v' + proj.version + ' · ' + last.file)
         ])
@@ -316,7 +316,7 @@ window.App = window.App || {};
       ]);
 
       const mid = el('.vc-status', null, [
-        el('span.vc-badge', { style: { background: st.color + '22', color: st.color, borderColor: st.color + '55' } },
+        el('span.vc-badge', { style: { background: st.color + '22', color: App.textInk(st.color), borderColor: st.color + '55' } },
           [el('span.vc-dot', { style: { background: st.color } }), st.label]),
         proj.lock ? el('.vc-lockinfo', null, (mine ? 'You' : proj.lock.userName) + ' · ' + proj.lock.workingFile) : null
       ]);

@@ -1236,7 +1236,7 @@ window.App = window.App || {};
         el('span.chev' + (open ? '.open' : ''), null, '▶'),
         el('span.pr-label', null, g.label),
         (t.w <= 4 ? null : el('span.pr-sub', null, g.sub)),   // no room for the blurb when narrow
-        el('span.pr-count', { style: { color: g.color } }, String(items.length))
+        el('span.pr-count', { style: { color: App.textInk(g.color) } }, String(items.length))
       ]));
 
       if (open) {
@@ -1608,7 +1608,7 @@ window.App = window.App || {};
         ]);
         const row = el('.tw-row.' + lvl, { onclick: () => App.resources.openPerson(p.id) }, [
           el('.tw-who', null, [
-            el('span.avatar', { style: { width: '22px', height: '22px', fontSize: '8.5px', background: p.color, flex: 'none' } }, App.initials(p.name)),
+            el('span.avatar', { style: { width: '22px', height: '22px', fontSize: '8.5px', background: p.color, flex: 'none', color: App.pickInk(p.color) } }, App.initials(p.name)),
             el('.tw-name', null, [el('span', null, p.name), el('span.tw-dept', null, dep.label)])
           ]),
           lvl === 'off' && l.days && l.off >= l.days ? el('.tw-away', null, 'Away this week') : bar,
