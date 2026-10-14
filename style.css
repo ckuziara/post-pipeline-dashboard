@@ -4483,6 +4483,7 @@ select.fld { cursor: pointer; }
 .rvq-cell { min-width: 0; }
 
 .rvq-task-name { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rvq-ver { font-weight: 700; color: var(--text-2); }
 .rvq-task-sub { display: flex; align-items: center; gap: 7px; margin-top: 3px; }
 .rvq-task-sub .dept-chip { padding: 1px 7px; font-size: 10px; }
 .rvq-who { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -4502,7 +4503,14 @@ select.fld { cursor: pointer; }
 }
 .rvq-linkbtn:hover { text-decoration: underline; }
 .rvq-linkbtn svg { flex: none; }
-.rvq-link { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.rvq-link { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.rvq-link-text { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.rvq-thumb {
+  flex: none; display: block; width: 96px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden;
+  background: var(--surface-3); border: 1px solid var(--border);
+}
+.rvq-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.rvq-thumb:hover { border-color: var(--accent); }
 
 .rvq-acts { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
 .rvq-icon {
@@ -4523,6 +4531,7 @@ select.fld { cursor: pointer; }
 .rvq-mini.go { border-color: rgba(91,108,255,.55); color: #b3bcff; }
 .rvq-mini.ok { border-color: rgba(0,200,117,.5); color: #6ee0aa; }
 .rvq-mini.warn { border-color: rgba(253,171,61,.5); color: #ffce8e; }
+.rvq-mini.ok.approved, .rvq-mini.ok.approved:hover { background: rgba(0,200,117,.16); color: #6ee0aa; cursor: default; }
 
 /* the note composer — anchored to its own button, like the toolbar popovers */
 .rvq-note-pop {

@@ -2477,7 +2477,8 @@ window.App = window.App || {};
     });
     // an app menu that opened for this right-click gets Copy at the top
     new MutationObserver(muts => muts.forEach(m => m.addedNodes.forEach(menu => {
-      if (menu.nodeType !== 1 || !menu.classList.contains('ctx-menu') || menu.querySelector('.ctx-copy')) return;
+      // .no-copy: a menu about an action, where copying the clicked text means nothing
+      if (menu.nodeType !== 1 || !menu.classList.contains('ctx-menu') || menu.classList.contains('no-copy') || menu.querySelector('.ctx-copy')) return;
       if (!last || !last.text || Date.now() - last.at > 1500) return;
       const field = last;
       const short = field.text.length > 30 ? field.text.slice(0, 28) + '…' : field.text;
