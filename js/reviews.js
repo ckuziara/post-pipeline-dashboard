@@ -312,7 +312,7 @@ window.App = window.App || {};
     // 6. straight into the task's Discussion tab
     out.push(el('button.rvq-icon', {
       title: 'Open the discussion on this task', 'aria-label': 'Open discussion',
-      onclick: () => App.editTask.open(ep.id, su.key, { tab: 'chat' })
+      onclick: () => App.openTaskChat(ep.id, su.key)
     }, App.icon('chat')));
 
     /* 7. a note, written into today's journal with links back. The click is

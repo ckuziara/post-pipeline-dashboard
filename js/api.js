@@ -290,6 +290,11 @@ window.App = window.App || {};
     chatSend(taskId, content) {
       return this._chat('POST', '/api/tasks/' + encodeURIComponent(taskId) + '/messages', { content });
     },
+    // the task's Slack thread permalink, creating the thread if it has none
+    // yet; { url: null } when the show doesn't post to Slack
+    chatSlackLink(taskId) {
+      return this._chat('GET', '/api/tasks/' + encodeURIComponent(taskId) + '/slack');
+    },
     chatReferences(taskId) {
       return this._chat('GET', '/api/tasks/' + encodeURIComponent(taskId) + '/references');
     },

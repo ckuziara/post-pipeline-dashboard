@@ -119,6 +119,23 @@ function makeSlackBridge({ chat, storage, sseEmit, appUrl }) {
     });
   }
 
+  /* The task's Slack thread as a link people can open — what the chat
+     buttons go to. Creating the thread here is the same thing the first
+     mirrored message would do, so a task nobody has talked about yet still
+     has somewhere to land. Permalinks never change, so each is looked up once
+     per server run. null = this task's show doesn't post to Slack. */
+  const permalinks = new Map();
+  async function threadLink(episodeId, taskKey) {
+    const thread = await ensureThread(episodeId, taskKey);
+    if (!thread) return null;
+    const k = thread.slack_channel_id + '/' + thread.slack_thread_ts;
+    if (!permalinks.has(k)) {
+      const r = await web.chat.getPermalink({ channel: thread.slack_channel_id, message_ts: thread.slack_thread_ts });
+      permalinks.set(k, r.permalink);
+    }
+    return permalinks.get(k);
+  }
+
   async function mirrorMessage(episodeId, taskKey, msg) {
     try {
       const thread = await ensureThread(episodeId, taskKey);
@@ -270,6 +287,7 @@ function makeSlackBridge({ chat, storage, sseEmit, appUrl }) {
   return {
     kind: 'slack',
     mirrorMessage,
+    threadLink,
     // The receiver's own (req, res) handler — App's constructor already
     // called receiver.init(this), so this is live and ready with no
     // separate start-up step. Bound, so `slack.handleEvent` alone works as
