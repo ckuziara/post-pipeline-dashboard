@@ -1262,19 +1262,37 @@ window.App = window.App || {};
     },
 
     /* The Director's Priority — the same job as a department's Priority list,
-       drawn as a month calendar because a Director's to-dos are meetings. Each
-       chip is one department's Kick Off on one episode (App.koItems), on the
-       day that department's first chosen task starts. Anything whose day has
-       passed without its KO done sits in the Overdue strip instead. Narrow
-       tiles get an agenda list rather than an unreadable 7-column grid. */
+       drawn as a week calendar because a Director's to-dos are meetings and
+       cuts to watch. Two kinds of chip:
+         · a Kick Off — one department's KO on one episode (App.koItems), on
+           the day that department's first chosen task starts; ✓ marks it done
+         · a review — a cut Post Operations has sent and the Director hasn't
+           signed off (App.reviews.open), on the day it's due, coloured by
+           where it's got to (waiting / under review); ▶ opens the cut
+       Anything whose day has passed sits in the Overdue strip instead.
+       Narrow tiles get an agenda list rather than a squeezed 5-column grid. */
     directorCal(m, t) {
-      const items = App.koItems(m.episodes);
+      const kos = App.koItems(m.episodes).map(x => Object.assign({ kind: 'ko' }, x));
+      const reviews = App.reviews && App.reviews.open ? App.reviews.open(m.episodes) : [];
+      const items = kos.concat(reviews).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || (a.kind === 'review' ? -1 : 1));
       const todayIso = App.isoDate(App.today());
       const overdue = items.filter(x => x.date < todayIso);
       const ahead = items.filter(x => x.date >= todayIso);
-      const pad = n => String(n).padStart(2, '0');
 
-      const chip = (x, withDate) => {
+      const reviewChip = (x, withDate) => el('.kocal-chip.kocal-review', {
+        style: { borderLeftColor: x.color },
+        title: x.ep.code + ' — ' + x.su.name + '\n' + x.stageLabel + ' · due ' + App.fmtDate(x.date),
+        onclick: (e) => { e.stopPropagation(); App.editTask.open(x.ep.id, x.su.key); }
+      }, [
+        el('span.kocal-code', null, x.ep.code),
+        el('span.kocal-dept', null, x.su.name + ' · ' + (x.stage === 'under' ? 'Under review' : 'Review')),
+        withDate ? el('span.kocal-date', null, App.fmtDate(x.date)) : null,
+        x.url ? el('a.kocal-tick.kocal-watch', {
+          href: x.url, target: '_blank', rel: 'noopener noreferrer', title: 'Watch the cut',
+          onclick: (e) => e.stopPropagation()
+        }, '▶') : null
+      ]);
+      const koChip = (x, withDate) => {
         const dep = App.dept(x.dept);
         const n = x.open.length;
         return el('.kocal-chip', {
@@ -1284,7 +1302,7 @@ window.App = window.App || {};
           onclick: (e) => { e.stopPropagation(); App.editTask.open(x.ep.id, x.open[0].key); }
         }, [
           el('span.kocal-code', null, x.ep.code),
-          el('span.kocal-dept', null, dep.label + (n > 1 ? ' · ' + n : '')),
+          el('span.kocal-dept', null, dep.label + ' Kick Off' + (n > 1 ? ' · ' + n : '')),
           withDate ? el('span.kocal-date', null, App.fmtDate(x.date)) : null,
           el('button.kocal-tick', {
             type: 'button', title: 'Mark this Kick Off done',
@@ -1292,6 +1310,7 @@ window.App = window.App || {};
           }, '✓')
         ]);
       };
+      const chip = (x, withDate) => x.kind === 'review' ? reviewChip(x, withDate) : koChip(x, withDate);
 
       const parts = [];
       if (overdue.length) {
@@ -1308,7 +1327,7 @@ window.App = window.App || {};
         parts.push(ahead.length
           ? el('.kocal-agenda', null, ahead.slice(0, cap).map(x => chip(x, true))
               .concat(ahead.length > cap ? [el('.pr-more', null, '+' + (ahead.length - cap) + ' more')] : []))
-          : el('.dw-calm', null, 'No Kick Offs coming up.'));
+          : el('.dw-calm', null, 'No Kick Offs or reviews coming up.'));
       } else {
         const now = App.today();
         // one working week at a time, so each day has room for a long list
@@ -1340,11 +1359,13 @@ window.App = window.App || {};
         parts.push(grid);
       }
 
+      const subBits = [kos.length + ' Kick Off' + (kos.length === 1 ? '' : 's'), reviews.length + ' review' + (reviews.length === 1 ? '' : 's')];
+      if (overdue.length) subBits.push(overdue.length + ' overdue');
       return {
         title: 'Priority',
-        sub: 'Kick Offs · ' + items.length + ' to run' + (overdue.length ? ' · ' + overdue.length + ' overdue' : ''),
+        sub: subBits.join(' · '),
         body: items.length || t.w > 4 ? el('.kocal', null, parts)
-          : el('.dw-calm', null, 'No Kick Offs to run — choose them from an episode on the Board.')
+          : el('.dw-calm', null, 'Nothing to run or review — Kick Offs come from an episode on the Board, reviews from Post Operations.')
       };
     },
 

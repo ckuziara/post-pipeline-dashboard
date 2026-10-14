@@ -139,6 +139,18 @@ window.App = window.App || {};
 
   /* -------------------------------------------------------------- render */
   App.reviews = {
+    /* What's open on the Director's desk, for the Dashboard's Priority
+       calendar: every review that's been sent and isn't signed off yet, on
+       the day it's due (the task's due date), with where it's got to and the
+       link to watch. The same reviews this tab lists, done ones left out. */
+    open(episodes) {
+      return collect(episodes).filter(x => x.stage !== 'done').map(x => ({
+        kind: 'review', ep: x.ep, su: x.su, date: x.su.due,
+        stage: x.stage, stageLabel: STAGES[x.stage].label, color: STAGES[x.stage].color,
+        url: safeHref(App.review.frameUrl(x.ep.id, x.su.key))
+      }));
+    },
+
     render(episodes) {
       const wrap = el('.rvq');
       wrap.appendChild(el('.section-title', null, [App.icon('target'), ' Reviews']));
