@@ -1267,31 +1267,43 @@ window.App = window.App || {};
          · a Kick Off — one department's KO on one episode (App.koItems), on
            the day that department's first chosen task starts; ✓ marks it done
          · a review — a cut Post Operations has sent and the Director hasn't
-           signed off (App.reviews.open), on the day it's due, coloured by
-           where it's got to (waiting / under review); ▶ opens the cut
+           signed off (App.reviews.open), on the day it's PLANNED for (spread
+           at most four a day before its due date), coloured by where it's got
+           to (waiting / under review), its due date on the chip; ▶ opens it
        Anything whose day has passed sits in the Overdue strip instead.
        Narrow tiles get an agenda list rather than a squeezed 5-column grid. */
     directorCal(m, t) {
       const kos = App.koItems(m.episodes).map(x => Object.assign({ kind: 'ko' }, x));
       const reviews = App.reviews && App.reviews.open ? App.reviews.open(m.episodes) : [];
-      const items = kos.concat(reviews).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || (a.kind === 'review' ? -1 : 1));
+      // by day; within a day, Kick Offs (meetings) first, then reviews soonest-due first
+      const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+      const items = kos.concat(reviews).sort((a, b) => cmp(a.date, b.date) ||
+        (a.kind === b.kind ? (a.kind === 'review' ? cmp(a.due, b.due) : 0) : (a.kind === 'ko' ? -1 : 1)));
       const todayIso = App.isoDate(App.today());
-      const overdue = items.filter(x => x.date < todayIso);
-      const ahead = items.filter(x => x.date >= todayIso);
+      const overdue = items.filter(x => x.kind === 'review' ? x.overdue : x.date < todayIso);
+      const ahead = items.filter(x => x.kind === 'review' ? !x.overdue : x.date >= todayIso);
 
-      const reviewChip = (x, withDate) => el('.kocal-chip.kocal-review', {
+      // a review sits on the day it's planned for; its deadline rides on the chip,
+      // amber when it couldn't fit before it or it's due within a day
+      const tomorrowIso = App.isoDate(App.addDays(App.today(), 1));
+      const reviewChip = (x, withDate) => {
+        const tight = x.atRisk || (!x.overdue && x.due <= tomorrowIso);
+        return el('.kocal-chip.kocal-review' + (tight ? '.kocal-tight' : ''), {
         style: { borderLeftColor: x.color },
-        title: x.ep.code + ' — ' + x.su.name + '\n' + x.stageLabel + ' · due ' + App.fmtDate(x.date),
+        title: x.ep.code + ' — ' + x.su.name + '\n' + x.stageLabel + ' · due ' + App.fmtDate(x.due) +
+          (x.atRisk ? '\nNo room to watch it before it’s due' : ''),
         onclick: (e) => { e.stopPropagation(); App.editTask.open(x.ep.id, x.su.key); }
       }, [
         el('span.kocal-code', null, x.ep.code),
-        el('span.kocal-dept', null, x.su.name + ' · ' + (x.stage === 'under' ? 'Under review' : 'Review')),
+        el('span.kocal-dept', null, x.su.name + ' · ' + (x.stage === 'under' ? 'Under review' : 'Review') +
+          (x.overdue ? '' : ' · due ' + (x.due === todayIso ? 'today' : App.fmtDate(x.due)))),
         withDate ? el('span.kocal-date', null, App.fmtDate(x.date)) : null,
         x.url ? el('a.kocal-tick.kocal-watch', {
           href: x.url, target: '_blank', rel: 'noopener noreferrer', title: 'Watch the cut',
           onclick: (e) => e.stopPropagation()
         }, '▶') : null
       ]);
+      };
       const koChip = (x, withDate) => {
         const dep = App.dept(x.dept);
         const n = x.open.length;

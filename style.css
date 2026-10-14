@@ -4831,6 +4831,8 @@ select.fld { cursor: pointer; }
 /* a review on the Director's Priority calendar: tinted by where it's got to, ▶ opens the cut */
 .kocal-chip.kocal-review { background: color-mix(in srgb, var(--surface-3) 85%, #a25ddc); }
 .kocal-watch { text-decoration: none; }
+/* at risk: no room before it's due, or due within a day */
+.kocal-chip.kocal-tight .kocal-dept { color: #fdab3d; font-weight: 600; }
 .kocal-watch:hover { color: #a25ddc; background: rgba(162,93,220,.16); }
 .kocal-more { font-size: 10px; color: var(--text-3); padding-left: 4px; }
 .kocal-strip, .kocal-agenda { display: flex; flex-direction: column; gap: 3px; padding: 4px 0 2px; }
