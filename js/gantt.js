@@ -1621,11 +1621,11 @@ window.App = window.App || {};
         // into unreadable fragments.
         el('.l-sub', null, portrait ? [
           el('span.code', null, ep.code),
-          (overdue ? el('span', { style: { color: '#ff8a95', fontWeight: '700' } }, '· ' + overdue) : null)
+          (overdue ? el('span', { style: { color: 'var(--ink-bad)', fontWeight: '700' } }, '· ' + overdue) : null)
         ] : [
           el('span.code', null, ep.code),
           el('span', null, '· ' + App.fmtRange(App.epStart(ep), App.epDue(ep))),
-          (overdue ? el('span', { style: { color: '#ff8a95', fontWeight: '700' } }, ['· ', App.icon('warn'), ' ' + overdue]) : null)
+          (overdue ? el('span', { style: { color: 'var(--ink-bad)', fontWeight: '700' } }, ['· ', App.icon('warn'), ' ' + overdue]) : null)
         ])
       ]));
 
@@ -2210,7 +2210,7 @@ window.App = window.App || {};
     resPersonLabel(p) {
       return el('.g-label', { onclick: (e) => { e.stopPropagation(); App.resources.openPerson(p.id); }, title: 'Capacity, time off and allocations' }, [
         el('.l-title', null, [
-          el('span.avatar', { style: { width: '18px', height: '18px', fontSize: '8px', background: p.color, flex: 'none' } }, App.initials(p.name)),
+          el('span.avatar', { style: { width: '18px', height: '18px', fontSize: '8px', background: p.color, flex: 'none', color: App.pickInk(p.color) } }, App.initials(p.name)),
           el('span', null, p.name)
         ]),
         el('.l-sub', null, [el('span', null, App.role(p.role).label + (p.contractor ? ' · Contractor' : '') + ' · ' +
@@ -2990,9 +2990,19 @@ window.App = window.App || {};
     const f = (c) => Math.max(0, Math.min(255, c + amt));
     return '#' + [f(r), f(g), f(b)].map(c => c.toString(16).padStart(2, '0')).join('');
   }
+  // dark or white ink for text on a solid fill, whichever has the higher WCAG
+  // contrast (leaning slightly to white) — a brightness cut-off left mid tones
+  // such as teal and grey under white ink at ~2:1
   function pickInk(hex) {
-    const [r, g, b] = hexToRgb(hex);
-    return (0.299 * r + 0.587 * g + 0.114 * b) > 165 ? '#11131a' : '#fff';
+    if (!/^#[0-9a-f]{6}$/i.test(hex || '')) return '#fff';
+    const lin = (c) => { c /= 255; return c <= .03928 ? c / 12.92 : Math.pow((c + .055) / 1.055, 2.4); };
+    const [r, g, b] = hexToRgb(hex).map(lin);
+    const L = .2126 * r + .7152 * g + .0722 * b;
+    return (L + .05) / .05 > 1.05 / (L + .05) * 1.1 ? '#11131a' : '#fff';
   }
   App.pickInk = pickInk;
+  // a status or department colour used as the TEXT colour: as-is on a dark
+  // canvas, deepened on light themes where the bright swatches wash out
+  // (--ink-depth in style.css, so it follows a theme change with no re-render)
+  App.textInk = (c) => 'color-mix(in srgb, ' + c + ' var(--ink-depth), #000)';
 })();

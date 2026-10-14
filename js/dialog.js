@@ -612,12 +612,12 @@ window.App = window.App || {};
       };
       const statusDisplay = () => {
         const st = App.status(statusSel.value);
-        return el('span.et-status', { style: { color: st.color } }, [el('span.et-dot', { style: { background: st.color } }), st.label]);
+        return el('span.et-status', { style: { color: App.textInk(st.color) } }, [el('span.et-dot', { style: { background: st.color } }), st.label]);
       };
       const ownerDisplay = () => {
         const id = ownerSel.value; if (!id) return el('span.et-empty', null, 'Unassigned');
         const p = App.person(id); if (!p) return 'Unassigned';
-        return el('span.et-owner', null, [el('span.avatar', { style: { background: p.color } }, App.initials(p.name)), p.name]);
+        return el('span.et-owner', null, [el('span.avatar', { style: { background: p.color, color: App.pickInk(p.color) } }, App.initials(p.name)), p.name]);
       };
 
       /* The context bar stays outside the tabs: which task you're looking at is
@@ -2312,7 +2312,7 @@ window.App = window.App || {};
       const isLead = lead === id;
       const l = loadOf(id);
       return el('span.team-chip' + (isLead ? '.lead' : ''), null, [
-        el('span.avatar', { style: { background: p.color } }, App.initials(p.name)),
+        el('span.avatar', { style: { background: p.color, color: App.pickInk(p.color) } }, App.initials(p.name)),
         // the name carries the hover, so the detail is on the thing you'd point at
         el('span.team-chip-name', { title: loadTip(p) }, p.name),
         /* Managers are shown where they already are rather than on a row of
@@ -2474,7 +2474,7 @@ window.App = window.App || {};
             onclick: () => { has ? unassign(dk, p.id) : assign(dk, p.id); draw(); }
           }, [
             el('span.sw-tick'),
-            el('span.avatar.staff-menu-av', { style: { background: p.color } }, App.initials(p.name)),
+            el('span.avatar.staff-menu-av', { style: { background: p.color, color: App.pickInk(p.color) } }, App.initials(p.name)),
             el('span.sw-menu-name', null, p.name),
             el('span.sw-menu-meta' + (l.pct <= 50 ? '.thin' : ''), null, l.pct + '%')
           ]);
@@ -4058,7 +4058,7 @@ window.App = window.App || {};
               prods.length
                 ? el('.show-card-prods', null, prods.slice(0, 3).map(p =>
                     el('span.avatar.show-card-av', {
-                      style: { background: p.color }, title: p.name + ' — producer on ' + s.name
+                      style: { background: p.color, color: App.pickInk(p.color) }, title: p.name + ' — producer on ' + s.name
                     }, App.initials(p.name))))
                 : null
             ])
