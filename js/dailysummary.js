@@ -490,14 +490,17 @@ window.App = window.App || {};
       const cal = rec.cal;
       const todayIso = App.isoDate(App.today());
       const winStart = [todayIso, isoOf(r.added) || todayIso].sort()[1];
-      const deps = rec.deps.slice(0, 6);
+      /* While versions are still in the budget, what matters is the next one
+         — so that's what's drawn, and the next task stays off the chart (the
+         note underneath still names it). Once this is the final version, the
+         next task is the thing it has to land before, so it's shown instead.
+         Later versions still count towards the suggested date either way. */
+      const nextVer = rec.reserved[0] || null;
+      const deps = nextVer ? [] : rec.deps.slice(0, 6);
       /* The range holds every key date (today, the upload, both due dates,
          the next start) and every bar end. Long empty stretches between
          them are cut out below rather than trimmed off the ends. */
       const keyIsos = [todayIso, isoOf(r.added), su.due, r.due, deps[0] && deps[0].start].filter(Boolean);
-      // only the version this review would trigger is drawn; later ones still
-      // count towards the suggested date, they just aren't worth a row here
-      const nextVer = rec.reserved[0] || null;
       const barEnds = [su.start, su.due].concat(...deps.map(d => [d.start, d.due]), nextVer ? [nextVer.start, nextVer.due] : []);
       const from = App.shiftIso(keyIsos.concat(barEnds).sort()[0], -1);
       const to = App.shiftIso(keyIsos.concat(barEnds).sort().pop(), 1);
@@ -575,7 +578,7 @@ window.App = window.App || {};
         el('.dsum-lane-label', { title: d.name }, d.name),
         el('.dsum-lane-track', null, bar(d.start, d.due, { background: App.dept(d.dept).color }))
       ])));
-      if (rec.deps.length > deps.length) lines.push(el('.dsum-lane-more', null, '+' + (rec.deps.length - deps.length) + ' more waiting on it'));
+      if (!nextVer && rec.deps.length > deps.length) lines.push(el('.dsum-lane-more', null, '+' + (rec.deps.length - deps.length) + ' more waiting on it'));
 
       /* ---- the date axis ----
          A tick for every day drawn, a stronger one for each Monday, and a
@@ -630,7 +633,7 @@ window.App = window.App || {};
       };
       if (r.added) addKey(isoOf(r.added), 'Uploaded', 'up');
       addKey(su.due, 'Planned due', 'plan');
-      if (rec.deps[0]) addKey(rec.deps[0].start, rec.deps[0].name + ' starts', 'next');
+      if (deps[0]) addKey(deps[0].start, deps[0].name + ' starts', 'next');
       addKey(r.due, r.extra.feedbackDue ? 'Feedback due' : 'Feedback due (suggested)', 'due');
       addKey(todayIso, 'Today', 'today');
       keys.sort((a, b) => a.iso < b.iso ? -1 : 1);
@@ -656,7 +659,7 @@ window.App = window.App || {};
       const pop = el('.dsum-lane', null, [
         el('.dsum-lane-head', null, [
           el('strong', null, r.ep.code + ' · ' + r.name),
-          el('span', null, (deps.length ? deps.length + ' task' + (deps.length === 1 ? '' : 's') + ' waiting on it' : 'nothing waits on it'))
+          el('span', null, (rec.deps.length ? rec.deps.length + ' task' + (rec.deps.length === 1 ? '' : 's') + ' waiting on it' : 'nothing waits on it'))
         ]),
         el('.dsum-lane-axis-row', null, axis),
         body,
