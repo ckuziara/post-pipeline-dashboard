@@ -3842,7 +3842,13 @@ select.fld { cursor: pointer; }
    than floating: it is part of the task, not an overlay on it.
    ============================================================================ */
 .chat { margin-top: 2px; }
-.chat-head { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.chat-head { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 8px; }
+.chat-slack-link {
+  display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 11.5px; font-weight: 600; color: var(--accent); padding: 2px 4px; border-radius: 5px;
+}
+.chat-slack-link:hover { color: var(--text); }
+.chat-slack-link svg { width: 12px; height: 12px; }
 .chat-rev-pill {
   font-size: 10px; font-weight: 700; letter-spacing: .04em;
   text-transform: uppercase; color: var(--text-2);

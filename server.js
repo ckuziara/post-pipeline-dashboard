@@ -1355,7 +1355,12 @@ const server = http.createServer(async (req, res) => {
       });
       return sendJson(res, 200, {
         email: s.email, name: s.name, picture: s.picture, via: s.via,
-        admin: config.adminEmails.map(e => e.toLowerCase()).includes(s.email)
+        admin: config.adminEmails.map(e => e.toLowerCase()).includes(s.email),
+        // which shows (and departments) post to Slack — so a chat button knows
+        // to open Slack before it asks for the link. Channel ids stay admin-only.
+        slackRoutes: slack && chat
+          ? (await chat.listChannels()).map(m => ({ showId: m.show_id, deptKey: m.dept_key || null }))
+          : []
       });
     }
 
@@ -1559,7 +1564,7 @@ const server = http.createServer(async (req, res) => {
          :taskId is `episodeId::taskKey` — the identity the rest of the app
          already uses (js/uploads.js, js/workspace.js). There is no tasks table
          to hand out uuids, so this is the stable name a task actually has. */
-      const taskChat = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(messages|revisions|references)$/);
+      const taskChat = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(messages|revisions|references|slack)$/);
       if (taskChat) {
         if (!chat) {
           return sendJson(res, 503, {
@@ -1575,6 +1580,16 @@ const server = http.createServer(async (req, res) => {
         // the users table fills itself from whoever signs in, which is also
         // what keeps author_id pointing at a real row
         const me = await chat.upsertUser({ email: s.email, fullName: s.name || '' });
+
+        if (route.startsWith('GET') && taskChat[2] === 'slack') {
+          if (!slack) return sendJson(res, 200, { url: null });
+          try {
+            return sendJson(res, 200, { url: await slack.threadLink(episodeId, taskKey) });
+          } catch (e) {
+            console.error('[slack] thread link failed:', e.data ? e.data.error : e.message);
+            return sendJson(res, 502, { error: 'Slack didn’t answer — try again in a moment.' });
+          }
+        }
 
         if (route.startsWith('GET') && taskChat[2] === 'messages') {
           const limit = parseInt(url.searchParams.get('limit') || '100', 10);

@@ -1674,7 +1674,7 @@ window.App = window.App || {};
   function riChatBtn(epId, taskKey) {
     return el('button.ri-chat', {
       title: 'Open discussion', type: 'button',
-      onclick: (e) => { e.stopPropagation(); App.editTask.open(epId, taskKey, { tab: 'chat' }); }
+      onclick: (e) => { e.stopPropagation(); App.openTaskChat(epId, taskKey); }
     }, App.icon('chat'));
   }
 
