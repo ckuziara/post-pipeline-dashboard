@@ -100,6 +100,11 @@ window.App = window.App || {};
   App.dailySummary = {
     get(id) { const d = App.state.data.dailySummary; return (d && d[id]) || {}; },
 
+    /* The Priority picked here also orders the Reviews tab (js/reviews.js):
+       Highest first, unset last. Exposed so both read one vocabulary. */
+    priority(id) { return this.get(id).priority || null; },
+    priorityRank: (v) => PRIORITY_RANK(v),
+
     set(id, patch, label) {
       App.mutate(d => {
         d.dailySummary = d.dailySummary || {};

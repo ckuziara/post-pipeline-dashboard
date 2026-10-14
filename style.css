@@ -4445,46 +4445,38 @@ select.fld { cursor: pointer; }
 .rvq-ep { border: 1px solid var(--border); border-radius: var(--r-card, 10px); background: var(--surface); margin-bottom: 10px; overflow: hidden; }
 .rvq-ep-head { display: flex; align-items: center; gap: 9px; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
 .rvq-ep-title { font-size: 12px; font-weight: 600; color: var(--text-2); }
+/* department split inside the one priority list: a slim divider line, not a card */
+.rvq-dept-head {
+  display: flex; align-items: center; gap: 7px; padding: 4px 12px;
+  background: var(--surface-2); border-top: 1px solid var(--border);
+  font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-2);
+}
+.rvq-prio .rvq-dept-head:first-child { border-top: 0; }
+.rvq-dept-head .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.rvq-dept-n { margin-left: auto; font-weight: 600; color: var(--text-3); font-variant-numeric: tabular-nums; }
 
 /* a review opened from the Dashboard's Priority calendar flashes once */
 @keyframes rvq-flash { 0%, 60% { box-shadow: 0 0 0 2px var(--accent), 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent); } 100% { box-shadow: none; } }
 .rvq-row.rvq-flash { animation: rvq-flash 1.3s ease-out; border-radius: 8px; }
 .rvq-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1.5fr) minmax(150px, 1.1fr) 132px 96px auto;
+  grid-template-columns: minmax(160px, 1.5fr) minmax(200px, 1.2fr) 96px auto;
   align-items: center; gap: 12px;
   padding: 9px 12px; border-top: 1px solid var(--border);
 }
 .rvq-ep .rvq-row:first-of-type { border-top: 0; }
 .rvq-row:hover { background: var(--hover); }
 .rvq-row.done { opacity: .62; }
-/* Priority order: one ranked list, a rank (and, for a Producer, a grip) in
-   front of each row. The drag itself is App.dragReorder, like the pipeline
-   editor's, so the lifted row and the gliding ones mirror .pipe-dragging. */
-.rvq-row.in-prio { grid-template-columns: 44px minmax(160px, 1.5fr) minmax(150px, 1.1fr) 132px 96px auto; }
-.rvq-rank { display: flex; align-items: center; gap: 4px; }
+/* Priority order: one list split by department, a rank in front of each row */
+.rvq-row.in-prio { grid-template-columns: 24px minmax(160px, 1.5fr) minmax(200px, 1.2fr) 96px auto; }
+.rvq-rank { display: flex; align-items: center; }
 .rvq-rank-n { font-size: 12px; font-weight: 700; color: var(--text-3); font-variant-numeric: tabular-nums; }
-.rvq-grip {
-  flex: none; width: 18px; padding: 0; background: none; border: 0;
-  color: var(--text-3); font-size: 12px; line-height: 1; cursor: grab; touch-action: none; user-select: none;
-}
-.rvq-grip:hover { color: var(--text); }
-.rvq-grip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 5px; }
 .rvq-prio { overflow: visible; }
-.rvq-prio.reordering { cursor: grabbing; }
-.rvq-prio.reordering .rvq-row { transition: transform .18s cubic-bezier(.2,.8,.2,1); }
-.rvq-prio.reordering .rvq-row:hover { background: none; }
-.rvq-row.rvq-lifted {
-  transition: none !important; position: relative; z-index: 3;
-  background: var(--surface-2); outline: 1px solid var(--accent); border-radius: 6px;
-  box-shadow: 0 10px 24px rgba(0,0,0,.45); cursor: grabbing;
-}
-.rvq-row.rvq-lifted .rvq-grip { cursor: grabbing; color: var(--text); }
 .rvq-cell { min-width: 0; }
 
 .rvq-task-name { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rvq-ver { font-weight: 700; color: var(--text-2); }
-.rvq-task-sub { display: flex; align-items: center; gap: 7px; margin-top: 3px; }
+.rvq-task-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; margin-top: 3px; }
 .rvq-task-sub .dept-chip { padding: 1px 7px; font-size: 10px; }
 .rvq-who { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -4494,7 +4486,6 @@ select.fld { cursor: pointer; }
 .rvq-uploaded { font-size: 10.5px; color: var(--text-3); }
 .rvq-due.late .rvq-val { color: var(--danger); font-weight: 700; }
 
-.rvq-pill { display: inline-block; font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
 
 .rvq-linkbtn {
   display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
@@ -4506,7 +4497,7 @@ select.fld { cursor: pointer; }
 .rvq-link { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .rvq-link-text { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
 .rvq-thumb {
-  flex: none; display: block; width: 96px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden;
+  flex: none; display: block; width: 80px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden;
   background: var(--surface-3); border: 1px solid var(--border);
 }
 .rvq-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
