@@ -4446,6 +4446,9 @@ select.fld { cursor: pointer; }
 .rvq-ep-head { display: flex; align-items: center; gap: 9px; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
 .rvq-ep-title { font-size: 12px; font-weight: 600; color: var(--text-2); }
 
+/* a review opened from the Dashboard's Priority calendar flashes once */
+@keyframes rvq-flash { 0%, 60% { box-shadow: 0 0 0 2px var(--accent), 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent); } 100% { box-shadow: none; } }
+.rvq-row.rvq-flash { animation: rvq-flash 1.3s ease-out; border-radius: 8px; }
 .rvq-row {
   display: grid;
   grid-template-columns: minmax(160px, 1.5fr) minmax(150px, 1.1fr) 132px 96px auto;
@@ -4828,6 +4831,12 @@ select.fld { cursor: pointer; }
 .kocal-date { flex: none; color: var(--text-3); }
 .kocal-tick { font: inherit; font-size: 10px; flex: none; border: 0; background: transparent; color: var(--text-3); cursor: pointer; padding: 0 2px; border-radius: 3px; }
 .kocal-tick:hover { color: #00c875; background: rgba(0,200,117,.14); }
+/* a review on the Director's Priority calendar: tinted by where it's got to, ▶ opens the cut */
+.kocal-chip.kocal-review { background: color-mix(in srgb, var(--surface-3) 85%, #a25ddc); }
+.kocal-watch { text-decoration: none; }
+/* at risk: no room before it's due, or due within a day */
+.kocal-chip.kocal-tight .kocal-dept { color: #fdab3d; font-weight: 600; }
+.kocal-watch:hover { color: #a25ddc; background: rgba(162,93,220,.16); }
 .kocal-more { font-size: 10px; color: var(--text-3); padding-left: 4px; }
 .kocal-strip, .kocal-agenda { display: flex; flex-direction: column; gap: 3px; padding: 4px 0 2px; }
 .kocal-strip .kocal-chip, .kocal-agenda .kocal-chip { font-size: 11.5px; padding: 4px 6px 4px 8px; }
@@ -4876,7 +4885,23 @@ select.fld { cursor: pointer; }
 .kocal-grid.week .kocal-chip { flex-wrap: wrap; font-size: 11px; padding: 4px 4px 4px 6px; }
 .kocal-grid.week .kocal-dept { white-space: normal; flex-basis: 100%; order: 3; }
 .kocal-empty { color: var(--text-3); font-size: 11px; padding-left: 2px; }
-.kocal-nav .btn-mini { white-space: nowrap; }
+/* week navigation: the stepper on the left, This week on the right */
+.kocal-nav { justify-content: space-between; }
+.kocal-step { display: flex; align-items: center; gap: 4px; }
+.kocal-today {
+  border: 1px solid var(--border-2); background: var(--surface-2); color: var(--text-2);
+  font: inherit; font-size: 11.5px; font-weight: 600; padding: 4px 12px; border-radius: 999px; cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.kocal-today:hover:not(:disabled) { background: var(--hover); color: var(--text); border-color: var(--accent); }
+.kocal-today:disabled { opacity: .45; cursor: default; }
+/* dragging a review to another day */
+.kocal-chip.kocal-drag { cursor: grab; }
+.kocal-chip.kocal-dragging { opacity: .45; }
+.kocal-day.kocal-drop { border-color: var(--accent); background: color-mix(in srgb, var(--surface-2) 85%, var(--accent)); }
+.kocal-chip.kocal-pinned { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-2) 60%, #a25ddc); }
+.kocal-unpin { font-size: 9px; filter: grayscale(.3); }
+.kocal-unpin:hover { background: rgba(162,93,220,.16); filter: none; }
 
 /* pipeline editor: V1 · V2 · … ＋ = total */
 .pipe-vers { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

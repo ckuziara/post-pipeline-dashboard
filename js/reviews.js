@@ -32,6 +32,8 @@ window.App = window.App || {};
      the tab would stop being a to-do list. Two weeks is long enough to still
      be "what we just signed off". */
   const DONE_DAYS = 14;
+  // how many reviews the Director's Priority calendar plans on any one day
+  const REVIEWS_PER_DAY = 4;
 
   const STAGES = {
     waiting: { label: 'Waiting for review', color: '#5fb0f0' },
@@ -139,6 +141,75 @@ window.App = window.App || {};
 
   /* -------------------------------------------------------------- render */
   App.reviews = {
+    /* What's open on the Director's desk, for the Dashboard's Priority
+       calendar: every review that's been sent and isn't signed off yet, with
+       where it's got to, the link to watch, and the day to watch it.
+
+       The day is planned, not just the due date, so reviews spread out
+       instead of piling up on their deadlines. In the Producer's priority
+       order (then soonest due), each review takes the first working day
+       that still has room — at most REVIEWS_PER_DAY — from the day after it
+       was sent (never before today) up to its due date. One that can't fit
+       before it's due goes on its due date, flagged at risk. One already past
+       its due date has no plan: it's overdue. A review someone has pinned to
+       a day (dragged there on the calendar, App.review.pin) keeps that day,
+       and the rest are planned around it. The plan is worked out over
+       every open review on the board, then cut down to `episodes`, so
+       filtering the Dashboard doesn't change anyone's schedule. */
+    open(episodes) {
+      const want = new Set(episodes.map(ep => ep.id));
+      const all = byPriority(collect(App.activeEpisodes()).filter(x => x.stage !== 'done'));
+      const today = App.today(), todayIso = App.isoDate(today);
+      const isWork = (d) => d.getDay() !== 0 && d.getDay() !== 6;
+      const nextWork = (d) => { let n = App.addDays(d, 1); while (!isWork(n)) n = App.addDays(n, 1); return n; };
+      const onOrBefore = (d) => { let n = new Date(d); while (!isWork(n)) n = App.addDays(n, -1); return n; };
+      const load = {};
+      // pinned first (a pin on a day that's passed no longer holds): they keep
+      // their day and count against it, and everything else plans around them
+      const pinOf = (x) => { const r = record(x.ep.id, x.su.key); return r && r.planDate && r.planDate >= todayIso ? r.planDate : null; };
+      all.forEach(x => { const p = pinOf(x); if (p && x.su.due >= todayIso) load[p] = (load[p] || 0) + 1; });
+      const out = all.map(x => {
+        const rec = record(x.ep.id, x.su.key) || {};
+        const due = x.su.due;
+        const base = {
+          kind: 'review', ep: x.ep, su: x.su, due,
+          stage: x.stage, stageLabel: STAGES[x.stage].label, color: STAGES[x.stage].color,
+          url: safeHref(App.review.frameUrl(x.ep.id, x.su.key))
+        };
+        if (!due || due < todayIso) return Object.assign(base, { date: due || todayIso, overdue: true });
+        const pinned = pinOf(x);
+        if (pinned) return Object.assign(base, { date: pinned, pinned: true, atRisk: pinned > due });
+        const sent = rec.sentAt ? App.parseDate(String(rec.sentAt).slice(0, 10)) : today;
+        let day = nextWork(sent);
+        if (App.isoDate(day) < todayIso) day = isWork(today) ? today : nextWork(today);
+        const last = onOrBefore(App.parseDate(due));
+        for (; App.isoDate(day) <= App.isoDate(last); day = nextWork(day)) {
+          const k = App.isoDate(day);
+          if ((load[k] || 0) < REVIEWS_PER_DAY) { load[k] = (load[k] || 0) + 1; return Object.assign(base, { date: k }); }
+        }
+        // no room before it's due: on its due date, and said so
+        const k = App.isoDate(last) < todayIso ? todayIso : App.isoDate(last);
+        load[k] = (load[k] || 0) + 1;
+        return Object.assign(base, { date: k, atRisk: true });
+      });
+      return out.filter(x => want.has(x.ep.id));
+    },
+
+    /* Open the Reviews tab on one review and flash its row, so a review
+       clicked on the Dashboard is easy to spot. Says so if the tab's filters
+       are hiding it. */
+    focus(epId, taskKey) {
+      App.state.view = 'review';
+      App.render();
+      requestAnimationFrame(() => {
+        const row = document.querySelector('.rvq-row[data-key="' + CSS.escape(KEY(epId, taskKey)) + '"]');
+        if (!row) { App.toast('That review is hidden by the current filters', true); return; }
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        row.classList.remove('rvq-flash'); void row.offsetWidth; row.classList.add('rvq-flash');
+        setTimeout(() => row.classList.remove('rvq-flash'), 1400);
+      });
+    },
+
     render(episodes) {
       const wrap = el('.rvq');
       wrap.appendChild(el('.section-title', null, [App.icon('target'), ' Reviews']));

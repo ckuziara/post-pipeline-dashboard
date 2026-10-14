@@ -1262,19 +1262,67 @@ window.App = window.App || {};
     },
 
     /* The Director's Priority — the same job as a department's Priority list,
-       drawn as a month calendar because a Director's to-dos are meetings. Each
-       chip is one department's Kick Off on one episode (App.koItems), on the
-       day that department's first chosen task starts. Anything whose day has
-       passed without its KO done sits in the Overdue strip instead. Narrow
-       tiles get an agenda list rather than an unreadable 7-column grid. */
+       drawn as a week calendar because a Director's to-dos are meetings and
+       cuts to watch. Two kinds of chip:
+         · a Kick Off — one department's KO on one episode (App.koItems), on
+           the day that department's first chosen task starts; ✓ marks it done
+         · a review — a cut Post Operations has sent and the Director hasn't
+           signed off (App.reviews.open), on the day it's PLANNED for (spread
+           at most four a day before its due date), coloured by where it's got
+           to (waiting / under review), its due date on the chip; ▶ opens it
+       Anything whose day has passed sits in the Overdue strip instead.
+       Narrow tiles get an agenda list rather than a squeezed 5-column grid. */
     directorCal(m, t) {
-      const items = App.koItems(m.episodes);
+      const kos = App.koItems(m.episodes).map(x => Object.assign({ kind: 'ko' }, x));
+      const reviews = App.reviews && App.reviews.open ? App.reviews.open(m.episodes) : [];
+      // by day; within a day, Kick Offs (meetings) first, then reviews soonest-due first
+      const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+      const items = kos.concat(reviews).sort((a, b) => cmp(a.date, b.date) ||
+        (a.kind === b.kind ? (a.kind === 'review' ? cmp(a.due, b.due) : 0) : (a.kind === 'ko' ? -1 : 1)));
       const todayIso = App.isoDate(App.today());
-      const overdue = items.filter(x => x.date < todayIso);
-      const ahead = items.filter(x => x.date >= todayIso);
-      const pad = n => String(n).padStart(2, '0');
+      const overdue = items.filter(x => x.kind === 'review' ? x.overdue : x.date < todayIso);
+      const ahead = items.filter(x => x.kind === 'review' ? !x.overdue : x.date >= todayIso);
 
-      const chip = (x, withDate) => {
+      // a review sits on the day it's planned for; its deadline rides on the chip,
+      // amber when it couldn't fit before it or it's due within a day
+      const tomorrowIso = App.isoDate(App.addDays(App.today(), 1));
+      // a review on the week grid can be dragged to another day to pin it there
+      const canPin = App.review && App.review.canPin(App.state.role);
+      const toReviews = App.canSeeReviewQueue(App.state.role);
+      const reviewChip = (x, withDate) => {
+        const tight = x.atRisk || (!x.overdue && x.due <= tomorrowIso);
+        const draggable = canPin && !withDate && !x.overdue;
+        return el('.kocal-chip.kocal-review' + (tight ? '.kocal-tight' : '') + (x.pinned ? '.kocal-pinned' : '') + (draggable ? '.kocal-drag' : ''), {
+        style: { borderLeftColor: x.color },
+        draggable: draggable ? 'true' : null,
+        title: x.ep.code + ' — ' + x.su.name + '\n' + x.stageLabel + ' · due ' + App.fmtDate(x.due) +
+          (x.pinned ? '\nPinned to this day' : '') +
+          (x.atRisk ? '\n' + (x.pinned ? 'Planned after it’s due' : 'No room to watch it before it’s due') : '') +
+          (draggable ? '\nDrag to another day to plan it there' : ''),
+        ondragstart: draggable ? (e) => {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/x-review', JSON.stringify({ ep: x.ep.id, key: x.su.key }));
+          e.currentTarget.classList.add('kocal-dragging');
+        } : null,
+        ondragend: draggable ? (e) => e.currentTarget.classList.remove('kocal-dragging') : null,
+        // to the Reviews tab, with this review picked out; the task itself for anyone without that tab
+        onclick: (e) => { e.stopPropagation(); toReviews ? App.reviews.focus(x.ep.id, x.su.key) : App.editTask.open(x.ep.id, x.su.key); }
+      }, [
+        el('span.kocal-code', null, x.ep.code),
+        el('span.kocal-dept', null, x.su.name + ' · ' + (x.stage === 'under' ? 'Under review' : 'Review') +
+          (x.overdue ? '' : ' · due ' + (x.due === todayIso ? 'today' : App.fmtDate(x.due)))),
+        withDate ? el('span.kocal-date', null, App.fmtDate(x.date)) : null,
+        x.pinned && canPin ? el('button.kocal-tick.kocal-unpin', {
+          type: 'button', title: 'Unpin — let the planner place it',
+          onclick: (e) => { e.stopPropagation(); App.review.pin(x.ep.id, x.su.key, null); }
+        }, '📌') : null,
+        x.url ? el('a.kocal-tick.kocal-watch', {
+          href: x.url, target: '_blank', rel: 'noopener noreferrer', title: 'Watch the cut',
+          onclick: (e) => e.stopPropagation()
+        }, '▶') : null
+      ]);
+      };
+      const koChip = (x, withDate) => {
         const dep = App.dept(x.dept);
         const n = x.open.length;
         return el('.kocal-chip', {
@@ -1284,7 +1332,7 @@ window.App = window.App || {};
           onclick: (e) => { e.stopPropagation(); App.editTask.open(x.ep.id, x.open[0].key); }
         }, [
           el('span.kocal-code', null, x.ep.code),
-          el('span.kocal-dept', null, dep.label + (n > 1 ? ' · ' + n : '')),
+          el('span.kocal-dept', null, dep.label + ' Kick Off' + (n > 1 ? ' · ' + n : '')),
           withDate ? el('span.kocal-date', null, App.fmtDate(x.date)) : null,
           el('button.kocal-tick', {
             type: 'button', title: 'Mark this Kick Off done',
@@ -1292,6 +1340,7 @@ window.App = window.App || {};
           }, '✓')
         ]);
       };
+      const chip = (x, withDate) => x.kind === 'review' ? reviewChip(x, withDate) : koChip(x, withDate);
 
       const parts = [];
       if (overdue.length) {
@@ -1308,7 +1357,7 @@ window.App = window.App || {};
         parts.push(ahead.length
           ? el('.kocal-agenda', null, ahead.slice(0, cap).map(x => chip(x, true))
               .concat(ahead.length > cap ? [el('.pr-more', null, '+' + (ahead.length - cap) + ' more')] : []))
-          : el('.dw-calm', null, 'No Kick Offs coming up.'));
+          : el('.dw-calm', null, 'No Kick Offs or reviews coming up.'));
       } else {
         const now = App.today();
         // one working week at a time, so each day has room for a long list
@@ -1325,26 +1374,45 @@ window.App = window.App || {};
         for (let i = 0; i < 5; i++) {
           const day = App.addDays(wk, i), iso = App.isoDate(day);
           const list = byDay[iso] || [];
-          grid.appendChild(el('.kocal-day' + (iso === todayIso ? '.today' : '') + (iso < todayIso ? '.past' : ''), null, [
+          // a day takes a dropped review (not a day that's already gone)
+          const dropOk = canPin && iso >= todayIso;
+          const isReview = (e) => [...e.dataTransfer.types].includes('text/x-review');
+          grid.appendChild(el('.kocal-day' + (iso === todayIso ? '.today' : '') + (iso < todayIso ? '.past' : ''), {
+            ondragover: dropOk ? (e) => { if (!isReview(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('kocal-drop'); } : null,
+            ondragleave: dropOk ? (e) => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove('kocal-drop'); } : null,
+            ondrop: dropOk ? (e) => {
+              e.preventDefault(); e.currentTarget.classList.remove('kocal-drop');
+              let r; try { r = JSON.parse(e.dataTransfer.getData('text/x-review')); } catch (err) { return; }
+              if (r && r.ep && r.key) App.review.pin(r.ep, r.key, iso);
+            } : null
+          }, [
             el('.kocal-num', null, day.toLocaleDateString(undefined, { weekday: 'short' }) + ' ' + day.getDate()),
             ...(list.length ? list.map(x => chip(x, false)) : [el('.kocal-empty', null, '—')])
           ]));
         }
         const fri = App.addDays(wk, 4);
+        const thisWeek = App.isoDate(wk) === App.isoDate(monday(now));
         parts.push(el('.kocal-nav', null, [
-          el('button.btn-mini', { type: 'button', title: 'Previous week', onclick: () => setWeek(App.addDays(wk, -7)) }, '‹'),
-          el('span.kocal-month', null, App.fmtDate(App.isoDate(wk)) + ' – ' + App.fmtDate(App.isoDate(fri))),
-          el('button.btn-mini', { type: 'button', title: 'Next week', onclick: () => setWeek(App.addDays(wk, 7)) }, '›'),
-          el('button.btn-mini', { type: 'button', onclick: () => setWeek(null) }, 'This week')
+          el('.kocal-step', null, [
+            el('button.btn-mini', { type: 'button', title: 'Previous week', onclick: () => setWeek(App.addDays(wk, -7)) }, '‹'),
+            el('span.kocal-month', null, App.fmtDate(App.isoDate(wk)) + ' – ' + App.fmtDate(App.isoDate(fri))),
+            el('button.btn-mini', { type: 'button', title: 'Next week', onclick: () => setWeek(App.addDays(wk, 7)) }, '›')
+          ]),
+          el('button.kocal-today', {
+            type: 'button', disabled: thisWeek ? true : null,
+            title: thisWeek ? 'Showing this week' : 'Back to this week', onclick: () => setWeek(null)
+          }, 'This week')
         ]));
         parts.push(grid);
       }
 
+      const subBits = [kos.length + ' Kick Off' + (kos.length === 1 ? '' : 's'), reviews.length + ' review' + (reviews.length === 1 ? '' : 's')];
+      if (overdue.length) subBits.push(overdue.length + ' overdue');
       return {
         title: 'Priority',
-        sub: 'Kick Offs · ' + items.length + ' to run' + (overdue.length ? ' · ' + overdue.length + ' overdue' : ''),
+        sub: subBits.join(' · '),
         body: items.length || t.w > 4 ? el('.kocal', null, parts)
-          : el('.dw-calm', null, 'No Kick Offs to run — choose them from an episode on the Board.')
+          : el('.dw-calm', null, 'Nothing to run or review — Kick Offs come from an episode on the Board, reviews from Post Operations.')
       };
     },
 
