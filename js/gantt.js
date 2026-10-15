@@ -737,11 +737,13 @@ window.App = window.App || {};
         onclick: () => { this.closeBarMenu(); fn(); }
       }, [el('span.ctx-item-lbl', null, label), sub ? el('span.ctx-item-sub', null, sub) : null]);
 
-      if (sel.length > 1 && App.canEditSchedule(App.state.role)) {
-        menu.appendChild(item('Batch Set Dates…', sel.length + ' selected', () => App.batchDates.open()));
-        menu.appendChild(el('.ctx-sep'));
+      // right-clicking inside a selection edits the lot; any other bar, just that one
+      if (sel.length > 1 && selHas(epId, suKey)) {
+        menu.appendChild(item('Batch Edit Tasks…', sel.length + ' selected', () => App.editTask.openBatch(selResolved())));
+        if (App.canEditSchedule(App.state.role)) menu.appendChild(item('Batch Set Dates…', sel.length + ' selected', () => App.batchDates.open()));
+      } else {
+        menu.appendChild(item('Edit task…', null, () => App.editTask.open(epId, suKey)));
       }
-      menu.appendChild(item('Edit task…', null, () => App.editTask.open(epId, suKey)));
       {
         const ep = App.state.data.episodes.find(x => x.id === epId);
         if (ep && this.clashes(ep.showId)[epId + '::' + suKey] && App.canManageShows(App.state.role)) {

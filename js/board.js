@@ -261,12 +261,11 @@ window.App = window.App || {};
       // stopped here, or the page's own click-away would close the picker it opens
       const item = (label, sub, fn) => el('button.ctx-item', { type: 'button', onclick: (ev) => { ev.stopPropagation(); close(); fn(); } },
         [el('span.ctx-item-lbl', null, label), sub ? el('span.ctx-item-sub', null, sub) : null]);
-      // the pickers open where the menu was, and act on the whole selection
-      const at = { getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY }) };
       const first = App.ganttSelection.resolved()[0];
       const menu = el('.ctx-menu', null, [
-        item('Set status…', n + ' selected', () => this.openStatusPop(at, first.ep, first.suKey)),
-        App.canAssignOwners(App.state.role) ? item('Assign owner…', n + ' selected', () => this.openOwnerPop(at, first.ep, first.suKey)) : null,
+        // name, status and owner live in Batch Edit Tasks; dates have their own spacing tools
+        n > 1 ? item('Batch Edit Tasks…', n + ' selected', () => App.editTask.openBatch(App.ganttSelection.resolved()))
+          : item('Edit task…', null, () => App.editTask.open(first.epId, first.suKey)),
         n > 1 && App.canEditSchedule(App.state.role) ? item('Batch Set Dates…', n + ' selected', () => App.batchDates.open()) : null,
         el('.ctx-sep'),
         item('Clear selection', 'Esc', () => { App.ganttSelection.clear(); App.render(); })
