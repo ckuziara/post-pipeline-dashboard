@@ -1653,8 +1653,37 @@ window.App = window.App || {};
       if (this.running) return;
       if (!App.state.data || !App.state.user) return;
       const p = App.profile.get();
-      if (p && p.setupDone) return;
-      setTimeout(() => this.start(), 400);
+      if (p && (p.setupDone || p.setupDeclined)) return;
+      setTimeout(() => this.offer(), 400);
+    },
+
+    /* First sign-in no longer drops straight into the wizard. The preferences
+       button (the brand logo) pulses, and a callout under it asks whether to
+       run setup. "No thanks" is remembered per person; the wizard stays one
+       click away in Preferences either way. */
+    offer() {
+      if (this.running || document.querySelector('.setup-offer')) return;
+      const logo = document.getElementById('brand-logo');
+      if (!logo) return;
+      const el = App.el;
+      const close = () => { logo.classList.remove('setup-nudge'); pop.remove(); window.removeEventListener('resize', place); };
+      const pop = el('.setup-offer', { role: 'dialog', onclick: e => e.stopPropagation() }, [
+        el('.setup-offer-title', null, 'Set up PipeDream?'),
+        el('.setup-offer-body', null, 'A short setup wizard picks your name, theme and which tabs come first. You can run it any time from Preferences.'),
+        el('.setup-offer-actions', null, [
+          el('button.btn-ghost', { onclick: () => { close(); App.profile.set({ setupDeclined: App.isoDate(App.today()) }); } }, 'No thanks'),
+          el('button.btn-primary', { onclick: () => { close(); this.start(); } }, 'Start setup')
+        ])
+      ]);
+      const place = () => {
+        const r = logo.getBoundingClientRect();
+        pop.style.top = (r.bottom + 12) + 'px';
+        pop.style.left = Math.max(8, r.left - 6) + 'px';
+      };
+      logo.classList.add('setup-nudge');
+      document.body.appendChild(pop);
+      place();
+      window.addEventListener('resize', place);
     },
 
     async start(opts) {
@@ -1662,6 +1691,10 @@ window.App = window.App || {};
       opts = opts || {};
       this.running = true;
       App.prefsMenu && App.prefsMenu.close();
+      // started from Preferences while the first-sign-in callout was still up
+      document.querySelectorAll('.setup-offer').forEach(n => n.remove());
+      const logo = document.getElementById('brand-logo');
+      if (logo) logo.classList.remove('setup-nudge');
       try { await this._run(opts); }
       catch (e) { console.error('guide', e); }
       finally {
