@@ -42,11 +42,24 @@ window.App = window.App || {};
     ['code', 'Episode code', 'Alphabetical by code'],
     ['title', 'Title', 'Alphabetical by episode title']
   ];
-  const SORT_DEFAULT = { board: { key: 'running', dir: 'asc' } };
+  /* The QC tab's own Sort By — the same menu, ordering the checks within
+     each department (js/qc.js). */
+  App.QC_SORT_OPTIONS = [
+    ['qcdue', 'QC due', 'When each check is due'],
+    ['planned', 'Planned day', 'The day each check is planned for'],
+    ['approved', 'Date approved', 'When each task joined the queue'],
+    ['running', 'Running order', 'Show, then episode number'],
+    ['code', 'Episode code', 'Alphabetical by code'],
+    ['task', 'Task', 'Alphabetical by task name'],
+    ['dept', 'Department', 'In the pipeline’s department order'],
+    ['owner', 'Operator', 'Alphabetical by the QC operator doing the check']
+  ];
+  App.sortOptionsFor = (view) => view === 'qc' ? App.QC_SORT_OPTIONS : App.SORT_OPTIONS;
+  const SORT_DEFAULT = { board: { key: 'running', dir: 'asc' }, qc: { key: 'qcdue', dir: 'asc' } };
   App.sortPref = function (view) {
     const v = App.prefs.get('sortBy.' + view, null) || {};
     const d = SORT_DEFAULT[view] || SORT_DEFAULT.board;
-    return { key: App.SORT_OPTIONS.some(o => o[0] === v.key) ? v.key : d.key, dir: v.dir === 'desc' ? 'desc' : 'asc' };
+    return { key: App.sortOptionsFor(view).some(o => o[0] === v.key) ? v.key : d.key, dir: v.dir === 'desc' ? 'desc' : 'asc' };
   };
   App.episodeComparator = function (view) {
     const { key, dir } = App.sortPref(view);
@@ -304,15 +317,15 @@ window.App = window.App || {};
     bar.appendChild(multiSelectEl('person', App.state.data.people.filter(p => App.roleDept(p.role)).map(p => [p.id, p.name]), f.person, 'Everyone',
       arr => { f.person = arr; App.render(); }));
 
-    // Sort By — Board only. The same trigger and popover as the filters beside it; direction is picked
-    // in the same menu rather than on a separate button.
-    if (App.state.view === 'board') {
-      const view = 'board', cur = App.sortPref(view);
+    // Sort By — the Board and the QC tab, each with its own options. The same trigger and popover as
+    // the filters beside it; direction is picked in the same menu rather than on a separate button.
+    if (App.state.view === 'board' || App.state.view === 'qc') {
+      const view = App.state.view, cur = App.sortPref(view), opts = App.sortOptionsFor(view);
       const setSort = (patch) => { App.prefs.set('sortBy.' + view, Object.assign({}, cur, patch)); App.filterMenu.close(); App.render(); };
-      const opt = App.SORT_OPTIONS.find(o => o[0] === cur.key);
+      const opt = opts.find(o => o[0] === cur.key);
       bar.appendChild(el('span.toolbar-label', null, 'Sort'));
       bar.appendChild(sortMenuEl('sort', opt[1] + (cur.dir === 'desc' ? ' ↓' : ' ↑'), [
-        App.SORT_OPTIONS.map(([v, l, tip]) => ({ label: l, tip, on: v === cur.key, pick: () => setSort({ key: v }) })),
+        opts.map(([v, l, tip]) => ({ label: l, tip, on: v === cur.key, pick: () => setSort({ key: v }) })),
         [['asc', 'Ascending ↑'], ['desc', 'Descending ↓']].map(([d, l]) => ({ label: l, on: d === cur.dir, pick: () => setSort({ dir: d }) }))
       ]));
     }

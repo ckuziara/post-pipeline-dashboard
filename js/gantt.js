@@ -835,7 +835,7 @@ window.App = window.App || {};
             const su = ep && suKey && App.subitem(ep, suKey);
             // dragging a bar reschedules it, so it's the schedule right that
             // matters here — not the department-scoped edit gate
-            ok = !!(su && App.canEditSchedule(App.state.role));
+            ok = !!(su && App.canEditScheduleFor(App.state.role, su.dept));
             this._adjustableCache.set(bar, ok);
           }
           bar.classList.toggle('adjustable', ok);
@@ -869,7 +869,8 @@ window.App = window.App || {};
 
         // a planned version: drag its end to change how many days it runs
         const revEl = e.target.closest('.rev-plan.adjustable');
-        if (revEl && !e.shiftKey && App.canEditSchedule(App.state.role)) {
+        const revSu = revEl && (() => { const ep = App.state.data.episodes.find(x => x.id === revEl.dataset.episodeId); return ep && App.subitem(ep, revEl.dataset.suKey); })();
+        if (revEl && !e.shiftKey && revSu && App.canEditScheduleFor(App.state.role, revSu.dept)) {
           const ep = App.state.data.episodes.find(x => x.id === revEl.dataset.episodeId);
           const su = ep && App.subitem(ep, revEl.dataset.suKey);
           const rv = su && App.plannedRevisions(ep, su).revs.find(x => String(x.idx) === revEl.dataset.rev);
@@ -971,7 +972,7 @@ window.App = window.App || {};
           return;
         }
 
-        if (!App.canEditSchedule(App.state.role)) return;   // a plain click still opens the dialog, which explains the lock
+        if (!App.canEditScheduleFor(App.state.role, su && su.dept)) return;   // a plain click still opens the dialog, which explains the lock
         e.preventDefault();
         hideTip();
         const zone = this.dragZone(bar, e, this._axis);
@@ -1740,7 +1741,7 @@ window.App = window.App || {};
       App.plannedRevisions(ep, su).revs.forEach(rv => {
         const rStyle = {};
         setBarPos(rStyle, axis, xOf, rv.start, rv.due);
-        const canAdjust = App.canEditSchedule(App.state.role);
+        const canAdjust = App.canEditScheduleFor(App.state.role, su.dept);
         const rbar = el('.rev-plan' + (bare ? '.bare' : '') + (canAdjust ? '.adjustable' : ''), {
           title: su.name + ' ' + rv.label + ' — planned revision, ' + App.fmtRange(rv.start, rv.due) + ' · only used if it’s sent back' +
                  (canAdjust ? '\nDrag its end to change how long it runs' : ''),

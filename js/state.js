@@ -141,8 +141,8 @@ window.App = window.App || {};
      Operations also owns scheduling (across every department, since that's the
      coordinating job), so it carries editSchedule without editAll. */
   App.ROLES = [
-    { key: 'producer',  label: 'Producer',        ico: 'clapper', selectTasks: true, approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, qcQueue: true, qcDecide: true, resourceView: 'all', hint: 'Full access — all tasks, shows & admin' },
-    { key: 'manager',   label: 'Manager',         ico: 'compass', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, resourceView: 'all', manageResources: true, hint: 'Oversight, approvals & admin' },
+    { key: 'producer',  label: 'Producer',        ico: 'clapper', selectTasks: true, approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, qcQueue: true, qcDecide: true, qcAssign: true, resourceView: 'all', hint: 'Full access — all tasks, shows & admin' },
+    { key: 'manager',   label: 'Manager',         ico: 'compass', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, qcAssign: true, resourceView: 'all', manageResources: true, hint: 'Oversight, approvals & admin' },
     { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, reviewQueue: true, kickOff: true, resourceView: 'none', hint: 'Review & approve cuts' },
     { key: 'creative',  label: 'Creative',        ico: 'pencil', dept: 'creative',  hint: 'Creative department tasks' },
     { key: 'music',     label: 'Music',           ico: 'music', dept: 'music',     hint: 'Music department tasks' },
@@ -155,7 +155,7 @@ window.App = window.App || {};
     // settings), which stays with Producers and Managers. They keep their
     // department, so they still own Post Ops tasks and get the Post Ops
     // dashboard. allDepts: they start on every department, not just theirs.
-    { key: 'ops',       label: 'Post Operations', ico: 'package', dept: 'ops', allDepts: true, selectTasks: true, approve: true, editAll: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, qcQueue: true, qcDecide: true, resourceView: 'all', hint: 'Producer-level access to all tasks & shows (no Admin)' },
+    { key: 'ops',       label: 'Post Operations', ico: 'package', dept: 'ops', allDepts: true, selectTasks: true, approve: true, editAll: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, qcQueue: true, qcDecide: true, qcAssign: true, resourceView: 'all', hint: 'Producer-level access to all tasks & shows (no Admin)' },
     { key: 'qc',        label: 'QC',              ico: 'checkBadge', dept: 'qc', qcQueue: true, qcDecide: true, hint: 'QC tasks and the QC queue' }
   ];
   App.role = (k) => App.ROLES.find(r => r.key === k) || App.ROLES[0];
@@ -190,14 +190,35 @@ window.App = window.App || {};
     if (t && t[k] && perm in t[k]) return !!t[k][perm];
     return !!builtin;
   };
-  App.SUB_ROLES = ['manager'];
+  App.SUB_ROLES = ['manager', 'deptManager'];
   App.isManager = (person) => !!(person && person.manager);
+  /* Manager on a DEPARTMENT role is a department manager ('deptManager'),
+     not the Manager role: they run their own department and nothing else —
+       · assign owners and change the schedule for their department's tasks
+         (App.canAssignOwnersFor / App.canEditScheduleFor), and
+       · for QC, run the QC queue: the QC tab, passing / failing checks and
+         reassigning them.
+     No Admin, no Planning, no other department's work. The full Manager
+     sub-role is only for someone with no department (the toggle isn't
+     offered on oversight roles, which already hold those rights). Both come
+     from the same flag on the person (p.manager). */
+  const DEPT_MANAGER_GRANTS = { qc: { qcQueue: true, qcDecide: true, qcAssign: true } };
+  // a department role proper — Post Operations has a department but is oversight
+  App.isDeptRole = (k) => !!App.roleDept(k) && !App.role(k).allDepts;
+  App.subRolesOf = (person) => !App.isManager(person) ? []
+    : App.isDeptRole(person.role) ? ['deptManager'] : ['manager'];
+  // the department the signed-in person manages, if they're a department manager
+  App.myManagedDept = () => App.mySubRoles().includes('deptManager') ? App.roleDept(App.state.role) : null;
+  // a sub-role's own role definition — only Manager is a role; deptManager isn't
+  const subRoleDef = (sk) => sk === 'manager' ? App.role('manager') : {};
   // sub-roles held by the signed-in user; a sub-role elevates the person who
   // carries it, never the role itself
   App.mySubRoles = () => (App.state && App.state.subRoles) || [];
   App.rolePerm = function (k, perm, builtin) {
     if (App.rolePermOf(k, perm, builtin)) return true;
-    return App.mySubRoles().some(sk => App.rolePermOf(sk, perm, !!App.role(sk)[perm]));
+    return App.mySubRoles().some(sk => sk === 'deptManager'
+      ? !!(DEPT_MANAGER_GRANTS[App.myManagedDept()] || {})[perm]
+      : App.rolePermOf(sk, perm, !!subRoleDef(sk)[perm]));
   };
   App.canApprove = (k) => App.rolePerm(k, 'approve', App.role(k).approve);
   App.isAdminRole = (k) => App.rolePerm(k, 'admin', App.role(k).admin);
@@ -210,6 +231,10 @@ window.App = window.App || {};
   // QC, Producer and Post Operations by default.
   App.canSeeQcQueue = (k) => App.rolePerm(k, 'qcQueue', App.role(k).qcQueue);
   App.canDecideQc = (k) => App.rolePerm(k, 'qcDecide', App.role(k).qcDecide);
+  // Reassigning QC checks between QC staff — a QC Manager's job: Producer,
+  // Post Operations, Manager, and a QC person who's a department manager
+  // (Manager on top of QC); a plain QC user doesn't
+  App.canAssignQc = (k) => App.rolePerm(k, 'qcAssign', App.role(k).qcAssign);
   // Which roles may assign task owners — selectable in the Admin panel and
   // persisted in data.assignPriv. Until an admin changes it, the approver
   // (oversight) roles hold the privilege.
@@ -223,14 +248,15 @@ window.App = window.App || {};
   App.canAssignOwners = function (k) {
     const priv = App.state && App.state.data && App.state.data.assignPriv;
     const holds = (key) => priv ? priv.includes(key) : !!App.role(key).approve;
-    return holds(k) || App.mySubRoles().some(holds);
+    return holds(k) || App.mySubRoles().filter(sk => sk === 'manager').some(holds);
   };
+  // …or for one department's tasks, which a department manager also may
+  App.canAssignOwnersFor = (k, dept) => App.canAssignOwners(k) || (!!dept && App.myManagedDept() === dept);
   App.roleDept = (k) => App.role(k).dept || null;
   App.canEditTask = function (k, task) {
     // editAll from either the base role or a sub-role opens every task; a
     // department role on its own stays scoped to its own department
-    const keys = [k].concat(App.mySubRoles());
-    if (keys.some(key => App.role(key).editAll)) return true;
+    if (App.role(k).editAll || App.mySubRoles().some(sk => subRoleDef(sk).editAll)) return true;
     const r = App.role(k);
     if (r.dept && task) return task.dept === r.dept;
     return false;
@@ -242,6 +268,8 @@ window.App = window.App || {};
   App.canEditTaskName = (k) => App.rolePerm(k, 'editName', App.role(k).editName);
   App.canRemoveTask   = (k) => App.rolePerm(k, 'removeTask', App.role(k).removeTask);
   App.canEditSchedule = (k) => App.rolePerm(k, 'editSchedule', App.role(k).editSchedule);
+  // …or one department's tasks' dates, which a department manager also may
+  App.canEditScheduleFor = (k, dept) => App.canEditSchedule(k) || (!!dept && App.myManagedDept() === dept);
   /* Highlighting tasks — Shift+click, the sweep, Opt+Shift, the ruler's Select
      Tasks — is the Producer's and Post Operations' alone. Every other shortcut only changes what's
      on screen (open/close, filters, lists, the ruler), so it works for all. */
@@ -453,10 +481,13 @@ window.App = window.App || {};
     const q = (App.state.data && App.state.data.qcSettings) || {};
     return { perDay: Math.max(1, Math.round(q.perDay || 4)), defaultDays: Math.max(1, Math.round(q.defaultDays || 1)) };
   };
-  /* Form branding for the QC report spreadsheet Create QC Project makes:
-     the studio's logo (a PNG or JPEG data URL, scaled down when it's set)
-     in the header, and the report's title ({show} = the show's name). Both
-     optional — without them the report has no logo and "<Show> QC Report". */
+  /* Brand Configuration (Admin → Workflow): the studio's logo (a PNG or
+     JPEG data URL, scaled down when it's set) on everything PipeDream
+     exports — the printed / PDF exports (js/export.js) and the QC report
+     spreadsheet Create QC Project makes — plus the QC report's title
+     ({show} = the show's name). All optional: without a logo nothing
+     carries one. Stored as data.formBranding (its name from when it was
+     the QC report's alone). */
   App.formBranding = function () {
     const b = (App.state.data && App.state.data.formBranding) || {};
     return { logo: typeof b.logo === 'string' ? b.logo : '', logoName: b.logoName || '', title: typeof b.title === 'string' ? b.title : '' };
@@ -484,6 +515,31 @@ window.App = window.App || {};
     return !App.qcFor(ep, key).on || App.qcState(ep, key) === 'passed';
   };
   App.isComplete = (ep, su) => App.isCompleteKey(ep, su.key);
+  /* Who does a QC check. QC staff are put on a show (Add / Edit Show →
+     Production Team) and the show's QC tasks fall to them, so by default a
+     check is the episode's own QC task's owner, else the show's QC lead (or
+     first QC person on it). A QC Manager can hand one to someone else from
+     the QC tab (ep.qcChecks[key].owner). → { id, auto } */
+  App.qcOwner = function (ep, key, opts) {
+    const c = App.qcCheck(ep, key);
+    if (!(opts && opts.ignoreOwner) && c && c.owner && App.person(c.owner)) return { id: c.owner, auto: false };
+    const pipe = App.pipelineFor(ep);
+    const qcTask = pipe.find(t => t.key === 'qc') || pipe.find(t => t.dept === 'qc');
+    const own = qcTask && ep.assignees && ep.assignees[qcTask.key];
+    if (own && App.person(own)) return { id: own, auto: true };
+    const show = App.show(ep.showId);
+    const pool = show ? App.deptPool(show, 'qc') : [];
+    return { id: pool[0] || null, auto: true };
+  };
+  /* Where a dependency stands, in words, for hovers: "Approved", "approved,
+     waiting for QC V2", "QC sent a report back (QC V1)", or its status. */
+  App.depStateText = function (ep, key) {
+    const st = (ep.statuses && ep.statuses[key]) || 'not_started';
+    const q = App.qcFor(ep, key), qs = App.qcState(ep, key), v = 'QC V' + App.qcVersion(ep, key);
+    if (q.on && qs === 'failed') return 'QC sent a report back (' + v + ')';
+    if (st === 'approved') return q.on && qs !== 'passed' ? 'approved, waiting for ' + v : (q.on ? 'Approved · ' + v + ' passed' : 'Approved');
+    return App.status(st).label + (q.on ? ' · needs QC once approved' : '');
+  };
   App.awaitingQc = (ep, su) => su.status === 'approved' && App.qcFor(ep, su.key).on && App.qcState(ep, su.key) !== 'passed';
   /* The QC days that follow `after` (a task's finish, revisions included), on
      QC's own calendar when the show keeps one. Returns { start, due }. */

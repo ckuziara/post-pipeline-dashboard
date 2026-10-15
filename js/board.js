@@ -86,7 +86,7 @@ window.App = window.App || {};
         const waitingOn = t.deps
           .map(k => byKey[k])
           .filter(d => d && !App.isCompleteKey(ep, d.key))
-          .map(d => App.dept(d.dept).label + ' — ' + d.name)
+          .map(d => App.dept(d.dept).label + ' — ' + d.name + ' (' + App.depStateText(ep, d.key) + ')')
           .join(', ');
         return App.dept(t.dept).label + ' — ' + t.name + ' waiting on: ' + (waitingOn || '—');
       }).join('\n') : '';
@@ -355,7 +355,7 @@ window.App = window.App || {};
           el('.cell.c-dept', null, el('span.dept-chip', null, [
             el('span.dot', { style: { background: dep.color } }), dep.label
           ])),
-          el('.cell.c-assignee' + (App.canAssignOwners(App.state.role) ? '.can' : ''), App.canAssignOwners(App.state.role) ? {
+          el('.cell.c-assignee' + (App.canAssignOwnersFor(App.state.role, su.dept) ? '.can' : ''), App.canAssignOwnersFor(App.state.role, su.dept) ? {
             onclick: (e) => { e.stopPropagation(); App.board.openOwnerPop(e.currentTarget, ep, su.key); }
           } : null, person
             ? el('span.avatar', { style: { background: person.color, color: App.pickInk(person.color) }, title: person.name }, App.initials(person.name))
@@ -387,7 +387,7 @@ window.App = window.App || {};
             ? su.deps.map(dk => {
                 const depDone = App.isCompleteKey(ep, dk);
                 return el('span.dep-chip' + (depDone ? '.ok' : '.wait'),
-                  { title: App.taskNameFor(ep, dk) + ' — ' + (depDone ? 'Approved' : 'not ready') },
+                  { title: App.taskNameFor(ep, dk) + ' — ' + App.depStateText(ep, dk) },
                   [(depDone ? '✓ ' : '◷ ') + App.taskNameFor(ep, dk)]);
               })
             : [el('span', { style: { color: 'var(--text-3)', fontSize: '11px' } }, '—')])
@@ -447,7 +447,7 @@ window.App = window.App || {};
       const startable = App.isStartable(ep, key);
       const blocked = App.isBlocked(ep, key);
       pop.appendChild(el('.pop-note', null,
-        blocked ? 'Waiting on: ' + (App.pTask(ep, key) || { deps: [] }).deps.filter(d => !App.isCompleteKey(ep, d)).map(d => App.taskNameFor(ep, d)).join(', ')
+        blocked ? 'Waiting on: ' + (App.pTask(ep, key) || { deps: [] }).deps.filter(d => !App.isCompleteKey(ep, d)).map(d => App.taskNameFor(ep, d) + ' (' + App.depStateText(ep, d) + ')').join(', ')
         : startable ? '✓ All dependencies approved — ready to start' : 'Dependencies approved'));
       this.placePop(pop, r);
     },
@@ -478,7 +478,7 @@ window.App = window.App || {};
        department — plus Unassigned for all of them. */
     openOwnerPop(cell, ep, key) {
       this.closePop();
-      if (!App.canAssignOwners(App.state.role)) { App.toast('Your role can’t assign owners (set in Admin → Privileges)', true); return; }
+      if (!App.canAssignOwnersFor(App.state.role, (App.subitem(ep, key) || {}).dept)) { App.toast('Your role can’t assign owners (set in Admin → Privileges)', true); return; }
       const many = this.selTargets(ep, key);
       const items = many || [{ epId: ep.id, suKey: key, ep, su: App.subitem(ep, key) }];
       const counts = {};

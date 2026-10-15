@@ -104,14 +104,61 @@ window.App = window.App || {};
   /* The report's QC Operator: whoever owns this episode's QC task (the
      pipeline's QC task, or its first QC-department task). With no owner
      set, the signed-in person — by name, never a role label. */
-  function qcOperator(ep) {
-    const subs = App.subitems(ep);
-    const qcTask = subs.find(x => x.key === 'qc') || subs.find(x => x.dept === 'qc');
-    const owner = qcTask && qcTask.assignee && App.person(qcTask.assignee);
-    if (owner) return owner.name;
+  // the QC report's QC Operator: the check's QC owner (App.qcOwner), else
+  // the signed-in person — by name, never a role label
+  function qcOperator(ep, key) {
+    const o = App.qcOwner(ep, key), p = o.id && App.person(o.id);
+    if (p) return p.name;
     const u = App.state.user, me = u && u.personId && App.person(u.personId);
     return (me && me.name) || (u && u.name) || '';
   }
+
+  /* Toolbar Sort By for the QC tab (App.QC_SORT_OPTIONS in js/render.js):
+     orders the checks within each department. Ties fall to QC due, then
+     running order, so equal keys never shuffle. */
+  function sortChecks() {
+    const { key, dir } = App.sortPref('qc');
+    const ownerName = (x) => { const o = App.qcOwner(x.ep, x.su.key); const p = o.id && App.person(o.id); return p ? p.name : '\uffff'; };
+    const val = {
+      qcdue: x => x.qcDue || '9999', planned: x => x.date || '9999', approved: x => String(x.check.queuedAt || ''),
+      running: x => App.show(x.ep.showId).name + '\u0000' + String(x.ep.index || 0).padStart(5, '0'),
+      code: x => String(x.ep.code || ''), task: x => x.su.name.toLowerCase(), owner: ownerName,
+      dept: x => String(Object.keys(App.DEPARTMENTS).indexOf(x.su.dept)).padStart(3, '0')
+    }[key] || (x => x.qcDue || '9999');
+    const sign = dir === 'desc' ? -1 : 1;
+    const cmp = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+    return (a, b) => sign * cmp(val(a), val(b)) || cmp(a.qcDue || '9999', b.qcDue || '9999') ||
+      cmp(App.show(a.ep.showId).name, App.show(b.ep.showId).name) || (a.ep.index || 0) - (b.ep.index || 0);
+  }
+
+  /* The QC owner on a row: who's doing the check. A QC Manager gets a
+     picker — the show's QC team first, then the rest of QC — and can put it
+     back to the default (the show's QC person). */
+  function ownerControl(ep, su) {
+    const o = App.qcOwner(ep, su.key), p = o.id ? App.person(o.id) : null;
+    const tip = p ? 'QC: ' + p.name + (o.auto ? '' : ' (reassigned)') : 'No QC person on this show';
+    // just the circle, like the Board's Owner column
+    const av = p ? el('span.avatar.qcq-av', { style: { background: p.color, color: App.pickInk(p.color) } }, App.initials(p.name))
+      : el('span.avatar.avatar-none.qcq-av', null, '?');
+    if (!App.canAssignQc(App.state.role)) return el('span.qcq-owner', { title: tip }, av);
+    const show = App.show(ep.showId);
+    const team = show ? App.deptTeam(show, 'qc').ids : [];
+    const all = App.deptStaff('qc');
+    const onShow = all.filter(x => team.includes(x.id)), others = all.filter(x => !team.includes(x.id));
+    const pick = (id) => () => { App.filterMenu.close(); App.qcQueue.assign(ep.id, su.key, id); };
+    const dflt = App.qcOwner(ep, su.key, { ignoreOwner: true }), dfltP = dflt.id && App.person(dflt.id);
+    const sections = [];
+    if (onShow.length) sections.push(onShow.map(x => ({ label: x.name, tip: 'On ' + show.name + '’s QC team', on: !o.auto && x.id === o.id, pick: pick(x.id) })));
+    if (others.length) sections.push(others.map(x => ({ label: x.name, tip: 'Not on this show’s QC team', on: !o.auto && x.id === o.id, pick: pick(x.id) })));
+    sections.push([{ label: 'Default' + (dfltP ? ' (' + dfltP.name + ')' : ''), tip: 'The show’s QC person', on: o.auto, pick: pick(null) }]);
+    const btn = App.choiceMenu('qc:owner:' + ep.id + ':' + su.key, '', sections);
+    btn.className = 'qcq-owner can';
+    btn.innerHTML = '';
+    btn.appendChild(av);
+    btn.title = tip + ' — click to reassign';
+    return btn;
+  }
+
 
   App.qcQueue = {
     collect, plan,
@@ -127,6 +174,25 @@ window.App = window.App || {};
       App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'passed', version: 'V' + App.qcVersion(g.ep, key) });
       App.toast(g.su.name + ' passed QC V' + App.qcVersion(g.ep, key));
       App.promoteDelivered(epId, key);
+    },
+
+    /* Take a pass back: the check goes back in the queue at the same
+       version, and the task stops counting as finished — anything waiting
+       on it that hadn't started drops back from Ready (App.refreshReadiness).
+       Files already published stay where they are. */
+    revoke(epId, key) {
+      if (!App.canDecideQc(App.state.role)) { App.toast('Only QC and Producers can revoke a QC pass', true); return; }
+      const g = find(epId, key); if (!g || App.qcState(g.ep, key) !== 'passed') return;
+      const v = 'QC V' + App.qcVersion(g.ep, key);
+      App.confirm('Revoke the ' + v + ' pass on “' + g.su.name + '” (' + g.ep.code + ')? It goes back in the QC queue, and anything waiting on it that hasn’t started waits again.', () => {
+        const u = me();
+        mutateCheck(epId, key, 'revoking the QC pass', (e, c) => {
+          Object.assign(c, { state: 'waiting', queuedAt: App.isoDate(App.today()), planDate: null, decidedAt: null, decidedBy: null,
+            revokedAt: new Date().toISOString(), revokedBy: u.byName });
+        });
+        App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'pass revoked', version: v });
+        App.toast(v + ' pass revoked — ' + g.su.name + ' is back in the QC queue');
+      }, { title: 'Revoke QC Pass', yesLabel: 'Revoke' });
     },
 
     fail(epId, key, notes, link) {
@@ -160,6 +226,18 @@ window.App = window.App || {};
       });
       App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'resubmitted' });
       App.toast(g.su.name + ' resubmitted to QC — now QC V' + App.qcVersion(App.state.data.episodes.find(e => e.id === epId), key));
+    },
+
+    // hand a check to another QC person, or back to the default (null)
+    assign(epId, key, personId) {
+      if (!App.canAssignQc(App.state.role)) { App.toast('Only a QC Manager can reassign QC', true); return; }
+      const g = find(epId, key); if (!g) return;
+      const was = App.qcOwner(g.ep, key);
+      mutateCheck(epId, key, 'reassigning QC', (e, c) => { if (personId) c.owner = personId; else delete c.owner; });
+      const now = App.qcOwner(App.state.data.episodes.find(e => e.id === epId), key);
+      const p = now.id && App.person(now.id);
+      App.track.audit('task.qcOwner', { episode: g.ep.code, task: g.su.name, from: (App.person(was.id) || {}).name || null, to: p ? p.name : null });
+      App.toast(g.su.name + ' — QC: ' + (p ? p.name : 'unassigned') + (personId ? '' : ' (default)'));
     },
 
     pin(epId, key, iso) {
@@ -200,7 +278,7 @@ window.App = window.App || {};
         const w = App.qcWindow(ep, su);
         const report = {
           task: su.name, dept: App.dept(su.dept).label,
-          operator: qcOperator(ep),
+          operator: qcOperator(ep, su.key),
           qcDue: w ? App.fmtDate(w.due) : '',
           ips: App.activeShows().map(x => x.name),
           operators: App.deptStaff('qc').map(p => p.name),
@@ -220,6 +298,15 @@ window.App = window.App || {};
           !r.file && !r.existed);
         if (!r.opened) App.toast('QC folder: ' + r.path);
       } catch (e) { App.toast('Couldn’t create the QC project: ' + e.message, true); }
+    },
+
+    // a settled check's QC report — the version QC decided on
+    async openReport(ep, su) {
+      if (App.masterPathSet && !App.masterPathSet()) { App.toast('Connect this device to the production folder first (Preferences → Connect to Workspace)', true); return; }
+      try {
+        const r = await App.api.qcReport({ epId: ep.id, taskKey: su.key, pipeline: App.pipelineFor(ep), version: App.qcVersion(ep, su.key) });
+        if (!r.opened) App.toast('QC report: ' + r.path);
+      } catch (e) { App.toast(e.message, true); }
     },
 
     reportDialog(ep, su) {
@@ -313,53 +400,58 @@ window.App = window.App || {};
       });
     },
 
-    /* The same shape as the Reviews tab: one card, split by department in
-       the pipeline's department order, ranked within each (soonest planned
-       day, then soonest QC due); then a Completed card for what QC has
-       settled in the last DONE_DAYS. */
+    /* A table like the Board's: one card of checks waiting for QC and one of
+       what QC settled in the last DONE_DAYS, each with a header row whose
+       columns sort (ascending, descending, then back to QC due) — the same
+       setting as the toolbar's Sort menu (sortBy.qc). */
     render(episodes) {
       const wrap = el('.rvq.qcq');
       wrap.appendChild(el('.section-title', null, [App.icon('checkBadge'), ' QC']));
-
-      const open = plan(episodes).items;
+      const open = plan(episodes).items.sort(sortChecks());
       const done = collect(episodes, true).filter(x => x.state !== 'waiting')
         .sort((a, b) => String(b.check.decidedAt) < String(a.check.decidedAt) ? -1 : 1);
       if (!open.length && !done.length) {
         wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' Nothing is waiting for QC right now.']));
         return wrap;
       }
-      if (open.length) {
-        const order = Object.keys(App.DEPARTMENTS);
-        const groups = new Map();
-        open.slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || ((a.qcDue || '') < (b.qcDue || '') ? -1 : 1))
-          .forEach(x => { if (!groups.has(x.su.dept)) groups.set(x.su.dept, []); groups.get(x.su.dept).push(x); });
-        const depts = [...groups.keys()].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
-        const list = el('.rvq-ep.rvq-prio');
-        depts.forEach(k => {
-          const dep = App.dept(k), rows = groups.get(k);
-          list.appendChild(el('.rvq-dept-head', null, [
-            el('span.dot', { style: { background: dep.color } }),
-            el('span.rvq-dept-name', null, dep.label),
-            el('span.rvq-dept-n', null, rows.length)
-          ]));
-          rows.forEach((x, i) => list.appendChild(this.row(x, i + 1)));
-        });
-        wrap.appendChild(list);
-      }
-      if (done.length) {
-        const blk = el('.rvq-ep', null, el('.rvq-ep-head', null, el('span.rvq-ep-title', null, 'Completed')));
-        done.forEach(x => blk.appendChild(this.row(x, null)));
-        wrap.appendChild(blk);
-      }
+      const card = (title, items, ranked) => {
+        const grid = el('.subgrid.qcq-grid');
+        grid.appendChild(this.head(ranked));
+        items.forEach((x, i) => grid.appendChild(this.row(x, ranked ? i + 1 : null)));
+        return el('.rvq-ep.qcq-card', null, [
+          el('.rvq-ep-head', null, [el('span.rvq-ep-title', null, title), el('span.rvq-dept-n', null, items.length)]),
+          el('.subtable', null, grid)
+        ]);
+      };
+      if (open.length) wrap.appendChild(card('Waiting for QC', open, true));
+      if (done.length) wrap.appendChild(card('Completed', done, false));
       return wrap;
     },
 
-    // a Reviews-style row: rank · the task · the cut that was approved · QC due · actions
+    // the header row: the sortable columns drive the same Sort By as the toolbar
+    head(sortable) {
+      const cur = App.sortPref('qc');
+      const set = (v) => { App.prefs.set('sortBy.qc', v); App.render(); };
+      const col = (k, label) => {
+        if (!sortable || !k) return el('.cell', null, label);
+        const on = cur.key === k;
+        return el('.cell.sortable' + (on ? '.sorted' : ''), {
+          title: !on ? 'Sort by ' + label.toLowerCase() : cur.dir === 'asc' ? 'Sorted ascending — click for descending' : 'Sorted descending — click for QC due',
+          onclick: () => set(!on ? { key: k, dir: 'asc' } : cur.dir === 'asc' ? { key: k, dir: 'desc' } : null)
+        }, [label, el('span.sort-ind', null, on ? (cur.dir === 'asc' ? '↑' : '↓') : '↕')]);
+      };
+      return el('.subrow.head', null, [
+        el('.cell.c-num', null, '#'),
+        col('task', 'Task'), col('code', 'Episode'), col('dept', 'Department'),
+        col('owner', 'Operator'), col('qcdue', 'QC due'),
+        el('.cell', null, 'Files'), el('.cell', null, '')
+      ]);
+    },
+
     row(x, rank) {
       const { ep, su, check } = x;
       const dep = App.dept(su.dept);
       const show = App.show(ep.showId);
-      const person = su.assignee ? App.person(su.assignee) : null;
       const can = App.canDecideQc(App.state.role);
       const todayIso = App.isoDate(App.today());
       const waiting = x.state === 'waiting';
@@ -368,50 +460,51 @@ window.App = window.App || {};
         : x.atRisk && !late ? el('span.qcq-flag.risk', { title: 'QC is already full every day before this is due' }, 'At risk')
         : x.date && x.date > todayIso ? el('span.qcq-flag', { title: 'Planned for ' + App.fmtDate(x.date) + (x.pinned ? ' (pinned)' : '') }, App.fmtDate(x.date)) : null;
       const madeV = check.projects && check.projects['V' + App.qcVersion(ep, su.key)];
-      const reports = (check.reports || []).length;
 
       const acts = [el('button.rvq-icon', { title: 'Open the discussion on this task', 'aria-label': 'Open discussion',
         onclick: () => App.openTaskChat(ep.id, su.key) }, App.icon('chat'))];
       if (waiting) {
-        acts.push(el('button.rvq-mini.ok', { disabled: !can, title: can ? 'Passed QC' : 'Only QC and Producers can pass a QC check',
+        acts.push(el('button.rvq-mini.ok', { disabled: !can, title: can ? 'Pass QC' : 'Only QC and Producers can pass a QC check',
           onclick: () => App.qcQueue.pass(ep.id, su.key) }, '✓ Pass'));
-        acts.push(el('button.rvq-mini.warn', { disabled: !can, title: can ? 'Send a QC report back to ' + dep.label : 'Only QC and Producers can send a QC report',
-          onclick: () => App.qcQueue.reportDialog(ep, su) }, '↺ Send QC Report'));
+        acts.push(el('button.rvq-mini.warn', { disabled: !can, title: can ? 'Send QC Report — back to ' + dep.label : 'Only QC and Producers can send a QC report',
+          onclick: () => App.qcQueue.reportDialog(ep, su) }, '↺ Report'));
       } else if (x.state === 'passed') {
-        acts.push(el('button.rvq-mini.ok.approved', { type: 'button', 'aria-disabled': 'true', title: 'QC passed' + (check.decidedBy ? ' by ' + check.decidedBy : '') }, '✓ QC Passed'));
+        acts.push(el('button.rvq-mini.ok.approved', { type: 'button', 'aria-disabled': 'true', title: 'QC passed' + (check.decidedBy ? ' by ' + check.decidedBy : '') }, '✓ Passed'));
+        if (can) acts.push(el('button.rvq-mini.warn', { title: 'Revoke QC Pass — put it back in the QC queue',
+          onclick: () => App.qcQueue.revoke(ep.id, su.key) }, '↺ Revoke'));
       } else {
-        acts.push(el('button.rvq-mini.warn', { type: 'button', 'aria-disabled': 'true', title: 'Back with ' + dep.label + ' to fix' }, '↺ Report Sent'));
+        acts.push(el('button.rvq-mini.warn', { type: 'button', 'aria-disabled': 'true', title: 'QC report sent — back with ' + dep.label + ' to fix' }, '↺ Sent'));
       }
 
-      const row = el('.rvq-row.qcq-row' + (waiting ? '' : '.done') + (rank != null ? '.in-prio' : ''), null, [
-        rank != null ? el('.rvq-cell.rvq-rank', null, el('span.rvq-rank-n', null, rank)) : null,
-        el('.rvq-cell.rvq-task', null, [
-          el('.rvq-task-name', { style: { cursor: 'pointer' }, title: 'Open the task', onclick: () => App.editTask.open(ep.id, su.key) },
-            [su.name, ' ', el('span.rvq-ver', { title: reports ? reports + ' QC report' + (reports === 1 ? '' : 's') + ' sent back before' : 'First QC pass' }, 'QC V' + App.qcVersion(ep, su.key)), ' ', flag]),
-          el('.rvq-task-sub', null, [
-            el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color) }, title: show.name + ' · ' + (ep.title || '') }, ep.code),
-            rank == null ? el('span.dept-chip', null, [el('span.dot', { style: { background: dep.color } }), dep.label]) : null,
-            person ? el('span.rvq-who', null, person.name) : null,
-          ])
-        ]),
-        // the files to check, and QC's own project for checking them
-        el('.rvq-cell.rvq-link', null, el('.rvq-link-text', null, [
-          el('.qcq-files', null, [
-            el('button.rvq-mini', { title: 'Open the folder ' + dep.label + ' delivered ' + su.name + ' to',
-              onclick: () => App.qcQueue.openAssets(ep, su) }, [App.icon('folderOpen'), ' Delivered Assets']),
-            waiting ? el('button.rvq-mini.go', {
-              title: madeV ? 'Open the folder with ' + madeV.file + ' and its QC report' : 'Make QC’s project and QC report for this version, named and saved automatically, and open their folder',
+      const row = el('.subrow.qcq-row' + (waiting ? '' : '.done'), null, [
+        el('.cell.c-num', null, rank != null ? String(rank) : ''),
+        el('.cell.c-name.qcq-task', null,
+          [el('span', null, su.name), el('span.rvq-ver', null, 'QC V' + App.qcVersion(ep, su.key)), flag]),
+        el('.cell', null, el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color) }, title: show.name + ' · ' + (ep.title || '') }, ep.code)),
+        el('.cell.c-dept', null, el('span.dept-chip', null, [el('span.dot', { style: { background: dep.color } }), dep.label])),
+        el('.cell.c-assignee', null, ownerControl(ep, su)),
+        el('.cell.c-date' + (late ? '.overdue' : ''), null, x.qcDue ? App.fmtDate(x.qcDue) : '—'),
+        // icon buttons, named on hover, to keep the table narrow
+        el('.cell.qcq-files', null, [
+          el('button.rvq-icon', { title: 'Delivered Assets — the folder ' + dep.label + ' delivered ' + su.name + ' to', 'aria-label': 'Delivered Assets',
+            onclick: () => App.qcQueue.openAssets(ep, su) }, App.icon('package')),
+          waiting ? el('button.rvq-icon.qcq-go', {
+              title: madeV ? 'Open QC Folder — ' + madeV.file + ' and its QC report' : 'Create QC Project — QC’s project and QC report for this version, named and saved automatically',
+              'aria-label': madeV ? 'Open QC Folder' : 'Create QC Project',
               onclick: () => App.qcQueue.createProject(ep, su)
-            }, madeV ? [App.icon('folderOpen'), ' Open QC Folder'] : '＋ Create QC Project') : null
-          ])
-        ])),
-        el('.rvq-cell.rvq-due' + (late ? '.late' : ''), null, [
-          el('.rvq-lbl', null, 'QC due'),
-          el('.rvq-val', null, x.qcDue ? App.fmtDate(x.qcDue) : '—')
+            }, madeV ? App.icon('checkBadge') : App.icon('plus'))
+            : el('button.rvq-icon.qcq-go', { title: 'Open QC Report — QC V' + App.qcVersion(ep, su.key), 'aria-label': 'Open QC Report',
+                onclick: () => App.qcQueue.openReport(ep, su) }, App.icon('file'))
         ]),
-        el('.rvq-cell.rvq-acts', null, acts)
+        el('.cell.rvq-acts', null, acts)
       ]);
       row.dataset.key = KEY(ep.id, su.key);
+      // the whole row opens the task, as on the Board; its buttons keep their own clicks
+      row.title = 'Open ' + su.name;
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('button, a, input, .filter-pop')) return;
+        App.editTask.open(ep.id, su.key, { preview: true });   // view-only when it's another department's
+      });
       return row;
     },
 

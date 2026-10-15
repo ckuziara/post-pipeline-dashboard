@@ -791,6 +791,8 @@ window.App = window.App || {};
   .hd .sub{margin-top:3px;color:#5b6272;font-size:12px;font-weight:600}
   .hd .brand{font-size:9.5px;color:#8a90a0;text-align:right;white-space:nowrap}
   .hd .brand b{display:block;color:#1d2230;font-size:10.5px}
+  .hd .hd-l{display:flex;align-items:flex-end;gap:14px;min-width:0}
+  .hd .logo{display:block;max-height:13mm;max-width:48mm;object-fit:contain}
   .meta{display:flex;flex-wrap:wrap;gap:6px 22px;margin:0 0 16px;font-size:10px}
   .meta div span{color:#8a90a0;text-transform:uppercase;letter-spacing:.06em;font-size:8.5px;font-weight:700;display:block}
   .meta div b{font-weight:600}
@@ -878,7 +880,11 @@ window.App = window.App || {};
       '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">' +
       '<style>' + DOC_CSS + '@page{size:' + (o.paper === 'letter' ? 'letter' : 'A4') + ' ' + (land ? 'landscape' : 'portrait') + ';margin:11mm 11mm 12mm}' +
       ':root{--acc:' + acc + ';--pad:11mm;--ph:' + ph + 'mm}@media screen{.doc{width:' + pw + 'mm}}</style>' + FIT_JS + '</head><body><div class="doc">';
-    h += '<div class="hd"><div><h1>' + esc(ctx.title) + '</h1>' + (ctx.subtitle ? '<div class="sub">' + esc(ctx.subtitle) + '</div>' : '') + '</div>' +
+    // the studio's logo (Admin → Brand Configuration), when one is set
+    const logo = App.formBranding ? App.formBranding().logo : '';
+    const logoOk = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(logo);
+    h += '<div class="hd"><div class="hd-l">' + (logoOk ? '<img class="logo" src="' + logo + '" alt="">' : '') +
+      '<div><h1>' + esc(ctx.title) + '</h1>' + (ctx.subtitle ? '<div class="sub">' + esc(ctx.subtitle) + '</div>' : '') + '</div></div>' +
       '<div class="brand"><b>PipeDream</b>' + esc(fmtY(today())) + (who ? ' · ' + esc(who) : '') + '</div></div>';
     if (doc.meta && doc.meta.length) h += '<div class="meta">' + doc.meta.map(([k, v]) => '<div><span>' + esc(k) + '</span><b>' + esc(v) + '</b></div>').join('') + '</div>';
     doc.blocks.forEach(b => {

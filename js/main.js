@@ -84,7 +84,8 @@ window.App = window.App || {};
   function guardSchedule(epId, key) {
     const g = findTask(epId, key);
     if (!g) return null;
-    if (!App.canEditSchedule(App.state.role)) {
+    // a department manager may move their own department's tasks
+    if (!App.canEditScheduleFor(App.state.role, g.su.dept)) {
       App.toast('Only Producers, Managers and Post Operations can change the schedule', true);
       return null;
     }
@@ -170,13 +171,14 @@ window.App = window.App || {};
   App.assignMany = function (items, personId) {
     App.board.closePop && App.board.closePop();
     const role = App.state.role;
-    if (!App.canAssignOwners(role)) { App.toast('Your role can’t assign owners (set in Admin → Privileges)', true); return; }
+    if (!App.canAssignOwners(role) && !App.myManagedDept()) { App.toast('Your role can’t assign owners (set in Admin → Privileges)', true); return; }
     const p = personId ? App.person(personId) : null;
     const dept = p ? App.roleDept(p.role) : null;
     const ok = [], skipped = [];
     items.forEach(({ epId, suKey }) => {
       const g = findTask(epId, suKey); if (!g) return;
-      if (!App.canEditTask(role, g.su) || (p && g.su.dept !== dept)) skipped.push(g);
+      // a department manager assigns their own department's tasks only
+      if (!App.canAssignOwnersFor(role, g.su.dept) || !App.canEditTask(role, g.su) || (p && g.su.dept !== dept)) skipped.push(g);
       else if ((g.su.assignee || null) !== (personId || null)) ok.push(g);
     });
     if (ok.length) {
@@ -202,7 +204,7 @@ window.App = window.App || {};
   App.applyTaskEditMany = function (items, { name, status, assignee }) {
     const role = App.state.role;
     const canName = name !== undefined && App.canEditTaskName(role);
-    const canAssign = assignee !== undefined && App.canAssignOwners(role);
+    const canAssign = assignee !== undefined && (App.canAssignOwners(role) || !!App.myManagedDept());
     if (status === 'approved' && !App.canApprove(role)) {
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
@@ -222,7 +224,7 @@ window.App = window.App || {};
         else w.status = status;
       }
       if (canAssign && (g.su.assignee || null) !== (assignee || null)) {
-        if (!canTouch || (p && g.su.dept !== ownerDept)) refused = true;
+        if (!canTouch || !App.canAssignOwnersFor(role, g.su.dept) || (p && g.su.dept !== ownerDept)) refused = true;
         else w.assignee = assignee || null;
       }
       if (refused) skipped++;
@@ -262,7 +264,7 @@ window.App = window.App || {};
     // rather than blocking the save. A department owner can still move their
     // task's status on, and a scheduler can still redate another team's task.
     const canTouch = App.canEditTask(role, g.su);
-    const canName = App.canEditTaskName(role), canSched = App.canEditSchedule(role);
+    const canName = App.canEditTaskName(role), canSched = App.canEditScheduleFor(role, g.su.dept);
     if (!canTouch && !canSched) {
       const d = App.roleDept(role);
       App.toast('Your role can only edit ' + (d ? App.dept(d).label : 'permitted') + ' tasks', true);
@@ -298,7 +300,7 @@ window.App = window.App || {};
       if (canSched) e.dates[key] = { start, due };
       if (canTouch) e.statuses[key] = status;
       // assignee is only passed when the editor holds the assign-owners privilege
-      if (assignee !== undefined && canTouch && App.canAssignOwners(role)) {
+      if (assignee !== undefined && canTouch && App.canAssignOwnersFor(role, g.su.dept)) {
         e.assignees = e.assignees || {};
         if (assignee) e.assignees[key] = assignee; else delete e.assignees[key];
       }
@@ -559,7 +561,9 @@ window.App = window.App || {};
   };
 
   App.moveTasks = function (moves, opts) {
-    if (!App.canEditSchedule(App.state.role)) {
+    // a department manager's move (or push) may only touch their own department
+    const deptOf = (m) => { const g = m && findTask(m.epId, m.suKey); return g ? g.su.dept : null; };
+    if (!App.canEditSchedule(App.state.role) && !(moves || []).every(m => App.canEditScheduleFor(App.state.role, deptOf(m)))) {
       App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
     }
     moves = (moves || []).filter(m => m && m.epId && m.suKey);
@@ -1294,9 +1298,9 @@ window.App = window.App || {};
   /* Hand one task to someone else — the Holiday clashes dialog's "Reassign".
      A batch task moves with its group. */
   App.reassignTask = function (epId, key, personId) {
-    if (!App.canAssignOwners(App.state.role)) { App.toast('Your role can’t reassign tasks', true); return false; }
     const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return false;
     const su = App.subitem(ep, key); if (!su) return false;
+    if (!App.canAssignOwnersFor(App.state.role, su.dept)) { App.toast('Your role can’t reassign tasks', true); return false; }
     App.mutate(d => {
       const e = d.episodes.find(x => x.id === epId);
       e.assignees = e.assignees || {};
@@ -1520,9 +1524,9 @@ window.App = window.App || {};
       if (!b.logo) { delete b.logo; delete b.logoName; }
       if (!b.title) delete b.title;
       if (Object.keys(b).length) d.formBranding = b; else delete d.formBranding;
-    }, 'the QC report branding');
-    App.track.audit('qc.formBranding', 'logo' in patch ? { logo: patch.logo ? (patch.logoName || 'set') : 'removed' } : patch);
-    App.toast('logo' in patch ? (patch.logo ? 'Logo saved' : 'Logo removed') : 'Report title saved');
+    }, 'the brand configuration');
+    App.track.audit('brand.config', 'logo' in patch ? { logo: patch.logo ? (patch.logoName || 'set') : 'removed' } : patch);
+    App.toast('logo' in patch ? (patch.logo ? 'Logo saved — exports and QC reports will carry it' : 'Logo removed') : 'QC report title saved');
   };
 
   App.saveDefaultPipeline = function (type, pipeline) {
@@ -2251,11 +2255,12 @@ window.App = window.App || {};
       if (on) p.manager = true; else delete p.manager;
     });
     App.track.audit('person.manager', { person: was.name, allowed: !!on });
-    App.toast(was.name + (on ? ' is now a Manager as well as ' + App.role(was.role).label
+    const dept = App.isDeptRole(was.role) ? App.roleDept(was.role) : null;
+    App.toast(was.name + (on ? (dept ? ' now manages ' + App.dept(dept).label : ' is now a Manager as well as ' + App.role(was.role).label)
                              : ' is no longer a Manager'));
     // the change lands on the signed-in user's own powers immediately
     if (App.state.user && App.state.user.personId === id) {
-      App.state.subRoles = on ? ['manager'] : [];
+      App.state.subRoles = App.subRolesOf(App.person(id));
       App.render();
     }
   };
@@ -2330,7 +2335,7 @@ window.App = window.App || {};
     /* Sub-roles ride alongside the base role rather than replacing it, so a
        departmental manager keeps their department (and its task ownership)
        while gaining a Manager's reach. See App.rolePerm. */
-    App.state.subRoles = App.isManager(person) ? ['manager'] : [];
+    App.state.subRoles = App.subRolesOf(person);
     App.state.baseRole = App.state.role;
     App.state.view = 'dashboard';
     const startDepts = App.roleDefaultDepts(App.state.role);

@@ -1,5 +1,5 @@
 /* QC report form branding — the studio's logo in the report's header, set
-   in Admin → Workflow → QC (board state: data.formBranding).
+   in Admin → Workflow → Brand Configuration (board state: data.formBranding).
 
    templates/qc-report.xlsx has no logo, on purpose. This places one picture
    in the header row: an image part, a drawing that anchors it to the top-left

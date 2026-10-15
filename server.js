@@ -674,11 +674,15 @@ async function hasBoardAccess(email) {
   return isAdminEmail(email) || !!(await directoryEntry(email));
 }
 /* Who may accept or deny: bootstrap admins, Producers and Managers (base
-   role or the Manager sub-role) — the people the Admin page is for. */
+   role, or the Manager sub-role on an oversight role) — the people the Admin
+   page is for. */
 async function canReviewAccess(email) {
   if (isAdminEmail(email)) return true;
   const p = await directoryEntry(email);
-  return !!(p && (p.role === 'producer' || p.role === 'manager' || p.manager));
+  // Manager on a department role manages that department only (js/state.js
+  // App.subRolesOf), so it doesn't come with reviewing who gets in
+  const DEPT_ROLES = ['creative', 'music', 'animation', 'audio', 'video', 'qc'];
+  return !!(p && (p.role === 'producer' || p.role === 'manager' || (p.manager && !DEPT_ROLES.includes(p.role))));
 }
 
 /* Contextual task chat. Postgres only — there is no file backend, so chat is
@@ -1004,6 +1008,20 @@ function isLocalRequest(req) {
   const a = (req.socket && req.socket.remoteAddress) || '';
   return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
 }
+/* QC's folder for one task's deliverable: inside the episode's QC task
+   folder (or a QC folder at the episode's foot when the pipeline has none),
+   QC_<Deliverable>/. Where Create QC Project puts the project and report. */
+function qcFolderFor(ctx) {
+  const { masterPath, show, ep, pipeline, paths } = ctx;
+  const qcTask = pipeline.find(t => t.key === 'qc') || pipeline.find(t => t.dept === 'qc');
+  const qcPaths = qcTask ? folders.taskPaths(ep, pipeline, qcTask.key) : null;
+  const qcRoot = qcPaths ? qcPaths.work : '0002_Episodes/' + folders.episodeFolder(ep) + '/zz_QC';
+  return folders.resolveIn(masterPath, show, qcRoot + '/QC_' + paths.deliverable);
+}
+// <EPCODE>_<Deliverable>_V<n>_QC-REPORT.xlsx
+const qcReportName = (ep, paths, version) =>
+  folders.safeFile(folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_V' + version + '_QC-REPORT.xlsx');
+
 function openNatively(target) {
   const { spawn } = require('child_process');
   const cmd = process.platform === 'darwin' ? 'open'
@@ -1998,11 +2016,7 @@ const server = http.createServer(async (req, res) => {
         const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
         const { masterPath, show, ep, pipeline, paths } = ctx;
-        // QC's own folder in this episode: its pipeline task's, else a QC folder at the episode's foot
-        const qcTask = pipeline.find(t => t.key === 'qc') || pipeline.find(t => t.dept === 'qc');
-        const qcPaths = qcTask ? folders.taskPaths(ep, pipeline, qcTask.key) : null;
-        const qcRoot = qcPaths ? qcPaths.work : '0002_Episodes/' + folders.episodeFolder(ep) + '/zz_QC';
-        const dirAbs = folders.resolveIn(masterPath, show, qcRoot + '/QC_' + paths.deliverable);
+        const dirAbs = qcFolderFor(ctx);
         fs.mkdirSync(dirAbs, { recursive: true });
 
         const version = Math.max(1, Math.min(99, parseInt(body.version, 10) || 1));
@@ -2028,7 +2042,7 @@ const server = http.createServer(async (req, res) => {
            in — show, content code, date, operator, the task and the files it
            delivered (Mezzanine, or Publish once it's been published). Made
            once per version, like the project. */
-        const reportName = folders.safeFile(folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_V' + version + '_QC-REPORT.xlsx');
+        const reportName = qcReportName(ep, paths, version);
         const reportAbs = path.join(dirAbs, reportName);
         let reportCreated = false;
         if (!fs.existsSync(reportAbs)) {
@@ -2039,7 +2053,7 @@ const server = http.createServer(async (req, res) => {
           let files = delivered(paths.mezzanine);
           if (!files.length) files = delivered(paths.publish);
           const task = pipeline.find(t => t.key === body.taskKey);
-          // form branding (Admin → Workflow → QC): the board's own, or — for a
+          // the studio's branding (Admin → Workflow → Brand Configuration): the board's own, or — for a
           // companion, which has no board — the copy the client sent
           const fb = (ctx.data ? ctx.data.formBranding : r.branding) || {};
           fs.writeFileSync(reportAbs, qcReport.build({
@@ -2058,6 +2072,28 @@ const server = http.createServer(async (req, res) => {
         if (willOpen) openNatively(dirAbs);
         return sendJson(res, 200, { ok: true, dir: dirAbs, file, created, existed: !!existing, template, opened: willOpen, path: dirAbs,
           report: reportName, reportCreated });
+      }
+
+      /* Open QC Report — the report for a check QC has settled, from the QC
+         tab's Completed list: the asked-for version's, or failing that the
+         newest earlier one (a version checked without Create QC Project has
+         none of its own). Opens in whatever the OS uses for .xlsx. */
+      if (route === 'POST /api/task/qc-report') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { ep, paths } = ctx;
+        const dirAbs = qcFolderFor(ctx);
+        const want = Math.max(1, Math.min(99, parseInt(body.version, 10) || 1));
+        let found = null;
+        for (let v = want; v >= 1 && !found; v--) {
+          const f = path.join(dirAbs, qcReportName(ep, paths, v));
+          if (fs.existsSync(f)) found = { file: f, version: v };
+        }
+        if (!found) return sendJson(res, 404, { error: 'No QC report for this task yet — Create QC Project makes one' });
+        if (!isLocalRequest(req)) return sendJson(res, 200, { ok: true, opened: false, path: found.file, version: found.version });
+        openNatively(found.file);
+        return sendJson(res, 200, { ok: true, opened: true, path: found.file, version: found.version });
       }
 
       /* Open — hands the file or folder to the OS when the server is on this

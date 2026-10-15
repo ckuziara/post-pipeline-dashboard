@@ -523,7 +523,7 @@ window.App = window.App || {};
     // a locked row never opens, so its hint would stay buried in editWrap —
     // surface it as the row's tooltip instead (explains *why* it's locked)
     return el('.et-row' + (opts.locked ? '.locked' : ''),
-      opts.locked && opts.hint ? { title: opts.hint } : null, [
+      opts.locked && opts.hint && !opts.quiet ? { title: opts.hint } : null, [
       el('.et-label', null, labelText),
       el('.et-control', null, [display, editWrap])
     ]);
@@ -537,12 +537,15 @@ window.App = window.App || {};
       const role = App.state.role;
       // structural rights — reshaping the plan, as opposed to reporting on it
       const canName = App.canEditTaskName(role);
-      const canSched = App.canEditSchedule(role);
+      const canSched = App.canEditScheduleFor(role, su.dept);   // a department manager: their own department's
       const canRemove = App.canRemoveTask(role);
       // `canTouch` is the department gate (status, owner, files). Schedulers get
       // in regardless — Post Operations reschedules other departments' work.
       const canTouch = App.canEditTask(role, su);
-      if (!canTouch && !canSched) {
+      /* opts.preview (the QC tab): someone who can't edit the task may still
+         look at it — every field locked, nothing to save. */
+      const viewOnly = !canTouch && !canSched;
+      if (viewOnly && !(opts && opts.preview)) {
         const d = App.roleDept(role);
         App.toast('Your role can only edit ' + (d ? App.dept(d).label : 'permitted') + ' tasks', true);
         return;
@@ -563,7 +566,7 @@ window.App = window.App || {};
       }
 
       // owner — only staff from the task's department are eligible
-      const canAssign = App.canAssignOwners(role);
+      const canAssign = App.canAssignOwnersFor(role, su.dept);
       const deptPeople = App.state.data.people.filter(p => App.roleDept(p.role) === su.dept);
       const ownerSel = el('select.fld');
       const none = document.createElement('option');
@@ -645,7 +648,7 @@ window.App = window.App || {};
       const detailsPanel = el('.et-panel', null, [
         el('.et-list', null, [
           editRow('Task name', nameInput, () => nameInput.value, {
-            locked: !canName, hint: canName ? null : 'Only Producers and Managers can rename a task'
+            quiet: viewOnly, locked: !canName, hint: canName ? null : 'Only Producers and Managers can rename a task'
           }),
           editRow('Status', statusSel, statusDisplay, {
             /* the Board's status popover, one click away, and applied at once
@@ -656,17 +659,17 @@ window.App = window.App || {};
               const now = App.subitem(App.state.data.episodes.find(e => e.id === epId), key);
               statusSel.value = now ? now.status : sk; refresh();
             }),
-            locked: lockedApproved || !canTouch,
+            quiet: viewOnly, locked: lockedApproved || !canTouch,
             hint: !canTouch ? 'Only the ' + App.dept(su.dept).label + ' team can update this task’s status'
               : lockedApproved ? 'Only Producer, Director or Manager can change an approved task'
               : (canApprove ? null : 'Your role cannot set tasks to Approved')
           }),
-          editRow('Owner', ownerSel, ownerDisplay, { locked: !canAssign, hint: ownerHint }),
+          editRow('Owner', ownerSel, ownerDisplay, { quiet: viewOnly, locked: !canAssign, hint: ownerHint }),
           editRow('Schedule', schedControl, schedDisplay, {
-            locked: !canSched, hint: canSched ? null : 'Only Producers, Managers and Post Operations can change the schedule'
+            quiet: viewOnly, locked: !canSched, hint: canSched ? null : 'Only Producers, Managers and Post Operations can change the schedule'
           }),
           editRow('QC', qcControl, qcDisplay, {
-            locked: !canQc, hint: canQc ? 'Once approved it joins the QC queue; anything waiting on it waits for QC too' : 'Only Producers can choose what needs QC'
+            quiet: viewOnly, locked: !canQc, hint: canQc ? 'Once approved it joins the QC queue; anything waiting on it waits for QC too' : 'Only Producers can choose what needs QC'
           })
         ]),
         koLine(ep, su),
@@ -674,11 +677,14 @@ window.App = window.App || {};
         (App.qcQueue ? App.qcQueue.taskSection(ep, su) : null),
         // LucidLink version control — only for tasks flagged version-controlled
         // in the pipeline (enabled in Pipeline Presets, not here)
-        (App.vc && App.vc.isVc(ep, key) ? App.vc.inlineSection(epId, key) : null),
+        // a view-only preview leaves out the working sections — making a
+        // project or uploading isn't the viewer's to do (QC opens the files
+        // from the QC tab's Delivered Assets)
+        (!viewOnly && App.vc && App.vc.isVc(ep, key) ? App.vc.inlineSection(epId, key) : null),
         /* The task workspace (Project / Assets / Deliver) works against the real
            production folders, so it needs a master directory. Without one, fall
            back to Smart Upload's metadata catalogue rather than showing nothing. */
-        (App.workspace && App.masterPathSet && App.masterPathSet()
+        (viewOnly ? null : App.workspace && App.masterPathSet && App.masterPathSet()
           ? App.workspace.inlineSection(epId, key)
           : (App.uploads ? App.uploads.inlineSection(epId, key) : null))
       ]);
@@ -702,7 +708,9 @@ window.App = window.App || {};
 
       const sections = [ctxBar, detailsPanel, chatPanel];
 
-      const footer = [
+      const footer = viewOnly ? [
+        el('button.btn-primary', { onclick: () => App.modal.close() }, 'Close')
+      ] : [
         el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
         (canRemove ? el('button.btn-danger', {
           onclick: () => App.confirm('Remove “' + su.name + '” from ' + ep.code + '?',
