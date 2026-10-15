@@ -139,7 +139,7 @@ window.App = window.App || {};
               : el('span.stage-chip.done', { title: s.stageTip }, '✓ Complete')
           ]),
           el('.ep-prog', { title: s.prog + '% ' + progLabel + ' — ' + s.done + ' of ' + s.total + ' approved' }, [
-            el('.prog-track', null, [el('.prog-fill', { style: { width: s.prog + '%' } })])
+            el('.prog-track', null, [el('.prog-fill.p' + (s.prog >= 100 ? 4 : Math.min(3, Math.floor(s.prog / 25))), { style: { width: s.prog + '%' } })])
           ])
         ])
       ]);
