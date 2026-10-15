@@ -238,7 +238,7 @@ window.App = window.App || {};
       onclick: () => { if (!editing) { App.state.admin.editing = p.id; App.render(); } }
     }, [
       el('.cell.u', null, [
-        el('span.avatar', { style: { background: p.color } }, App.initials(p.name)),
+        el('span.avatar', { style: { background: p.color, color: App.pickInk(p.color) } }, App.initials(p.name)),
         editing
           ? el('div.adm-edit-stack', null, [
               el('input.adm-inline', {
@@ -1299,7 +1299,7 @@ window.App = window.App || {};
                     const p = App.person(id);
                     const load = App.personLoad(id);
                     return el('span.team-chip.static' + (id === lead ? '.lead' : ''), null, [
-                      el('span.avatar', { style: { background: p.color } }, App.initials(p.name)),
+                      el('span.avatar', { style: { background: p.color, color: App.pickInk(p.color) } }, App.initials(p.name)),
                       // same hover as the editor: how spread thin they are, and across what
                       el('span.team-chip-name', { title: App.personLoadTip(p) }, p.name),
                       el('span.team-pct' + (load.pct <= 50 ? '.thin' : ''), {
@@ -1410,7 +1410,7 @@ window.App = window.App || {};
     'view.admin': 'Admin view', 'view.review': 'Review queue',
     'admin.hub': 'Admin hub', 'admin.directory': 'User directory', 'admin.roles': 'Access control',
     'admin.workflow': 'Workflow settings', 'admin.logs': 'Audit logs',
-    'task.editDialog': 'Edit Task dialog', 'timeline.dragReschedule': 'Timeline drag-reschedule',
+    'task.editDialog': 'Edit Task dialog', 'task.batchEdit': 'Batch Edit Tasks', 'timeline.dragReschedule': 'Timeline drag-reschedule',
     'lucidlink.delivered': 'LucidLink upload', 'lucidlink.uploadFailed': 'LucidLink upload failed',
     'lucidlink.prepareFailed': 'LucidLink prepare failed',
     'flow.start': 'Workflow started', 'flow.complete': 'Workflow completed', 'flow.abandon': 'Workflow abandoned',

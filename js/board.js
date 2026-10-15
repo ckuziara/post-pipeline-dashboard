@@ -113,7 +113,7 @@ window.App = window.App || {};
           el('span.ep-title', null, ep.title),
           el('span.ep-show', null, show.name),
           (overdue ? el('span.risk-flag', { title: overdueTip }, [App.icon('warn'), ' ' + overdue + ' overdue']) : null),
-          (blocked ? el('span.risk-flag', { title: blockedTip, style: { color: '#ffce8e', background: 'rgba(253,171,61,.14)', borderColor: 'rgba(253,171,61,.3)' } }, [App.icon('blocked'), ' ' + blocked + ' blocked']) : null),
+          (blocked ? el('span.risk-flag', { title: blockedTip, style: { color: 'var(--ink-warn)', background: 'rgba(253,171,61,.14)', borderColor: 'rgba(253,171,61,.3)' } }, [App.icon('blocked'), ' ' + blocked + ' blocked']) : null),
           (App.vc && App.vc.boardBadge(ep))
         ]),
         el('.ep-right', null, [
@@ -127,7 +127,7 @@ window.App = window.App || {};
           ]),
           el('.ep-meta.status-meta', null, [
             el('.m-label', null, 'Status'),
-            el('.m-val', { style: { color: s.status.color } }, s.status.label)
+            el('.m-val', { style: { color: App.textInk(s.status.color) } }, s.status.label)
           ]),
           el('.ep-meta.stage-meta', null, [
             el('.m-label', null, 'Stage'),
@@ -261,12 +261,11 @@ window.App = window.App || {};
       // stopped here, or the page's own click-away would close the picker it opens
       const item = (label, sub, fn) => el('button.ctx-item', { type: 'button', onclick: (ev) => { ev.stopPropagation(); close(); fn(); } },
         [el('span.ctx-item-lbl', null, label), sub ? el('span.ctx-item-sub', null, sub) : null]);
-      // the pickers open where the menu was, and act on the whole selection
-      const at = { getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY }) };
       const first = App.ganttSelection.resolved()[0];
       const menu = el('.ctx-menu', null, [
-        item('Set status…', n + ' selected', () => this.openStatusPop(at, first.ep, first.suKey)),
-        App.canAssignOwners(App.state.role) ? item('Assign owner…', n + ' selected', () => this.openOwnerPop(at, first.ep, first.suKey)) : null,
+        // name, status and owner live in Batch Edit Tasks; dates have their own spacing tools
+        n > 1 ? item('Batch Edit Tasks…', n + ' selected', () => App.editTask.openBatch(App.ganttSelection.resolved()))
+          : item('Edit task…', null, () => App.editTask.open(first.epId, first.suKey)),
         n > 1 && App.canEditSchedule(App.state.role) ? item('Batch Set Dates…', n + ' selected', () => App.batchDates.open()) : null,
         el('.ctx-sep'),
         item('Clear selection', 'Esc', () => { App.ganttSelection.clear(); App.render(); })
@@ -359,7 +358,7 @@ window.App = window.App || {};
           el('.cell.c-assignee' + (App.canAssignOwners(App.state.role) ? '.can' : ''), App.canAssignOwners(App.state.role) ? {
             onclick: (e) => { e.stopPropagation(); App.board.openOwnerPop(e.currentTarget, ep, su.key); }
           } : null, person
-            ? el('span.avatar', { style: { background: person.color }, title: person.name }, App.initials(person.name))
+            ? el('span.avatar', { style: { background: person.color, color: App.pickInk(person.color) }, title: person.name }, App.initials(person.name))
             : el('span.avatar.avatar-none', { title: 'Unassigned' }, '?')),
           // none → click to add a Kick Off; needed → click to mark it done; done → click to undo (Producer / Director)
           (() => {
@@ -488,7 +487,7 @@ window.App = window.App || {};
       const pop = el('.status-pop.owner-pop');
       const opt = (label, color, on, fn) => el('button.owner-opt' + (on ? '.on' : ''), {
         type: 'button', onclick: (e) => { e.stopPropagation(); fn(); }
-      }, [color ? el('span.avatar.owner-av', { style: { background: color } }, App.initials(label)) : el('span.avatar.avatar-none.owner-av', null, '–'), el('span', null, label)]);
+      }, [color ? el('span.avatar.owner-av', { style: { background: color, color: App.pickInk(color) } }, App.initials(label)) : el('span.avatar.avatar-none.owner-av', null, '–'), el('span', null, label)]);
       Object.keys(App.DEPARTMENTS).filter(d => counts[d]).forEach(d => {
         if (many) pop.appendChild(el('.owner-dept', null, [el('span.dot', { style: { background: App.dept(d).color } }),
           App.dept(d).label + ' · ' + counts[d] + ' task' + (counts[d] === 1 ? '' : 's')]));

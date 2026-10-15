@@ -68,7 +68,7 @@ window.App = window.App || {};
     not_started: { label: 'Not Started',      color: '#c4c4c4', ink: '#33353d', weight: 0.0,  group: 'pending' },
     ready:       { label: 'Ready to Start',   color: '#5fb0f0', ink: '#06203f', weight: 0.1,  group: 'pending' },
     in_progress: { label: 'In Progress',      color: '#fdab3d', ink: '#3a2400', weight: 0.5,  group: 'working' },
-    review:      { label: 'Ready for Review', color: '#a25ddc', ink: '#ffffff', weight: 0.85, group: 'review'  },
+    review:      { label: 'Review', color: '#a25ddc', ink: '#ffffff', weight: 0.85, group: 'review'  },
     approved:    { label: 'Approved',         color: '#00c875', ink: '#04321d', weight: 1.0,  group: 'done'    }
   };
   // order used by the status picker / cycling
@@ -2405,7 +2405,8 @@ window.App = window.App || {};
     return node;
   };
 
-  App.toast = function (msg, isError) {
+  // opts.ms keeps a toast up longer — for one with a link in it to click
+  App.toast = function (msg, isError, opts) {
     const root = document.getElementById('toast-root');
     if (!root) return;
     // error toasts get the warning mark here rather than every caller
@@ -2413,7 +2414,8 @@ window.App = window.App || {};
     const t = App.el('div.toast' + (isError ? '.error' : ''), null,
       isError ? [App.icon('warn'), ' ' + msg] : msg);
     root.appendChild(t);
-    setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, isError ? 5000 : 2800);
+    setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); },
+      (opts && opts.ms) || (isError ? 5000 : 2800));
   };
 
   /* ---- Right-click to copy ----

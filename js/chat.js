@@ -268,7 +268,12 @@ window.App = window.App || {};
       // No heading: the tab already says Discussion. Only the current round
       // needs stating, and only once there is one.
       const rev = m.thread && m.thread.currentRevision;
-      if (rev) box.appendChild(el('.chat-head', null, el('span.chat-rev-pill', null, 'Revision ' + rev.idx)));
+      const toSlack = ep && App.slackRouted(ep, m.taskKey);
+      if (rev || toSlack) box.appendChild(el('.chat-head', null, [
+        rev ? el('span.chat-rev-pill', null, 'Revision ' + rev.idx) : null,
+        toSlack ? el('button.chat-slack-link', { type: 'button', title: 'Open this task’s thread in Slack',
+          onclick: () => App.openTaskChat(m.epId, m.taskKey) }, [App.icon('link'), ' Open in Slack']) : null
+      ]));
 
       // Unavailable is the normal case in local development, so it reads as a
       // note about configuration rather than something being broken.
@@ -426,4 +431,62 @@ window.App = window.App || {};
       ])
     ]);
   }
+
+  /* ---- chat buttons → Slack ----
+     A task whose show posts to Slack (Admin → Shows) has its conversation in
+     a Slack thread, so the chat buttons go there; anything else opens the
+     Discussion tab as before. Department-specific channels win over a
+     whole-show one, the same rule the server uses to pick the channel. */
+  App.slackRouted = function (ep, taskKey) {
+    const routes = (App.api.me && App.api.me.slackRoutes) || [];
+    if (!routes.length) return false;
+    const su = App.subitem(ep, taskKey);
+    const dept = su ? su.dept : null;
+    return routes.some(r => r.showId === ep.showId && (r.deptKey == null || r.deptKey === dept));
+  };
+
+  /* Straight into the Slack desktop app, with no browser tab left behind.
+     A slack:// link is handed to the OS through a hidden frame, so this page
+     never navigates. Nothing reports whether the app actually opened, so the
+     window losing focus is the signal: if it hasn't within a few seconds
+     (no desktop app, or the browser's "Open Slack?" prompt was declined), a
+     toast offers the thread in the browser instead — a click there is a
+     fresh gesture, so that tab isn't popup-blocked. */
+  const slackLinks = new Map();   // taskId → { url, app }; they never change
+  function launchSlackApp(link) {
+    let left = false;
+    const onBlur = () => { left = true; };
+    window.addEventListener('blur', onBlur, { once: true });
+    const frame = el('iframe', { style: { display: 'none' } });
+    frame.src = link.app;
+    document.body.appendChild(frame);
+    setTimeout(() => {
+      frame.remove();
+      window.removeEventListener('blur', onBlur);
+      if (left || document.visibilityState === 'hidden') return;
+      App.toast(el('span', null, ['Slack didn’t open. ',
+        el('a', { href: link.url, target: '_blank', rel: 'noopener', style: { color: 'inherit', fontWeight: 700 } },
+          'Open the thread in your browser')]), false, { ms: 9000 });
+    }, 3000);
+  }
+
+  App.openTaskChat = function (epId, taskKey) {
+    const ep = App.state.data.episodes.find(e => e.id === epId);
+    const inApp = () => App.editTask.open(epId, taskKey, { tab: 'chat' });
+    if (!ep || !App.slackRouted(ep, taskKey)) return inApp();
+    const id = taskIdOf(epId, taskKey);
+    const go = (link) => {
+      if (link.app) launchSlackApp(link);
+      else window.open(link.url, '_blank', 'noopener');   // no workspace id: the web link is all there is
+    };
+    if (slackLinks.has(id)) return go(slackLinks.get(id));
+    App.api.chatSlackLink(id).then(r => {
+      if (!r.url) throw new Error('This task isn’t linked to Slack');
+      slackLinks.set(id, r);
+      go(r);
+    }).catch(e => {
+      App.toast(e.message + ' — opening the discussion here instead', true);
+      inApp();
+    });
+  };
 })();

@@ -191,6 +191,68 @@ window.App = window.App || {};
       (skipped.length ? ' · ' + n(skipped.length) + ' left as they were' + (p ? ' (not ' + App.dept(dept).label + ' tasks)' : '') : ''), !ok.length && !!skipped.length);
   };
 
+  /* Batch Edit Tasks: name, status and owner across a selection, as ONE
+     undo step. Only the fields passed are written (undefined = leave each
+     task as it is). Every task meets the rules it would one at a time — the
+     same ones App.setStatusMany and App.assignMany apply — and one that fails
+     a field keeps that field and is counted, rather than stopping the rest.
+     `items` is [{ epId, suKey }]. */
+  App.applyTaskEditMany = function (items, { name, status, assignee }) {
+    const role = App.state.role;
+    const canName = name !== undefined && App.canEditTaskName(role);
+    const canAssign = assignee !== undefined && App.canAssignOwners(role);
+    if (status === 'approved' && !App.canApprove(role)) {
+      App.toast('Only Producer, Director or Manager can approve tasks', true); return;
+    }
+    const p = assignee ? App.person(assignee) : null;
+    const ownerDept = p ? App.roleDept(p.role) : null;
+    const plan = [];
+    let skipped = 0;
+    items.forEach(({ epId, suKey }) => {
+      const g = findTask(epId, suKey); if (!g) return;
+      const canTouch = App.canEditTask(role, g.su);
+      const w = { g };
+      let refused = false;
+      if (canName && name !== g.su.name) w.name = name;
+      if (status !== undefined && status !== g.su.status) {
+        const deny = status === 'review' && App.review && App.review.denyReady(g.ep, g.su);
+        if (!canTouch || (g.su.status === 'approved' && !App.canApprove(role)) || deny) refused = true;
+        else w.status = status;
+      }
+      if (canAssign && (g.su.assignee || null) !== (assignee || null)) {
+        if (!canTouch || (p && g.su.dept !== ownerDept)) refused = true;
+        else w.assignee = assignee || null;
+      }
+      if (refused) skipped++;
+      if ('name' in w || 'status' in w || 'assignee' in w) plan.push(w);
+    });
+    if (plan.length) {
+      const put = (e, key, id) => { e.assignees = e.assignees || {}; if (id) e.assignees[key] = id; else delete e.assignees[key]; };
+      App.mutate(d => plan.forEach(w => {
+        const e = d.episodes.find(x => x.id === w.g.ep.id), key = w.g.su.key;
+        if ('name' in w) { e.names = e.names || {}; e.names[key] = w.name; }
+        if ('status' in w) e.statuses[key] = w.status;
+        if ('assignee' in w) {
+          put(e, key, w.assignee);
+          (App.batchMates(d, e, key) || []).forEach(m => put(m, key, w.assignee));
+        }
+        App.refreshReadiness(e);
+        App.syncBatch(d, e, key);
+      }), 'the batch edit');
+      plan.forEach(w => {
+        const changed = {};
+        if ('name' in w) changed.name = { from: w.g.su.name, to: w.name };
+        if ('status' in w) changed.status = { from: w.g.su.status, to: w.status };
+        if ('assignee' in w) changed.owner = { from: w.g.su.assignee || null, to: w.assignee };
+        App.track.audit('task.edit', { episode: w.g.ep.code, task: w.g.su.name, changed, bulk: plan.length });
+      });
+      plan.filter(w => w.status === 'approved').forEach(w => App.promoteDelivered(w.g.ep.id, w.g.su.key));
+    }
+    const n = (k) => k + ' task' + (k === 1 ? '' : 's');
+    App.toast((plan.length ? 'Updated ' + n(plan.length) : 'Nothing to change') +
+      (skipped ? ' · ' + n(skipped) + ' kept some fields (not yours to change, or not ready)' : ''), !plan.length && !!skipped);
+  };
+
   App.applyTaskEdit = function (epId, key, { name, status, start, due, assignee }, opts) {
     const g = findTask(epId, key); if (!g) return;
     const role = App.state.role;

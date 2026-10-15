@@ -612,12 +612,12 @@ window.App = window.App || {};
       };
       const statusDisplay = () => {
         const st = App.status(statusSel.value);
-        return el('span.et-status', { style: { color: st.color } }, [el('span.et-dot', { style: { background: st.color } }), st.label]);
+        return el('span.et-status', { style: { color: App.textInk(st.color) } }, [el('span.et-dot', { style: { background: st.color } }), st.label]);
       };
       const ownerDisplay = () => {
         const id = ownerSel.value; if (!id) return el('span.et-empty', null, 'Unassigned');
         const p = App.person(id); if (!p) return 'Unassigned';
-        return el('span.et-owner', null, [el('span.avatar', { style: { background: p.color } }, App.initials(p.name)), p.name]);
+        return el('span.et-owner', null, [el('span.avatar', { style: { background: p.color, color: App.pickInk(p.color) } }, App.initials(p.name)), p.name]);
       };
 
       /* The context bar stays outside the tabs: which task you're looking at is
@@ -709,6 +709,109 @@ window.App = window.App || {};
 
       App.modal.open(card(null, null, null, sections, footer, null, tabs));
       App.track.flowStart('Task edit', { dept: su.dept });   // after open(): its defensive close() must not cancel this
+    },
+
+    /* Batch Edit Tasks — the same dialog for a whole selection (right-click a
+       Timeline bar or Board row inside a selection). Only what can be set
+       across many tasks at once is shown: name, status and owner. Dates have
+       Batch Set Dates (beside it in the menu), and files, discussion and Remove belong to one task.
+       Each row shows the shared value, or "Mixed" when the tasks differ; only
+       rows actually changed are written (App.applyTaskEditMany). */
+    openBatch(items) {
+      items = (items || []).filter(it => it && it.su);
+      if (items.length < 2) { App.toast('Select two or more tasks first', true); return; }
+      const role = App.state.role;
+      const canName = App.canEditTaskName(role);
+      const anyTouch = items.some(it => App.canEditTask(role, it.su));
+      const depts = [...new Set(items.map(it => it.su.dept))];
+      const oneDept = depts.length === 1 ? depts[0] : null;
+      const canAssign = App.canAssignOwners(role) && anyTouch;
+      if (!canName && !anyTouch) {
+        const d = App.roleDept(role);
+        App.toast('Your role can only edit ' + (d ? App.dept(d).label : 'permitted') + ' tasks', true);
+        return;
+      }
+      App.track.feature('task.batchEdit', { count: items.length });
+      const KEEP = '__keep';
+      const shared = (f) => { const v = items.map(f); return v.every(x => x === v[0]) ? v[0] : KEEP; };
+      const opt = (sel, v, label, on) => {
+        const o = document.createElement('option'); o.value = v; o.textContent = label;
+        if (on) o.selected = true; sel.appendChild(o);
+      };
+      const mixedLabel = (f) => 'Mixed — ' + new Set(items.map(f)).size + ' different';
+
+      // name: blank means keep each task's own
+      const name0 = shared(it => it.su.name);
+      const nameInput = el('input.fld', { type: 'text', value: name0 === KEEP ? '' : name0,
+        placeholder: name0 === KEEP ? 'Mixed — leave blank to keep each name' : '' });
+
+      const status0 = shared(it => it.su.status);
+      const statusSel = el('select.fld');
+      if (status0 === KEEP) opt(statusSel, KEEP, '— Keep each status —', true);
+      App.statusOptionsFor(role).forEach(sk => opt(statusSel, sk, App.STATUSES[sk].label, sk === status0));
+      if (status0 !== KEEP && ![...statusSel.options].some(o => o.value === status0)) {
+        opt(statusSel, status0, App.status(status0).label, true);   // e.g. Approved, for a role that can't set it
+      }
+
+      // owners are department staff, so a mixed-department selection has no common list
+      const owner0 = shared(it => it.su.assignee || '');
+      const ownerSel = el('select.fld');
+      if (owner0 === KEEP) opt(ownerSel, KEEP, '— Keep each owner —', true);
+      opt(ownerSel, '', '— Unassigned —', owner0 === '');
+      if (oneDept) App.state.data.people.filter(pp => App.roleDept(pp.role) === oneDept)
+        .forEach(pp => opt(ownerSel, pp.id, pp.name, pp.id === owner0));
+
+      const nameDisplay = () => nameInput.value.trim() ||
+        (name0 === KEEP ? el('span.et-empty', null, mixedLabel(it => it.su.name)) : '');
+      const statusDisplay = () => {
+        if (statusSel.value === KEEP) return el('span.et-empty', null, mixedLabel(it => it.su.status));
+        const st = App.status(statusSel.value);
+        return el('span.et-status', { style: { color: App.textInk(st.color) } }, [el('span.et-dot', { style: { background: st.color } }), st.label]);
+      };
+      const ownerDisplay = () => {
+        const id = ownerSel.value;
+        if (id === KEEP) return el('span.et-empty', null, mixedLabel(it => it.su.assignee || ''));
+        const pp = id && App.person(id);
+        if (!pp) return el('span.et-empty', null, 'Unassigned');
+        return el('span.et-owner', null, [el('span.avatar', { style: { background: pp.color, color: App.pickInk(pp.color) } }, App.initials(pp.name)), pp.name]);
+      };
+
+      const eps = new Set(items.map(it => it.epId)).size;
+      const taskNames = new Set(items.map(it => it.su.name));
+      const ctxBar = el('.ctx-box.slim', null, [
+        el('span.ctx-chip', null, items.length + ' tasks'),
+        el('span.ctx-title', null, (taskNames.size === 1 ? [...taskNames][0] + ' · ' : '') +
+          'in ' + eps + ' episode' + (eps === 1 ? '' : 's')),
+        el('span.ctx-dept', null, oneDept ? App.dept(oneDept).label : depts.length + ' departments')
+      ]);
+
+      const rows = [];
+      if (canName) rows.push(editRow('Task name', nameInput, nameDisplay));
+      if (anyTouch) rows.push(editRow('Status', statusSel, statusDisplay, {
+        hint: App.canApprove(role) ? 'Tasks your role can’t change keep their status' : 'Your role cannot set tasks to Approved'
+      }));
+      if (canAssign && oneDept) rows.push(editRow('Owner', ownerSel, ownerDisplay, { hint: 'Only ' + App.dept(oneDept).label + ' staff are listed' }));
+      const note = canAssign && !oneDept
+        ? el('.fld-hint', { style: { margin: '10px 2px 0' } }, 'Owner isn’t shown: the selection spans ' + depts.length + ' departments, and owners come from a task’s own department.')
+        : null;
+
+      const footer = [
+        el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
+        el('button.btn-primary', {
+          onclick: () => {
+            const patch = {};
+            const nm = nameInput.value.trim();
+            if (canName && nm && nm !== name0) patch.name = nm;
+            if (anyTouch && statusSel.value !== KEEP && statusSel.value !== status0) patch.status = statusSel.value;
+            if (canAssign && oneDept && ownerSel.value !== KEEP && ownerSel.value !== owner0) patch.assignee = ownerSel.value || null;
+            App.modal.close();
+            if (!Object.keys(patch).length) { App.toast('Nothing changed'); return; }
+            App.applyTaskEditMany(items.map(it => ({ epId: it.epId, suKey: it.suKey })), patch);
+          }
+        }, [App.icon('save'), ' Save ' + items.length + ' Tasks'])
+      ];
+      App.modal.open(card('pencil', 'Batch Edit Tasks', 'Changes apply to every selected task',
+        [ctxBar, el('.et-panel', null, [el('.et-list', null, rows), note])], footer));
     }
   };
 
@@ -2312,7 +2415,7 @@ window.App = window.App || {};
       const isLead = lead === id;
       const l = loadOf(id);
       return el('span.team-chip' + (isLead ? '.lead' : ''), null, [
-        el('span.avatar', { style: { background: p.color } }, App.initials(p.name)),
+        el('span.avatar', { style: { background: p.color, color: App.pickInk(p.color) } }, App.initials(p.name)),
         // the name carries the hover, so the detail is on the thing you'd point at
         el('span.team-chip-name', { title: loadTip(p) }, p.name),
         /* Managers are shown where they already are rather than on a row of
@@ -2474,7 +2577,7 @@ window.App = window.App || {};
             onclick: () => { has ? unassign(dk, p.id) : assign(dk, p.id); draw(); }
           }, [
             el('span.sw-tick'),
-            el('span.avatar.staff-menu-av', { style: { background: p.color } }, App.initials(p.name)),
+            el('span.avatar.staff-menu-av', { style: { background: p.color, color: App.pickInk(p.color) } }, App.initials(p.name)),
             el('span.sw-menu-name', null, p.name),
             el('span.sw-menu-meta' + (l.pct <= 50 ? '.thin' : ''), null, l.pct + '%')
           ]);
@@ -4058,7 +4161,7 @@ window.App = window.App || {};
               prods.length
                 ? el('.show-card-prods', null, prods.slice(0, 3).map(p =>
                     el('span.avatar.show-card-av', {
-                      style: { background: p.color }, title: p.name + ' — producer on ' + s.name
+                      style: { background: p.color, color: App.pickInk(p.color) }, title: p.name + ' — producer on ' + s.name
                     }, App.initials(p.name))))
                 : null
             ])

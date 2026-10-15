@@ -73,7 +73,7 @@ window.App = window.App || {};
     const foot = el('.modal-foot.rp-foot');
     const card = el('.modal-card.res-card.rp-card', { onclick: e => e.stopPropagation() }, [
       el('.rp-hero', { style: { '--rp-dept': dep.color } }, [
-        el('span.avatar.rp-avatar', { style: { background: p.color } }, App.initials(p.name)),
+        el('span.avatar.rp-avatar', { style: { background: p.color, color: App.pickInk(p.color) } }, App.initials(p.name)),
         el('.rp-id', null, [
           el('.rp-name', null, p.name),
           el('.rp-tags', null, [

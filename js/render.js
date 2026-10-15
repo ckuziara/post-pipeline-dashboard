@@ -247,7 +247,7 @@ window.App = window.App || {};
       box.appendChild(el('.user-chip', { title: user.email + ' — signed in via ' + (App.api.me && App.api.me.via === 'neon' ? 'Neon Auth' : 'dev sign-in') }, [
         user.picture
           ? el('img.user-pic', { src: user.picture, alt: '' })
-          : el('span.avatar', { style: { background: 'var(--accent)' } }, App.initials(user.name)),
+          : el('span.avatar', { style: { background: 'var(--accent)', color: 'var(--accent-ink)' } }, App.initials(user.name)),
         el('span.user-name', null, user.name),
         el('button.user-out', { onclick: () => App.api.logout(), title: 'Sign out' }, '⎋')
       ]));
