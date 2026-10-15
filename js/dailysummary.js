@@ -372,8 +372,13 @@ window.App = window.App || {};
     linkCell(r, edit) {
       const url = r.rev && r.rev.frameUrl;
       if (url) {
-        return copyOnRightClick(el('a.dsum-url', { href: url, target: '_blank', rel: 'noopener noreferrer',
+        const a = copyOnRightClick(el('a.dsum-url', { href: url, target: '_blank', rel: 'noopener noreferrer',
           title: 'Right-click to copy the link', onclick: e => e.stopPropagation() }, linkLabel(url)), url, 'link');
+        if (!edit) return a;
+        // clicking the link opens it and right-click copies it, so changing it gets its own button
+        const btn = el('button.dsum-link-edit', { type: 'button', title: 'Change the review link',
+          onclick: (e) => { e.stopPropagation(); this.openLinkPop(btn, r); } }, App.icon('pencil'));
+        return el('.dsum-link-wrap', null, [a, btn]);
       }
       // not sent yet: the coordinator's next move is right here
       if (edit && r.su.status === 'review') {
@@ -441,6 +446,40 @@ window.App = window.App || {};
       btn.addEventListener('mouseenter', () => this.showLane(btn, r));
       btn.addEventListener('mouseleave', () => this.hideLane());
       return btn;
+    },
+
+    // the same small popover as the Feedback Due picker, holding the link instead
+    openLinkPop(anchor, r) {
+      this.hideLane();
+      const key = 'dsum:link:' + r.id;
+      if (App.filterMenu.openKey === key) { App.filterMenu.close(); return; }
+      App.filterMenu.close();
+      const cur = (r.rev && r.rev.frameUrl) || '';
+      const input = el('input.fld', { type: 'text', value: cur, placeholder: 'Paste the review link' });
+      const save = () => {
+        if (!App.review.setLink(r.ep.id, r.su.key, input.value)) { input.focus(); return; }
+        App.filterMenu.close();
+      };
+      const pop = el('.filter-pop.dsum-due-pop.dsum-link-pop', { style: { maxHeight: 'none' }, onclick: e => e.stopPropagation() }, [
+        el('.dsum-pop-title', null, 'Review link'),
+        input,
+        el('.dsum-pop-hint', null, 'This is the link the Director opens. Changing it keeps the review where it is.'),
+        el('.dsum-pop-actions', null, [
+          el('button.btn-ghost', { onclick: () => App.filterMenu.close() }, 'Cancel'),
+          el('button.btn-primary', { onclick: save }, 'Save')
+        ])
+      ]);
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') save();
+        if (e.key === 'Escape') App.filterMenu.close();
+      });
+      const b = anchor.getBoundingClientRect();
+      pop.style.top = (b.bottom + 6) + 'px';
+      pop.style.left = Math.max(8, Math.min(b.left - 120, window.innerWidth - 348)) + 'px';
+      document.body.appendChild(pop);
+      App.filterMenu.openKey = key;
+      App.filterMenu._pop = pop;
+      setTimeout(() => { input.focus(); input.select(); }, 20);
     },
 
     openDuePop(anchor, r) {

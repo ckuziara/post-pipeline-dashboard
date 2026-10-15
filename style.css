@@ -6014,6 +6014,20 @@ body.has-dash-scene .dash-grid > .empty {
 .dsum-url { color: var(--accent-text); text-decoration: none; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dsum-url:hover { text-decoration: underline; }
 .dsum-url.muted { color: var(--text-2); }
+/* a sent link, plus a pencil to change it — shown on the row's hover so the
+   column stays as clean as the sheet's */
+.dsum-link-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.dsum-link-wrap .dsum-url { min-width: 0; }
+.dsum-link-edit {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+  background: none; border: 1px solid transparent; border-radius: 6px; color: var(--text-3); cursor: pointer;
+  font-size: 12px; opacity: 0; transition: opacity .12s;
+}
+.dsum-table tr:hover .dsum-link-edit, .dsum-link-edit:focus-visible { opacity: 1; }
+.dsum-link-edit:hover { color: var(--text); border-color: var(--border-2); background: var(--hover); }
+@media (hover: none) { .dsum-link-edit { opacity: 1; } }
+.dsum-link-pop { width: 340px; }
+
 .dsum-send {
   white-space: nowrap; background: rgba(91,108,255,.16); color: var(--ink-info); border: 0; border-radius: 6px;
   font: inherit; font-size: 11px; font-weight: 700; padding: 3px 9px; cursor: pointer;

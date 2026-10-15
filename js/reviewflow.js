@@ -47,9 +47,12 @@ window.App = window.App || {};
      instead of just storing it. */
   function cleanUrl(raw) {
     let url = String(raw || '').trim();
-    if (!url) return null;
+    if (!url || /\s/.test(url)) return null;          // a sentence isn't a link, even if URL() lets it through
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-    try { new URL(url); } catch (e) { return null; }
+    let host;
+    try { host = new URL(url).hostname; } catch (e) { return null; }
+    // a real address has a domain (vimeo.com, f.io) — or is this machine
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host) && host !== 'localhost') return null;
     return url;
   }
 
@@ -165,6 +168,26 @@ window.App = window.App || {};
         if (iso) next.planDate = iso; else delete next.planDate;
         d.reviews[k] = next;
       }, iso ? 'Plan review' : 'Unpin review');
+    },
+
+    /* Swapping the link on a review that's already been sent — a re-upload, a
+       new share link, a typo. Only the link changes: where the review has got
+       to (sent, under review) and when it was sent stay as they were, so the
+       Director's queue doesn't treat it as new. */
+    setLink(epId, taskKey, raw) {
+      const url = cleanUrl(raw);
+      if (!url) { App.toast('That doesn’t look like a link', true); return false; }
+      if (!this.sent(epId, taskKey)) return this.send(epId, taskKey, url);
+      if (url === this.frameUrl(epId, taskKey)) return true;
+      const u = me();
+      App.mutate(d => {
+        const k = KEY(epId, taskKey);
+        d.reviews[k] = Object.assign({}, d.reviews[k], {
+          frameUrl: url, linkChangedAt: new Date().toISOString(), linkChangedBy: u.byName
+        });
+      }, 'Change review link');
+      App.toast('Review link updated');
+      return true;
     },
 
     /* Claiming a review, from the Director's tab. No un-claim: the two ways
