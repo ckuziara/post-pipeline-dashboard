@@ -434,9 +434,25 @@ window.App = window.App || {};
     { key: 'qc',             name: 'QC',              dept: 'qc',       days: 2, minDays: 1, deps: ['deliverys'] }
   ];
   // The pipeline each show type ships with, before any Admin change.
+  /* QC isn't a step of its own in a new show's pipeline: any task can be
+     marked Requires QC, and QC's time is held after it. The standalone QC
+     task only lives on in shows made before (and in App.TEMPLATE, which
+     older episodes still read their dates from). */
+  const withoutQcStep = (pipe) => {
+    const gone = pipe.filter(t => t.dept === 'qc').map(t => t.key);
+    return pipe.filter(t => t.dept !== 'qc').map(t => Object.assign(t, { deps: t.deps.filter(d => !gone.includes(d)) }));
+  };
   App.builtinPipelineFor = function (type) {
-    if (type === 'live_action') return App.LIVE_PIPELINE.map(t => ({ ...t, deps: t.deps.slice() }));
-    return App.defaultPipeline();
+    if (type === 'live_action') return withoutQcStep(App.LIVE_PIPELINE.map(t => ({ ...t, deps: t.deps.slice() })));
+    return withoutQcStep(App.defaultPipeline());
+  };
+  // A show's team departments: its pipeline's, plus QC — QC staff are put on
+  // a show to take its QC checks even though no task belongs to QC
+  App.teamDepts = function (pipe) {
+    const d = App.pipelineDepts(pipe);
+    if (!d.includes('qc') && App.DEPARTMENTS.qc) d.push('qc');
+    const order = Object.keys(App.DEPARTMENTS);
+    return d.sort((a, b) => order.indexOf(a) - order.indexOf(b));
   };
   /* The pipeline a NEW show of this type starts from: the Admin's version from
      Admin → Workflow → Pipelines when one is saved, otherwise the built-in one.

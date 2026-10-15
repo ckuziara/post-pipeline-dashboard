@@ -790,6 +790,24 @@ window.App = window.App || {};
       if (oneDept) App.state.data.people.filter(pp => App.roleDept(pp.role) === oneDept)
         .forEach(pp => opt(ownerSel, pp.id, pp.name, pp.id === owner0));
 
+      /* Requires QC across the selection (Producers): keep each task's own,
+         or set them all on (with days) or off. */
+      const canQc = App.canManageShows(role);
+      const qcOf = (it) => { const ep = App.state.data.episodes.find(e => e.id === it.epId); return ep ? App.qcFor(ep, it.suKey) : { on: false, days: 0 }; };
+      const qc0 = shared(it => { const q = qcOf(it); return q.on ? 'on:' + q.days : 'off'; });
+      const qcSel = el('select.fld');
+      if (qc0 === KEEP) opt(qcSel, KEEP, '— Keep each task’s QC —', true);
+      opt(qcSel, 'on', 'Requires QC', qc0 !== KEEP && qc0 !== 'off');
+      opt(qcSel, 'off', 'Not needed', qc0 === 'off');
+      const qcDays0 = qc0 !== KEEP && qc0 !== 'off' ? +qc0.split(':')[1] : App.qcSettings().defaultDays;
+      const qcDays = el('input.fld.fld-num', { type: 'number', min: '1', max: '60', value: String(qcDays0), style: { width: '64px' } });
+      const syncQcDays = () => { qcDays.disabled = qcSel.value !== 'on'; };
+      qcSel.addEventListener('change', syncQcDays); syncQcDays();
+      const qcControl = el('.et-qc-edit', null, [qcSel, qcDays, el('span.et-qc-unit', null, 'days')]);
+      const qcDisplay = () => qcSel.value === KEEP
+        ? el('span.et-empty', null, mixedLabel(it => { const q = qcOf(it); return q.on ? 'on:' + q.days : 'off'; }))
+        : qcSel.value === 'on' ? 'Requires QC · ' + (parseInt(qcDays.value, 10) || 1) + ' day' + ((parseInt(qcDays.value, 10) || 1) === 1 ? '' : 's') : 'Not needed';
+
       const nameDisplay = () => nameInput.value.trim() ||
         (name0 === KEEP ? el('span.et-empty', null, mixedLabel(it => it.su.name)) : '');
       const statusDisplay = () => {
@@ -820,6 +838,7 @@ window.App = window.App || {};
         hint: App.canApprove(role) ? 'Tasks your role can’t change keep their status' : 'Your role cannot set tasks to Approved'
       }));
       if (canAssign && oneDept) rows.push(editRow('Owner', ownerSel, ownerDisplay, { hint: 'Only ' + App.dept(oneDept).label + ' staff are listed' }));
+      if (canQc) rows.push(editRow('QC', qcControl, qcDisplay, { hint: 'Anything waiting on these tasks waits for QC too' }));
       const note = canAssign && !oneDept
         ? el('.fld-hint', { style: { margin: '10px 2px 0' } }, 'Owner isn’t shown: the selection spans ' + depts.length + ' departments, and owners come from a task’s own department.')
         : null;
@@ -833,9 +852,13 @@ window.App = window.App || {};
             if (canName && nm && nm !== name0) patch.name = nm;
             if (anyTouch && statusSel.value !== KEEP && statusSel.value !== status0) patch.status = statusSel.value;
             if (canAssign && oneDept && ownerSel.value !== KEEP && ownerSel.value !== owner0) patch.assignee = ownerSel.value || null;
+            const qcNext = canQc && qcSel.value !== KEEP ? { on: qcSel.value === 'on', days: Math.max(1, Math.min(60, parseInt(qcDays.value, 10) || 1)) } : null;
+            const qcChanged = qcNext && (qcNext.on ? 'on:' + qcNext.days : 'off') !== qc0;
             App.modal.close();
-            if (!Object.keys(patch).length) { App.toast('Nothing changed'); return; }
-            App.applyTaskEditMany(items.map(it => ({ epId: it.epId, suKey: it.suKey })), patch);
+            if (!Object.keys(patch).length && !qcChanged) { App.toast('Nothing changed'); return; }
+            const targets = items.map(it => ({ epId: it.epId, suKey: it.suKey }));
+            if (Object.keys(patch).length) App.applyTaskEditMany(targets, patch);
+            if (qcChanged) App.setTaskQcMany(targets, qcNext);
           }
         }, [App.icon('save'), ' Save ' + items.length + ' Tasks'])
       ];
@@ -2091,7 +2114,9 @@ window.App = window.App || {};
 
     function editRow(t, i) {
       const deptSel = el('select.fld.fld-dept', { onchange: (e) => { t.dept = e.target.value; onChange(); } });
-      Object.keys(App.DEPARTMENTS).forEach(dk => {
+      // QC isn't a task department any more (tasks are marked Requires QC
+      // instead) — still listed for a task that already belongs to it
+      Object.keys(App.DEPARTMENTS).filter(dk => dk !== 'qc' || t.dept === 'qc').forEach(dk => {
         const o = document.createElement('option'); o.value = dk; o.textContent = App.DEPARTMENTS[dk].label;
         if (dk === t.dept) o.selected = true; deptSel.appendChild(o);
       });
@@ -2436,7 +2461,7 @@ window.App = window.App || {};
       extraRoles.forEach(r => { if (shown.indexOf(r) < 0) shown.push(r); });
       return App.ROLES.map(r => r.key).filter(k => shown.indexOf(k) >= 0).map(App.roleSlot);
     }
-    const slotsNow = () => roleSlotsNow().concat(App.pipelineDepts(pipe));
+    const slotsNow = () => roleSlotsNow().concat(App.teamDepts(pipe));
 
     /* How much of a person this show can expect to get. Counted live: the
        shows they're already on, plus this one if they've just been put on it —
@@ -2527,6 +2552,8 @@ window.App = window.App || {};
         ? el('span.team-dept-tasks', null, 'oversight')
         : (() => {
             const n = pipe.filter(t => t.dept === slot).length;
+            // QC owns no tasks of its own now — its people take the show's QC checks
+            if (slot === 'qc' && !n) return el('span.team-dept-tasks', null, 'QC checks');
             return el('span.team-dept-tasks', null, n + ' task' + (n === 1 ? '' : 's'));
           })();
 
@@ -2553,7 +2580,7 @@ window.App = window.App || {};
       // not yet staffed has no team entry, and would otherwise be offered a
       // second time while its own empty row sat on screen
       const shown = roleSlotsNow().map(App.slotRoleKey);
-      const depts = App.pipelineDepts(pipe);
+      const depts = App.teamDepts(pipe);
       return App.ROLES.filter(r =>
         !App.isSubRole(r.key) &&                 // Manager rides a base role
         shown.indexOf(r.key) < 0 && depts.indexOf(r.key) < 0);
@@ -2664,7 +2691,7 @@ window.App = window.App || {};
     const summary = el('.team-summary', null, [summaryTxt, el('.team-bar', null, summaryBar)]);
 
     function paintSummary() {
-      const depts = App.pipelineDepts(pipe);
+      const depts = App.teamDepts(pipe);
       const staffed = depts.filter(dk => App.deptTeam({ team: team }, dk).ids.length).length;
       const size = App.showTeamSize({ team: team, pipeline: pipe });
       const leads = depts.filter(dk => App.deptTeam({ team: team }, dk).lead).length;
@@ -2707,7 +2734,7 @@ window.App = window.App || {};
       roleAddBtn.style.display = missingRoles().length ? '' : 'none';
 
       deptRows.innerHTML = '';
-      const depts = App.pipelineDepts(pipe);
+      const depts = App.teamDepts(pipe);
       if (!depts.length) {
         deptRows.appendChild(el('.adm-empty', null, 'This pipeline has no departments to staff.'));
       } else {
