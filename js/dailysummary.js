@@ -35,8 +35,29 @@ window.App = window.App || {};
     ['Priority 1', 'bad'], ['Priority 2', 'warn'], ['Priority 3', 'mute']
   ];
   const QC = [
-    ['Pending', 'mute'], ['In Progress', 'warn'], ['Completed', 'info'], ['Passed', 'ok'], ['Overdue', 'bad']
+    ['Pending', 'mute'], ['In Progress', 'warn'], ['Completed', 'info'], ['Passed', 'ok'], ['Failed', 'bad'], ['Overdue', 'bad']
   ];
+  /* A task marked Requires QC has its QC status read from the QC queue
+     (ep.qcChecks, js/qc.js) instead of set by hand, so the sheet and the QC
+     tab never disagree:
+       not approved yet        Pending
+       waiting for QC          In Progress, or Overdue past its QC due date
+       QC sent a report back   Failed
+       QC passed it            Passed
+     Null for a task that doesn't need QC: its column is just "—", with
+     nothing to set (QC isn't part of that task). */
+  function qcSynced(ep, su) {
+    if (!App.qcFor || !App.qcFor(ep, su.key).on) return null;
+    const st = App.qcState(ep, su.key);
+    if (st === 'passed') return 'Passed';
+    if (st === 'failed') return 'Failed';
+    if (st === 'waiting') {
+      const w = App.qcWindow(ep, su);
+      return w && w.due < App.isoDate(App.today()) ? 'Overdue' : 'In Progress';
+    }
+    return 'Pending';
+  }
+  const qcValue = (r) => qcSynced(r.ep, r.su);
   const REVIEWER = [
     ['Needs Reviewing', 'info'], ['Under Review', 'warn'], ['Feedback Done', 'ok'],
     ['Approved', 'ok'], ['Approved with Notes', 'ok'], ['Final Approval Needed', 'info'],
@@ -258,7 +279,7 @@ window.App = window.App || {};
         code: r => r.ep.code, name: r => r.name.toLowerCase(), stage: r => r.stage.toLowerCase(),
         dept: r => App.dept(r.su.dept).label.toLowerCase(), added: r => r.added || '',
         due: r => r.due, priority: r => PRIORITY_RANK(r.extra.priority),
-        qc: r => { const i = QC.findIndex(x => x[0] === r.extra.qc); return i < 0 ? 99 : i; }
+        qc: r => { const i = QC.findIndex(x => x[0] === qcValue(r)); return i < 0 ? 99 : i; }
       };
       // the sheet's own order: what's due first, the urgent first within a day
       const dflt = (a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0) ||
@@ -351,7 +372,7 @@ window.App = window.App || {};
         : el('td.dsum-date', null, el('span.dsum-muted', null, '—')));
       cells.push(copyOnRightClick(el('td.dsum-due', null, this.dueCell(r, o.edit, todayIso)), fullDate(r.due), 'date'));
       cells.push(el('td', null, this.choice(r, 'priority', PRIORITIES, o.edit)));
-      cells.push(el('td', null, this.choice(r, 'qc', QC, o.edit)));
+      cells.push(el('td', null, this.qcCell(r, o.edit)));
       cells.push(el('td.dsum-notes-cell', null, this.notesCell(r, o.edit)));
       return el('tr' + (r.state === 'approved' ? '.done' : ''), null, cells);
     },
@@ -391,8 +412,39 @@ window.App = window.App || {};
       const btn = App.choiceMenu('dsum:' + field + ':' + r.id, v || '—', [
         list.map(([val]) => ({ label: val, on: val === v, pick: pick(val) })),
         [{ label: 'Clear', on: false, pick: pick(null) }]
-      ], 'Set ' + (field === 'qc' ? 'QC' : field));
+      ], 'Set ' + field);
       btn.classList.add('dsum-pick', 'dsum-t-' + (v ? toneOf(list, v) : 'none'));
+      return btn;
+    },
+
+    /* QC: synced from the QC queue for a task that needs QC (see qcSynced).
+       Picking there acts on the queue itself — Passed passes the check,
+       Failed opens the QC report — for whoever may decide QC; anything
+       else is the queue's to say. A task that doesn't need QC has nothing
+       here to set. */
+    qcCell(r, edit) {
+      const v = qcSynced(r.ep, r.su);
+      if (v == null) {
+        const n = el('span.dsum-muted', null, '—');
+        n.setAttribute('title', 'Doesn’t need QC');
+        return n;
+      }
+      const tone = toneOf(QC, v);
+      const waiting = App.qcState(r.ep, r.su.key) === 'waiting';
+      if (!(edit && waiting && App.canDecideQc(App.state.role))) {
+        const s = this.pill(v, tone, '.derived');
+        s.setAttribute('title', 'From the QC queue — click to open it on the QC tab');
+        s.style.cursor = 'pointer';
+        s.addEventListener('click', (e) => { e.stopPropagation(); App.qcQueue.focus(r.ep.id, r.su.key); });
+        return s;
+      }
+      const act = (fn) => () => { App.filterMenu.close(); fn(); };
+      const btn = App.choiceMenu('dsum:qc:' + r.id, v, [
+        [{ label: 'Passed', tip: 'Pass the QC check', on: false, pick: act(() => App.qcQueue.pass(r.ep.id, r.su.key)) },
+         { label: 'Failed', tip: 'Send a QC report back to the department', on: false, pick: act(() => App.qcQueue.reportDialog(r.ep, r.su)) }],
+        [{ label: 'Open on the QC tab', on: false, pick: act(() => App.qcQueue.focus(r.ep.id, r.su.key)) }]
+      ], 'QC — from the QC queue');
+      btn.classList.add('dsum-pick', 'dsum-t-' + tone, 'derived');
       return btn;
     },
 

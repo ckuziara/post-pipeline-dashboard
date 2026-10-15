@@ -32,13 +32,15 @@ window.App = window.App || {};
   // Keep "Ready to Start" honest after any change: a not-started task whose (non-removed)
   // dependencies are all Approved becomes Ready; a Ready task that loses a dep drops back.
   App.refreshReadiness = function (ep) {
+    App.syncQcChecks(ep);                  // first: readiness below depends on QC
     const removed = ep.removed || [];
     const pipe = App.pipelineFor(ep);
     pipe.forEach(t => {
       if (removed.includes(t.key)) return;
       const cur = ep.statuses[t.key] || 'not_started';
       const deps = t.deps.filter(d => !removed.includes(d) && pipe.some(p => p.key === d));
-      const depsOK = deps.every(d => (ep.statuses[d] || 'not_started') === 'approved');
+      // approved, and through QC when it needs it (App.isCompleteKey)
+      const depsOK = deps.every(d => App.isCompleteKey(ep, d));
       const hasOwner = !!(ep.assignees && ep.assignees[t.key]);
       // no-dependency tasks are ready from day one — provided someone owns them
       if (cur === 'not_started' && depsOK && (deps.length || hasOwner)) ep.statuses[t.key] = 'ready';
@@ -82,7 +84,8 @@ window.App = window.App || {};
   function guardSchedule(epId, key) {
     const g = findTask(epId, key);
     if (!g) return null;
-    if (!App.canEditSchedule(App.state.role)) {
+    // a department manager may move their own department's tasks
+    if (!App.canEditScheduleFor(App.state.role, g.su.dept)) {
       App.toast('Only Producers, Managers and Post Operations can change the schedule', true);
       return null;
     }
@@ -168,13 +171,14 @@ window.App = window.App || {};
   App.assignMany = function (items, personId) {
     App.board.closePop && App.board.closePop();
     const role = App.state.role;
-    if (!App.canAssignOwners(role)) { App.toast('Your role can’t assign owners (set in Admin → Privileges)', true); return; }
+    if (!App.canAssignOwners(role) && !App.myManagedDept()) { App.toast('Your role can’t assign owners (set in Admin → Privileges)', true); return; }
     const p = personId ? App.person(personId) : null;
     const dept = p ? App.roleDept(p.role) : null;
     const ok = [], skipped = [];
     items.forEach(({ epId, suKey }) => {
       const g = findTask(epId, suKey); if (!g) return;
-      if (!App.canEditTask(role, g.su) || (p && g.su.dept !== dept)) skipped.push(g);
+      // a department manager assigns their own department's tasks only
+      if (!App.canAssignOwnersFor(role, g.su.dept) || !App.canEditTask(role, g.su) || (p && g.su.dept !== dept)) skipped.push(g);
       else if ((g.su.assignee || null) !== (personId || null)) ok.push(g);
     });
     if (ok.length) {
@@ -200,7 +204,7 @@ window.App = window.App || {};
   App.applyTaskEditMany = function (items, { name, status, assignee }) {
     const role = App.state.role;
     const canName = name !== undefined && App.canEditTaskName(role);
-    const canAssign = assignee !== undefined && App.canAssignOwners(role);
+    const canAssign = assignee !== undefined && (App.canAssignOwners(role) || !!App.myManagedDept());
     if (status === 'approved' && !App.canApprove(role)) {
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
@@ -220,7 +224,7 @@ window.App = window.App || {};
         else w.status = status;
       }
       if (canAssign && (g.su.assignee || null) !== (assignee || null)) {
-        if (!canTouch || (p && g.su.dept !== ownerDept)) refused = true;
+        if (!canTouch || !App.canAssignOwnersFor(role, g.su.dept) || (p && g.su.dept !== ownerDept)) refused = true;
         else w.assignee = assignee || null;
       }
       if (refused) skipped++;
@@ -260,7 +264,7 @@ window.App = window.App || {};
     // rather than blocking the save. A department owner can still move their
     // task's status on, and a scheduler can still redate another team's task.
     const canTouch = App.canEditTask(role, g.su);
-    const canName = App.canEditTaskName(role), canSched = App.canEditSchedule(role);
+    const canName = App.canEditTaskName(role), canSched = App.canEditScheduleFor(role, g.su.dept);
     if (!canTouch && !canSched) {
       const d = App.roleDept(role);
       App.toast('Your role can only edit ' + (d ? App.dept(d).label : 'permitted') + ' tasks', true);
@@ -296,7 +300,7 @@ window.App = window.App || {};
       if (canSched) e.dates[key] = { start, due };
       if (canTouch) e.statuses[key] = status;
       // assignee is only passed when the editor holds the assign-owners privilege
-      if (assignee !== undefined && canTouch && App.canAssignOwners(role)) {
+      if (assignee !== undefined && canTouch && App.canAssignOwnersFor(role, g.su.dept)) {
         e.assignees = e.assignees || {};
         if (assignee) e.assignees[key] = assignee; else delete e.assignees[key];
       }
@@ -322,6 +326,8 @@ window.App = window.App || {};
   App.promoteDelivered = function (epId, key) {
     if (!App.masterPathSet || !App.masterPathSet()) return;
     const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
+    // a deliverable that needs QC is published when QC passes it, not before
+    if (!App.isCompleteKey(ep, key)) return;
     App.api.flush()
       .then(() => App.api.taskPromote({ epId, taskKey: key, pipeline: App.pipelineFor(ep) }))
       .then(r => {
@@ -445,7 +451,9 @@ window.App = window.App || {};
      plan does), keeps its length, and lands on working days when the show
      has a calendar. Work that's under way, in review or approved is left
      where it is. Returns the moves, the pushed task first. */
-  App.pushPlan = function (ep, key, newStart, newDue) {
+  /* opts.qc: { key: { on, days } } — a QC change not yet written, so the
+     plan can be shown before Edit Task saves it */
+  App.pushPlan = function (ep, key, newStart, newDue, opts) {
     const pipe = App.pipelineFor(ep);
     const order = App.topoSort(pipe); if (!order) return [{ epId: ep.id, suKey: key, start: newStart, due: newDue }];
     const cal = App.showCalendar(ep.showId);
@@ -456,10 +464,14 @@ window.App = window.App || {};
     // the tasks that (transitively) wait on the moved one
     const down = new Set([key]);
     order.forEach(k => { const t = byKey[k]; if (t && subs[k] && t.deps.some(d => down.has(d))) down.add(k); });
+    const qcOf = (k) => (opts && opts.qc && opts.qc[k]) || App.qcFor(ep, k);
     const doneOf = (k) => {
       const t = App.revTask(ep, k), su = subs[k];
-      if (!t || !t.maxRev || su.status === 'approved') return dates[k].due;
-      return App.revisionSteps(t, dates[k].due, cal, { dept: su.dept, person: su.assignee }, App.revisionsUsed(ep, k)).end;
+      const base = (!t || !t.maxRev || su.status === 'approved') ? dates[k].due
+        : App.revisionSteps(t, dates[k].due, cal, { dept: su.dept, person: su.assignee }, App.revisionsUsed(ep, k)).end;
+      // then QC's days, unless QC has already passed it
+      const q = qcOf(k);
+      return q.on && App.qcState(ep, k) !== 'passed' ? App.qcSpan(q.days, base, cal).due : base;
     };
     const moves = [{ epId: ep.id, suKey: key, start: newStart, due: newDue }];
     order.forEach(k => {
@@ -504,8 +516,54 @@ window.App = window.App || {};
     App.moveTasks(moves, Object.assign(cbs(opts), { pushed: true }));
   };
 
+  /* Requires QC, set on one episode's task from Edit Task (Producers — the
+     same right as shaping a show). Turning it on, or lengthening it, holds
+     QC's days after the task, so whatever waits on it is pushed back just as
+     a dragged bar pushes its dependents — shown first, then written together
+     with the flag as one undo step. Turning it off frees the days but pulls
+     nothing earlier (the ripple only ever pushes). */
+  App.setTaskQc = function (epId, key, next, opts) {
+    if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change what needs QC', true); return; }
+    const g = findTask(epId, key); if (!g) return;
+    const cur = App.qcFor(g.ep, key);
+    const want = { on: !!next.on, days: next.on ? Math.max(1, Math.round(next.days || App.qcSettings().defaultDays)) : 0 };
+    if (want.on === cur.on && want.days === cur.days) return;
+    const pushes = App.pushPlan(g.ep, key, g.su.start, g.su.due, { qc: { [key]: want } }).slice(1)
+      .filter(m => !(App.timelineDraft && App.timelineDraft.dates(epId, m.suKey)));
+    // nothing may reach the live date — said straight away, before anything is asked
+    const ms = App.epMilestones(g.ep).find(m => m.key === App.LIVE_KEY);
+    if (ms && pushes.some(m => m.due >= ms.date)) {
+      App.toast('Not enough room: ' + want.days + ' QC day' + (want.days === 1 ? '' : 's') + ' after ' + g.su.name + ' would push work past the live date (' + App.fmtDate(ms.date) + ') — nothing saved', true);
+      App.render(); return;
+    }
+    if (pushes.length && !(opts && opts.confirmed) && App.pushConfirmDialog) {
+      const qcEnd = App.qcSpan(want.days, App.plannedRevisions(g.ep, g.su).end, App.showCalendar(g.ep.showId)).due;
+      App.pushConfirmDialog.open(g.ep, [{ epId, suKey: key, start: g.su.start, due: g.su.due }].concat(pushes), {
+        leadLabel: '+' + want.days + 'd QC',
+        intro: 'QC needs ' + want.days + ' day' + (want.days === 1 ? '' : 's') + ' after ' + g.su.name + '.',
+        endsBy: qcEnd,
+        onConfirm: () => App.setTaskQc(epId, key, next, { confirmed: true }),
+        onCancel: () => App.render()
+      });
+      return;
+    }
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.qcTasks = Object.assign({}, e.qcTasks, { [key]: want });
+      e.dates = e.dates || {};
+      pushes.forEach(m => { e.dates[m.suKey] = { start: m.start, due: m.due }; });
+      pushes.forEach(m => App.syncBatch(d, e, m.suKey));
+      App.refreshReadiness(e);
+    }, want.on ? 'Requires QC' : 'removing QC');
+    App.track.audit('task.qcFlag', { episode: g.ep.code, task: g.su.name, from: cur.on ? cur.days + 'd' : 'off', to: want.on ? want.days + 'd' : 'off', pushed: pushes.length });
+    App.toast(g.su.name + (want.on ? ' — needs QC (' + want.days + ' day' + (want.days === 1 ? '' : 's') + ')' : ' — QC no longer needed') +
+      (pushes.length ? ' · ' + pushes.length + ' task' + (pushes.length === 1 ? '' : 's') + ' after it pushed back' : ''));
+  };
+
   App.moveTasks = function (moves, opts) {
-    if (!App.canEditSchedule(App.state.role)) {
+    // a department manager's move (or push) may only touch their own department
+    const deptOf = (m) => { const g = m && findTask(m.epId, m.suKey); return g ? g.su.dept : null; };
+    if (!App.canEditSchedule(App.state.role) && !(moves || []).every(m => App.canEditScheduleFor(App.state.role, deptOf(m)))) {
       App.toast('Only Producers, Managers and Post Operations can change the schedule', true); return;
     }
     moves = (moves || []).filter(m => m && m.epId && m.suKey);
@@ -1240,9 +1298,9 @@ window.App = window.App || {};
   /* Hand one task to someone else — the Holiday clashes dialog's "Reassign".
      A batch task moves with its group. */
   App.reassignTask = function (epId, key, personId) {
-    if (!App.canAssignOwners(App.state.role)) { App.toast('Your role can’t reassign tasks', true); return false; }
     const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return false;
     const su = App.subitem(ep, key); if (!su) return false;
+    if (!App.canAssignOwnersFor(App.state.role, su.dept)) { App.toast('Your role can’t reassign tasks', true); return false; }
     App.mutate(d => {
       const e = d.episodes.find(x => x.id === epId);
       e.assignees = e.assignees || {};
@@ -1419,6 +1477,7 @@ window.App = window.App || {};
     if (t.ko) { o.ko = true; if (t.koFor) o.koFor = t.koFor; if (t.koDay != null) o.koDay = t.koDay; if (t.koWeeks > 0) o.koWeeks = t.koWeeks; }
     if (App.batchCfg(t)) o.batch = App.batchCfg(t);
     if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); if (App.hasRevGaps(t)) o.revGaps = t.revGaps.slice(0, t.maxRev); }
+    if (t.needsQc) { o.needsQc = true; o.qcDays = App.qcDaysOf(t); }
     return o;
   });
   const pipelineValid = (pipeline) => {
@@ -1451,6 +1510,25 @@ window.App = window.App || {};
   /* Default pipelines — what Add Show (and a new preset) starts from for each
      show type. Only new shows pick up a change: existing shows keep their
      own copy, or the built-in pipeline they already run on. */
+  App.setQcSettings = function (patch) {
+    if (!guardAdmin()) return;
+    App.mutate(d => { d.qcSettings = Object.assign({}, d.qcSettings, patch); }, 'the QC settings');
+    App.track.audit('qc.settings', patch);
+    App.toast('QC settings saved');
+  };
+  // patch: { logo, logoName } or { title }; an empty logo clears it
+  App.setFormBranding = function (patch) {
+    if (!guardAdmin()) return;
+    App.mutate(d => {
+      const b = Object.assign({}, d.formBranding, patch);
+      if (!b.logo) { delete b.logo; delete b.logoName; }
+      if (!b.title) delete b.title;
+      if (Object.keys(b).length) d.formBranding = b; else delete d.formBranding;
+    }, 'the brand configuration');
+    App.track.audit('brand.config', 'logo' in patch ? { logo: patch.logo ? (patch.logoName || 'set') : 'removed' } : patch);
+    App.toast('logo' in patch ? (patch.logo ? 'Logo saved — exports and QC reports will carry it' : 'Logo removed') : 'QC report title saved');
+  };
+
   App.saveDefaultPipeline = function (type, pipeline) {
     if (!guardAdmin()) return false;
     if (!TYPE_LABEL[type] || !pipelineValid(pipeline)) return false;
@@ -1681,6 +1759,7 @@ window.App = window.App || {};
       if (t.ko) { o.ko = true; if (t.koFor) o.koFor = t.koFor; if (t.koDay != null) o.koDay = t.koDay; if (t.koWeeks > 0) o.koWeeks = t.koWeeks; }
       if (App.batchCfg(t)) o.batch = App.batchCfg(t);
       if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = (t.revDays || []).slice(); if (App.hasRevGaps(t)) o.revGaps = t.revGaps.slice(0, t.maxRev); }
+      if (t.needsQc) { o.needsQc = true; o.qcDays = App.qcDaysOf(t); }
       return o;
     });
     const LOCKED = ['in_progress', 'review', 'approved'];
@@ -1688,7 +1767,7 @@ window.App = window.App || {};
     // what the pipeline edit touched, then everything that waits on it
     const old = {};
     App.showPipeline(show).forEach(t => { old[t.key] = t; });
-    const sig = (t) => JSON.stringify([t.days, t.deps.slice().sort(), t.lag || 0, App.batchCfg(t), t.maxRev || 0, (t.revDays || []).slice(), App.hasRevGaps(t) ? t.revGaps.slice(0, t.maxRev) : [], t.ko ? [t.koDay, t.koWeeks || 0] : null]);
+    const sig = (t) => JSON.stringify([t.days, t.deps.slice().sort(), t.lag || 0, App.batchCfg(t), t.maxRev || 0, (t.revDays || []).slice(), App.hasRevGaps(t) ? t.revGaps.slice(0, t.maxRev) : [], t.ko ? [t.koDay, t.koWeeks || 0] : null, App.qcDaysOf(t)]);
     // touched against a given starting pipeline — the show's, or the one an
     // episode was frozen on by an earlier locked edit
     const touchedFrom = (oldByKey) => {
@@ -1710,7 +1789,12 @@ window.App = window.App || {};
     const calChanged = JSON.stringify(App.normCal(show.calendar || { workWeekends: true })) !== JSON.stringify(App.normCal(newCalData || { workWeekends: true }));
     // a task's real finish including its review/revision reserve, which is
     // what the scheduler measures dependents from
-    const doneOf = (t, due, who) => t.maxRev > 0 ? App.revisionSteps(t, due, cal, who, 0).end : due;
+    // qd: the QC days to hold after it (the episode's own say, or the task's)
+    const doneOf = (t, due, who, qd) => {
+      const end = t.maxRev > 0 ? App.revisionSteps(t, due, cal, who, 0).end : due;
+      if (qd === undefined) qd = App.qcDaysOf(t);           // then QC, when it's needed
+      return qd ? App.qcSpan(qd, end, cal).due : end;
+    };
 
     // each episode's dates as it shows them now — older episodes derive
     // template tasks' dates rather than storing them, so read, don't assume
@@ -1809,6 +1893,15 @@ window.App = window.App || {};
           livesSet++;
         }
         e.dates = e.dates || {}; e.statuses = e.statuses || {};
+        // QC this episode holds back for: its own Edit Task say wins over the
+        // pipeline's, and a check QC has already passed holds nothing
+        const qcDays = {};
+        clean.forEach(t => {
+          const own = e.qcTasks && e.qcTasks[t.key];
+          let qd = own ? (own.on ? Math.max(1, Math.round(own.days || App.qcSettings().defaultDays)) : 0) : App.qcDaysOf(t);
+          if (App.qcState(e, t.key) === 'passed') qd = 0;
+          qcDays[t.key] = qd;
+        });
         // pinned: whatever this change leaves alone, and anything under way
         const fixed = {};
         clean.forEach(t => {
@@ -1816,10 +1909,10 @@ window.App = window.App || {};
           if (!cur) return;
           const moves = pe.replan || touchedHere.has(t.key);
           if (!moves || LOCKED.includes(e.statuses[t.key])) {
-            fixed[t.key] = { start: cur.start, due: cur.due, done: doneOf(t, cur.due, whoOf(t)) };
+            fixed[t.key] = { start: cur.start, due: cur.due, done: doneOf(t, cur.due, whoOf(t), qcDays[t.key]) };
           }
         });
-        const sch = App.schedulePipeline(clean, pe.start || App.epStart(e), 1, { fixed, cal, assignees: e.assignees || {}, notBefore: pe.replan ? {} : notBefore });
+        const sch = App.schedulePipeline(clean, pe.start || App.epStart(e), 1, { fixed, cal, assignees: e.assignees || {}, notBefore: pe.replan ? {} : notBefore, qcDays });
         if (!sch) return;
         clean.forEach(t => {
           if (fixed[t.key]) { if (pe.replan || touchedHere.has(t.key)) kept++; return; }
@@ -2162,11 +2255,12 @@ window.App = window.App || {};
       if (on) p.manager = true; else delete p.manager;
     });
     App.track.audit('person.manager', { person: was.name, allowed: !!on });
-    App.toast(was.name + (on ? ' is now a Manager as well as ' + App.role(was.role).label
+    const dept = App.isDeptRole(was.role) ? App.roleDept(was.role) : null;
+    App.toast(was.name + (on ? (dept ? ' now manages ' + App.dept(dept).label : ' is now a Manager as well as ' + App.role(was.role).label)
                              : ' is no longer a Manager'));
     // the change lands on the signed-in user's own powers immediately
     if (App.state.user && App.state.user.personId === id) {
-      App.state.subRoles = on ? ['manager'] : [];
+      App.state.subRoles = App.subRolesOf(App.person(id));
       App.render();
     }
   };
@@ -2241,7 +2335,7 @@ window.App = window.App || {};
     /* Sub-roles ride alongside the base role rather than replacing it, so a
        departmental manager keeps their department (and its task ownership)
        while gaining a Manager's reach. See App.rolePerm. */
-    App.state.subRoles = App.isManager(person) ? ['manager'] : [];
+    App.state.subRoles = App.subRolesOf(person);
     App.state.baseRole = App.state.role;
     App.state.view = 'dashboard';
     const startDepts = App.roleDefaultDepts(App.state.role);

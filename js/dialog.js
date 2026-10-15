@@ -523,7 +523,7 @@ window.App = window.App || {};
     // a locked row never opens, so its hint would stay buried in editWrap —
     // surface it as the row's tooltip instead (explains *why* it's locked)
     return el('.et-row' + (opts.locked ? '.locked' : ''),
-      opts.locked && opts.hint ? { title: opts.hint } : null, [
+      opts.locked && opts.hint && !opts.quiet ? { title: opts.hint } : null, [
       el('.et-label', null, labelText),
       el('.et-control', null, [display, editWrap])
     ]);
@@ -537,12 +537,15 @@ window.App = window.App || {};
       const role = App.state.role;
       // structural rights — reshaping the plan, as opposed to reporting on it
       const canName = App.canEditTaskName(role);
-      const canSched = App.canEditSchedule(role);
+      const canSched = App.canEditScheduleFor(role, su.dept);   // a department manager: their own department's
       const canRemove = App.canRemoveTask(role);
       // `canTouch` is the department gate (status, owner, files). Schedulers get
       // in regardless — Post Operations reschedules other departments' work.
       const canTouch = App.canEditTask(role, su);
-      if (!canTouch && !canSched) {
+      /* opts.preview (the QC tab): someone who can't edit the task may still
+         look at it — every field locked, nothing to save. */
+      const viewOnly = !canTouch && !canSched;
+      if (viewOnly && !(opts && opts.preview)) {
         const d = App.roleDept(role);
         App.toast('Your role can only edit ' + (d ? App.dept(d).label : 'permitted') + ' tasks', true);
         return;
@@ -563,7 +566,7 @@ window.App = window.App || {};
       }
 
       // owner — only staff from the task's department are eligible
-      const canAssign = App.canAssignOwners(role);
+      const canAssign = App.canAssignOwnersFor(role, su.dept);
       const deptPeople = App.state.data.people.filter(p => App.roleDept(p.role) === su.dept);
       const ownerSel = el('select.fld');
       const none = document.createElement('option');
@@ -628,10 +631,24 @@ window.App = window.App || {};
         el('span.ctx-dept', null, App.dept(su.dept).label)
       ]);
 
+      /* Requires QC — whether QC checks this deliverable once it's approved,
+         and how many days they get. Producers decide (the same right as
+         shaping the show); saving it pushes whatever waits on the task back
+         by QC's days, asked about first (App.setTaskQc). */
+      const canQc = App.canManageShows(role);
+      const qcNow = App.qcFor(ep, key);
+      const qcPick = { on: qcNow.on, days: qcNow.days || App.qcSettings().defaultDays };
+      const qcDays = el('input.fld.fld-num', { type: 'number', min: '1', max: '60', value: String(qcPick.days), disabled: !qcPick.on,
+        onchange: (e) => { qcPick.days = Math.max(1, Math.min(60, parseInt(e.target.value, 10) || 1)); e.target.value = qcPick.days; } });
+      const qcSwitch = el('span.switch' + (qcPick.on ? '.on' : ''), { role: 'switch', tabindex: '0',
+        onclick: () => { qcPick.on = !qcPick.on; qcSwitch.classList.toggle('on', qcPick.on); qcDays.disabled = !qcPick.on; } }, el('span.knob'));
+      const qcControl = el('.et-qc-edit', null, [qcSwitch, el('span', null, 'Requires QC'), qcDays, el('span.et-qc-unit', null, 'days')]);
+      const qcDisplay = () => qcPick.on ? 'Requires QC · ' + qcPick.days + ' day' + (qcPick.days === 1 ? '' : 's') : 'Not needed';
+
       const detailsPanel = el('.et-panel', null, [
         el('.et-list', null, [
           editRow('Task name', nameInput, () => nameInput.value, {
-            locked: !canName, hint: canName ? null : 'Only Producers and Managers can rename a task'
+            quiet: viewOnly, locked: !canName, hint: canName ? null : 'Only Producers and Managers can rename a task'
           }),
           editRow('Status', statusSel, statusDisplay, {
             /* the Board's status popover, one click away, and applied at once
@@ -642,24 +659,32 @@ window.App = window.App || {};
               const now = App.subitem(App.state.data.episodes.find(e => e.id === epId), key);
               statusSel.value = now ? now.status : sk; refresh();
             }),
-            locked: lockedApproved || !canTouch,
+            quiet: viewOnly, locked: lockedApproved || !canTouch,
             hint: !canTouch ? 'Only the ' + App.dept(su.dept).label + ' team can update this task’s status'
               : lockedApproved ? 'Only Producer, Director or Manager can change an approved task'
               : (canApprove ? null : 'Your role cannot set tasks to Approved')
           }),
-          editRow('Owner', ownerSel, ownerDisplay, { locked: !canAssign, hint: ownerHint }),
+          editRow('Owner', ownerSel, ownerDisplay, { quiet: viewOnly, locked: !canAssign, hint: ownerHint }),
           editRow('Schedule', schedControl, schedDisplay, {
-            locked: !canSched, hint: canSched ? null : 'Only Producers, Managers and Post Operations can change the schedule'
+            quiet: viewOnly, locked: !canSched, hint: canSched ? null : 'Only Producers, Managers and Post Operations can change the schedule'
+          }),
+          editRow('QC', qcControl, qcDisplay, {
+            quiet: viewOnly, locked: !canQc, hint: canQc ? 'Once approved it joins the QC queue; anything waiting on it waits for QC too' : 'Only Producers can choose what needs QC'
           })
         ]),
         koLine(ep, su),
+        // where its QC check stands: waiting, passed, or the report sent back
+        (App.qcQueue ? App.qcQueue.taskSection(ep, su) : null),
         // LucidLink version control — only for tasks flagged version-controlled
         // in the pipeline (enabled in Pipeline Presets, not here)
-        (App.vc && App.vc.isVc(ep, key) ? App.vc.inlineSection(epId, key) : null),
+        // a view-only preview leaves out the working sections — making a
+        // project or uploading isn't the viewer's to do (QC opens the files
+        // from the QC tab's Delivered Assets)
+        (!viewOnly && App.vc && App.vc.isVc(ep, key) ? App.vc.inlineSection(epId, key) : null),
         /* The task workspace (Project / Assets / Deliver) works against the real
            production folders, so it needs a master directory. Without one, fall
            back to Smart Upload's metadata catalogue rather than showing nothing. */
-        (App.workspace && App.masterPathSet && App.masterPathSet()
+        (viewOnly ? null : App.workspace && App.masterPathSet && App.masterPathSet()
           ? App.workspace.inlineSection(epId, key)
           : (App.uploads ? App.uploads.inlineSection(epId, key) : null))
       ]);
@@ -683,7 +708,9 @@ window.App = window.App || {};
 
       const sections = [ctxBar, detailsPanel, chatPanel];
 
-      const footer = [
+      const footer = viewOnly ? [
+        el('button.btn-primary', { onclick: () => App.modal.close() }, 'Close')
+      ] : [
         el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
         (canRemove ? el('button.btn-danger', {
           onclick: () => App.confirm('Remove “' + su.name + '” from ' + ep.code + '?',
@@ -703,6 +730,8 @@ window.App = window.App || {};
             });
             App.track.flowDone('Task edit', true);
             App.modal.close();
+            // after the edit: it may ask about pushing what waits on the task
+            if (canQc && (qcPick.on !== qcNow.on || (qcPick.on && qcPick.days !== qcNow.days))) App.setTaskQc(epId, key, qcPick);
           }
         }, [App.icon('save'), ' Save Changes'])
       ];
@@ -1437,15 +1466,15 @@ window.App = window.App || {};
           el('span.pc-push-was', null, App.fmtRange(su.start, su.due)),
           el('span.pc-push-arrow', null, '→'),
           el('span.pc-push-now', null, App.fmtRange(m.start, m.due)),
-          el('span.pc-push-d', null, i === 0 ? 'the move' : (d > 0 ? '+' + d + 'd' : d + 'd'))
+          el('span.pc-push-d', null, i === 0 ? (handlers.leadLabel || 'the move') : (d > 0 ? '+' + d + 'd' : d + 'd'))
         ]);
       }).filter(Boolean);
-      const lastDue = moves.reduce((m, x) => x.due > m ? x.due : m, '');
+      const lastDue = moves.reduce((m, x) => x.due > m ? x.due : m, handlers.endsBy || '');
       const ms = App.epMilestones(ep);
       const warn = ms.filter(m => lastDue >= m.date).map(m => m.name + ' (' + App.fmtDate(m.date) + ')');
       const sections = [
         el('.ctx-box.slim', null, [el('span.ctx-chip', null, ep.code), el('span.ctx-title', null, ep.title)]),
-        el('.fld-hint', { style: { margin: '10px 0 8px' } },
+        el('.fld-hint', { style: { margin: '10px 0 8px' } }, (handlers.intro ? handlers.intro + ' ' : '') +
           (moves.length - 1) + ' task' + (moves.length === 2 ? '' : 's') + ' that wait on it ' + (moves.length === 2 ? 'is' : 'are') +
           ' pushed back just far enough to keep the order. Each keeps its length; work already under way stays put.'),
         el('.pc-push-list', null, rows),
@@ -2023,6 +2052,7 @@ window.App = window.App || {};
           el('span.pipe-ko-tag', null, 'KO'), el('span', null, App.koLabel(ko))
         ]) : null),
         (t.maxRev ? el('span.pipe-rev', { title: tip(versionTip(t)) }, 'V1–V' + (t.maxRev + 1)) : null),
+        (t.needsQc ? el('span.pipe-qc-tag', { title: tip('Requires QC — ' + App.qcDaysOf(t) + ' day' + (App.qcDaysOf(t) === 1 ? '' : 's') + ' of QC after the last version') }, 'QC ' + App.qcDaysOf(t) + 'd') : null),
         el('span.pipe-dur', { title: tip(versionTip(t)) }, taskTotal(t) + 'd'),
         dragGrip(i, t, '.hov')
       ]);
@@ -2118,6 +2148,25 @@ window.App = window.App || {};
       versBox.appendChild(totalLbl);
       paintTotal();
 
+      /* Requires QC: once approved, the deliverable goes to the QC queue, and
+         QC's days are held after the last version — dependents wait for them. */
+      const qcBox = el('.pipe-qc', null, [
+        el('span.switch' + (t.needsQc ? '.on' : ''), {
+          role: 'switch', title: tip(t.needsQc ? 'Requires QC — click to turn off' : 'QC must check this deliverable once it’s approved'),
+          onclick: (e) => {
+            e.stopPropagation(); snapshot();
+            if (t.needsQc) { delete t.needsQc; delete t.qcDays; } else { t.needsQc = true; t.qcDays = App.qcSettings().defaultDays; }
+            renderPipe(); onChange();
+          }
+        }, el('span.knob')),
+        el('span.pipe-qc-lbl', null, 'Requires QC'),
+        t.needsQc ? selectOnFocus(el('input.fld.fld-num.pipe-qc-days', {
+          type: 'number', value: String(App.qcDaysOf(t)), min: '1', max: '60', title: tip('Days QC needs to check it'),
+          onchange: (e) => { t.qcDays = Math.max(1, Math.min(60, parseInt(e.target.value, 10) || 1)); e.target.value = t.qcDays; onChange(); }
+        })) : null,
+        t.needsQc ? el('span.pipe-qc-unit', null, 'QC days') : null
+      ]);
+
       return el('.pipe-row.editing', null, [
         leadCell(i),
         dragGrip(i, t),
@@ -2133,6 +2182,7 @@ window.App = window.App || {};
           el('span.pipe-rev-block-lbl', null, 'Days per version'),
           versBox
         ]) : null,
+        el('.pipe-rev-block', { style: { gridColumn: '1 / -1' } }, [qcBox]),
         el('.pipe-actions', null, [
           vcToggle,
           el('button.btn-done', {
@@ -3219,7 +3269,8 @@ window.App = window.App || {};
         key: t.key, name: (t.name || '').trim(), dept: t.dept,
         days: t.days, minDays: t.minDays, deps: t.deps.slice().sort(),
         lag: t.lag || 0, vc: !!t.vc, batch: App.batchCfg(t), maxRev: t.maxRev || 0, revDays: (t.revDays || []).slice(), revGaps: App.hasRevGaps(t) ? t.revGaps.slice(0, t.maxRev) : [],
-        ko: !!t.ko, koFor: t.koFor || null, koDay: t.koDay != null ? t.koDay : null, koWeeks: t.koWeeks || 0
+        ko: !!t.ko, koFor: t.koFor || null, koDay: t.koDay != null ? t.koDay : null, koWeeks: t.koWeeks || 0,
+        qc: App.qcDaysOf(t)
       })));
       const baselinePipe = () => {
         const preset = presetSel.value && (App.state.data.pipelinePresets || []).find(p => p.id === presetSel.value);
@@ -3734,6 +3785,7 @@ window.App = window.App || {};
               if (t.ko) { o.ko = true; if (t.koFor) o.koFor = t.koFor; if (t.koDay != null) o.koDay = t.koDay; if (t.koWeeks > 0) o.koWeeks = t.koWeeks; }
               if (App.batchCfg(t)) o.batch = App.batchCfg(t);
               if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); if (App.hasRevGaps(t)) o.revGaps = t.revGaps.slice(0, t.maxRev); }
+              if (t.needsQc) { o.needsQc = true; o.qcDays = App.qcDaysOf(t); }
               return o;
             });
             const teamOut = team.read();

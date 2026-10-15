@@ -62,6 +62,7 @@ window.App = window.App || {};
       el('.pv-legend', null, [
         el('span.pv-lg', null, [el('span.pv-lg-pill'), 'First pass']),
         el('span.pv-lg', null, [el('span.pv-lg-pill.rev'), 'Revision (planned)']),
+        el('span.pv-lg', null, [el('span.pv-lg-pill.qc'), 'QC']),
                 el('span.pv-lg', null, [el('span.pv-lg-line'), 'Delivery / Live'])
       ])
     ]);
@@ -127,7 +128,11 @@ window.App = window.App || {};
         const off = (iso) => App.diffDays(iso, startIso);
         const steps = App.revisionSteps(t, d.due, cal, { dept: t.dept, person: assignees[t.key] || null }, 0);
         steps.revs.forEach(rv => segs.push({ s: off(rv.start), e: off(rv.due) + 1, label: rv.label, rev: true }));
-        const at = off(steps.end) + 1;
+        // Requires QC: QC's days after the last version (not draggable)
+        const qd = App.qcDaysOf(t);
+        const qs = qd ? App.qcSpan(qd, steps.end, cal) : null;
+        if (qs) segs.push({ s: off(qs.start), e: off(qs.due) + 1, label: 'QC', rev: true, qc: true });
+        const at = off(qs ? qs.due : steps.end) + 1;
         return { t, s, e, end: Math.max(at, e), segs, start: d.start, due: d.due,
           ready: sch.ready && sch.ready[t.key] ? App.diffDays(sch.ready[t.key], startIso) : s };
       });
@@ -343,12 +348,12 @@ window.App = window.App || {};
             const a = wd(s0, sg.s) / total * 100, z = wd(s0, sg.e) / total * 100;
             // in visible columns, so a weekend the show doesn't work isn't a gap
             const gapL = i > 0 && wd(it.segs[i - 1].e, sg.s) > 0, gapR = i < lastSi && wd(sg.e, it.segs[i + 1].s) > 0;
-            const part = el('span.pv-part' + (sg.rev ? '.rev' : '') + (i && !gapL ? '.div' : '') + (gapL ? '.gap-l' : '') + (gapR ? '.gap-r' : '') + (drag && drag.t.key === it.t.key && drag.si === i ? '.dragging' : ''),
+            const part = el('span.pv-part' + (sg.rev ? '.rev' : '') + (sg.qc ? '.qc' : '') + (i && !gapL ? '.div' : '') + (gapL ? '.gap-l' : '') + (gapR ? '.gap-r' : '') + (drag && drag.t.key === it.t.key && drag.si === i ? '.dragging' : ''),
               { style: { left: a + '%', width: (z - a) + '%' } },
               // V1 carries the task's name too, while there's room for it
               wd(sg.s, sg.e) * px > 11 ? el('span.pv-part-txt' + (wd(sg.s, sg.e) * px < 28 ? '.short' : ''), { style: sg.rev ? null : { color: ink } },
                 i === 0 && wd(sg.s, sg.e) * px > 60 ? name + ' · ' + sg.label : sg.label) : null);
-            if (update) {
+            if (update && !sg.qc) {
               if (sg.rev) {
                 part.title = name + ' ' + sg.label + ' — drag to move it, drag its right edge to resize';
                 part.addEventListener('pointerdown', (e) => beginMove(e, it.t, i));
@@ -377,7 +382,7 @@ window.App = window.App || {};
             ? name + ' — ' + dep.label + '\n' + span(it.s, it.e) + ' · ' + days + ' day' + (days === 1 ? '' : 's') +
               (it.t.deps.length ? '\nWaits for ' + it.t.deps.map(k => byKey[k] ? byKey[k].t.name : k).join(', ') : '\nStarts on day 1')
             : name + ' ' + sg.label + ' — ' + days + ' day' + (days === 1 ? '' : 's') + ' — planned for, in case it’s sent back';
-          const pill = el('button.pv-pill' + (sg.rev ? '.rev' : '') + (batch ? '.batch' : '') + (it.t.ko ? '.ko' : ''), {
+          const pill = el('button.pv-pill' + (sg.rev ? '.rev' : '') + (sg.qc ? '.qc' : '') + (batch ? '.batch' : '') + (it.t.ko ? '.ko' : ''), {
             type: 'button', title: tip, 'data-key': it.t.key,
             style: {
               left: (X(sg.s) + 1) + 'px', top: top + 'px', width: w + 'px', height: BAR_H + 'px',
@@ -399,7 +404,7 @@ window.App = window.App || {};
           pill.style.setProperty('--pv-c', dep.color);     // Object.assign can't set a custom property
           // the right edge stretches or shrinks this pass — its days, or this
           // revision's days. Narrow bars are all handle.
-          if (update && !it.t.ko) {
+          if (update && !it.t.ko && !sg.qc) {
             pill.classList.add('editable');
             // the one being stretched keeps its handle lit through the repaints
             if (drag && drag.t.key === it.t.key && drag.si === si) pill.classList.add('dragging');

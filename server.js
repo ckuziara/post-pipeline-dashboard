@@ -18,6 +18,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const folders = require('./folders');
+const qcReport = require('./qcreport');
 const { makePgChat, parseTaskId } = require('./chat-store');
 const { makeKeyVault } = require('./keyvault');
 const { makeSlackBridge } = require('./slack-bridge');
@@ -673,11 +674,15 @@ async function hasBoardAccess(email) {
   return isAdminEmail(email) || !!(await directoryEntry(email));
 }
 /* Who may accept or deny: bootstrap admins, Producers and Managers (base
-   role or the Manager sub-role) — the people the Admin page is for. */
+   role, or the Manager sub-role on an oversight role) — the people the Admin
+   page is for. */
 async function canReviewAccess(email) {
   if (isAdminEmail(email)) return true;
   const p = await directoryEntry(email);
-  return !!(p && (p.role === 'producer' || p.role === 'manager' || p.manager));
+  // Manager on a department role manages that department only (js/state.js
+  // App.subRolesOf), so it doesn't come with reviewing who gets in
+  const DEPT_ROLES = ['creative', 'music', 'animation', 'audio', 'video', 'qc'];
+  return !!(p && (p.role === 'producer' || p.role === 'manager' || (p.manager && !DEPT_ROLES.includes(p.role))));
 }
 
 /* Contextual task chat. Postgres only — there is no file backend, so chat is
@@ -1003,6 +1008,20 @@ function isLocalRequest(req) {
   const a = (req.socket && req.socket.remoteAddress) || '';
   return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
 }
+/* QC's folder for one task's deliverable: inside the episode's QC task
+   folder (or a QC folder at the episode's foot when the pipeline has none),
+   QC_<Deliverable>/. Where Create QC Project puts the project and report. */
+function qcFolderFor(ctx) {
+  const { masterPath, show, ep, pipeline, paths } = ctx;
+  const qcTask = pipeline.find(t => t.key === 'qc') || pipeline.find(t => t.dept === 'qc');
+  const qcPaths = qcTask ? folders.taskPaths(ep, pipeline, qcTask.key) : null;
+  const qcRoot = qcPaths ? qcPaths.work : '0002_Episodes/' + folders.episodeFolder(ep) + '/zz_QC';
+  return folders.resolveIn(masterPath, show, qcRoot + '/QC_' + paths.deliverable);
+}
+// <EPCODE>_<Deliverable>_V<n>_QC-REPORT.xlsx
+const qcReportName = (ep, paths, version) =>
+  folders.safeFile(folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_V' + version + '_QC-REPORT.xlsx');
+
 function openNatively(target) {
   const { spawn } = require('child_process');
   const cmd = process.platform === 'darwin' ? 'open'
@@ -1981,6 +2000,100 @@ const server = http.createServer(async (req, res) => {
         const willOpen = body.open !== false && isLocalRequest(req);
         if (willOpen) openNatively(created ? path.join(workAbs, created) : workAbs);
         return sendJson(res, 200, { ok: true, created, dir: workAbs, opened: willOpen });
+      }
+
+      /* Create QC Project — QC's own working project for checking one task's
+         deliverable, made, named and saved without asking anything:
+           <QC department folder>/QC_<Deliverable>/<EPCODE>_<Deliverable>_QC_V<n>.<ext>
+         from the first template in the studio library that QC's preferred
+         software opens (body.exts — one whose name mentions QC wins), with
+         the QC report beside it, then opens that folder so QC sees both. One
+         project per QC version: asking again for the same version just opens
+         the folder rather than making another. No matching template still
+         makes the folder and the report. Never overwrites. */
+      if (route === 'POST /api/task/qc-project') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { masterPath, show, ep, pipeline, paths } = ctx;
+        const dirAbs = qcFolderFor(ctx);
+        fs.mkdirSync(dirAbs, { recursive: true });
+
+        const version = Math.max(1, Math.min(99, parseInt(body.version, 10) || 1));
+        const exts = (Array.isArray(body.exts) ? body.exts : []).map(e => String(e).toLowerCase().replace(/[^a-z0-9]/g, '')).filter(Boolean);
+        const stem = folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_QC_V' + version;
+        const extOf = (n) => (n.includes('.') ? n.split('.').pop().toLowerCase() : '');
+
+        // this version's project already made: open it, don't make another
+        const existing = fs.readdirSync(dirAbs).find(n => n.startsWith(stem + '.') && (!exts.length || exts.includes(extOf(n))));
+        let file = existing || null, created = false, template = null;
+        if (!file && exts.length) {
+          const tpls = folders.templatesFor(masterPath, show).filter(t => exts.includes(extOf(t.name)));
+          const tpl = tpls.find(t => /qc/i.test(t.name)) || tpls[0];
+          if (tpl) {
+            const src = folders.templatePath(masterPath, show, tpl.name, tpl.source);
+            const dest = folders.uniquePath(dirAbs, folders.safeFile(stem + '.' + extOf(tpl.name)));
+            fs.cpSync(src, dest, { recursive: fs.statSync(src).isDirectory() });
+            file = path.basename(dest); created = true; template = tpl.name;
+          }
+        }
+        /* The QC report for this version, beside the project: the studio's
+           form (templates/qc-report.xlsx) with what the board knows filled
+           in — show, content code, date, operator, the task and the files it
+           delivered (Mezzanine, or Publish once it's been published). Made
+           once per version, like the project. */
+        const reportName = qcReportName(ep, paths, version);
+        const reportAbs = path.join(dirAbs, reportName);
+        let reportCreated = false;
+        if (!fs.existsSync(reportAbs)) {
+          const r = body.report || {};
+          const str = (v, n) => String(v == null ? '' : v).slice(0, n || 120);
+          const list = (a, n) => (Array.isArray(a) ? a : []).map(x => str(x)).filter(Boolean).slice(0, n);
+          const delivered = (rel) => folders.listDir(folders.resolveIn(masterPath, show, rel)).filter(i => !i.dir || /\.[a-z0-9]+$/i.test(i.name)).map(i => i.name);
+          let files = delivered(paths.mezzanine);
+          if (!files.length) files = delivered(paths.publish);
+          const task = pipeline.find(t => t.key === body.taskKey);
+          // the studio's branding (Admin → Workflow → Brand Configuration): the board's own, or — for a
+          // companion, which has no board — the copy the client sent
+          const fb = (ctx.data ? ctx.data.formBranding : r.branding) || {};
+          fs.writeFileSync(reportAbs, qcReport.build({
+            show: show.name, contentCode: ep.code, episode: ep.title || '',
+            task: str(r.task) || (task && task.name) || body.taskKey, dept: str(r.dept, 40),
+            operator: str(r.operator, 60), version, qcDue: str(r.qcDue, 40), date: new Date(),
+            files, ips: list(r.ips, 39), operators: list(r.operators, 14),
+            branding: { logo: typeof fb.logo === 'string' ? fb.logo : null, title: str(fb.title) }
+          }));
+          reportCreated = true;
+        }
+
+        // opens the folder, not the files: QC sees the project and the report
+        // side by side and starts whichever they need
+        const willOpen = body.open !== false && isLocalRequest(req);
+        if (willOpen) openNatively(dirAbs);
+        return sendJson(res, 200, { ok: true, dir: dirAbs, file, created, existed: !!existing, template, opened: willOpen, path: dirAbs,
+          report: reportName, reportCreated });
+      }
+
+      /* Open QC Report — the report for a check QC has settled, from the QC
+         tab's Completed list: the asked-for version's, or failing that the
+         newest earlier one (a version checked without Create QC Project has
+         none of its own). Opens in whatever the OS uses for .xlsx. */
+      if (route === 'POST /api/task/qc-report') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { ep, paths } = ctx;
+        const dirAbs = qcFolderFor(ctx);
+        const want = Math.max(1, Math.min(99, parseInt(body.version, 10) || 1));
+        let found = null;
+        for (let v = want; v >= 1 && !found; v--) {
+          const f = path.join(dirAbs, qcReportName(ep, paths, v));
+          if (fs.existsSync(f)) found = { file: f, version: v };
+        }
+        if (!found) return sendJson(res, 404, { error: 'No QC report for this task yet — Create QC Project makes one' });
+        if (!isLocalRequest(req)) return sendJson(res, 200, { ok: true, opened: false, path: found.file, version: found.version });
+        openNatively(found.file);
+        return sendJson(res, 200, { ok: true, opened: true, path: found.file, version: found.version });
       }
 
       /* Open — hands the file or folder to the OS when the server is on this

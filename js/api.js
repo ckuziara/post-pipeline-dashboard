@@ -373,6 +373,10 @@ window.App = window.App || {};
     taskWorkspace(b) { return this._post('/api/task/workspace', b); },
     taskProject(b)   { return this._post('/api/task/project', b); },
     taskOpen(b)      { return this._post('/api/task/open', b); },
+    // QC's project for checking a task's deliverable, made and opened (see /api/task/qc-project)
+    qcProject(b)     { return this._post('/api/task/qc-project', b); },
+    // opens a settled check's QC report (see /api/task/qc-report)
+    qcReport(b)      { return this._post('/api/task/qc-report', b); },
     // open the folder a path on the volume sits in — confined server-side to
     // the master directory (see /api/task/reveal)
     taskReveal(b)    { return this._post('/api/task/reveal', b); },

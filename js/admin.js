@@ -264,21 +264,29 @@ window.App = window.App || {};
       el('.cell', null, editing
         ? el('.adm-rolecell', null, [
             (() => { const s = roleSelect(p.role, v => App.setPersonRole(p.id, v)); s.addEventListener('click', e => e.stopPropagation()); return s; })(),
-            (() => {
-              const on = App.isManager(p);
+            /* Manager on a department role = manager of that department:
+               their department's owners and dates (and, for QC, the QC
+               queue) — no Admin. Not offered on oversight roles, which
+               already hold everything it would add (an existing flag there
+               can still be removed). */
+            (App.isDeptRole(p.role) || App.isManager(p)) ? (() => {
+              const on = App.isManager(p), d = App.isDeptRole(p.role) ? App.roleDept(p.role) : null;
+              const label = d ? App.dept(d).label + ' Manager' : 'Manager';
               return el('button.adm-subrole' + (on ? '.on' : ''), {
                 type: 'button',
-                title: on ? 'Also a Manager — click to remove the sub-role'
-                          : 'Also make ' + p.name + ' a Manager, on top of ' + App.role(p.role).label,
+                title: on ? label + ' — click to remove'
+                  : d ? 'Make ' + p.name + ' manager of ' + App.dept(d).label + ': assign owners and change dates for ' + App.dept(d).label + ' tasks' + (d === 'qc' ? ', and reassign QC checks' : '') + '. No Admin access.'
+                  : 'Also make ' + p.name + ' a Manager',
                 onclick: (e) => { e.stopPropagation(); App.setPersonManager(p.id, !on); }
-              }, (on ? '✓ ' : '+ ') + 'Manager');
-            })()
+              }, (on ? '✓ ' : '+ ') + label);
+            })() : null
           ])
         : el('.adm-rolecell', null, [
             (dept
               ? el('span.dept-chip', null, [el('span.dot', { style: { background: App.dept(dept).color } }), App.dept(dept).label])
               : el('span.adm-role-chip', null, App.role(p.role).label + ' · oversight')),
-            (App.isManager(p) ? el('span.adm-mgr-chip', { title: 'Manager, on top of ' + App.role(p.role).label }, 'Manager') : null)
+            (App.isManager(p) ? el('span.adm-mgr-chip', { title: App.isDeptRole(p.role) ? 'Manages ' + App.dept(dept).label + ' — its owners and dates' + (dept === 'qc' ? ', and the QC queue' : '') : 'Manager, on top of ' + App.role(p.role).label },
+              App.isDeptRole(p.role) ? App.dept(dept).label + ' Manager' : 'Manager') : null)
           ])),
       (App.memberConnectors().length ? el('.cell', null, integrationsCell(p, editing)) : null),
       el('.cell', null, el('.adm-load', { title: load.total ? load.active + ' active of ' + load.total + ' assigned task' + (load.total === 1 ? '' : 's') : 'No assigned tasks' }, [
@@ -312,6 +320,12 @@ window.App = window.App || {};
         get: k => App.rolePermOf(k, 'reviewQueue', App.role(k).reviewQueue), set: (k, v) => App.setRolePerm(k, 'reviewQueue', v, 'Reviews Tab') },
       { title: 'Review Order', desc: 'Can set the order reviews should be worked in, by dragging them up or down on the Reviews tab. Everyone sees the same order.',
         get: k => App.rolePermOf(k, 'reviewPriority', App.role(k).reviewPriority), set: (k, v) => App.setRolePerm(k, 'reviewPriority', v, 'Review Order') },
+      { title: 'QC Tab', desc: 'Can open the QC tab — every approved deliverable waiting on a QC check, planned against QC’s daily capacity.',
+        get: k => App.rolePermOf(k, 'qcQueue', App.role(k).qcQueue), set: (k, v) => App.setRolePerm(k, 'qcQueue', v, 'QC Tab') },
+      { title: 'Reassign QC', desc: 'Can hand a QC check to a different QC person on the QC tab (a QC Manager’s job).',
+        get: k => App.rolePermOf(k, 'qcAssign', App.role(k).qcAssign), set: (k, v) => App.setRolePerm(k, 'qcAssign', v, 'Reassign QC') },
+      { title: 'Pass or Fail QC', desc: 'Can pass a QC check, or send a QC report back to the department, and plan checks onto days.',
+        get: k => App.rolePermOf(k, 'qcDecide', App.role(k).qcDecide), set: (k, v) => App.setRolePerm(k, 'qcDecide', v, 'Pass or Fail QC') },
       { title: 'Change the Schedule', desc: 'Can move task dates — in the Edit Task dialog and by dragging bars on the Timeline — for every department, not just their own.',
         get: k => App.rolePermOf(k, 'editSchedule', App.role(k).editSchedule), set: (k, v) => App.setRolePerm(k, 'editSchedule', v, 'Change the Schedule') },
       { title: 'Kick Offs', desc: 'Can choose which departments and tasks need a Kick Off on each episode, set a show’s usual list, and mark Kick Offs done.',
@@ -427,7 +441,7 @@ window.App = window.App || {};
     const layout = el('.adm-split');
     const side = el('.adm-side');
     side.appendChild(el('.adm-side-label', null, 'Workflow'));
-    [['statuses', 'palette', 'Task statuses'], ['departments', 'tag', 'Departments'], ['software', 'mixer', 'Software'], ['pipelines', 'pipeline', 'Pipelines'], ['shows', 'book', 'Shows'], ['storage', 'folderOpen', 'Storage'], ['connectors', 'plug', 'Connectors'], ['guide', 'sparkle', 'Guide Configuration']].forEach(([k, ic, lbl]) => {
+    [['statuses', 'palette', 'Task statuses'], ['departments', 'tag', 'Departments'], ['software', 'mixer', 'Software'], ['pipelines', 'pipeline', 'Pipelines'], ['shows', 'book', 'Shows'], ['storage', 'folderOpen', 'Storage'], ['connectors', 'plug', 'Connectors'], ['guide', 'sparkle', 'Guide Configuration'], ['branding', 'image', 'Brand Configuration']].forEach(([k, ic, lbl]) => {
       side.appendChild(el('button.adm-role' + (tab === k ? '.active' : ''), {
         onclick: () => { App.state.admin.wfTab = k; App.render(); }
       }, [App.icon(ic, { cls: 'adm-role-ic' }), lbl]));
@@ -445,6 +459,7 @@ window.App = window.App || {};
       : tab === 'storage' ? storageCard()
       : tab === 'connectors' ? connectorsCard()
       : tab === 'guide' ? guideCard()
+      : tab === 'branding' ? brandingPanel()
       : statusesCard());
 
     layout.appendChild(side);
@@ -941,6 +956,89 @@ window.App = window.App || {};
     return dpCard;
   }
 
+  /* QC capacity: how many checks QC can get through a day (the QC tab plans
+     against it) and the days a task gets when it's first marked Requires QC. */
+  function qcCard() {
+    const q = App.qcSettings();
+    const num = (key, val, max) => el('input.fld.fld-num.qcq-adm-num', { type: 'number', min: '1', max: String(max), value: String(val),
+      onchange: (e) => App.setQcSettings({ [key]: Math.max(1, Math.min(max, parseInt(e.target.value, 10) || 1)) }) });
+    const c = el('.adm-permcard');
+    c.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'QC'),
+      el('.adm-permcard-desc', null, 'How much QC can check a day, and the days a task gets when it’s first marked Requires QC.')
+    ]));
+    c.appendChild(el('.qcq-adm-row', null, [
+      el('label.qcq-adm-fld', null, [el('span', null, 'Checks per day'), num('perDay', q.perDay, 50)]),
+      el('label.qcq-adm-fld', null, [el('span', null, 'Default QC days'), num('defaultDays', q.defaultDays, 60)])
+    ]));
+    return c;
+  }
+
+  /* Brand Configuration: the studio's logo on everything PipeDream exports —
+     the header of every printed / PDF export (js/export.js) and of the QC
+     report spreadsheet Create QC Project makes — and the QC report's title.
+     The logo is scaled down here (it only ever fills a header) and kept in
+     board state as a data URL. Files made before a change keep what they had. */
+  function brandingPanel() {
+    const b = App.formBranding();
+    const MAX_W = 600, MAX_H = 160;
+    const load = (f) => {
+      if (!/^image\/(png|jpeg)$/.test(f.type)) return App.toast('The logo needs to be a PNG or JPEG', true);
+      const url = URL.createObjectURL(f);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const scale = Math.min(1, MAX_W / img.naturalWidth, MAX_H / img.naturalHeight);
+        const cv = document.createElement('canvas');
+        cv.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        cv.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        const png = f.type === 'image/png';
+        App.setFormBranding({ logo: cv.toDataURL(png ? 'image/png' : 'image/jpeg', 0.92), logoName: f.name.slice(0, 120) });
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); App.toast('Couldn’t read that image', true); };
+      img.src = url;
+    };
+    const pick = () => {
+      const inp = el('input', { type: 'file', accept: 'image/png,image/jpeg', style: { display: 'none' } });
+      inp.addEventListener('change', () => { const f = inp.files && inp.files[0]; inp.remove(); if (f) load(f); });
+      document.body.appendChild(inp);
+      inp.click();
+    };
+    const wrap = el('div', { style: { display: 'grid', gap: '16px' } });
+    const logoCard = el('.adm-permcard');
+    logoCard.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'Logo'),
+      el('.adm-permcard-desc', null, 'Shown in the header of everything PipeDream exports: printed and PDF exports, and the QC report made with each QC project. Without a logo they carry none. (CSV exports are plain data, so they never have one.)')
+    ]));
+    logoCard.appendChild(el('.wf-list', null, [
+      el('.qcb-row', null, [
+        el('span', null, 'Logo'),
+        el('.qcb-logo', null, [
+          b.logo ? el('img.qcb-logo-img', { src: b.logo, alt: b.logoName || 'Logo' }) : el('span.qcb-logo-none', null, 'No logo'),
+          el('button.btn-ghost.qcb-btn', { onclick: pick, title: 'A PNG or JPEG' }, b.logo ? 'Replace…' : 'Upload logo…'),
+          b.logo ? el('button.btn-ghost.qcb-btn.danger', { onclick: () => App.setFormBranding({ logo: '' }) }, 'Remove') : null
+        ])
+      ])
+    ]));
+    wrap.appendChild(logoCard);
+    const qcCardEl = el('.adm-permcard');
+    qcCardEl.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'QC report'),
+      el('.adm-permcard-desc', null, 'The title at the top of the QC report spreadsheet.')
+    ]));
+    qcCardEl.appendChild(el('.wf-list', null, [
+      el('.qcb-row', null, [
+        el('span', null, 'Report title'),
+        el('input.fld.qcb-title', { type: 'text', maxlength: '120', value: b.title, placeholder: '{show} QC Report',
+          title: '{show} becomes the show’s name. Leave empty for “<Show> QC Report”.',
+          onchange: (e) => { const v = e.target.value.trim(); if (v !== b.title) App.setFormBranding({ title: v }); } })
+      ])
+    ]));
+    wrap.appendChild(qcCardEl);
+    return wrap;
+  }
+
   /* ---- Pipelines: named presets a Producer/Manager can build once and pick
      from in Add Show. The draft being edited lives on App.state.admin so a
      background re-render (teammate sync) never wipes in-progress work. ---- */
@@ -994,6 +1092,8 @@ window.App = window.App || {};
     };
     nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') create(); });
     cardEl.appendChild(el('.wf-add', null, [nameInput, typeSel, el('button.btn-primary', { onclick: create }, '＋ New pipeline')]));
+    // QC's own settings, after the pipelines themselves
+    wrap.appendChild(qcCard());
     return wrap;
   }
 
