@@ -68,7 +68,7 @@ window.App = window.App || {};
     not_started: { label: 'Not Started',      color: '#c4c4c4', ink: '#33353d', weight: 0.0,  group: 'pending' },
     ready:       { label: 'Ready to Start',   color: '#5fb0f0', ink: '#06203f', weight: 0.1,  group: 'pending' },
     in_progress: { label: 'In Progress',      color: '#fdab3d', ink: '#3a2400', weight: 0.5,  group: 'working' },
-    review:      { label: 'Ready for Review', color: '#a25ddc', ink: '#ffffff', weight: 0.85, group: 'review'  },
+    review:      { label: 'Review', color: '#a25ddc', ink: '#ffffff', weight: 0.85, group: 'review'  },
     approved:    { label: 'Approved',         color: '#00c875', ink: '#04321d', weight: 1.0,  group: 'done'    }
   };
   // order used by the status picker / cycling

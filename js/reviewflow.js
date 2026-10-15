@@ -47,11 +47,31 @@ window.App = window.App || {};
      instead of just storing it. */
   function cleanUrl(raw) {
     let url = String(raw || '').trim();
-    if (!url) return null;
+    if (!url || /\s/.test(url)) return null;          // a sentence isn't a link, even if URL() lets it through
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-    try { new URL(url); } catch (e) { return null; }
+    let host;
+    try { host = new URL(url).hostname; } catch (e) { return null; }
+    // a real address has a domain (vimeo.com, f.io) — or is this machine
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host) && host !== 'localhost') return null;
     return url;
   }
+
+
+  /* A link reads as where it goes — "Frame.io Link" — not as a URL. The
+     address itself is one hover (tooltip) or right-click (copy) away. */
+  const HOSTS = [
+    [/(^|\.)(f\.io|frame\.io)$/, 'Frame.io'], [/(^|\.)drive\.google\.com$|(^|\.)docs\.google\.com$/, 'Google Drive'],
+    [/(^|\.)dropbox\.com$/, 'Dropbox'], [/(^|\.)box\.com$/, 'Box'], [/(^|\.)vimeo\.com$/, 'Vimeo'],
+    [/(^|\.)(youtube\.com|youtu\.be)$/, 'YouTube'], [/(^|\.)(wetransfer\.com|we\.tl)$/, 'WeTransfer'],
+    [/(^|\.)ibmaspera\.com$|(^|\.)asperafiles\.com$/, 'Aspera'], [/(^|\.)sharepoint\.com$/, 'SharePoint']
+  ];
+  App.reviewLinkLabel = function (url) {
+    let host = '';
+    try { host = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return 'Link'; }
+    const known = HOSTS.find(([re]) => re.test(host));
+    const name = known ? known[1] : host.charAt(0).toUpperCase() + host.slice(1);
+    return name + ' Link';
+  };
 
   /* ------------------------------------------------------------- uploads */
   App.reviewUploads = {
@@ -167,6 +187,26 @@ window.App = window.App || {};
       }, iso ? 'Plan review' : 'Unpin review');
     },
 
+    /* Swapping the link on a review that's already been sent — a re-upload, a
+       new share link, a typo. Only the link changes: where the review has got
+       to (sent, under review) and when it was sent stay as they were, so the
+       Director's queue doesn't treat it as new. */
+    setLink(epId, taskKey, raw) {
+      const url = cleanUrl(raw);
+      if (!url) { App.toast('That doesn’t look like a link', true); return false; }
+      if (!this.sent(epId, taskKey)) return this.send(epId, taskKey, url);
+      if (url === this.frameUrl(epId, taskKey)) return true;
+      const u = me();
+      App.mutate(d => {
+        const k = KEY(epId, taskKey);
+        d.reviews[k] = Object.assign({}, d.reviews[k], {
+          frameUrl: url, linkChangedAt: new Date().toISOString(), linkChangedBy: u.byName
+        });
+      }, 'Change review link');
+      App.toast('Review link updated');
+      return true;
+    },
+
     /* Claiming a review, from the Director's tab. No un-claim: the two ways
        out are in the same row — approve it, or spend a revision. */
     start(epId, taskKey) {
@@ -189,7 +229,7 @@ window.App = window.App || {};
        instead. */
     denyReady(ep, su) {
       if (App.reviewUploads.has(ep.id, su.key)) return null;
-      return 'Upload the cut to Review Uploads before setting ' + su.name + ' to Ready for Review';
+      return 'Upload the cut to Review Uploads before setting ' + su.name + ' to ' + App.status('review').label;
     }
   };
 
@@ -275,14 +315,28 @@ window.App = window.App || {};
         ]));
       }
 
+      /* The review link itself, once Post Operations has sent it — the same
+         link the Director opens, named by where it lives ("Frame.io Link"). */
+      if (sentUrl) {
+        const rev = App.review.get(ep.id, su.key) || {};
+        wrap.appendChild(el('.ws-delivered', null, [
+          el('.ws-sub', null, 'Review link'),
+          el('.ws-list', null, el('.ws-item.static', null, [
+            App.icon('link', { cls: 'ws-ic' }),
+            el('a.ws-name', { href: sentUrl, target: '_blank', rel: 'noopener noreferrer' }, App.reviewLinkLabel(sentUrl)),
+            el('span.ws-meta', null, rev.sentBy ? 'sent by ' + rev.sentBy : '')
+          ]))
+        ]));
+      }
+
       // What happens next, said once, in whichever of the three states this is
       wrap.appendChild(el('.ws-note.tight', null, sentUrl
         ? 'Sent for review — the Director has this on their Reviews tab.'
         : items.length
           ? (su.status === 'review'
             ? 'Post Operations will set up the review and send it to the Director.'
-            : 'Set this task to Ready for Review to put it on Post Operations’ desk.')
-          : 'Nothing here yet. A task can’t be set to Ready for Review until the cut is up.'));
+            : 'Set this task to ' + App.status('review').label + ' to put it on Post Operations’ desk.')
+          : 'Nothing here yet. A task can’t be set to ' + App.status('review').label + ' until the cut is up.'));
       return wrap;
     },
 
