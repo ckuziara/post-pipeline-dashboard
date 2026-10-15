@@ -963,6 +963,61 @@ window.App = window.App || {};
     return c;
   }
 
+  /* QC report branding: the studio's logo in the header of the QC report
+     spreadsheet Create QC Project makes, and the report's title. The report
+     template itself has no logo; reports made before a change keep theirs.
+     The logo is scaled down here (it only needs to fill a header row) and
+     kept in board state as a data URL. */
+  function qcBrandingCard() {
+    const b = App.formBranding();
+    const MAX_W = 600, MAX_H = 160;
+    const load = (f) => {
+      if (!/^image\/(png|jpeg)$/.test(f.type)) return App.toast('The logo needs to be a PNG or JPEG', true);
+      const url = URL.createObjectURL(f);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const scale = Math.min(1, MAX_W / img.naturalWidth, MAX_H / img.naturalHeight);
+        const cv = document.createElement('canvas');
+        cv.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        cv.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        const png = f.type === 'image/png';
+        App.setFormBranding({ logo: cv.toDataURL(png ? 'image/png' : 'image/jpeg', 0.92), logoName: f.name.slice(0, 120) });
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); App.toast('Couldn’t read that image', true); };
+      img.src = url;
+    };
+    const pick = () => {
+      const inp = el('input', { type: 'file', accept: 'image/png,image/jpeg', style: { display: 'none' } });
+      inp.addEventListener('change', () => { const f = inp.files && inp.files[0]; inp.remove(); if (f) load(f); });
+      document.body.appendChild(inp);
+      inp.click();
+    };
+    const c = el('.adm-permcard');
+    c.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'QC report branding'),
+      el('.adm-permcard-desc', null, 'The logo and title on the QC report spreadsheet made with each QC project. Without a logo the report has none.')
+    ]));
+    c.appendChild(el('.wf-list', null, [
+      el('.qcb-row', null, [
+        el('span', null, 'Logo'),
+        el('.qcb-logo', null, [
+          b.logo ? el('img.qcb-logo-img', { src: b.logo, alt: b.logoName || 'Logo' }) : el('span.qcb-logo-none', null, 'No logo'),
+          el('button.btn-ghost.qcb-btn', { onclick: pick, title: 'A PNG or JPEG — shown at the top-left of the report' }, b.logo ? 'Replace…' : 'Upload logo…'),
+          b.logo ? el('button.btn-ghost.qcb-btn.danger', { onclick: () => App.setFormBranding({ logo: '' }) }, 'Remove') : null
+        ])
+      ]),
+      el('.qcb-row', null, [
+        el('span', null, 'Report title'),
+        el('input.fld.qcb-title', { type: 'text', maxlength: '120', value: b.title, placeholder: '{show} QC Report',
+          title: '{show} becomes the show’s name. Leave empty for “<Show> QC Report”.',
+          onchange: (e) => { const v = e.target.value.trim(); if (v !== b.title) App.setFormBranding({ title: v }); } })
+      ])
+    ]));
+    return c;
+  }
+
   /* ---- Pipelines: named presets a Producer/Manager can build once and pick
      from in Add Show. The draft being edited lives on App.state.admin so a
      background re-render (teammate sync) never wipes in-progress work. ---- */
@@ -973,6 +1028,7 @@ window.App = window.App || {};
     const wrap = el('div', { style: { display: 'grid', gap: '16px' } });
     wrap.appendChild(defaultPipelinesCard());
     wrap.appendChild(qcCard());
+    wrap.appendChild(qcBrandingCard());
     const cardEl = el('.adm-permcard');
     wrap.appendChild(cardEl);
     cardEl.appendChild(el('.adm-permcard-head', null, [

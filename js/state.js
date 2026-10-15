@@ -453,6 +453,14 @@ window.App = window.App || {};
     const q = (App.state.data && App.state.data.qcSettings) || {};
     return { perDay: Math.max(1, Math.round(q.perDay || 4)), defaultDays: Math.max(1, Math.round(q.defaultDays || 1)) };
   };
+  /* Form branding for the QC report spreadsheet Create QC Project makes:
+     the studio's logo (a PNG or JPEG data URL, scaled down when it's set)
+     in the header, and the report's title ({show} = the show's name). Both
+     optional — without them the report has no logo and "<Show> QC Report". */
+  App.formBranding = function () {
+    const b = (App.state.data && App.state.data.formBranding) || {};
+    return { logo: typeof b.logo === 'string' ? b.logo : '', logoName: b.logoName || '', title: typeof b.title === 'string' ? b.title : '' };
+  };
   // a pipeline task's own QC days (0 = not flagged)
   App.qcDaysOf = (t) => t && t.needsQc ? Math.max(1, Math.round(t.qcDays || App.qcSettings().defaultDays)) : 0;
   App.qcFor = function (ep, key) {

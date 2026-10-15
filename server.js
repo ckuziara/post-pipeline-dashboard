@@ -2039,11 +2039,15 @@ const server = http.createServer(async (req, res) => {
           let files = delivered(paths.mezzanine);
           if (!files.length) files = delivered(paths.publish);
           const task = pipeline.find(t => t.key === body.taskKey);
+          // form branding (Admin → Workflow → QC): the board's own, or — for a
+          // companion, which has no board — the copy the client sent
+          const fb = (ctx.data ? ctx.data.formBranding : r.branding) || {};
           fs.writeFileSync(reportAbs, qcReport.build({
             show: show.name, contentCode: ep.code, episode: ep.title || '',
             task: str(r.task) || (task && task.name) || body.taskKey, dept: str(r.dept, 40),
             operator: str(r.operator, 60), version, qcDue: str(r.qcDue, 40), date: new Date(),
-            files, ips: list(r.ips, 39), operators: list(r.operators, 14)
+            files, ips: list(r.ips, 39), operators: list(r.operators, 14),
+            branding: { logo: typeof fb.logo === 'string' ? fb.logo : null, title: str(fb.title) }
           }));
           reportCreated = true;
         }
