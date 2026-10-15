@@ -48,6 +48,20 @@ window.App = window.App || {};
   /* Plan the waiting checks onto days. The plan is worked out over every
      check on the board, then cut down to `episodes`, so a filter never
      changes what QC is doing on a given day. */
+  /* Pending: tasks marked Requires QC that haven't been approved yet, so
+     there's nothing to check — listed so QC can see what's coming. A task
+     QC sent back (failed) is under Completed instead. */
+  function pendingFor(episodes) {
+    const out = [];
+    episodes.forEach(ep => App.subitems(ep).forEach(su => {
+      if (su.status === 'approved' || !App.qcFor(ep, su.key).on) return;
+      if (App.qcState(ep, su.key) === 'failed') return;
+      const w = App.qcWindow(ep, su);
+      out.push({ ep, su, check: App.qcCheck(ep, su.key) || {}, state: 'pending', qcDue: w ? w.due : null, date: w ? w.start : null });
+    }));
+    return out;
+  }
+
   function plan(episodes) {
     const want = new Set(episodes.map(ep => ep.id));
     const perDay = App.qcSettings().perDay;
@@ -410,7 +424,7 @@ window.App = window.App || {};
       const open = plan(episodes).items.sort(sortChecks());
       const done = collect(episodes, true).filter(x => x.state !== 'waiting')
         .sort((a, b) => String(b.check.decidedAt) < String(a.check.decidedAt) ? -1 : 1);
-      if (!open.length && !done.length) {
+      if (!open.length && !done.length && !pendingFor(episodes).length) {
         wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' Nothing is waiting for QC right now.']));
         return wrap;
       }
@@ -423,7 +437,9 @@ window.App = window.App || {};
           el('.subtable', null, grid)
         ]);
       };
+      const pending = pendingFor(episodes).sort(sortChecks());
       if (open.length) wrap.appendChild(card('Waiting for QC', open, true));
+      if (pending.length) wrap.appendChild(card('Pending QC — not approved yet', pending, false));
       if (done.length) wrap.appendChild(card('Completed', done, false));
       return wrap;
     },
@@ -454,7 +470,7 @@ window.App = window.App || {};
       const show = App.show(ep.showId);
       const can = App.canDecideQc(App.state.role);
       const todayIso = App.isoDate(App.today());
-      const waiting = x.state === 'waiting';
+      const waiting = x.state === 'waiting', pending = x.state === 'pending';
       const late = waiting && x.qcDue && x.qcDue < todayIso;
       const flag = !waiting ? null
         : x.atRisk && !late ? el('span.qcq-flag.risk', { title: 'QC is already full every day before this is due' }, 'At risk')
@@ -463,7 +479,11 @@ window.App = window.App || {};
 
       const acts = [el('button.rvq-icon', { title: 'Open the discussion on this task', 'aria-label': 'Open discussion',
         onclick: () => App.openTaskChat(ep.id, su.key) }, App.icon('chat'))];
-      if (waiting) {
+      if (pending) {
+        // nothing to check until it's approved: say where the task is instead
+        const st = App.status(su.status);
+        acts.push(el('span.qcq-pending', { title: 'Can’t be QC’d until it’s approved' }, [el('span.et-dot', { style: { background: st.color } }), st.label]));
+      } else if (waiting) {
         acts.push(el('button.rvq-mini.ok', { disabled: !can, title: can ? 'Pass QC' : 'Only QC and Producers can pass a QC check',
           onclick: () => App.qcQueue.pass(ep.id, su.key) }, '✓ Pass'));
         acts.push(el('button.rvq-mini.warn', { disabled: !can, title: can ? 'Send QC Report — back to ' + dep.label : 'Only QC and Producers can send a QC report',
@@ -476,7 +496,7 @@ window.App = window.App || {};
         acts.push(el('button.rvq-mini.warn', { type: 'button', 'aria-disabled': 'true', title: 'QC report sent — back with ' + dep.label + ' to fix' }, '↺ Sent'));
       }
 
-      const row = el('.subrow.qcq-row' + (waiting ? '' : '.done'), null, [
+      const row = el('.subrow.qcq-row' + (waiting ? '' : pending ? '.pending' : '.done'), null, [
         el('.cell.c-num', null, rank != null ? String(rank) : ''),
         el('.cell.c-name.qcq-task', null,
           [el('span', null, su.name), el('span.rvq-ver', null, 'QC V' + App.qcVersion(ep, su.key)), flag]),
@@ -488,7 +508,7 @@ window.App = window.App || {};
         el('.cell.qcq-files', null, [
           el('button.rvq-icon', { title: 'Delivered Assets — the folder ' + dep.label + ' delivered ' + su.name + ' to', 'aria-label': 'Delivered Assets',
             onclick: () => App.qcQueue.openAssets(ep, su) }, App.icon('package')),
-          waiting ? el('button.rvq-icon.qcq-go', {
+          pending ? null : waiting ? el('button.rvq-icon.qcq-go', {
               title: madeV ? 'Open QC Folder — ' + madeV.file + ' and its QC report' : 'Create QC Project — QC’s project and QC report for this version, named and saved automatically',
               'aria-label': madeV ? 'Open QC Folder' : 'Create QC Project',
               onclick: () => App.qcQueue.createProject(ep, su)

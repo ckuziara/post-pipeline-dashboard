@@ -522,6 +522,27 @@ window.App = window.App || {};
      a dragged bar pushes its dependents — shown first, then written together
      with the flag as one undo step. Turning it off frees the days but pulls
      nothing earlier (the ripple only ever pushes). */
+  /* When QC's days won't fit before an episode's live date: where the live
+     date would have to move to, keeping the same gap the episode had between
+     its last task and going live. Null when it already fits. */
+  const qcLiveShift = function (ep, moves) {
+    const ms = App.epMilestones(ep).find(m => m.key === App.LIVE_KEY);
+    if (!ms || !moves.some(m => m.due >= ms.date)) return null;
+    const subs = App.subitems(ep);
+    const oldEnd = subs.reduce((a, s) => s.due > a ? s.due : a, '');
+    const moved = {}; moves.forEach(m => { moved[m.suKey] = m; });
+    const newEnd = subs.reduce((a, s) => { const d = moved[s.key] ? moved[s.key].due : s.due; return d > a ? d : a; }, '');
+    const gap = Math.max(1, App.diffDays(ms.date, oldEnd));
+    const live = App.shiftIso(newEnd, gap);
+    return { from: ms.date, live, delta: App.diffDays(live, ms.date) };
+  };
+  // move an episode's live date (and a delivery date that was set by hand) by `shift`
+  const applyLiveShift = (e, shift) => {
+    e.milestones = Object.assign({}, e.milestones);
+    e.milestones[App.LIVE_KEY] = shift.live;
+    if (e.milestones.delivery_date) e.milestones.delivery_date = App.shiftIso(e.milestones.delivery_date, shift.delta);
+  };
+
   App.setTaskQc = function (epId, key, next, opts) {
     if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change what needs QC', true); return; }
     const g = findTask(epId, key); if (!g) return;
@@ -530,11 +551,17 @@ window.App = window.App || {};
     if (want.on === cur.on && want.days === cur.days) return;
     const pushes = App.pushPlan(g.ep, key, g.su.start, g.su.due, { qc: { [key]: want } }).slice(1)
       .filter(m => !(App.timelineDraft && App.timelineDraft.dates(epId, m.suKey)));
-    // nothing may reach the live date — said straight away, before anything is asked
-    const ms = App.epMilestones(g.ep).find(m => m.key === App.LIVE_KEY);
-    if (ms && pushes.some(m => m.due >= ms.date)) {
-      App.toast('Not enough room: ' + want.days + ' QC day' + (want.days === 1 ? '' : 's') + ' after ' + g.su.name + ' would push work past the live date (' + App.fmtDate(ms.date) + ') — nothing saved', true);
-      App.render(); return;
+    /* Not enough room before the live date: ask whether to push the
+       schedule — the work and the live date (and a set delivery date) move
+       out together. Asked first; nothing is written unless they say yes. */
+    const shift = qcLiveShift(g.ep, pushes);
+    if (shift && !(opts && opts.pushLive)) {
+      App.confirm('QC needs ' + want.days + ' day' + (want.days === 1 ? '' : 's') + ' after ' + g.su.name + ', which pushes work past ' + g.ep.code +
+        '’s live date (' + App.fmtDate(shift.from) + '). Push the schedule — ' + pushes.length + ' task' + (pushes.length === 1 ? '' : 's') +
+        ' and the live date move to ' + App.fmtDate(shift.live) + ' (+' + shift.delta + 'd)?',
+        () => App.setTaskQc(epId, key, next, { confirmed: true, pushLive: true }),
+        { title: 'Not enough room for QC', yesLabel: 'Push schedule', onNo: () => App.render() });
+      return;
     }
     if (pushes.length && !(opts && opts.confirmed) && App.pushConfirmDialog) {
       const qcEnd = App.qcSpan(want.days, App.plannedRevisions(g.ep, g.su).end, App.showCalendar(g.ep.showId)).due;
@@ -553,11 +580,69 @@ window.App = window.App || {};
       e.dates = e.dates || {};
       pushes.forEach(m => { e.dates[m.suKey] = { start: m.start, due: m.due }; });
       pushes.forEach(m => App.syncBatch(d, e, m.suKey));
+      if (shift) applyLiveShift(e, shift);
       App.refreshReadiness(e);
     }, want.on ? 'Requires QC' : 'removing QC');
-    App.track.audit('task.qcFlag', { episode: g.ep.code, task: g.su.name, from: cur.on ? cur.days + 'd' : 'off', to: want.on ? want.days + 'd' : 'off', pushed: pushes.length });
+    App.track.audit('task.qcFlag', { episode: g.ep.code, task: g.su.name, from: cur.on ? cur.days + 'd' : 'off', to: want.on ? want.days + 'd' : 'off', pushed: pushes.length, live: shift ? shift.live : undefined });
     App.toast(g.su.name + (want.on ? ' — needs QC (' + want.days + ' day' + (want.days === 1 ? '' : 's') + ')' : ' — QC no longer needed') +
-      (pushes.length ? ' · ' + pushes.length + ' task' + (pushes.length === 1 ? '' : 's') + ' after it pushed back' : ''));
+      (pushes.length ? ' · ' + pushes.length + ' task' + (pushes.length === 1 ? '' : 's') + ' after it pushed back' : '') +
+      (shift ? ' · live date now ' + App.fmtDate(shift.live) : ''));
+  };
+
+  /* Requires QC for a whole selection (Batch Edit Tasks), as ONE undo step.
+     Per episode, every changed task's QC days are held at once and what
+     waits on them is pushed back (the later push wins where two meet). An
+     episode whose push would reach its live date is asked about first, and
+     on yes its live date moves out with the work. `items` is [{ epId, suKey }]; `next` is { on, days }. */
+  App.setTaskQcMany = function (items, next, opts) {
+    if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change what needs QC', true); return; }
+    const want = { on: !!next.on, days: next.on ? Math.max(1, Math.round(next.days || App.qcSettings().defaultDays)) : 0 };
+    const byEp = {};
+    items.forEach(({ epId, suKey }) => {
+      const g = findTask(epId, suKey); if (!g) return;
+      const cur = App.qcFor(g.ep, suKey);
+      if (cur.on === want.on && cur.days === want.days) return;
+      (byEp[epId] = byEp[epId] || { ep: g.ep, keys: [] }).keys.push(suKey);
+    });
+    const plans = [], refused = [];
+    Object.values(byEp).forEach(({ ep, keys }) => {
+      const qc = {}; keys.forEach(k => { qc[k] = want; });
+      const moves = {};
+      keys.forEach(k => {
+        const su = App.subitem(ep, k);
+        App.pushPlan(ep, k, su.start, su.due, { qc }).slice(1).forEach(m => {
+          if (!moves[m.suKey] || m.start > moves[m.suKey].start) moves[m.suKey] = m;
+        });
+      });
+      const list = Object.values(moves);
+      const shift = qcLiveShift(ep, list);
+      if (shift) refused.push({ code: ep.code, shift });
+      plans.push({ epId: ep.id, keys, moves: list, shift });
+    });
+    if (!plans.length) { App.toast('Nothing changed'); return; }
+    // some episodes have no room before their live date: ask to push them out
+    if (refused.length && !(opts && opts.pushLive)) {
+      App.confirm('QC’s days push work past the live date in ' + refused.map(r => r.code).join(', ') + '. Push the schedule — move ' +
+        refused.map(r => r.code + '’s live date to ' + App.fmtDate(r.shift.live) + ' (+' + r.shift.delta + 'd)').join(', ') + '?',
+        () => App.setTaskQcMany(items, next, { pushLive: true }),
+        { title: 'Not enough room for QC', yesLabel: 'Push schedule', onNo: () => App.render() });
+      return;
+    }
+    let pushed = 0, changed = 0;
+    App.mutate(d => plans.forEach(pl => {
+      const e = d.episodes.find(x => x.id === pl.epId); if (!e) return;
+      e.qcTasks = Object.assign({}, e.qcTasks);
+      pl.keys.forEach(k => { e.qcTasks[k] = want; changed++; });
+      e.dates = e.dates || {};
+      pl.moves.forEach(m => { e.dates[m.suKey] = { start: m.start, due: m.due }; pushed++; });
+      pl.moves.forEach(m => App.syncBatch(d, e, m.suKey));
+      if (pl.shift) applyLiveShift(e, pl.shift);
+      App.refreshReadiness(e);
+    }), want.on ? 'Requires QC' : 'removing QC');
+    App.track.audit('task.qcFlag', { tasks: changed, to: want.on ? want.days + 'd' : 'off', pushed, refused: refused.length });
+    App.toast(changed + ' task' + (changed === 1 ? '' : 's') + (want.on ? ' need QC (' + want.days + ' day' + (want.days === 1 ? '' : 's') + ')' : ' no longer need QC') +
+      (pushed ? ' · ' + pushed + ' task' + (pushed === 1 ? '' : 's') + ' after them pushed back' : '') +
+      (refused.length ? ' · live date moved in ' + refused.map(r => r.code).join(', ') : ''));
   };
 
   App.moveTasks = function (moves, opts) {

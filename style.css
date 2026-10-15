@@ -6295,3 +6295,5 @@ button.dsum-due-btn:hover { border-color: var(--border-2); }
 .qcq-task .rvq-ver { flex: none; font-size: 11px; }
 .qcq-task .qcq-flag { flex: none; }
 .qcq-grid .qcq-files { display: flex; flex-wrap: wrap; gap: 6px; }
+.qcq-pending { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-2); white-space: nowrap; }
+.qcq-pending .et-dot { width: 8px; height: 8px; border-radius: 50%; }
