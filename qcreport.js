@@ -3,9 +3,10 @@
 
    templates/qc-report.xlsx is the studio's QC report form with nothing in
    it: every label, guideline, colour rule (PASS / FLAG / FAIL / FIXED) and
-   dropdown kept, no example data, no logo (form branding is a separate
-   setting). This fills in what the board already knows — show, content code,
-   date, QC operator, the task and its QC version, and the files that were
+   dropdown kept, no example data, no logo — the studio's logo and report
+   title are form branding, set in Admin and added here (qcbranding.js).
+   This fills in what the board already knows — show, content code, date,
+   QC operator, the task and its QC version, and the files that were
    delivered — and leaves the QC results and notes for QC.
 
    No spreadsheet library: an .xlsx is a zip of XML, so this reads the
@@ -16,6 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const branding = require('./qcbranding');
 
 const TEMPLATE = path.join(__dirname, 'templates', 'qc-report.xlsx');
 
@@ -135,7 +137,8 @@ function listsSheet(base, ips, operators) {
 
 /* info: {
      show, contentCode, operator, date (Date), task, version (n),
-     files: [names delivered], ips: [show names], operators: [QC people]
+     files: [names delivered], ips: [show names], operators: [QC people],
+     branding: { logo: data URL, title } (optional — data.formBranding)
    } → the finished .xlsx as a Buffer */
 function build(info) {
   const parts = readZip(fs.readFileSync(TEMPLATE));
@@ -143,7 +146,7 @@ function build(info) {
   const v = 'V' + (info.version || 1);
 
   let s = get('xl/worksheets/sheet1.xml').data.toString('utf8');
-  s = setCell(s, 'A1', (info.show ? info.show + ' ' : '') + 'QC Report');
+  s = setCell(s, 'A1', branding.titleFor(info.branding, info.show) || (info.show ? info.show + ' ' : '') + 'QC Report');
   s = setCell(s, 'E3', info.show || '');
   s = setCell(s, 'H3', excelDate(info.date || new Date()));
   s = setCell(s, 'E4', info.contentCode || '');
@@ -179,6 +182,7 @@ function build(info) {
       .replace(/<dc:creator>[\s\S]*?<\/dc:creator>/, '<dc:creator>' + esc(info.operator || 'QC') + '</dc:creator>')
       .replace(/<cp:lastModifiedBy>[\s\S]*?<\/cp:lastModifiedBy>/, '<cp:lastModifiedBy>' + esc(info.operator || 'QC') + '</cp:lastModifiedBy>'), 'utf8');
   }
+  if (info.branding && info.branding.logo) branding.addLogo(parts, info.branding.logo);
   return writeZip(parts);
 }
 

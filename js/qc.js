@@ -203,7 +203,9 @@ window.App = window.App || {};
           operator: qcOperator(ep),
           qcDue: w ? App.fmtDate(w.due) : '',
           ips: App.activeShows().map(x => x.name),
-          operators: App.deptStaff('qc').map(p => p.name)
+          operators: App.deptStaff('qc').map(p => p.name),
+          // the server uses the board's own; a companion has no board, so it uses this
+          branding: App.state.data.formBranding || null
         };
         const r = await App.api.qcProject({ epId: ep.id, taskKey: su.key, pipeline: App.pipelineFor(ep), version, exts: sw ? sw.ext : [], report });
         if (r.file) {

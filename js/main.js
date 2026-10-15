@@ -1512,6 +1512,18 @@ window.App = window.App || {};
     App.track.audit('qc.settings', patch);
     App.toast('QC settings saved');
   };
+  // patch: { logo, logoName } or { title }; an empty logo clears it
+  App.setFormBranding = function (patch) {
+    if (!guardAdmin()) return;
+    App.mutate(d => {
+      const b = Object.assign({}, d.formBranding, patch);
+      if (!b.logo) { delete b.logo; delete b.logoName; }
+      if (!b.title) delete b.title;
+      if (Object.keys(b).length) d.formBranding = b; else delete d.formBranding;
+    }, 'the QC report branding');
+    App.track.audit('qc.formBranding', 'logo' in patch ? { logo: patch.logo ? (patch.logoName || 'set') : 'removed' } : patch);
+    App.toast('logo' in patch ? (patch.logo ? 'Logo saved' : 'Logo removed') : 'Report title saved');
+  };
 
   App.saveDefaultPipeline = function (type, pipeline) {
     if (!guardAdmin()) return false;
