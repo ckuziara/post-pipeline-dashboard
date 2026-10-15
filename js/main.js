@@ -2363,6 +2363,11 @@ window.App = window.App || {};
     toggle() { this._pop ? this.close() : this.open(); },
     open() {
       this.close();
+      // the first-sign-in setup callout points here; once the menu is open its
+      // highlighted Setup Wizard row takes over the ask (see App.guide.offer)
+      document.querySelectorAll('.setup-offer').forEach(n => n.remove());
+      const logo = document.getElementById('brand-logo');
+      if (logo) logo.classList.remove('setup-nudge');
       const el = App.el;
       const prefRow = (title, key, def, onChange) => {
         const on = App.prefs.get(key, def);
@@ -2469,8 +2474,10 @@ window.App = window.App || {};
       ]);
 
       // the setup wizard, again — with the answers already given filled in
-      const redoRow = el('.prefs-row', { onclick: () => { this.close(); App.guide.start({ redo: true }); } }, [
-        el('.prefs-row-title', null, 'Redo Setup Wizard'),
+      // never finished: highlighted, and worded as a first run rather than a redo
+      const setupDone = !!(App.profile.get() || {}).setupDone;
+      const redoRow = el('.prefs-row' + (setupDone ? '' : '.prefs-row-hl'), { onclick: () => { this.close(); App.guide.start({ redo: true }); } }, [
+        el('.prefs-row-title', null, setupDone ? 'Redo Setup Wizard' : 'Run Setup Wizard'),
         el('button.prefs-btn', { onclick: (e) => { e.stopPropagation(); this.close(); App.guide.start({ redo: true }); } }, 'Start')
       ]);
 
