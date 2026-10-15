@@ -66,21 +66,8 @@ window.App = window.App || {};
 
   const isoOf = (ts) => ts ? App.isoDate(new Date(ts)) : null;
 
-  /* A link reads as where it goes — "Frame.io Link" — not as a URL. The
-     address itself is one hover (tooltip) or right-click (copy) away. */
-  const HOSTS = [
-    [/(^|\.)(f\.io|frame\.io)$/, 'Frame.io'], [/(^|\.)drive\.google\.com$|(^|\.)docs\.google\.com$/, 'Google Drive'],
-    [/(^|\.)dropbox\.com$/, 'Dropbox'], [/(^|\.)box\.com$/, 'Box'], [/(^|\.)vimeo\.com$/, 'Vimeo'],
-    [/(^|\.)(youtube\.com|youtu\.be)$/, 'YouTube'], [/(^|\.)(wetransfer\.com|we\.tl)$/, 'WeTransfer'],
-    [/(^|\.)ibmaspera\.com$|(^|\.)asperafiles\.com$/, 'Aspera'], [/(^|\.)sharepoint\.com$/, 'SharePoint']
-  ];
-  function linkLabel(url) {
-    let host = '';
-    try { host = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return 'Link'; }
-    const known = HOSTS.find(([re]) => re.test(host));
-    const name = known ? known[1] : host.charAt(0).toUpperCase() + host.slice(1);
-    return name + ' Link';
-  }
+  // "Frame.io Link" rather than a URL — shared with Edit Task (js/reviewflow.js)
+  const linkLabel = (url) => App.reviewLinkLabel(url);
   // shared with the Reviews tab, so a link reads the same everywhere
   App.linkLabel = linkLabel;
 
