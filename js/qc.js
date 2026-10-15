@@ -19,21 +19,15 @@
    Like the Director's Priority calendar (App.reviews.open), checks are
    planned onto working days, at most App.qcSettings().perDay a day, between
    the day they joined the queue and their QC due date. One that can't fit is
-   marked at risk. QC can pin a check to a day. The record lives on the
+   marked at risk. The record lives on the
    episode: ep.qcChecks[key] (see App.syncQcChecks in js/state.js). */
 window.App = window.App || {};
 (function () {
   const el = (s, p, c) => App.el(s, p, c);
-  const DONE_DAYS = 14;               // passed / failed checks stay listed this long
+  const DONE_DAYS = 14;               // passed / failed checks stay under Completed this long
   const safeHref = (u) => /^https?:\/\//i.test(String(u || '')) ? String(u) : null;
   const me = () => { const u = App.state.user; return { by: (u && u.personId) || null, byName: (u && u.name) || 'Someone' }; };
   const KEY = (epId, key) => epId + '::' + key;
-
-  const STATES = {
-    waiting: { label: 'Waiting for QC', color: '#5fb0f0' },
-    passed:  { label: 'QC passed',      color: '#00c875' },
-    failed:  { label: 'QC report sent', color: '#ff6b6b' }
-  };
 
   // every check that's live, or settled in the last DONE_DAYS
   function collect(episodes, withDone) {
@@ -118,8 +112,8 @@ window.App = window.App || {};
       mutateCheck(epId, key, 'passing QC', (e, c) => {
         Object.assign(c, { state: 'passed', decidedAt: new Date().toISOString(), decidedBy: u.byName, planDate: null });
       });
-      App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'passed' });
-      App.toast(g.su.name + ' passed QC');
+      App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'passed', version: 'V' + App.qcVersion(g.ep, key) });
+      App.toast(g.su.name + ' passed QC V' + App.qcVersion(g.ep, key));
       App.promoteDelivered(epId, key);
     },
 
@@ -130,14 +124,14 @@ window.App = window.App || {};
       if (!notes) { App.toast('Say what QC found', true); return false; }
       const href = String(link || '').trim();
       if (href && !safeHref(href)) { App.toast('The report link needs to start with https://', true); return false; }
-      const u = me(), at = new Date().toISOString();
+      const u = me(), at = new Date().toISOString(), version = App.qcVersion(g.ep, key);
       mutateCheck(epId, key, 'the QC report', (e, c) => {
-        c.reports.push({ at, by: u.by, byName: u.byName, notes, link: href || null });
+        c.reports.push({ at, by: u.by, byName: u.byName, notes, link: href || null, version });
         Object.assign(c, { state: 'failed', decidedAt: at, decidedBy: u.byName, planDate: null });
         e.statuses[key] = 'in_progress';         // back to the department to fix
       });
-      App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'report' });
-      App.toast('QC report sent — ' + g.su.name + ' is back with ' + App.dept(g.su.dept).label);
+      App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'report', version: 'V' + version });
+      App.toast('QC V' + version + ' report sent — ' + g.su.name + ' is back with ' + App.dept(g.su.dept).label);
       return true;
     },
 
@@ -153,7 +147,7 @@ window.App = window.App || {};
         c.resubmittedAt = new Date().toISOString();
       });
       App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'resubmitted' });
-      App.toast(g.su.name + ' resubmitted to QC');
+      App.toast(g.su.name + ' resubmitted to QC — now QC V' + App.qcVersion(App.state.data.episodes.find(e => e.id === epId), key));
     },
 
     pin(epId, key, iso) {
@@ -162,8 +156,59 @@ window.App = window.App || {};
       mutateCheck(epId, key, 'the QC day', (e, c) => { c.planDate = iso || null; });
     },
 
+    /* The task's delivered files. Approved work waiting on QC is still in
+       the episode's Mezzanine (it's only published once QC passes it —
+       App.promoteDelivered); after that it's in Publish. Whichever has it. */
+    async openAssets(ep, su) {
+      if (App.masterPathSet && !App.masterPathSet()) { App.toast('Connect this device to the production folder first (Preferences → Connect to Workspace)', true); return; }
+      const base = { epId: ep.id, taskKey: su.key, pipeline: App.pipelineFor(ep) };
+      const order = App.qcState(ep, su.key) === 'passed' ? ['publish', 'mezzanine'] : ['mezzanine', 'publish'];
+      for (const which of order) {
+        try {
+          const r = await App.api.taskOpen(Object.assign({ which }, base));
+          if (!r.opened) App.toast('Delivered assets: ' + r.path);
+          return;
+        } catch (e) { /* not there — try the other */ }
+      }
+      App.toast('Nothing has been delivered for ' + su.name + ' yet', true);
+    },
+
+    /* Create QC Project: QC's project for checking this version, in QC's
+       folder, named <EP>_<Deliverable>_QC_V<n> and opened in QC's preferred
+       software (the first desktop app in Admin → Department Software → QC;
+       its template comes from the studio library). Asking again for the same
+       version opens the one already made. */
+    async createProject(ep, su) {
+      if (App.masterPathSet && !App.masterPathSet()) { App.toast('Connect this device to the production folder first (Preferences → Connect to Workspace)', true); return; }
+      const apps = App.deptSoftware('qc');
+      const sw = apps.find(a => a.kind !== 'online' && a.ext && a.ext.length) || null;
+      const version = App.qcVersion(ep, su.key);
+      try {
+        const w = App.qcWindow(ep, su);
+        const report = {
+          task: su.name, dept: App.dept(su.dept).label,
+          operator: (App.profile && App.profile.displayName()) || (App.state.user && App.state.user.name) || '',
+          qcDue: w ? App.fmtDate(w.due) : '',
+          ips: App.activeShows().map(x => x.name),
+          operators: App.deptStaff('qc').map(p => p.name)
+        };
+        const r = await App.api.qcProject({ epId: ep.id, taskKey: su.key, pipeline: App.pipelineFor(ep), version, exts: sw ? sw.ext : [], report });
+        if (r.file) {
+          mutateCheck(ep.id, su.key, 'the QC project', (e, c) => {
+            c.projects = Object.assign({}, c.projects, { ['V' + version]: { file: r.file, at: new Date().toISOString(), by: me().byName } });
+          });
+        }
+        App.track.audit('task.qcProject', { episode: ep.code, task: su.name, version: 'V' + version, file: r.file || null, created: r.created });
+        const what = (r.file ? r.file : 'the QC folder') + (r.reportCreated ? ' and its QC report' : '');
+        App.toast(r.existed ? 'Opened ' + what : r.created ? 'Created ' + what + (sw ? ' — opening in ' + sw.label : '')
+          : (sw ? 'No ' + sw.label + ' template in the studio library — made the QC folder' : 'Made the QC folder — QC has no desktop software set in Admin') ,
+          !r.file && !r.existed);
+        if (!r.opened) App.toast('QC project: ' + r.path);
+      } catch (e) { App.toast('Couldn’t create the QC project: ' + e.message, true); }
+    },
+
     reportDialog(ep, su) {
-      const notes = el('textarea.fld', { rows: '6', placeholder: 'What QC found: timecodes, specs, what needs fixing…' });
+      const notes = el('textarea.fld.qcq-report-in', { rows: '6', placeholder: 'What QC found: timecodes, specs, what needs fixing…' });
       const link = el('input.fld', { type: 'url', placeholder: 'https://… (optional — the full QC report)' });
       const send = () => { if (this.fail(ep.id, su.key, notes.value, link.value)) App.modal.close(); };
       App.modal.open(el('.modal-card.confirm-card', { onclick: e => e.stopPropagation() }, [
@@ -171,7 +216,7 @@ window.App = window.App || {};
           el('.modal-head-main', null, [
             App.icon('checkBadge', { cls: 'modal-ic' }),
             el('div', null, [
-              el('.modal-title', null, 'Send QC Report'),
+              el('.modal-title', null, 'Send QC V' + App.qcVersion(ep, su.key) + ' Report'),
               el('.modal-subtitle', null, su.name + ' · ' + ep.code + ' ' + (ep.title || ''))
             ])
           ]),
@@ -195,10 +240,10 @@ window.App = window.App || {};
     // a small pill for the Board and Edit Task: where the QC check stands
     badge(ep, su) {
       const q = App.qcFor(ep, su.key); if (!q.on) return null;
-      const st = App.qcState(ep, su.key);
-      const [txt, cls, tip] = st === 'passed' ? ['QC ✓', '.passed', 'QC passed']
-        : st === 'failed' ? ['QC ✕', '.failed', 'QC sent a report back — fix it and resubmit to QC']
-        : su.status === 'approved' ? ['QC ◷', '.waiting', 'Approved — waiting for QC']
+      const st = App.qcState(ep, su.key), v = 'V' + App.qcVersion(ep, su.key);
+      const [txt, cls, tip] = st === 'passed' ? ['QC ' + v + ' ✓', '.passed', 'QC ' + v + ' passed']
+        : st === 'failed' ? ['QC ' + v + ' ✕', '.failed', 'QC ' + v + ' sent a report back — fix it and resubmit to QC']
+        : su.status === 'approved' ? ['QC ' + v + ' ◷', '.waiting', 'Approved — waiting for QC ' + v]
         : ['QC', '', 'Needs QC once approved (' + q.days + ' day' + (q.days === 1 ? '' : 's') + ')'];
       return el('span.qcq-badge' + cls, { title: tip }, txt);
     },
@@ -211,25 +256,32 @@ window.App = window.App || {};
       if (!q.on && !(c && c.reports && c.reports.length)) return null;
       const st = (c && c.state) || null;
       const w = App.qcWindow(ep, su);
-      const head = st === 'passed' ? 'QC passed' + (c.decidedBy ? ' by ' + c.decidedBy : '') + (c.decidedAt ? ' on ' + App.fmtDate(c.decidedAt.slice(0, 10)) : '')
-        : st === 'waiting' ? 'Approved — waiting for QC' + (w ? ', due ' + App.fmtDate(w.due) : '')
-        : st === 'failed' ? 'QC sent a report back'
+      const v = 'QC V' + App.qcVersion(ep, su.key);
+      const head = st === 'passed' ? v + ' passed' + (c.decidedBy ? ' by ' + c.decidedBy : '') + (c.decidedAt ? ' on ' + App.fmtDate(c.decidedAt.slice(0, 10)) : '')
+        : st === 'waiting' ? 'Approved — waiting for ' + v + (w ? ', due ' + App.fmtDate(w.due) : '')
+        : st === 'failed' ? v + ' — QC sent a report back'
         : q.on ? 'Goes to QC once approved' + (w ? ' — QC held ' + App.fmtRange(w.start, w.due) : '') : 'QC no longer needed';
-      const last = c && c.reports && c.reports.length ? c.reports[c.reports.length - 1] : null;
-      const href = last && safeHref(last.link);
       const kids = [el('.qcq-sec-head', null, [App.icon('checkBadge'), ' ', head])];
-      if (last && (st === 'failed' || st === 'waiting')) {
-        kids.push(el('.qcq-report', null, [
-          el('.qcq-report-meta', null, 'QC report · ' + (last.byName || 'QC') + ' · ' + App.fmtDate(last.at.slice(0, 10)) +
-            (c.reports.length > 1 ? ' · ' + c.reports.length + ' reports so far' : '')),
-          el('.qcq-report-notes', null, last.notes),
+      /* Every QC report, newest first, each under the version it was about.
+         The latest is open while it's the one being fixed or re-checked;
+         earlier versions sit folded underneath as the history. */
+      const reports = ((c && c.reports) || []).map((r, i) => Object.assign({ version: i + 1 }, r)).reverse();
+      reports.forEach((r, i) => {
+        const href = safeHref(r.link);
+        const body = [
+          el('.qcq-report-notes', null, r.notes),
           href ? el('a.qcq-report-link', { href, target: '_blank', rel: 'noopener' }, [App.icon('link'), ' Full report']) : null
-        ]));
-      }
+        ];
+        const meta = 'QC V' + r.version + ' report · ' + (r.byName || 'QC') + ' · ' + App.fmtDate(String(r.at).slice(0, 10));
+        const open = i === 0 && (st === 'failed' || st === 'waiting');
+        kids.push(open
+          ? el('.qcq-report', null, [el('.qcq-report-meta', null, meta)].concat(body))
+          : el('details.qcq-report.past', null, [el('summary.qcq-report-meta', null, meta)].concat(body)));
+      });
       if (st === 'failed' && App.canEditTask(App.state.role, su)) {
         kids.push(el('button.btn-primary.qcq-resubmit', {
           onclick: () => { App.modal.close(); App.qcQueue.resubmit(ep.id, su.key); }
-        }, 'Resubmit to QC'));
+        }, 'Resubmit to QC V' + (App.qcVersion(ep, su.key) + 1)));
       }
       return el('.qcq-sec' + (st ? '.' + st : ''), null, kids);
     },
@@ -246,95 +298,98 @@ window.App = window.App || {};
       });
     },
 
+    /* The same shape as the Reviews tab: one card, split by department in
+       the pipeline's department order, ranked within each (soonest planned
+       day, then soonest QC due); then a Completed card for what QC has
+       settled in the last DONE_DAYS. */
     render(episodes) {
       const wrap = el('.rvq.qcq');
-      const showDone = !!App.prefs.get('qcShowDone', false);
-      wrap.appendChild(el('.qcq-top', null, [
-        el('.section-title', null, [App.icon('checkBadge'), ' QC']),
-        el('label.qcq-toggle', null, [
-          el('span.switch' + (showDone ? '.on' : ''), { onclick: () => { App.prefs.set('qcShowDone', !showDone); App.render(); } }, el('span.knob')),
-          el('span', null, 'Show checked (' + DONE_DAYS + ' days)')
-        ])
-      ]));
+      wrap.appendChild(el('.section-title', null, [App.icon('checkBadge'), ' QC']));
 
-      const { items, load, perDay } = plan(episodes);
-      wrap.appendChild(this.strip(load, perDay));
-
-      const done = showDone ? collect(episodes, true).filter(x => x.state !== 'waiting') : [];
-      if (!items.length && !done.length) {
+      const open = plan(episodes).items;
+      const done = collect(episodes, true).filter(x => x.state !== 'waiting')
+        .sort((a, b) => String(b.check.decidedAt) < String(a.check.decidedAt) ? -1 : 1);
+      if (!open.length && !done.length) {
         wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' Nothing is waiting for QC right now.']));
         return wrap;
       }
-      // grouped by the day each check is planned for
-      const byDay = {};
-      items.forEach(x => { (byDay[x.date] = byDay[x.date] || []).push(x); });
-      const todayIso = App.isoDate(App.today());
-      Object.keys(byDay).sort().forEach(day => {
-        const list = byDay[day];
-        wrap.appendChild(el('.qcq-day', null, [
-          el('span.qcq-day-name', null, day === todayIso ? 'Today' : day === App.shiftIso(todayIso, 1) ? 'Tomorrow' : App.fmtDate(day)),
-          el('span.qcq-day-load' + (list.length > perDay ? '.over' : ''), null, list.length + ' / ' + perDay)
-        ]));
-        list.forEach(x => wrap.appendChild(this.row(x)));
-      });
+      if (open.length) {
+        const order = Object.keys(App.DEPARTMENTS);
+        const groups = new Map();
+        open.slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || ((a.qcDue || '') < (b.qcDue || '') ? -1 : 1))
+          .forEach(x => { if (!groups.has(x.su.dept)) groups.set(x.su.dept, []); groups.get(x.su.dept).push(x); });
+        const depts = [...groups.keys()].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+        const list = el('.rvq-ep.rvq-prio');
+        depts.forEach(k => {
+          const dep = App.dept(k), rows = groups.get(k);
+          list.appendChild(el('.rvq-dept-head', null, [
+            el('span.dot', { style: { background: dep.color } }),
+            el('span.rvq-dept-name', null, dep.label),
+            el('span.rvq-dept-n', null, rows.length)
+          ]));
+          rows.forEach((x, i) => list.appendChild(this.row(x, i + 1)));
+        });
+        wrap.appendChild(list);
+      }
       if (done.length) {
-        wrap.appendChild(el('.qcq-day', null, [el('span.qcq-day-name', null, 'Checked')]));
-        done.sort((a, b) => String(b.check.decidedAt) < String(a.check.decidedAt) ? -1 : 1).forEach(x => wrap.appendChild(this.row(x)));
+        const blk = el('.rvq-ep', null, el('.rvq-ep-head', null, el('span.rvq-ep-title', null, 'Completed')));
+        done.forEach(x => blk.appendChild(this.row(x, null)));
+        wrap.appendChild(blk);
       }
       return wrap;
     },
 
-    // the next two working weeks: how full each day is against QC's capacity
-    strip(load, perDay) {
-      const box = el('.qcq-strip');
-      let day = App.isoDate(App.today());
-      for (let n = 0, g = 0; n < 10 && g < 30; day = App.shiftIso(day, 1), g++) {
-        const dow = App.parseDate(day).getDay(); if (dow === 0 || dow === 6) continue;
-        n++;
-        const k = load[day] || 0;
-        box.appendChild(el('.qcq-strip-day' + (k > perDay ? '.over' : k === perDay ? '.full' : ''), { title: k + ' of ' + perDay + ' QC checks on ' + App.fmtDate(day) }, [
-          el('.qcq-strip-lbl', null, App.KO_DAYS[dow].slice(0, 3) + ' ' + App.parseDate(day).getDate()),
-          el('.qcq-strip-bar', null, el('span', { style: { width: Math.min(100, Math.round(k / perDay * 100)) + '%' } })),
-          el('.qcq-strip-n', null, k + '/' + perDay)
-        ]));
-      }
-      return box;
-    },
-
-    row(x) {
+    // a Reviews-style row: rank · the task · the cut that was approved · QC due · actions
+    row(x, rank) {
       const { ep, su, check } = x;
       const dep = App.dept(su.dept);
       const show = App.show(ep.showId);
+      const person = su.assignee ? App.person(su.assignee) : null;
       const can = App.canDecideQc(App.state.role);
-      const st = STATES[x.state] || STATES.waiting;
       const todayIso = App.isoDate(App.today());
-      const late = x.state === 'waiting' && x.qcDue && x.qcDue < todayIso;
-      const flag = x.state !== 'waiting' ? null : late ? el('span.qcq-flag.late', null, 'Overdue')
-        : x.atRisk ? el('span.qcq-flag.risk', { title: 'QC is already full every day before this is due' }, 'At risk')
-        : x.pinned ? el('span.qcq-flag', { title: 'Pinned to this day' }, 'Pinned') : null;
-      const acts = [el('button.rvq-icon', { title: 'Open the discussion on this task', onclick: () => App.openTaskChat(ep.id, su.key) }, App.icon('chat'))];
-      if (x.state === 'waiting' && can) {
-        const pin = el('input.fld.qcq-pin', { type: 'date', value: x.date || '', min: todayIso, title: 'Plan this check for a different day',
-          onchange: (e) => App.qcQueue.pin(ep.id, su.key, e.target.value) });
-        acts.push(pin);
-        acts.push(el('button.rvq-mini.ok', { onclick: () => App.qcQueue.pass(ep.id, su.key) }, '✓ Pass'));
-        acts.push(el('button.rvq-mini', { onclick: () => App.qcQueue.reportDialog(ep, su) }, 'Send QC Report'));
-      } else if (x.state !== 'waiting') {
-        acts.push(el('span.qcq-state', { style: { background: st.color } }, st.label));
+      const waiting = x.state === 'waiting';
+      const late = waiting && x.qcDue && x.qcDue < todayIso;
+      const flag = !waiting ? null
+        : x.atRisk && !late ? el('span.qcq-flag.risk', { title: 'QC is already full every day before this is due' }, 'At risk')
+        : x.date && x.date > todayIso ? el('span.qcq-flag', { title: 'Planned for ' + App.fmtDate(x.date) + (x.pinned ? ' (pinned)' : '') }, App.fmtDate(x.date)) : null;
+      const madeV = check.projects && check.projects['V' + App.qcVersion(ep, su.key)];
+      const reports = (check.reports || []).length;
+
+      const acts = [el('button.rvq-icon', { title: 'Open the discussion on this task', 'aria-label': 'Open discussion',
+        onclick: () => App.openTaskChat(ep.id, su.key) }, App.icon('chat'))];
+      if (waiting) {
+        acts.push(el('button.rvq-mini.ok', { disabled: !can, title: can ? 'Passed QC' : 'Only QC and Producers can pass a QC check',
+          onclick: () => App.qcQueue.pass(ep.id, su.key) }, '✓ Pass'));
+        acts.push(el('button.rvq-mini.warn', { disabled: !can, title: can ? 'Send a QC report back to ' + dep.label : 'Only QC and Producers can send a QC report',
+          onclick: () => App.qcQueue.reportDialog(ep, su) }, '↺ Send QC Report'));
+      } else if (x.state === 'passed') {
+        acts.push(el('button.rvq-mini.ok.approved', { type: 'button', 'aria-disabled': 'true', title: 'QC passed' + (check.decidedBy ? ' by ' + check.decidedBy : '') }, '✓ QC Passed'));
+      } else {
+        acts.push(el('button.rvq-mini.warn', { type: 'button', 'aria-disabled': 'true', title: 'Back with ' + dep.label + ' to fix' }, '↺ Report Sent'));
       }
-      const row = el('.rvq-row.qcq-row' + (x.state !== 'waiting' ? '.done' : ''), null, [
+
+      const row = el('.rvq-row.qcq-row' + (waiting ? '' : '.done') + (rank != null ? '.in-prio' : ''), null, [
+        rank != null ? el('.rvq-cell.rvq-rank', null, el('span.rvq-rank-n', null, rank)) : null,
         el('.rvq-cell.rvq-task', null, [
-          el('.rvq-task-name', { style: { cursor: 'pointer' }, title: 'Open the task', onclick: () => App.editTask.open(ep.id, su.key) }, [su.name, ' ', flag]),
+          el('.rvq-task-name', { style: { cursor: 'pointer' }, title: 'Open the task', onclick: () => App.editTask.open(ep.id, su.key) },
+            [su.name, ' ', el('span.rvq-ver', { title: reports ? reports + ' QC report' + (reports === 1 ? '' : 's') + ' sent back before' : 'First QC pass' }, 'QC V' + App.qcVersion(ep, su.key)), ' ', flag]),
           el('.rvq-task-sub', null, [
             el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color) }, title: show.name + ' · ' + (ep.title || '') }, ep.code),
-            el('span.dept-chip', null, [el('span.dot', { style: { background: dep.color } }), dep.label]),
-            check.reports && check.reports.length ? el('span.rvq-who', null, check.reports.length + ' report' + (check.reports.length === 1 ? '' : 's') + ' before') : null
+            rank == null ? el('span.dept-chip', null, [el('span.dot', { style: { background: dep.color } }), dep.label]) : null,
+            person ? el('span.rvq-who', null, person.name) : null,
           ])
         ]),
-        el('.rvq-cell', null, [
-          el('.rvq-lbl', null, 'Approved'),
-          el('.rvq-val', null, check.queuedAt ? App.fmtDate(String(check.queuedAt).slice(0, 10)) : '—')
-        ]),
+        // the files to check, and QC's own project for checking them
+        el('.rvq-cell.rvq-link', null, el('.rvq-link-text', null, [
+          el('.qcq-files', null, [
+            el('button.rvq-mini', { title: 'Open the folder ' + dep.label + ' delivered ' + su.name + ' to',
+              onclick: () => App.qcQueue.openAssets(ep, su) }, [App.icon('folderOpen'), ' Delivered Assets']),
+            waiting ? el('button.rvq-mini.go', {
+              title: madeV ? 'Open ' + madeV.file : 'Make QC’s project for this version, named and saved automatically, and open it',
+              onclick: () => App.qcQueue.createProject(ep, su)
+            }, madeV ? [App.icon('folderOpen'), ' Open QC Project'] : '＋ Create QC Project') : null
+          ])
+        ])),
         el('.rvq-cell.rvq-due' + (late ? '.late' : ''), null, [
           el('.rvq-lbl', null, 'QC due'),
           el('.rvq-val', null, x.qcDue ? App.fmtDate(x.qcDue) : '—')
@@ -345,7 +400,6 @@ window.App = window.App || {};
       return row;
     },
 
-    // Dashboard: today's checks, for the QC role's board
     // (m.episodes, not m.subs: for the QC role m.subs is QC's own tasks only)
     widget(m) {
       const todayIso = App.isoDate(App.today());

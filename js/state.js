@@ -463,6 +463,13 @@ window.App = window.App || {};
   };
   App.qcCheck = (ep, key) => (ep && ep.qcChecks && ep.qcChecks[key]) || null;
   App.qcState = (ep, key) => { const c = App.qcCheck(ep, key); return (c && c.state) || null; };
+  /* Which QC pass a task is on: V1 is the first check, and every QC report
+     sent back makes the resubmitted fix the next version (V2, V3 …). A failed
+     check is still the version that failed until it's resubmitted. */
+  App.qcVersion = function (ep, key) {
+    const c = App.qcCheck(ep, key), n = (c && c.reports && c.reports.length) || 0;
+    return n + ((c && c.state === 'failed') ? 0 : 1);
+  };
   // Approved, and — when it needs QC — passed by QC. What dependents wait on.
   App.isCompleteKey = function (ep, key) {
     if (((ep.statuses && ep.statuses[key]) || 'not_started') !== 'approved') return false;

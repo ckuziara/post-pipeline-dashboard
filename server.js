@@ -18,6 +18,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const folders = require('./folders');
+const qcReport = require('./qcreport');
 const { makePgChat, parseTaskId } = require('./chat-store');
 const { makeKeyVault } = require('./keyvault');
 const { makeSlackBridge } = require('./slack-bridge');
@@ -1981,6 +1982,77 @@ const server = http.createServer(async (req, res) => {
         const willOpen = body.open !== false && isLocalRequest(req);
         if (willOpen) openNatively(created ? path.join(workAbs, created) : workAbs);
         return sendJson(res, 200, { ok: true, created, dir: workAbs, opened: willOpen });
+      }
+
+      /* Create QC Project — QC's own working project for checking one task's
+         deliverable, made, named and saved without asking anything:
+           <QC department folder>/QC_<Deliverable>/<EPCODE>_<Deliverable>_QC_V<n>.<ext>
+         from the first template in the studio library that QC's preferred
+         software opens (body.exts — one whose name mentions QC wins), then
+         opened, so the OS hands it to that application. One project per QC
+         version: asking again for the same version opens the one already
+         there rather than making another. No matching template still makes
+         the folder and opens that. Never overwrites. */
+      if (route === 'POST /api/task/qc-project') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { masterPath, show, ep, pipeline, paths } = ctx;
+        // QC's own folder in this episode: its pipeline task's, else a QC folder at the episode's foot
+        const qcTask = pipeline.find(t => t.key === 'qc') || pipeline.find(t => t.dept === 'qc');
+        const qcPaths = qcTask ? folders.taskPaths(ep, pipeline, qcTask.key) : null;
+        const qcRoot = qcPaths ? qcPaths.work : '0002_Episodes/' + folders.episodeFolder(ep) + '/zz_QC';
+        const dirAbs = folders.resolveIn(masterPath, show, qcRoot + '/QC_' + paths.deliverable);
+        fs.mkdirSync(dirAbs, { recursive: true });
+
+        const version = Math.max(1, Math.min(99, parseInt(body.version, 10) || 1));
+        const exts = (Array.isArray(body.exts) ? body.exts : []).map(e => String(e).toLowerCase().replace(/[^a-z0-9]/g, '')).filter(Boolean);
+        const stem = folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_QC_V' + version;
+        const extOf = (n) => (n.includes('.') ? n.split('.').pop().toLowerCase() : '');
+
+        // this version's project already made: open it, don't make another
+        const existing = fs.readdirSync(dirAbs).find(n => n.startsWith(stem + '.') && (!exts.length || exts.includes(extOf(n))));
+        let file = existing || null, created = false, template = null;
+        if (!file && exts.length) {
+          const tpls = folders.templatesFor(masterPath, show).filter(t => exts.includes(extOf(t.name)));
+          const tpl = tpls.find(t => /qc/i.test(t.name)) || tpls[0];
+          if (tpl) {
+            const src = folders.templatePath(masterPath, show, tpl.name, tpl.source);
+            const dest = folders.uniquePath(dirAbs, folders.safeFile(stem + '.' + extOf(tpl.name)));
+            fs.cpSync(src, dest, { recursive: fs.statSync(src).isDirectory() });
+            file = path.basename(dest); created = true; template = tpl.name;
+          }
+        }
+        /* The QC report for this version, beside the project: the studio's
+           form (templates/qc-report.xlsx) with what the board knows filled
+           in — show, content code, date, operator, the task and the files it
+           delivered (Mezzanine, or Publish once it's been published). Made
+           once per version, like the project. */
+        const reportName = folders.safeFile(folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_V' + version + '_QC-REPORT.xlsx');
+        const reportAbs = path.join(dirAbs, reportName);
+        let reportCreated = false;
+        if (!fs.existsSync(reportAbs)) {
+          const r = body.report || {};
+          const str = (v, n) => String(v == null ? '' : v).slice(0, n || 120);
+          const list = (a, n) => (Array.isArray(a) ? a : []).map(x => str(x)).filter(Boolean).slice(0, n);
+          const delivered = (rel) => folders.listDir(folders.resolveIn(masterPath, show, rel)).filter(i => !i.dir || /\.[a-z0-9]+$/i.test(i.name)).map(i => i.name);
+          let files = delivered(paths.mezzanine);
+          if (!files.length) files = delivered(paths.publish);
+          const task = pipeline.find(t => t.key === body.taskKey);
+          fs.writeFileSync(reportAbs, qcReport.build({
+            show: show.name, contentCode: ep.code, episode: ep.title || '',
+            task: str(r.task) || (task && task.name) || body.taskKey, dept: str(r.dept, 40),
+            operator: str(r.operator, 60), version, qcDue: str(r.qcDue, 40), date: new Date(),
+            files, ips: list(r.ips, 39), operators: list(r.operators, 14)
+          }));
+          reportCreated = true;
+        }
+
+        const target = file ? path.join(dirAbs, file) : dirAbs;
+        const willOpen = body.open !== false && isLocalRequest(req);
+        if (willOpen) { openNatively(target); openNatively(reportAbs); }
+        return sendJson(res, 200, { ok: true, dir: dirAbs, file, created, existed: !!existing, template, opened: willOpen, path: target,
+          report: reportName, reportCreated });
       }
 
       /* Open — hands the file or folder to the OS when the server is on this
