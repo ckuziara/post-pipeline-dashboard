@@ -1257,7 +1257,7 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
    BOARD  (Monday table)
 ================================================================= */
 .board { display: flex; flex-direction: column; gap: 16px; }
-.ep-group { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+.ep-group { container-type: inline-size; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
 .ep-row {
   display: grid; grid-template-columns: 24px 1fr auto; align-items: center; gap: 12px;
   padding: 12px 16px; cursor: pointer; position: relative; background: var(--surface-2);
@@ -1281,10 +1281,20 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
    episode title matters more and the Timeline shows these dates too */
 .ep-meta.dates-meta { width: 118px; }
 .ep-meta.dates-meta .m-val { font-size: 11.5px; color: var(--text-2); }
-@media (max-width: 1100px) { .ep-meta.dates-meta { display: none; } }
-.ep-prog { width: 120px; flex: none; display: flex; flex-direction: column; align-items: center; }
+/* Progress bar: sized from the episode card's own width, not the window's. It
+   narrows first (120px down to 50px) to leave the title room, then goes
+   altogether — before the dates, which say more than a bar does. */
+.ep-prog { width: clamp(50px, calc(100cqw - 870px), 120px); flex: none; display: flex; flex-direction: column; align-items: center; }
+@container (max-width: 900px) { .ep-prog { display: none; } }
+@container (max-width: 800px) { .ep-meta.dates-meta { display: none; } }
 .prog-track { width: 100%; height: 7px; border-radius: 5px; background: var(--surface-3); overflow: hidden; }
-.prog-fill { height: 100%; border-radius: 5px; background: linear-gradient(90deg, #00c875, #2bd38a); }
+/* colour steps with how far along the episode is — class set in js/board.js */
+.prog-fill { height: 100%; border-radius: 5px; background: #00c875; transition: width .2s ease, background-color .2s ease; }
+.prog-fill.p0 { background: #e2445c; }   /* under 25% */
+.prog-fill.p1 { background: #fdab3d; }   /* 25–49% */
+.prog-fill.p2 { background: #ffcb00; }   /* 50–74% */
+.prog-fill.p3 { background: #9cd326; }   /* 75–99% */
+.prog-fill.p4 { background: #00c875; }   /* complete */
 .risk-flag { font-size: 10.5px; font-weight: 700; color: var(--ink-bad); background: rgba(255,91,110,.14); border: 1px solid rgba(255,91,110,.3); padding: 2px 8px; border-radius: 6px; }
 
 /* subitems table */
