@@ -105,6 +105,7 @@ window.App = window.App || {};
        than a fixed director-only tab — an admin turning it off mid-session
        would otherwise leave that person parked on a view whose tab is gone. */
     if (App.state.view === 'review' && !App.canSeeReviewQueue(App.state.role)) App.state.view = 'timeline';
+    if (App.state.view === 'qc' && !App.canSeeQcQueue(App.state.role)) App.state.view = 'timeline';
     /* guard: phone mode only ever offers Dashboard / Board / Admin (see
        renderViewTabs), so a view that isn't reachable from the tab bar there
        isn't reachable here either — the redirect fires every render, so
@@ -112,7 +113,7 @@ window.App = window.App || {};
        Reviews mid-session lands on Dashboard rather than a view with no tab
        to get back out of. Runs after the admin guard above, since that one
        can itself hand back 'timeline', which still needs catching here. */
-    if (App.isPhone() && ['timeline', 'planning', 'review'].includes(App.state.view)) App.state.view = 'dashboard';
+    if (App.isPhone() && ['timeline', 'planning', 'review', 'qc'].includes(App.state.view)) App.state.view = 'dashboard';
 
     App.timelineDraft && App.timelineDraft.sync();   // the unsaved-changes bar
     renderBrandMark();
@@ -154,6 +155,7 @@ window.App = window.App || {};
     if (App.state.view === 'admin') { view.appendChild(App.admin.render()); }
     else if (App.state.view === 'planning') { view.appendChild(App.planning.render()); }
     else if (App.state.view === 'review') { view.appendChild(App.reviews.render(episodes)); }
+    else if (App.state.view === 'qc') { view.appendChild(App.qcQueue.render(episodes)); }
     else if (App.state.view === 'board') view.appendChild(App.board.render(episodes));
     else if (App.state.view === 'dashboard') view.appendChild(App.dashboard.render(episodes));
     else { view.appendChild(App.gantt.render(episodes)); App.gantt.afterMount(); }
@@ -213,6 +215,7 @@ window.App = window.App || {};
       ? [['dashboard', 'compass', 'Dashboard'], ['board', 'grid', 'Board']]
       : [['timeline', 'chart', 'Timeline'], ['board', 'grid', 'Board'], ['dashboard', 'compass', 'Dashboard']];
     if (!phone && App.canSeeReviewQueue(App.state.role)) tabs.push(['review', 'target', 'Reviews']);
+    if (!phone && App.canSeeQcQueue(App.state.role)) tabs.push(['qc', 'checkBadge', 'QC']);
     // budget modelling is oversight work, so it rides the same gate as Admin
     if (!phone && App.isAdminRole(App.state.role)) tabs.push(['planning', 'sparkle', 'Planning']);
     if (App.isAdminRole(App.state.role)) tabs.push(['admin', 'tools', 'Admin']);

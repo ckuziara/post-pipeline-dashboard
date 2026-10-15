@@ -59,6 +59,7 @@ window.App = window.App || {};
     upcoming:  { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
     teamLoad:  { minW: 3, maxW: 12, minH: 130, maxH: 900, itemPx: 38, headPx: 52 },
     reviewUploads: { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
+    qcQueue:   { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
     directorCal: { minW: 3, maxW: 12, minH: 260, maxH: 900, itemPx: 22, headPx: 120 },
     // a sheet, not a list: it scrolls inside its tile rather than counting rows
     dailySummary: { minW: 6, maxW: 12, minH: 220, maxH: 1400 }
@@ -181,9 +182,10 @@ window.App = window.App || {};
       { id: 'deptLoad',      col: 7, row: 1904, w: 5, h: 256 }
     ],
     qc: [
-      { id: 'priority', col: 0, row: 0, w: 6, h: 504 },
+      { id: 'qcQueue',  col: 0, row: 0, w: 6, h: 504 },
       { id: 'journal',  col: 6, row: 0, w: 6, h: 504 },
-      { id: 'teamLoad', col: 0, row: 516, w: 12, h: 340 }
+      { id: 'priority', col: 0, row: 516, w: 6, h: 340 },
+      { id: 'teamLoad', col: 6, row: 516, w: 6, h: 340 }
     ]
   };
   // Music, Animation, Audio Post and Video Post share Creative's layout
@@ -198,6 +200,7 @@ window.App = window.App || {};
      theirs to clear is just noise. */
   const WIDGET_WHEN = {
     reviewUploads: () => App.roleDept(App.state.role) === 'ops',
+    qcQueue: () => App.canSeeQcQueue(App.state.role),
     // Post Operations' review sheet (js/dailysummary.js) — theirs by default,
     // and in the tray for producers and managers who cover for them
     dailySummary: () => App.roleDept(App.state.role) === 'ops' ||
@@ -228,7 +231,7 @@ window.App = window.App || {};
   const WIDGET_TITLE = {
     priority: 'Priority', atRisk: 'At Risk', journal: 'Journal', delivered: 'Delivered Episodes',
     pipeline: 'Pipeline Status', deptLoad: 'Department Workload', upcoming: 'Upcoming Deliveries',
-    teamLoad: 'Team Workload', reviewUploads: 'Review Uploads', directorCal: 'Priority',
+    teamLoad: 'Team Workload', reviewUploads: 'Review Uploads', qcQueue: 'QC Today', directorCal: 'Priority',
     dailySummary: 'Daily Summary'
   };
 
@@ -1426,6 +1429,12 @@ window.App = window.App || {};
         sub: items.length ? items.length + ' to send for review' : 'all sent',
         body: App.reviewFlow.widget(m, t, capOf('reviewUploads', t.h))
       };
+    },
+
+    // QC's checks for today (and anything overdue or at risk) — js/qc.js
+    qcQueue(m) {
+      const n = App.qcQueue.pendingCount(m.episodes);
+      return { title: 'QC Today', sub: n ? n + ' waiting for QC' : 'nothing waiting', body: App.qcQueue.widget(m) };
     },
 
     // Post Operations' review sheet — all of it lives in js/dailysummary.js

@@ -85,7 +85,7 @@ window.App = window.App || {};
       const blockedTip = blocked ? blockedTasks.map(t => {
         const waitingOn = t.deps
           .map(k => byKey[k])
-          .filter(d => d && (ep.statuses[d.key] || 'not_started') !== 'approved')
+          .filter(d => d && !App.isCompleteKey(ep, d.key))
           .map(d => App.dept(d.dept).label + ' — ' + d.name)
           .join(', ');
         return App.dept(t.dept).label + ' — ' + t.name + ' waiting on: ' + (waitingOn || '—');
@@ -374,18 +374,18 @@ window.App = window.App || {};
             } : null, this.koTag(ep, su));
           })(),
           // status cell — solid colour, click to change
-          el('.cell.c-status', null, el('.status-cell', {
+          el('.cell.c-status', null, [el('.status-cell', {
             style: { background: st.color, color: st.ink },
             onclick: (e) => { e.stopPropagation(); App.board.openStatusPop(e.currentTarget, ep, su.key); }
           }, [
             document.createTextNode(st.label),
             (blocked ? App.icon('blocked', { cls: 'blk', title: 'Waiting on a dependency' }) : null)
-          ])),
+          ]), App.qcQueue ? App.qcQueue.badge(ep, su) : null]),
           el('.cell.c-date' + (overdue ? '.overdue' : ''), null, App.fmtDate(su.start)),
           el('.cell.c-date' + (overdue ? '.overdue' : ''), null, App.fmtDate(su.due)),
           el('.cell.c-deps', null, su.deps.length
             ? su.deps.map(dk => {
-                const depDone = ((ep.statuses && ep.statuses[dk]) || 'not_started') === 'approved';
+                const depDone = App.isCompleteKey(ep, dk);
                 return el('span.dep-chip' + (depDone ? '.ok' : '.wait'),
                   { title: App.taskNameFor(ep, dk) + ' — ' + (depDone ? 'Approved' : 'not ready') },
                   [(depDone ? '✓ ' : '◷ ') + App.taskNameFor(ep, dk)]);
@@ -447,7 +447,7 @@ window.App = window.App || {};
       const startable = App.isStartable(ep, key);
       const blocked = App.isBlocked(ep, key);
       pop.appendChild(el('.pop-note', null,
-        blocked ? 'Waiting on: ' + (App.pTask(ep, key) || { deps: [] }).deps.filter(d => (ep.statuses[d] || 'not_started') !== 'approved').map(d => App.taskNameFor(ep, d)).join(', ')
+        blocked ? 'Waiting on: ' + (App.pTask(ep, key) || { deps: [] }).deps.filter(d => !App.isCompleteKey(ep, d)).map(d => App.taskNameFor(ep, d)).join(', ')
         : startable ? '✓ All dependencies approved — ready to start' : 'Dependencies approved'));
       this.placePop(pop, r);
     },

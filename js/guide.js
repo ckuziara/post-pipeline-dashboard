@@ -79,6 +79,7 @@ window.App = window.App || {};
     { key: 'timeline',  label: 'Production Schedule', blurb: 'the Timeline — every episode on a calendar' },
     { key: 'board',     label: 'Task Board',          blurb: 'every task, as a list' },
     { key: 'review',    label: 'Reviews',             blurb: 'cuts waiting for your notes', when: () => App.canSeeReviewQueue(App.state.role) },
+    { key: 'qc',        label: 'QC',                  blurb: 'deliverables waiting on a QC check', when: () => App.canSeeQcQueue(App.state.role) },
     { key: 'resources', label: 'Resourcing',          blurb: 'who’s busy, week by week', when: () => App.canSeeResources(App.state.role) }
   ];
   const availableTabs = () => PRIORITY_TABS.filter(t => !t.when || t.when());

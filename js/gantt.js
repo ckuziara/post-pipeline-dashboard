@@ -1753,6 +1753,23 @@ window.App = window.App || {};
         track.appendChild(rbar);
       });
 
+      /* Requires QC: the days held for QC after the task (after its last
+         planned version, or once it's approved, from when it joined the
+         queue). Gone once QC passes it. Not part of `su.due`. */
+      const qw = App.qcWindow(ep, su);
+      if (qw) {
+        const qStyle = {};
+        setBarPos(qStyle, axis, xOf, qw.start, qw.due);
+        const qbar = el('.qc-plan' + (bare ? '.bare' : '') + (qw.state ? '.' + qw.state : ''), {
+          title: su.name + ' — QC, ' + App.fmtRange(qw.start, qw.due) +
+                 (qw.state === 'waiting' ? ' · approved, waiting for QC' : qw.state === 'failed' ? ' · QC sent a report back' : ' · held for QC once approved'),
+          style: qStyle
+        }, bare ? null : el('span', null, 'QC'));
+        qbar.dataset.episodeId = ep.id;
+        qbar.dataset.suKey = su.key;
+        track.appendChild(qbar);
+      }
+
       /* Unused revision budget, left visible rather than forgotten: a task
          approved without spending every revision it was allowed banked real
          slack, and this is where that shows up — a grey tail right after the

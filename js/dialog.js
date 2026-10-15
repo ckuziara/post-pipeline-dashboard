@@ -628,6 +628,20 @@ window.App = window.App || {};
         el('span.ctx-dept', null, App.dept(su.dept).label)
       ]);
 
+      /* Requires QC — whether QC checks this deliverable once it's approved,
+         and how many days they get. Producers decide (the same right as
+         shaping the show); saving it pushes whatever waits on the task back
+         by QC's days, asked about first (App.setTaskQc). */
+      const canQc = App.canManageShows(role);
+      const qcNow = App.qcFor(ep, key);
+      const qcPick = { on: qcNow.on, days: qcNow.days || App.qcSettings().defaultDays };
+      const qcDays = el('input.fld.fld-num', { type: 'number', min: '1', max: '60', value: String(qcPick.days), disabled: !qcPick.on,
+        onchange: (e) => { qcPick.days = Math.max(1, Math.min(60, parseInt(e.target.value, 10) || 1)); e.target.value = qcPick.days; } });
+      const qcSwitch = el('span.switch' + (qcPick.on ? '.on' : ''), { role: 'switch', tabindex: '0',
+        onclick: () => { qcPick.on = !qcPick.on; qcSwitch.classList.toggle('on', qcPick.on); qcDays.disabled = !qcPick.on; } }, el('span.knob'));
+      const qcControl = el('.et-qc-edit', null, [qcSwitch, el('span', null, 'Requires QC'), qcDays, el('span.et-qc-unit', null, 'days')]);
+      const qcDisplay = () => qcPick.on ? 'Requires QC · ' + qcPick.days + ' day' + (qcPick.days === 1 ? '' : 's') : 'Not needed';
+
       const detailsPanel = el('.et-panel', null, [
         el('.et-list', null, [
           editRow('Task name', nameInput, () => nameInput.value, {
@@ -650,9 +664,14 @@ window.App = window.App || {};
           editRow('Owner', ownerSel, ownerDisplay, { locked: !canAssign, hint: ownerHint }),
           editRow('Schedule', schedControl, schedDisplay, {
             locked: !canSched, hint: canSched ? null : 'Only Producers, Managers and Post Operations can change the schedule'
+          }),
+          editRow('QC', qcControl, qcDisplay, {
+            locked: !canQc, hint: canQc ? 'Once approved it joins the QC queue; anything waiting on it waits for QC too' : 'Only Producers can choose what needs QC'
           })
         ]),
         koLine(ep, su),
+        // where its QC check stands: waiting, passed, or the report sent back
+        (App.qcQueue ? App.qcQueue.taskSection(ep, su) : null),
         // LucidLink version control — only for tasks flagged version-controlled
         // in the pipeline (enabled in Pipeline Presets, not here)
         (App.vc && App.vc.isVc(ep, key) ? App.vc.inlineSection(epId, key) : null),
@@ -703,6 +722,8 @@ window.App = window.App || {};
             });
             App.track.flowDone('Task edit', true);
             App.modal.close();
+            // after the edit: it may ask about pushing what waits on the task
+            if (canQc && (qcPick.on !== qcNow.on || (qcPick.on && qcPick.days !== qcNow.days))) App.setTaskQc(epId, key, qcPick);
           }
         }, [App.icon('save'), ' Save Changes'])
       ];
@@ -1437,15 +1458,15 @@ window.App = window.App || {};
           el('span.pc-push-was', null, App.fmtRange(su.start, su.due)),
           el('span.pc-push-arrow', null, '→'),
           el('span.pc-push-now', null, App.fmtRange(m.start, m.due)),
-          el('span.pc-push-d', null, i === 0 ? 'the move' : (d > 0 ? '+' + d + 'd' : d + 'd'))
+          el('span.pc-push-d', null, i === 0 ? (handlers.leadLabel || 'the move') : (d > 0 ? '+' + d + 'd' : d + 'd'))
         ]);
       }).filter(Boolean);
-      const lastDue = moves.reduce((m, x) => x.due > m ? x.due : m, '');
+      const lastDue = moves.reduce((m, x) => x.due > m ? x.due : m, handlers.endsBy || '');
       const ms = App.epMilestones(ep);
       const warn = ms.filter(m => lastDue >= m.date).map(m => m.name + ' (' + App.fmtDate(m.date) + ')');
       const sections = [
         el('.ctx-box.slim', null, [el('span.ctx-chip', null, ep.code), el('span.ctx-title', null, ep.title)]),
-        el('.fld-hint', { style: { margin: '10px 0 8px' } },
+        el('.fld-hint', { style: { margin: '10px 0 8px' } }, (handlers.intro ? handlers.intro + ' ' : '') +
           (moves.length - 1) + ' task' + (moves.length === 2 ? '' : 's') + ' that wait on it ' + (moves.length === 2 ? 'is' : 'are') +
           ' pushed back just far enough to keep the order. Each keeps its length; work already under way stays put.'),
         el('.pc-push-list', null, rows),
@@ -2023,6 +2044,7 @@ window.App = window.App || {};
           el('span.pipe-ko-tag', null, 'KO'), el('span', null, App.koLabel(ko))
         ]) : null),
         (t.maxRev ? el('span.pipe-rev', { title: tip(versionTip(t)) }, 'V1–V' + (t.maxRev + 1)) : null),
+        (t.needsQc ? el('span.pipe-qc-tag', { title: tip('Requires QC — ' + App.qcDaysOf(t) + ' day' + (App.qcDaysOf(t) === 1 ? '' : 's') + ' of QC after the last version') }, 'QC ' + App.qcDaysOf(t) + 'd') : null),
         el('span.pipe-dur', { title: tip(versionTip(t)) }, taskTotal(t) + 'd'),
         dragGrip(i, t, '.hov')
       ]);
@@ -2118,6 +2140,25 @@ window.App = window.App || {};
       versBox.appendChild(totalLbl);
       paintTotal();
 
+      /* Requires QC: once approved, the deliverable goes to the QC queue, and
+         QC's days are held after the last version — dependents wait for them. */
+      const qcBox = el('.pipe-qc', null, [
+        el('span.switch' + (t.needsQc ? '.on' : ''), {
+          role: 'switch', title: tip(t.needsQc ? 'Requires QC — click to turn off' : 'QC must check this deliverable once it’s approved'),
+          onclick: (e) => {
+            e.stopPropagation(); snapshot();
+            if (t.needsQc) { delete t.needsQc; delete t.qcDays; } else { t.needsQc = true; t.qcDays = App.qcSettings().defaultDays; }
+            renderPipe(); onChange();
+          }
+        }, el('span.knob')),
+        el('span.pipe-qc-lbl', null, 'Requires QC'),
+        t.needsQc ? selectOnFocus(el('input.fld.fld-num.pipe-qc-days', {
+          type: 'number', value: String(App.qcDaysOf(t)), min: '1', max: '60', title: tip('Days QC needs to check it'),
+          onchange: (e) => { t.qcDays = Math.max(1, Math.min(60, parseInt(e.target.value, 10) || 1)); e.target.value = t.qcDays; onChange(); }
+        })) : null,
+        t.needsQc ? el('span.pipe-qc-unit', null, 'QC days') : null
+      ]);
+
       return el('.pipe-row.editing', null, [
         leadCell(i),
         dragGrip(i, t),
@@ -2133,6 +2174,7 @@ window.App = window.App || {};
           el('span.pipe-rev-block-lbl', null, 'Days per version'),
           versBox
         ]) : null,
+        el('.pipe-rev-block', { style: { gridColumn: '1 / -1' } }, [qcBox]),
         el('.pipe-actions', null, [
           vcToggle,
           el('button.btn-done', {
@@ -3219,7 +3261,8 @@ window.App = window.App || {};
         key: t.key, name: (t.name || '').trim(), dept: t.dept,
         days: t.days, minDays: t.minDays, deps: t.deps.slice().sort(),
         lag: t.lag || 0, vc: !!t.vc, batch: App.batchCfg(t), maxRev: t.maxRev || 0, revDays: (t.revDays || []).slice(), revGaps: App.hasRevGaps(t) ? t.revGaps.slice(0, t.maxRev) : [],
-        ko: !!t.ko, koFor: t.koFor || null, koDay: t.koDay != null ? t.koDay : null, koWeeks: t.koWeeks || 0
+        ko: !!t.ko, koFor: t.koFor || null, koDay: t.koDay != null ? t.koDay : null, koWeeks: t.koWeeks || 0,
+        qc: App.qcDaysOf(t)
       })));
       const baselinePipe = () => {
         const preset = presetSel.value && (App.state.data.pipelinePresets || []).find(p => p.id === presetSel.value);
@@ -3734,6 +3777,7 @@ window.App = window.App || {};
               if (t.ko) { o.ko = true; if (t.koFor) o.koFor = t.koFor; if (t.koDay != null) o.koDay = t.koDay; if (t.koWeeks > 0) o.koWeeks = t.koWeeks; }
               if (App.batchCfg(t)) o.batch = App.batchCfg(t);
               if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); if (App.hasRevGaps(t)) o.revGaps = t.revGaps.slice(0, t.maxRev); }
+              if (t.needsQc) { o.needsQc = true; o.qcDays = App.qcDaysOf(t); }
               return o;
             });
             const teamOut = team.read();

@@ -312,6 +312,10 @@ window.App = window.App || {};
         get: k => App.rolePermOf(k, 'reviewQueue', App.role(k).reviewQueue), set: (k, v) => App.setRolePerm(k, 'reviewQueue', v, 'Reviews Tab') },
       { title: 'Review Order', desc: 'Can set the order reviews should be worked in, by dragging them up or down on the Reviews tab. Everyone sees the same order.',
         get: k => App.rolePermOf(k, 'reviewPriority', App.role(k).reviewPriority), set: (k, v) => App.setRolePerm(k, 'reviewPriority', v, 'Review Order') },
+      { title: 'QC Tab', desc: 'Can open the QC tab — every approved deliverable waiting on a QC check, planned against QC’s daily capacity.',
+        get: k => App.rolePermOf(k, 'qcQueue', App.role(k).qcQueue), set: (k, v) => App.setRolePerm(k, 'qcQueue', v, 'QC Tab') },
+      { title: 'Pass or Fail QC', desc: 'Can pass a QC check, or send a QC report back to the department, and plan checks onto days.',
+        get: k => App.rolePermOf(k, 'qcDecide', App.role(k).qcDecide), set: (k, v) => App.setRolePerm(k, 'qcDecide', v, 'Pass or Fail QC') },
       { title: 'Change the Schedule', desc: 'Can move task dates — in the Edit Task dialog and by dragging bars on the Timeline — for every department, not just their own.',
         get: k => App.rolePermOf(k, 'editSchedule', App.role(k).editSchedule), set: (k, v) => App.setRolePerm(k, 'editSchedule', v, 'Change the Schedule') },
       { title: 'Kick Offs', desc: 'Can choose which departments and tasks need a Kick Off on each episode, set a show’s usual list, and mark Kick Offs done.',
@@ -941,6 +945,24 @@ window.App = window.App || {};
     return dpCard;
   }
 
+  /* QC capacity: how many checks QC can get through a day (the QC tab plans
+     against it) and the days a task gets when it's first marked Requires QC. */
+  function qcCard() {
+    const q = App.qcSettings();
+    const num = (key, val, max) => el('input.fld.fld-num', { type: 'number', min: '1', max: String(max), value: String(val), style: { maxWidth: '80px' },
+      onchange: (e) => App.setQcSettings({ [key]: Math.max(1, Math.min(max, parseInt(e.target.value, 10) || 1)) }) });
+    const c = el('.adm-permcard');
+    c.appendChild(el('.adm-permcard-head', null, [
+      el('.adm-permcard-title', null, 'QC'),
+      el('.adm-permcard-desc', null, 'Tasks marked Requires QC (in a pipeline, or on one episode from Edit Task) go to the QC tab once they’re approved, and their QC days are held in the schedule after them.')
+    ]));
+    c.appendChild(el('.wf-list', null, [
+      el('.qcq-adm-row', null, [el('span', null, 'QC checks per day'), num('perDay', q.perDay, 50)]),
+      el('.qcq-adm-row', null, [el('span', null, 'Default QC days for a task'), num('defaultDays', q.defaultDays, 60)])
+    ]));
+    return c;
+  }
+
   /* ---- Pipelines: named presets a Producer/Manager can build once and pick
      from in Add Show. The draft being edited lives on App.state.admin so a
      background re-render (teammate sync) never wipes in-progress work. ---- */
@@ -950,6 +972,7 @@ window.App = window.App || {};
 
     const wrap = el('div', { style: { display: 'grid', gap: '16px' } });
     wrap.appendChild(defaultPipelinesCard());
+    wrap.appendChild(qcCard());
     const cardEl = el('.adm-permcard');
     wrap.appendChild(cardEl);
     cardEl.appendChild(el('.adm-permcard-head', null, [

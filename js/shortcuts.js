@@ -163,7 +163,7 @@ window.App = window.App || {};
     const onTimeline = App.state.view === 'timeline';
     const list = [];
     [['timeline', 'Timeline', 'G T'], ['board', 'Board', 'G B'], ['dashboard', 'Dashboard', 'G D'],
-     ['review', 'Reviews', ''], ['planning', 'Planning', 'G P'], ['admin', 'Admin', '']].forEach(([v, label, hint]) => {
+     ['review', 'Reviews', ''], ['qc', 'QC', ''], ['planning', 'Planning', 'G P'], ['admin', 'Admin', '']].forEach(([v, label, hint]) => {
       if (tabFor(v)) list.push({ kind: 'Page', label: 'Go to ' + label, hint, run: () => goView(v) });
     });
     if (tabFor('timeline')) list.push({ kind: 'Action', label: 'Jump to today', hint: 'T', run: jumpToday });

@@ -141,7 +141,7 @@ window.App = window.App || {};
      Operations also owns scheduling (across every department, since that's the
      coordinating job), so it carries editSchedule without editAll. */
   App.ROLES = [
-    { key: 'producer',  label: 'Producer',        ico: 'clapper', selectTasks: true, approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, resourceView: 'all', hint: 'Full access — all tasks, shows & admin' },
+    { key: 'producer',  label: 'Producer',        ico: 'clapper', selectTasks: true, approve: true, editAll: true, admin: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, qcQueue: true, qcDecide: true, resourceView: 'all', hint: 'Full access — all tasks, shows & admin' },
     { key: 'manager',   label: 'Manager',         ico: 'compass', approve: true, editAll: true, admin: true, editName: true, removeTask: true, editSchedule: true, resourceView: 'all', manageResources: true, hint: 'Oversight, approvals & admin' },
     { key: 'director',  label: 'Director',        ico: 'target', approve: true, editAll: true, reviewQueue: true, kickOff: true, resourceView: 'none', hint: 'Review & approve cuts' },
     { key: 'creative',  label: 'Creative',        ico: 'pencil', dept: 'creative',  hint: 'Creative department tasks' },
@@ -155,8 +155,8 @@ window.App = window.App || {};
     // settings), which stays with Producers and Managers. They keep their
     // department, so they still own Post Ops tasks and get the Post Ops
     // dashboard. allDepts: they start on every department, not just theirs.
-    { key: 'ops',       label: 'Post Operations', ico: 'package', dept: 'ops', allDepts: true, selectTasks: true, approve: true, editAll: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, resourceView: 'all', hint: 'Producer-level access to all tasks & shows (no Admin)' },
-    { key: 'qc',        label: 'QC',              ico: 'checkBadge', dept: 'qc',        hint: 'QC tasks' }
+    { key: 'ops',       label: 'Post Operations', ico: 'package', dept: 'ops', allDepts: true, selectTasks: true, approve: true, editAll: true, manageShows: true, editName: true, removeTask: true, editSchedule: true, kickOff: true, reviewQueue: true, reviewPriority: true, qcQueue: true, qcDecide: true, resourceView: 'all', hint: 'Producer-level access to all tasks & shows (no Admin)' },
+    { key: 'qc',        label: 'QC',              ico: 'checkBadge', dept: 'qc', qcQueue: true, qcDecide: true, hint: 'QC tasks and the QC queue' }
   ];
   App.role = (k) => App.ROLES.find(r => r.key === k) || App.ROLES[0];
   /* The department filter a role starts with. A department lead starts on
@@ -206,6 +206,10 @@ window.App = window.App || {};
   // setting the queue's priority order by hand (drag a review up or down) — Producer by default
   App.canPrioritiseReviews = (k) => App.rolePerm(k, 'reviewPriority', App.role(k).reviewPriority);
   App.canManageShows = (k) => App.rolePerm(k, 'manageShows', App.role(k).manageShows);
+  // The QC tab (deliverables waiting on a QC check), and passing or failing them.
+  // QC, Producer and Post Operations by default.
+  App.canSeeQcQueue = (k) => App.rolePerm(k, 'qcQueue', App.role(k).qcQueue);
+  App.canDecideQc = (k) => App.rolePerm(k, 'qcDecide', App.role(k).qcDecide);
   // Which roles may assign task owners — selectable in the Admin panel and
   // persisted in data.assignPriv. Until an admin changes it, the approver
   // (oversight) roles hold the privilege.
@@ -431,6 +435,74 @@ window.App = window.App || {};
     return (show && show.pipeline) || App.defaultPipeline();
   };
   App.pTask = (ep, key) => App.pipelineFor(ep).find(t => t.key === key);
+
+  /* ---- Requires QC ----
+     Some deliverables have to be checked by QC once the Director has approved
+     them. A pipeline task carries the show-wide default (t.needsQc, t.qcDays);
+     an episode can override it from Edit Task (ep.qcTasks[key] = { on, days }).
+     The check itself lives on the episode too (ep.qcChecks[key]):
+       state    'waiting' (approved, in the QC queue) | 'passed' | 'failed' | null
+       queuedAt the date it joined the queue
+       planDate a day QC pinned it to on the QC tab
+       reports  [{ at, by, byName, notes, link }] — every QC report sent back
+     Not a status of its own: the task stays Approved while it waits, so the
+     five-status workflow (and Admin's labels for it) is untouched. What
+     changes is when an approved task counts as finished — see App.isComplete.
+     The names keep clear of the `qc` task key and the `qc` department. */
+  App.qcSettings = function () {
+    const q = (App.state.data && App.state.data.qcSettings) || {};
+    return { perDay: Math.max(1, Math.round(q.perDay || 4)), defaultDays: Math.max(1, Math.round(q.defaultDays || 1)) };
+  };
+  // a pipeline task's own QC days (0 = not flagged)
+  App.qcDaysOf = (t) => t && t.needsQc ? Math.max(1, Math.round(t.qcDays || App.qcSettings().defaultDays)) : 0;
+  App.qcFor = function (ep, key) {
+    const own = ep && ep.qcTasks && ep.qcTasks[key];
+    if (own) return { on: !!own.on, days: own.on ? Math.max(1, Math.round(own.days || App.qcSettings().defaultDays)) : 0, own: true };
+    const days = App.qcDaysOf(App.pTask(ep, key));
+    return { on: days > 0, days, own: false };
+  };
+  App.qcCheck = (ep, key) => (ep && ep.qcChecks && ep.qcChecks[key]) || null;
+  App.qcState = (ep, key) => { const c = App.qcCheck(ep, key); return (c && c.state) || null; };
+  // Approved, and — when it needs QC — passed by QC. What dependents wait on.
+  App.isCompleteKey = function (ep, key) {
+    if (((ep.statuses && ep.statuses[key]) || 'not_started') !== 'approved') return false;
+    return !App.qcFor(ep, key).on || App.qcState(ep, key) === 'passed';
+  };
+  App.isComplete = (ep, su) => App.isCompleteKey(ep, su.key);
+  App.awaitingQc = (ep, su) => su.status === 'approved' && App.qcFor(ep, su.key).on && App.qcState(ep, su.key) !== 'passed';
+  /* The QC days that follow `after` (a task's finish, revisions included), on
+     QC's own calendar when the show keeps one. Returns { start, due }. */
+  App.qcSpan = function (days, after, cal) {
+    const who = cal ? { dept: 'qc', person: null } : null;
+    const start = cal ? cal.nextWork(App.shiftIso(after, 1), who) : App.shiftIso(after, 1);
+    const due = cal ? cal.addWork(start, days, who) : App.shiftIso(start, days - 1);
+    return { start, due };
+  };
+  /* Keep each flagged task's check in step with its status, after any
+     change (called from App.refreshReadiness, so every way a status moves is
+     covered — the Reviews tab, the Board, Edit Task, batch mates):
+       approved, no live check   → it joins the QC queue
+       no longer approved        → a waiting or passed check is withdrawn
+                                   (it'll be checked again once re-approved)
+     A failed check stays put — the department is fixing it — and the
+     reports are always kept. */
+  App.syncQcChecks = function (ep) {
+    const removed = ep.removed || [];
+    App.pipelineFor(ep).forEach(t => {
+      if (removed.includes(t.key)) return;
+      const on = App.qcFor(ep, t.key).on;
+      const st = (ep.statuses && ep.statuses[t.key]) || 'not_started';
+      const c = ep.qcChecks && ep.qcChecks[t.key];
+      if (on && st === 'approved' && (!c || !c.state || c.state === 'failed')) {
+        ep.qcChecks = ep.qcChecks || {};
+        ep.qcChecks[t.key] = Object.assign({}, c, { state: 'waiting', queuedAt: App.isoDate(App.today()), planDate: null });
+      } else if (c && st !== 'approved' && (c.state === 'waiting' || c.state === 'passed')) {
+        ep.qcChecks[t.key] = Object.assign({}, c, { state: null, planDate: null });
+      } else if (c && !on && c.state === 'waiting') {
+        ep.qcChecks[t.key] = Object.assign({}, c, { state: null, planDate: null });   // QC taken off
+      }
+    });
+  };
   App.taskNameFor = function (ep, key) {
     if (ep.names && ep.names[key]) return ep.names[key];
     const t = App.pTask(ep, key); return t ? t.name : key;
@@ -789,6 +861,10 @@ window.App = window.App || {};
       // worst case: every revision spent, back to back after the first pass
       const steps = t.maxRev > 0 && withRev ? App.revisionSteps(t, due, cal, who, 0) : null;
       done[k] = steps ? steps.end : due;
+      // Requires QC: QC's days follow the last version, and dependents wait
+      // for them. opts.qcDays ({ key: days }) is an episode's own override.
+      const qd = opts && opts.qcDays && opts.qcDays[k] != null ? opts.qcDays[k] : App.qcDaysOf(t);
+      if (qd > 0) done[k] = App.qcSpan(qd, done[k], cal).due;
       dates[k] = { start: s, due };
       if (done[k] > end) end = done[k];
     });
@@ -1087,7 +1163,7 @@ window.App = window.App || {};
     const removed = ep.removed || [];
     const deps = t.deps.filter(d => !removed.includes(d));
     if (!deps.length) return false;
-    return deps.some(d => ((ep.statuses && ep.statuses[d]) || 'not_started') !== 'approved');
+    return deps.some(d => !App.isCompleteKey(ep, d));
   };
   // can it legitimately start right now? all deps approved & not yet done
   App.isStartable = function (ep, key) {
@@ -1172,6 +1248,25 @@ window.App = window.App || {};
     if (!t || !t.maxRev) return { revs: [], end: su.due };
     return App.revisionSteps(t, su.due, App.showCalendar(ep.showId),
       { dept: su.dept, person: su.assignee }, App.revisionsUsed(ep, su.key));
+  };
+
+  /* The QC days held after a flagged task: after its last planned version
+     (or its due date once approved), or from the day it actually joined the
+     queue if that's later. Null when it isn't flagged or QC has passed it. */
+  App.qcWindow = function (ep, su) {
+    const q = App.qcFor(ep, su.key);
+    if (!q.on) return null;
+    const c = App.qcCheck(ep, su.key), state = (c && c.state) || null;
+    if (state === 'passed') return null;
+    let after = App.plannedRevisions(ep, su).end;
+    if (state === 'waiting' && c.queuedAt && App.shiftIso(c.queuedAt, -1) > after) after = App.shiftIso(c.queuedAt, -1);
+    const span = App.qcSpan(q.days, after, App.showCalendar(ep.showId));
+    return { start: span.start, due: span.due, days: q.days, state };
+  };
+  // when a task is really finished: revisions, then QC
+  App.taskEnd = function (ep, su) {
+    const w = App.qcWindow(ep, su);
+    return w ? w.due : App.plannedRevisions(ep, su).end;
   };
 
   /* What a proposed reschedule of one task would break.
@@ -1667,7 +1762,7 @@ window.App = window.App || {};
     App.subitems(ep).forEach(s => { c[s.status] = (c[s.status] || 0) + 1; });
     return c;
   };
-  App.isDelivered = (ep) => App.subitems(ep).every(s => s.status === 'approved');
+  App.isDelivered = (ep) => App.subitems(ep).every(s => App.isComplete(ep, s));
 
   // roll the episode up into one of the four swimlane groups
   App.epGroup = function (ep) {
