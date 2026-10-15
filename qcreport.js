@@ -136,8 +136,8 @@ function listsSheet(base, ips, operators) {
 }
 
 /* info: {
-     show, contentCode, operator, date (Date), episode, task, dept, version (n),
-     qcDue, files: [names delivered], ips: [show names], operators: [QC people],
+     show, contentCode, operator, date (Date), task, version (n),
+     files: [names delivered], ips: [show names], operators: [QC people],
      branding: { logo: data URL, title } (optional — data.formBranding)
    } → the finished .xlsx as a Buffer */
 function build(info) {
@@ -151,13 +151,6 @@ function build(info) {
   s = setCell(s, 'H3', excelDate(info.date || new Date()));
   s = setCell(s, 'E4', info.contentCode || '');
   s = setCell(s, 'H4', info.operator || '');
-  // the line under the header: what this report is checking — in the
-  // header values' own style (the template's spacer style is a tiny serif)
-  const styleOf = (ref) => ((s.match(new RegExp('<c r="' + ref + '"[^>]*?\\ss="(\\d+)"')) || [])[1]);
-  const valueStyle = styleOf('E4');
-  if (valueStyle) s = s.replace(/<c r="B5"((?:\s+[\w:]+="[^"]*")*)/, (m, a) => '<c r="B5"' + a.replace(/\ss="\d+"/, ' s="' + valueStyle + '"'));
-  s = setCell(s, 'B5', [info.episode, info.task + (info.dept ? ' (' + info.dept + ')' : ''), 'QC ' + v,
-    info.qcDue ? 'QC due ' + info.qcDue : null].filter(Boolean).join('  ·  '));
 
   // Assets: one row per delivered file (8 rows on the form)
   const files = (info.files || []).slice(0, 8);

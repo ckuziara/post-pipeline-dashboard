@@ -1988,11 +1988,11 @@ const server = http.createServer(async (req, res) => {
          deliverable, made, named and saved without asking anything:
            <QC department folder>/QC_<Deliverable>/<EPCODE>_<Deliverable>_QC_V<n>.<ext>
          from the first template in the studio library that QC's preferred
-         software opens (body.exts — one whose name mentions QC wins), then
-         opened, so the OS hands it to that application. One project per QC
-         version: asking again for the same version opens the one already
-         there rather than making another. No matching template still makes
-         the folder and opens that. Never overwrites. */
+         software opens (body.exts — one whose name mentions QC wins), with
+         the QC report beside it, then opens that folder so QC sees both. One
+         project per QC version: asking again for the same version just opens
+         the folder rather than making another. No matching template still
+         makes the folder and the report. Never overwrites. */
       if (route === 'POST /api/task/qc-project') {
         const body = JSON.parse(await readBody(req) || '{}');
         const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
@@ -2052,10 +2052,11 @@ const server = http.createServer(async (req, res) => {
           reportCreated = true;
         }
 
-        const target = file ? path.join(dirAbs, file) : dirAbs;
+        // opens the folder, not the files: QC sees the project and the report
+        // side by side and starts whichever they need
         const willOpen = body.open !== false && isLocalRequest(req);
-        if (willOpen) { openNatively(target); openNatively(reportAbs); }
-        return sendJson(res, 200, { ok: true, dir: dirAbs, file, created, existed: !!existing, template, opened: willOpen, path: target,
+        if (willOpen) openNatively(dirAbs);
+        return sendJson(res, 200, { ok: true, dir: dirAbs, file, created, existed: !!existing, template, opened: willOpen, path: dirAbs,
           report: reportName, reportCreated });
       }
 

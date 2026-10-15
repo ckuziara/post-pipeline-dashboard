@@ -101,6 +101,18 @@ window.App = window.App || {};
     return su ? { ep, su } : null;
   };
 
+  /* The report's QC Operator: whoever owns this episode's QC task (the
+     pipeline's QC task, or its first QC-department task). With no owner
+     set, the signed-in person — by name, never a role label. */
+  function qcOperator(ep) {
+    const subs = App.subitems(ep);
+    const qcTask = subs.find(x => x.key === 'qc') || subs.find(x => x.dept === 'qc');
+    const owner = qcTask && qcTask.assignee && App.person(qcTask.assignee);
+    if (owner) return owner.name;
+    const u = App.state.user, me = u && u.personId && App.person(u.personId);
+    return (me && me.name) || (u && u.name) || '';
+  }
+
   App.qcQueue = {
     collect, plan,
     pendingCount(episodes) { return collect(episodes, false).length; },
@@ -174,10 +186,11 @@ window.App = window.App || {};
     },
 
     /* Create QC Project: QC's project for checking this version, in QC's
-       folder, named <EP>_<Deliverable>_QC_V<n> and opened in QC's preferred
-       software (the first desktop app in Admin → Department Software → QC;
-       its template comes from the studio library). Asking again for the same
-       version opens the one already made. */
+       folder, named <EP>_<Deliverable>_QC_V<n> from QC's preferred
+       software's template (the first desktop app in Admin → Department
+       Software → QC), with the QC report beside it — then the folder opens,
+       so QC sees both. Asking again for the same version just opens the
+       folder; nothing is made twice. */
     async createProject(ep, su) {
       if (App.masterPathSet && !App.masterPathSet()) { App.toast('Connect this device to the production folder first (Preferences → Connect to Workspace)', true); return; }
       const apps = App.deptSoftware('qc');
@@ -187,7 +200,7 @@ window.App = window.App || {};
         const w = App.qcWindow(ep, su);
         const report = {
           task: su.name, dept: App.dept(su.dept).label,
-          operator: (App.profile && App.profile.displayName()) || (App.state.user && App.state.user.name) || '',
+          operator: qcOperator(ep),
           qcDue: w ? App.fmtDate(w.due) : '',
           ips: App.activeShows().map(x => x.name),
           operators: App.deptStaff('qc').map(p => p.name),
@@ -202,10 +215,10 @@ window.App = window.App || {};
         }
         App.track.audit('task.qcProject', { episode: ep.code, task: su.name, version: 'V' + version, file: r.file || null, created: r.created });
         const what = (r.file ? r.file : 'the QC folder') + (r.reportCreated ? ' and its QC report' : '');
-        App.toast(r.existed ? 'Opened ' + what : r.created ? 'Created ' + what + (sw ? ' — opening in ' + sw.label : '')
+        App.toast(r.existed ? 'Opened the QC folder' : r.created ? 'Created ' + what + ' — opening the folder'
           : (sw ? 'No ' + sw.label + ' template in the studio library — made the QC folder' : 'Made the QC folder — QC has no desktop software set in Admin') ,
           !r.file && !r.existed);
-        if (!r.opened) App.toast('QC project: ' + r.path);
+        if (!r.opened) App.toast('QC folder: ' + r.path);
       } catch (e) { App.toast('Couldn’t create the QC project: ' + e.message, true); }
     },
 
@@ -387,9 +400,9 @@ window.App = window.App || {};
             el('button.rvq-mini', { title: 'Open the folder ' + dep.label + ' delivered ' + su.name + ' to',
               onclick: () => App.qcQueue.openAssets(ep, su) }, [App.icon('folderOpen'), ' Delivered Assets']),
             waiting ? el('button.rvq-mini.go', {
-              title: madeV ? 'Open ' + madeV.file : 'Make QC’s project for this version, named and saved automatically, and open it',
+              title: madeV ? 'Open the folder with ' + madeV.file + ' and its QC report' : 'Make QC’s project and QC report for this version, named and saved automatically, and open their folder',
               onclick: () => App.qcQueue.createProject(ep, su)
-            }, madeV ? [App.icon('folderOpen'), ' Open QC Project'] : '＋ Create QC Project') : null
+            }, madeV ? [App.icon('folderOpen'), ' Open QC Folder'] : '＋ Create QC Project') : null
           ])
         ])),
         el('.rvq-cell.rvq-due' + (late ? '.late' : ''), null, [
