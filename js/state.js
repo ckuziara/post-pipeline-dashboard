@@ -624,7 +624,8 @@ window.App = window.App || {};
           : { aud: 'ops', who: 'Post Operations', text: 'Set up the review and send it to the Director.', tone: 'wait' };
       case 'approved':
         if (q.on && qs !== 'passed') return { aud: 'dept', who: dept, text: 'Deliver the final files, then Send to QC.', tone: 'go' };
-        return { aud: 'dept', who: dept, text: 'Deliver the final files, then Send Delivery to publish them.', tone: 'go' };
+        if (q.on) return { aud: 'dept', who: dept, text: 'QC passed — the files publish automatically.', tone: 'wait' };
+        return { aud: 'dept', who: dept, text: 'Deliver the final files, then Publish them.', tone: 'go' };
       case 'in_qc': {
         const w = App.qcWindow(ep, su);
         return { aud: 'qc', who: 'QC', text: 'Check the delivery and Pass it or send a QC report' + (w ? ' — due ' + App.fmtDate(w.due) : '') + '.', tone: 'wait' };

@@ -115,7 +115,7 @@ window.App = window.App || {};
     App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = status; App.refreshReadiness(e); App.syncBatch(d, e, key); }, 'the status change');
     App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: g.su.status, to: status });
     App.toast(g.su.name + ' → ' + App.status(status).label);
-    if (status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
+    if (status === 'approved' && !wasApproved) App.askForDelivery(epId, key);
   };
 
   /* Take an approval back (right-click ✓ Approved on the Reviews tab): the
@@ -157,7 +157,7 @@ window.App = window.App || {};
         e.statuses[g.su.key] = status; App.refreshReadiness(e); App.syncBatch(d, e, g.su.key);
       }), 'the status change');
       ok.forEach(g => App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: g.su.status, to: status, bulk: ok.length }));
-      if (status === 'approved') ok.filter(g => !App.isApproved(g.su.status)).forEach(g => App.promoteDelivered(g.ep.id, g.su.key));
+      if (status === 'approved') ok.filter(g => !App.isApproved(g.su.status)).forEach(g => App.askForDelivery(g.ep.id, g.su.key));
     }
     const n = (k) => k + ' task' + (k === 1 ? '' : 's');
     App.toast((ok.length ? n(ok.length) + ' → ' + App.status(status).label : 'Nothing to change') +
@@ -250,7 +250,7 @@ window.App = window.App || {};
         if ('assignee' in w) changed.owner = { from: w.g.su.assignee || null, to: w.assignee };
         App.track.audit('task.edit', { episode: w.g.ep.code, task: w.g.su.name, changed, bulk: plan.length });
       });
-      plan.filter(w => App.isApproved(w.status)).forEach(w => App.promoteDelivered(w.g.ep.id, w.g.su.key));
+      plan.filter(w => App.isApproved(w.status)).forEach(w => App.askForDelivery(w.g.ep.id, w.g.su.key));
     }
     const n = (k) => k + ' task' + (k === 1 ? '' : 's');
     App.toast((plan.length ? 'Updated ' + n(plan.length) : 'Nothing to change') +
@@ -316,13 +316,9 @@ window.App = window.App || {};
       App.track.audit('task.edit', { episode: g.ep.code, task: g.su.name, changed });
     }
     App.toast('Saved “' + (canName ? name : g.su.name) + '”');
-    if (canTouch && status === 'approved' && !wasApproved) App.promoteDelivered(epId, key);
+    if (canTouch && status === 'approved' && !wasApproved) App.askForDelivery(epId, key);
   };
 
-  /* Approval is what turns delivered work into an asset the next department can
-     use, so that's the moment the files move out of the episode's Mezzanine
-     folder into Publish. Silent when there's nothing waiting — plenty of tasks
-     are approved without a file attached. */
   /* Delivered: its files are published (in Publish, where everything
      downstream reads them). Set by the app, never picked — only for a task
      that's finished, i.e. approved and through QC where it needs it. */
@@ -357,8 +353,11 @@ window.App = window.App || {};
     if (App.api && App.api.chatSend) App.api.chatSend(epId + '::' + key, text).catch(() => {});
   };
 
+  /* Publish: a task's delivered files move from Mezzanine to Publish, where
+     everything downstream reads them, and the task becomes Delivered. Not
+     on approval any more — the department publishes (Deliver's Publish
+     button), or for a task that needs QC, QC passing it publishes it. */
   App.promoteDelivered = function (epId, key) {
-    App.askForDelivery(epId, key);         // a QC task waits for its delivery instead
     if (!App.masterPathSet || !App.masterPathSet()) return;
     const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
     // a deliverable that needs QC is published when QC passes it, not before
