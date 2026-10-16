@@ -1257,7 +1257,11 @@ window.App = window.App || {};
             el('span.pr-code', null, ep.code),
             el('span.pr-task', null, '(' + su.name + ')'),
             el('span.pr-date', null, App.fmtDate(su.due)),
-            el('span.pr-chip', { style: { background: st.color, color: st.ink } }, st.label)
+            // approved but not delivered: a Deliver button in place of the status
+            App.needsDelivery(ep, su)
+              ? el('button.pr-chip.pr-deliver', { type: 'button', title: 'Approved — open it to deliver the final files',
+                  onclick: (e) => { e.stopPropagation(); App.editTask.open(ep.id, su.key, { focus: 'deliver' }); } }, 'Deliver')
+              : el('span.pr-chip', { style: { background: st.color, color: st.ink } }, st.label)
           ]));
         });
         if (items.length > cap) rows.appendChild(el('.pr-more', null, '+' + (items.length - cap) + ' more'));

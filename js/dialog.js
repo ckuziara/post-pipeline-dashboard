@@ -728,7 +728,7 @@ window.App = window.App || {};
            production folders, so it needs a master directory. Without one, fall
            back to Smart Upload's metadata catalogue rather than showing nothing. */
         (viewOnly ? null : App.workspace && App.masterPathSet && App.masterPathSet()
-          ? App.workspace.inlineSection(epId, key)
+          ? App.workspace.inlineSection(epId, key, opts && opts.focus)
           : (App.uploads ? App.uploads.inlineSection(epId, key) : null))
       ]);
 

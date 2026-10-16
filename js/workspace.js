@@ -150,9 +150,9 @@ window.App = window.App || {};
 
     /* Mounted into the Edit Task dialog. Renders a placeholder immediately and
        fills in once the server has listed the folders. */
-    inlineSection(epId, taskKey) {
+    inlineSection(epId, taskKey, focus) {
       const box = el('.ws');
-      this._mounted = { box, epId, taskKey, data: null, busy: false };
+      this._mounted = { box, epId, taskKey, data: null, busy: false, focus: focus || null };
       this._render();
       this.reload();
       return box;
@@ -232,6 +232,12 @@ window.App = window.App || {};
         : stage === 'deliver' ? [deliver(), reviewPast(), folded('Project & files', [project(), assets()])]
         : /* qc, done */ [reviewPast(), folded(stage === 'qc' ? 'Delivered files & project' : 'Files & project', [deliver(), project(), assets()])];
       parts.filter(Boolean).forEach(n => box.appendChild(n));
+      // opened to deliver (the Priority widget's Deliver button): bring that section into view
+      if (m.focus === 'deliver') {
+        m.focus = null;
+        const d = [...box.querySelectorAll('.ws-block')].find(b => /Deliver/.test((b.querySelector('.modal-section-title') || {}).textContent || ''));
+        if (d) requestAnimationFrame(() => { d.scrollIntoView({ block: 'center', behavior: 'smooth' }); d.classList.add('ws-flash'); setTimeout(() => d.classList.remove('ws-flash'), 1400); });
+      }
       App.editTask && App.editTask._refresh && App.editTask._refresh();   // the To-Do follows the stage
     },
 

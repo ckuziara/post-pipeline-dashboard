@@ -6340,3 +6340,6 @@ button.dsum-due-btn:hover { border-color: var(--border-2); }
   background: #ff5b6e; color: #fff; border: 1px solid transparent;   /* red: it's waiting on someone */
 }
 .deliver-badge.inline { position: static; display: inline-block; margin-left: 8px; vertical-align: 1px; }
+.pr-chip.pr-deliver { background: #ff5b6e; color: #fff; border: 0; cursor: pointer; font: inherit; font-size: 10px; font-weight: 800; }
+.pr-chip.pr-deliver:hover { background: #ff3d55; }
+.ws-block.ws-flash { box-shadow: 0 0 0 2px #ff5b6e; transition: box-shadow .3s; }
