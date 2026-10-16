@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const branding = require('./qcbranding');
+const naming = require('./js/naming.js');
 
 const TEMPLATE = path.join(__dirname, 'templates', 'qc-report.xlsx');
 
@@ -106,8 +107,46 @@ function setCell(xml, ref, value) {
 const excelDate = (d) => Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 864e5);
 
 const VIDEO = ['mov', 'mp4', 'mxf', 'm4v', 'avi', 'mkv', 'r3d', 'braw'];
-// "MOV", "WAV", "AEP" … the Assets column, as the form writes it
-const assetType = (name) => { const e = String(name).includes('.') ? String(name).split('.').pop() : ''; return e ? e.toUpperCase() : 'FOLDER'; };
+/* The Assets column: what each file is by the naming convention — "ACA" for
+   EMWW0103_ACA.wav (Admin → Workflow → Naming Conventions; see js/naming.js).
+   A name ending in no known suffix is flagged on the row instead: UNKNOWN in
+   Assets, FLAG in QC Result (the form colours it) and the reason in Summary
+   of QC. All three are QC's to change. */
+const OFF_CONVENTION = 'File name doesn’t follow the naming convention: no known suffix';
+/* File names have no spaces, and Excel only wraps at spaces and hyphens, so a
+   long one ran off the edge of the File Name column. An invisible break
+   (zero-width space) after each underscore lets it wrap there, and the row is
+   made tall enough for the lines it takes. The column is 24.5 characters wide;
+   lines are packed the way Excel will, part by part. */
+const FILE_COL_CHARS = 24;
+const ZWSP = '\u200b';
+function wrapName(name) {
+  const parts = String(name).split(/(?<=_)/);
+  let lines = 1, len = 0;
+  parts.forEach(p => {
+    if (len && len + p.length > FILE_COL_CHARS) { lines++; len = 0; }
+    len += p.length;
+    while (len > FILE_COL_CHARS) { lines++; len -= FILE_COL_CHARS; }   // a part longer than a line breaks anywhere
+  });
+  return { text: parts.join(ZWSP), lines };
+}
+function fitRow(s, r, lines) {
+  const need = lines * 14.5 + 8;                       // 11pt Arial lines, plus the cell's padding
+  return s.replace(new RegExp('(<row r="' + r + '"[^>]*?) ht="([\\d.]+)"'), (m, head, ht) =>
+    head + ' ht="' + Math.max(+ht, need) + '"');
+}
+function assetRow(s, r, name, suffixes, cols) {
+  const hit = naming.assetSuffix(name, suffixes);
+  const w = wrapName(name);
+  s = setCell(s, 'B' + r, hit || 'UNKNOWN');
+  s = setCell(s, 'C' + r, w.text);
+  s = fitRow(s, r, w.lines);
+  if (!hit) {
+    s = setCell(s, cols.summary + r, OFF_CONVENTION);
+    s = setCell(s, cols.result + r, 'FLAG');
+  }
+  return s;
+}
 
 /* The hidden QCdropdownlists sheet: the form's dropdowns read their choices
    from it. IP and QC Operator come from the board (its shows, and the QC
@@ -138,12 +177,14 @@ function listsSheet(base, ips, operators) {
 /* info: {
      show, contentCode, operator, date (Date), task, version (n),
      files: [names delivered], ips: [show names], operators: [QC people],
+     suffixes: [the naming convention's suffix codes] (optional — the defaults),
      branding: { logo: data URL, title } (optional — data.formBranding)
    } → the finished .xlsx as a Buffer */
 function build(info) {
   const parts = readZip(fs.readFileSync(TEMPLATE));
   const get = (n) => parts.find(p => p.name === n);
   const v = 'V' + (info.version || 1);
+  const suffixes = Array.isArray(info.suffixes) && info.suffixes.length ? info.suffixes : naming.namingSuffixes(null);
 
   let s = get('xl/worksheets/sheet1.xml').data.toString('utf8');
   s = setCell(s, 'A1', branding.titleFor(info.branding, info.show) || (info.show ? info.show + ' ' : '') + 'QC Report');
@@ -157,14 +198,13 @@ function build(info) {
   if (!files.length) s = setCell(s, 'B7', info.task || '');
   files.forEach((f, i) => {
     const r = 7 + i;
-    s = setCell(s, 'B' + r, assetType(f));
-    s = setCell(s, 'C' + r, f);
+    s = assetRow(s, r, f, suffixes, { summary: 'E', result: 'F' });
     s = setCell(s, 'D' + r, v);
   });
   // Vidchecker: the video files (2 rows on the form)
   files.filter(f => VIDEO.includes(String(f).split('.').pop().toLowerCase())).slice(0, 2).forEach((f, i) => {
-    s = setCell(s, 'B' + (17 + i), assetType(f));
-    s = setCell(s, 'C' + (17 + i), f);
+    // here the summary is D (merged across D:E)
+    s = assetRow(s, 17 + i, f, suffixes, { summary: 'D', result: 'F' });
   });
   s = setCell(s, 'G32', v);
   get('xl/worksheets/sheet1.xml').data = Buffer.from(s, 'utf8');
