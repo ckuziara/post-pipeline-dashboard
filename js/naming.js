@@ -9,8 +9,12 @@
 (function (App) {
   App.NAMING_DEFAULTS = {
     pattern: '[Content Code][Language]_[Format]_[Suffix]',
-    examples: ['KYI0246ENUS_SONG_SONGMASTER', 'KYI0246ENUS_SONG_NOIO-TEXTED-BITC'],
-    notes: "If a suffix is split across two words, the words are joined with a hyphen rather than an underscore. The content code is generated when a series has a project created against it and episodes are added: in the example above, KYI is the series code, 02 is the season and 46 is the episode within that season.",
+    // two made-up deliveries the examples are built from, by filling each
+    // [Part] of the format in with its value here
+    samples: [
+      { 'Content Code': 'KYI0246', Language: 'ENUS', Format: 'SONG', Suffix: 'SONGMASTER' },
+      { 'Content Code': 'KYI0246', Language: 'ENUS', Format: 'FD', Suffix: 'NOIO-TEXTED-BITC' }
+    ],
     tables: [
       { key: 'formats', title: 'Formats', desc: 'The Format is one of these options.',
         cols: ['Format Code', 'Full Name', 'Description'],
@@ -44,8 +48,6 @@
     const D = App.NAMING_DEFAULTS;
     return {
       pattern: raw.pattern || D.pattern,
-      examples: Array.isArray(raw.examples) && raw.examples.length ? raw.examples.slice() : D.examples.slice(),
-      notes: typeof raw.notes === 'string' && raw.notes ? raw.notes : D.notes,
       tables: D.tables.map(t => {
         const src = raw.tables && Array.isArray(raw.tables[t.key]) ? raw.tables[t.key] : t.rows;
         const rows = [];
@@ -80,13 +82,21 @@
     return (suffixes || []).find(sx => { const S = sx.toUpperCase(); return B === S || B.endsWith('_' + S); }) || null;
   };
 
-  /* patch: { pattern, examples, notes } and/or { table: key, rows } —
+  /* Example names for a format: each [Part] filled in from a sample
+     delivery. A part the samples don't know stays as written, [Like This]. */
+  App.namingExamples = (pattern) => App.NAMING_DEFAULTS.samples.map(smp =>
+    String(pattern || '').replace(/\[([^\]]+)\]/g, (m, k) => {
+      const hit = Object.keys(smp).find(x => x.toLowerCase() === k.trim().toLowerCase());
+      return hit ? smp[hit] : m;
+    }));
+
+  /* patch: { pattern } and/or { table: key, rows } —
      rows: null puts that table back to its default */
   App.setNaming = function (patch, label) {
     if (!App.isAdminRole(App.state.role)) { App.toast('Only admins can change naming conventions', true); return false; }
     App.mutate(d => {
       const n = d.naming = Object.assign({}, d.naming);
-      ['pattern', 'examples', 'notes'].forEach(k => { if (k in patch) { if (patch[k] == null || patch[k] === '') delete n[k]; else n[k] = patch[k]; } });
+      ['pattern'].forEach(k => { if (k in patch) { if (patch[k] == null || patch[k] === '') delete n[k]; else n[k] = patch[k]; } });
       if (patch.table) {
         n.tables = Object.assign({}, n.tables);
         if (patch.rows == null) delete n.tables[patch.table]; else n.tables[patch.table] = patch.rows;
@@ -116,7 +126,7 @@
   // the draft is a fresh copy of what's live, taken when Edit is pressed
   function startEdit(key) {
     const cfg = App.namingConfig();
-    if (key === 'format') editing.format = { pattern: cfg.pattern, examples: cfg.examples.join('\n'), notes: cfg.notes };
+    if (key === 'format') editing.format = { pattern: cfg.pattern };
     else editing[key] = cfg.tables.find(t => t.key === key).rows.map(r => r.slice());
     App.render();
   }
@@ -140,43 +150,42 @@
     if (!dr) {
       card.appendChild(el('.gd-adm-body', null, [
         field('Format', el('.ncv-read.ncv-mono.ncv-pattern', null, cfg.pattern)),
-        field('Examples', el('.ncv-read.ncv-mono', null, cfg.examples.map(x => el('div', null, x)))),
-        field('Notes', el('.ncv-read.ncv-notes', null, cfg.notes))
+        field('Examples', exampleList(cfg.pattern))
       ]));
       return card;
     }
-    const bind = (node, k) => { node.value = dr[k]; node.addEventListener('input', () => { dr[k] = node.value; }); return node; };
-    const patIn = bind(el('input.fld.ncv-mono', { type: 'text', placeholder: App.NAMING_DEFAULTS.pattern, spellcheck: 'false' }), 'pattern');
-    const exIn = bind(el('textarea.fld.ncv-mono', { rows: '2', placeholder: App.NAMING_DEFAULTS.examples.join('\n'), spellcheck: 'false' }), 'examples');
-    const notesIn = bind(el('textarea.fld.gd-adm-text', { rows: '4', placeholder: App.NAMING_DEFAULTS.notes }), 'notes');
+    const patIn = el('input.fld.ncv-mono', { type: 'text', placeholder: App.NAMING_DEFAULTS.pattern, spellcheck: 'false' });
+    patIn.value = dr.pattern;
+    // the examples follow the format as it's typed
+    const exWrap = el('div', null, exampleList(dr.pattern));
+    patIn.addEventListener('input', () => { dr.pattern = patIn.value; exWrap.replaceChildren(exampleList(dr.pattern)); });
     card.appendChild(el('.gd-adm-body', null, [
-      field('Format', patIn),
-      field('Examples', exIn, 'One per line.'),
-      field('Notes', notesIn),
+      field('Format', patIn, 'Write each part in square brackets: [Content Code], [Language], [Format], [Suffix].'),
+      field('Examples', exWrap),
       el('.gd-adm-acts', null, [
         el('button.btn-ghost.ncv-reset', {
-          title: 'Put the format, examples and notes back to the standard document',
-          onclick: () => { const D = App.NAMING_DEFAULTS; Object.assign(dr, { pattern: D.pattern, examples: D.examples.join('\n'), notes: D.notes }); App.render(); }
+          title: 'Put the format back to the standard document',
+          onclick: () => { dr.pattern = App.NAMING_DEFAULTS.pattern; App.render(); }
         }, '↺ Use the default'),
         el('button.btn-ghost', { onclick: () => stopEdit('format') }, 'Cancel'),
         el('button.btn-primary', {
           onclick: () => {
             // whatever still matches the default is stored as "use the default", so it follows any later change to it
             const D = App.NAMING_DEFAULTS;
-            const pat = dr.pattern.trim(), notes = dr.notes.trim();
-            const ex = dr.examples.split('\n').map(s => s.trim()).filter(Boolean);
+            const pat = dr.pattern.trim();
             delete editing.format;
-            if (App.setNaming({
-              pattern: pat === D.pattern ? null : pat,
-              examples: !ex.length || ex.join('\n') === D.examples.join('\n') ? null : ex,
-              notes: notes === D.notes ? null : notes
-            }, 'the naming format')) App.toast('Naming format saved');
+            if (App.setNaming({ pattern: pat === D.pattern ? null : pat }, 'the naming format')) App.toast('Naming format saved');
             else App.render();
           }
         }, 'Save')
       ])
     ]));
     return card;
+  }
+
+  function exampleList(pattern) {
+    const el = App.el;
+    return el('.ncv-read.ncv-mono', null, App.namingExamples(pattern).map(x => el('div', null, x)));
   }
 
   function tableCard(t) {
