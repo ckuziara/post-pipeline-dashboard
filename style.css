@@ -6302,3 +6302,30 @@ button.dsum-due-btn:hover { border-color: var(--border-2); }
 .qcq-grid .ep-code { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
 .qcq-grid .subrow > .cell:last-child { padding-right: 18px; }   /* off the card's rounded edge */
 .qcq-grid .subrow > .cell:first-child { padding-left: 14px; }
+
+/* Edit Task: the next step, and the compact parts (js/dialog.js, js/workspace.js) */
+.et-next { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 12px 0 0; padding: 10px 14px; border-radius: 10px;
+  border: 1px solid var(--border-2); background: var(--bg-2); font-size: 12.5px; line-height: 1.4; }
+.et-next-k { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .6px; color: var(--text-3); }
+.et-next-who { font-weight: 800; }
+.et-next-t { color: var(--text-2); flex: 1 1 220px; }
+.et-next.go { border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 9%, var(--bg-2)); }
+.et-next.go .et-next-who { color: var(--accent); }
+.et-next.bad { border-color: rgba(255,91,110,.5); background: rgba(255,91,110,.08); }
+.et-next.bad .et-next-who { color: var(--ink-bad); }
+.et-next.done { border-color: rgba(0,200,117,.45); background: rgba(0,200,117,.08); }
+.et-next.done .et-next-who { color: var(--ink-ok); }
+.ws-more { margin-top: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-2); }
+.ws-more > summary { cursor: pointer; padding: 10px 14px; font-size: 12px; font-weight: 700; color: var(--text-2); list-style: none; }
+.ws-more > summary::before { content: '▸ '; color: var(--text-3); }
+.ws-more[open] > summary::before { content: '▾ '; }
+.ws-more > .ws-block { border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; }
+.ws-compact { padding: 10px 14px; }
+.ws-compact .ws-head { margin-bottom: 6px; }
+.ws-hist { display: flex; flex-direction: column; gap: 3px; }
+.ws-hist-row { display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0; }
+.ws-hist-row .ws-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-hist-row .ws-meta { color: var(--text-3); font-size: 11px; white-space: nowrap; }
+.ws-btn.ws-sent, .ws-btn.ws-sent:disabled { background: var(--st-approved, #00c875); border-color: transparent; color: #04321d; opacity: 1;
+  animation: ws-sent-pop .5s cubic-bezier(.2,1.6,.4,1); }
+@keyframes ws-sent-pop { 0% { transform: scale(.92); } 60% { transform: scale(1.06); } 100% { transform: scale(1); } }

@@ -337,7 +337,28 @@ window.App = window.App || {};
     App.track.audit('task.status', { episode: ep.code, task: App.taskNameFor(ep, key), from: 'approved', to: 'delivered' });
   };
 
+  /* Approved, but it needs QC: QC can't have it until the department has
+     delivered the final files and sent them. Said to the task's owner
+     through the task's own Discussion — the message is what lights up their
+     bell (and mirrors to Slack) — once per QC version, never twice. */
+  App.askForDelivery = function (epId, key) {
+    const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
+    const su = App.subitem(ep, key);
+    if (!su || su.status !== 'approved' || !App.qcFor(ep, key).on || App.qcState(ep, key) === 'passed') return;
+    const v = App.qcVersion(ep, key), c = App.qcCheck(ep, key);
+    if (c && c.deliveryAskedV === v) return;
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.qcChecks = Object.assign({}, e.qcChecks, { [key]: Object.assign({}, e.qcChecks && e.qcChecks[key], { deliveryAskedV: v }) });
+    }, 'asking for the delivery');
+    const owner = su.assignee && App.person(su.assignee);
+    const text = '✅ Approved — ' + (owner ? owner.name.split(' ')[0] + ', u' : 'U') +
+      'pload the delivery files in Deliver, then Send to QC. QC can’t start until they’re in.';
+    if (App.api && App.api.chatSend) App.api.chatSend(epId + '::' + key, text).catch(() => {});
+  };
+
   App.promoteDelivered = function (epId, key) {
+    App.askForDelivery(epId, key);         // a QC task waits for its delivery instead
     if (!App.masterPathSet || !App.masterPathSet()) return;
     const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
     // a deliverable that needs QC is published when QC passes it, not before

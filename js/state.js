@@ -569,6 +569,72 @@ window.App = window.App || {};
     return App.status(st).label + (q.on ? ' · needs QC once approved' : '');
   };
   App.awaitingQc = (ep, su) => su.status === 'in_qc';
+  /* Where a task is in its hand-offs — what the Edit Task dialog shows in
+     full (js/workspace.js), and what its Next line says:
+       start    not started / ready: make the project, gather the inputs
+       work     in progress: make it, put the cut up
+       review   with Post Operations / the Director
+       deliver  approved: deliver the final files and send them on
+       qc       In QC
+       done     Delivered, or finished with nothing left to send */
+  App.taskStage = function (ep, su) {
+    const st = su.status;
+    if (st === 'delivered') return 'done';
+    if (st === 'in_qc') return 'qc';
+    if (st === 'review') return 'review';
+    if (st === 'approved') return 'deliver';
+    if (st === 'not_started' || st === 'ready') return 'start';
+    return 'work';
+  };
+  /* The one next step for a task, and whose it is — always shown at the top
+     of Edit Task, so it's never a guess. → { text, who, tone, aud }
+     aud: whose move it is — 'dept' (the task's department), 'ops',
+     'director' or 'qc'; see App.nextStepFor. */
+  /* Is this To-Do for the person looking? Only for its audience — and every
+     To-Do for Producers, who run the whole thing. */
+  App.nextStepFor = function (nx, su, role) {
+    if (role === 'producer') return true;
+    const myDept = App.roleDept(role);
+    if (nx.aud === 'dept') return myDept === su.dept;
+    if (nx.aud === 'ops') return myDept === 'ops';
+    if (nx.aud === 'qc') return myDept === 'qc';
+    if (nx.aud === 'director') return role === 'director';
+    return false;
+  };
+  App.nextStep = function (ep, su) {
+    const dept = App.dept(su.dept).label;
+    const q = App.qcFor(ep, su.key), qs = App.qcState(ep, su.key);
+    const blockedBy = su.deps.filter(d => !App.isCompleteKey(ep, d)).map(d => App.taskNameFor(ep, d));
+    const sent = App.review && App.review.sent(ep.id, su.key);
+    const ups = App.reviewUploads ? App.reviewUploads.list(ep.id, su.key).length : 0;
+    switch (su.status) {
+      case 'not_started':
+      case 'ready':
+        return blockedBy.length
+          ? { aud: 'dept', who: 'Waiting', text: 'Can’t start until ' + blockedBy.join(', ') + (blockedBy.length === 1 ? ' is' : ' are') + ' finished.', tone: 'wait' }
+          : { aud: 'dept', who: dept, text: 'Start the work — create the project, then set it In Progress.', tone: 'go' };
+      case 'in_progress':
+        if (q.on && qs === 'failed') return { aud: 'dept', who: dept, text: 'Fix what QC reported, deliver the fix, then Resubmit to QC.', tone: 'bad' };
+        return ups
+          ? { aud: 'dept', who: dept, text: 'The cut is up — Send for Review when it’s ready.', tone: 'go' }
+          : { aud: 'dept', who: dept, text: 'Upload the cut to Review Uploads, then Send for Review.', tone: 'go' };
+      case 'review':
+        return sent
+          ? { aud: 'director', who: 'Director', text: 'Watch the cut and Approve it or Send Feedback.', tone: 'wait' }
+          : { aud: 'ops', who: 'Post Operations', text: 'Set up the review and send it to the Director.', tone: 'wait' };
+      case 'approved':
+        if (q.on && qs !== 'passed') return { aud: 'dept', who: dept, text: 'Deliver the final files, then Send to QC.', tone: 'go' };
+        return { aud: 'dept', who: dept, text: 'Deliver the final files, then Send Delivery to publish them.', tone: 'go' };
+      case 'in_qc': {
+        const w = App.qcWindow(ep, su);
+        return { aud: 'qc', who: 'QC', text: 'Check the delivery and Pass it or send a QC report' + (w ? ' — due ' + App.fmtDate(w.due) : '') + '.', tone: 'wait' };
+      }
+      case 'delivered':
+        return { aud: 'dept', who: 'Done', text: 'Delivered — the files are published for the next departments.', tone: 'done' };
+      default:
+        return { aud: 'dept', who: dept, text: App.status(su.status).label, tone: 'go' };
+    }
+  };
   /* The QC days that follow `after` (a task's finish, revisions included), on
      QC's own calendar when the show keeps one. Returns { start, due }. */
   App.qcSpan = function (days, after, cal) {

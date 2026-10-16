@@ -248,8 +248,10 @@ window.App = window.App || {};
        has approved the task and its final files are delivered. The task goes
        In QC and joins the queue. Their own department's task, so no approver
        needed: approval already happened. */
-    sendToQc(epId, key) {
+    sendToQc(epId, key, opts) {
       const g = find(epId, key); if (!g) return;
+      // QC checks the delivered files, so there must be some (Deliver passes delivered: n)
+      if (!(opts && opts.delivered > 0)) { App.toast('Upload the delivery files in Deliver first — QC checks those', true); return; }
       if (!App.canEditTask(App.state.role, g.su)) { App.toast('Only the ' + App.dept(g.su.dept).label + ' team can send this to QC', true); return; }
       if (!App.qcFor(g.ep, key).on) return;
       if (g.su.status !== 'approved') { App.toast(g.su.name + ' needs the Director’s approval before it goes to QC', true); return; }

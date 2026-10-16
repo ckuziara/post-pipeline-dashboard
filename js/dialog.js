@@ -522,11 +522,13 @@ window.App = window.App || {};
     refresh();
     // a locked row never opens, so its hint would stay buried in editWrap —
     // surface it as the row's tooltip instead (explains *why* it's locked)
-    return el('.et-row' + (opts.locked ? '.locked' : ''),
+    const row = el('.et-row' + (opts.locked ? '.locked' : ''),
       opts.locked && opts.hint && !opts.quiet ? { title: opts.hint } : null, [
       el('.et-label', null, labelText),
       el('.et-control', null, [display, editWrap])
     ]);
+    row._refresh = refresh;   // for a value that changed from outside the row
+    return row;
   }
 
   // ---- Edit Task ----
@@ -648,12 +650,46 @@ window.App = window.App || {};
       const qcControl = el('.et-qc-edit', null, [qcSwitch, el('span', null, 'Requires QC'), qcDays, el('span.et-qc-unit', null, 'days')]);
       const qcDisplay = () => qcPick.on ? 'Requires QC · ' + qcPick.days + ' day' + (qcPick.days === 1 ? '' : 's') : 'Not needed';
 
+      /* To-Do: the one next step, under the task's details. The department's
+         own step needs no name; someone else's (Post Operations, the
+         Director, QC) says whose it is. */
+      const liveSu = () => { const e = App.state.data.episodes.find(x => x.id === epId); return (e && App.subitem(e, key)) || su; };
+      const nextBar = el('div');
+      // redrawn whenever the task moves on (a send, a status pick); gone once there's nothing left to do
+      const paintNext = () => {
+        const e = App.state.data.episodes.find(x => x.id === epId), now = e && App.subitem(e, key);
+        nextBar.innerHTML = '';
+        if (!now || now.status === 'delivered') return;
+        const nx = App.nextStep(e, now);
+        if (!App.nextStepFor(nx, now, App.state.role)) return;   // not this viewer's to-do
+        nextBar.appendChild(el('.et-next.' + nx.tone, null, [
+          el('span.et-next-k', null, 'To-Do'),
+          nx.who && nx.who !== App.dept(now.dept).label ? el('span.et-next-who', null, nx.who) : null,
+          el('span.et-next-t', null, nx.text)
+        ]));
+      };
+      paintNext();
+      /* A send button moved the status on (Send for Review, Send to QC…):
+         the Status row follows, so it isn't mistaken for an unsaved change. */
+      let statusRow = null, seenStatus = su.status;
+      const followStatus = () => {
+        const now = liveSu().status;
+        if (now === seenStatus) return;
+        seenStatus = now;
+        if (![...statusSel.options].some(o => o.value === now)) {
+          const o = document.createElement('option'); o.value = now; o.textContent = App.status(now).label; statusSel.appendChild(o);
+        }
+        statusSel.value = now;
+        statusRow && statusRow._refresh && statusRow._refresh();
+      };
+      App.editTask._refresh = () => { if (nextBar.isConnected) { followStatus(); paintNext(); syncSave(); } };
+
       const detailsPanel = el('.et-panel', null, [
         el('.et-list', null, [
           editRow('Task name', nameInput, () => nameInput.value, {
             quiet: viewOnly, locked: !canName, hint: canName ? null : 'Only Producers and Managers can rename a task'
           }),
-          editRow('Status', statusSel, statusDisplay, {
+          statusRow = editRow('Status', statusSel, statusDisplay, {
             /* the Board's status popover, one click away, and applied at once
                like the Board. setStatus can refuse (Ready for Review needs its
                upload), so the row shows whatever the task actually holds after. */
@@ -661,6 +697,7 @@ window.App = window.App || {};
               App.setStatus(epId, key, sk);
               const now = App.subitem(App.state.data.episodes.find(e => e.id === epId), key);
               statusSel.value = now ? now.status : sk; refresh();
+              App.editTask._refresh && App.editTask._refresh();
             }),
             quiet: viewOnly, locked: lockedApproved || !canTouch,
             hint: !canTouch ? 'Only the ' + App.dept(su.dept).label + ' team can update this task’s status'
@@ -675,6 +712,7 @@ window.App = window.App || {};
             quiet: viewOnly, locked: !canQc, hint: canQc ? 'Once approved it joins the QC queue; anything waiting on it waits for QC too' : 'Only Producers can choose what needs QC'
           })
         ]),
+        nextBar,
         koLine(ep, su),
         // where its QC check stands: waiting, passed, or the report sent back
         (App.qcQueue ? App.qcQueue.taskSection(ep, su) : null),
@@ -711,6 +749,16 @@ window.App = window.App || {};
 
       const sections = [ctxBar, detailsPanel, chatPanel];
 
+      let saveBtn = null;
+      const dirty = () => {
+        const now = liveSu();
+        return (canName && nameInput.value.trim() !== now.name) ||
+          (!statusSel.disabled && statusSel.value !== now.status) ||
+          (canSched && (startInput.value !== now.start || dueInput.value !== now.due)) ||
+          (canAssign && (ownerSel.value || '') !== (now.assignee || '')) ||
+          (canQc && (qcPick.on !== qcNow.on || (qcPick.on && qcPick.days !== qcNow.days)));
+      };
+      function syncSave() { if (saveBtn) saveBtn.style.display = dirty() ? '' : 'none'; }
       const footer = viewOnly ? [
         el('button.btn-primary', { onclick: () => App.modal.close() }, 'Close')
       ] : [
@@ -720,7 +768,7 @@ window.App = window.App || {};
             () => { App.removeTask(epId, key); App.modal.close(); },
             { title: 'Remove task', yesLabel: 'Remove', onNo: () => App.editTask.open(epId, key) })
         }, [App.icon('trash'), ' Remove']) : null),
-        el('button.btn-primary', {
+        saveBtn = el('button.btn-primary', {
           onclick: () => {
             const s = startInput.value, d = dueInput.value;
             if (canName && !nameInput.value.trim()) { App.toast('Task name is required', true); return; }
@@ -740,6 +788,10 @@ window.App = window.App || {};
       ];
 
       App.modal.open(card(null, null, null, sections, footer, null, tabs));
+      // Save Changes only while something here is waiting to be saved
+      const mc = document.querySelector('.modal-card');
+      if (mc) ['input', 'change', 'click'].forEach(ev => mc.addEventListener(ev, () => setTimeout(syncSave, 0)));
+      syncSave();
       App.track.flowStart('Task edit', { dept: su.dept });   // after open(): its defensive close() must not cancel this
     },
 
