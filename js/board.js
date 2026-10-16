@@ -31,28 +31,28 @@ window.App = window.App || {};
     epSummary(ep) {
       const subs = App.subitems(ep);
       const myDept = App.roleDept(App.state.role);
-      const allDone = subs.length > 0 && subs.every(s => s.status === 'approved');
-      const started = subs.some(s => ['in_progress', 'review', 'approved'].includes(s.status));
+      const allDone = subs.length > 0 && subs.every(s => App.isApproved(s.status));
+      const started = subs.some(s => ['in_progress', 'review', 'approved', 'in_qc', 'delivered'].includes(s.status));
       const status = allDone ? { label: 'Delivered', color: '#00c875' }
         : started ? { label: 'In Production', color: '#fdab3d' }
         : { label: 'Pending', color: '#9aa0ad' };
 
       // the viewer's next open task on this episode, and whether it can start now
       const byKey = {}; subs.forEach(s => { byKey[s.key] = s; });
-      const next = myDept ? subs.find(s => s.dept === myDept && s.status !== 'approved') : null;
-      const openDeps = next ? next.deps.filter(k => byKey[k] && byKey[k].status !== 'approved') : [];
+      const next = myDept ? subs.find(s => s.dept === myDept && !App.isApproved(s.status)) : null;
+      const openDeps = next ? next.deps.filter(k => byKey[k] && !App.isApproved(byKey[k].status)) : [];
       const startable = !!next && !openDeps.length;
 
       // stage = dept of the first unapproved task in pipeline order — unless the
       // viewer's own next task is already startable (parallel branch): then it's
       // their turn and the chip shows their department.
-      const stageTask = subs.find(s => s.status !== 'approved') || null;
+      const stageTask = subs.find(s => !App.isApproved(s.status)) || null;
       const stageDept = startable ? myDept : stageTask ? stageTask.dept : null;
       const mine = startable || !!(myDept && stageTask && stageTask.dept === myDept);
 
       // completion scoped to the viewer's department (oversight roles see all)
       const scope = myDept ? subs.filter(s => s.dept === myDept) : subs;
-      const done = scope.filter(s => s.status === 'approved').length;
+      const done = scope.filter(s => App.isApproved(s.status)).length;
       const prog = scope.length ? Math.round(100 * done / scope.length) : 100;
 
       // hover text: when can the viewer's department start its next task?
@@ -344,7 +344,7 @@ window.App = window.App || {};
         const person = su.assignee ? App.person(su.assignee) : null;
         const st = App.status(su.status);
         const blocked = App.isRiskBlocked(ep, su.key);
-        const overdue = su.status !== 'approved' && su.due < todayIso;
+        const overdue = !App.isApproved(su.status) && su.due < todayIso;
 
         const row = el('.subrow' + (App.ganttSelection.has(ep.id, su.key) ? '.selected' : ''), null, [
           el('.cell.c-num', null, i + 1),
@@ -432,7 +432,7 @@ window.App = window.App || {};
         const d = App.roleDept(App.state.role);
         App.toast('Your role can only edit ' + (d ? App.dept(d).label : 'permitted') + ' tasks', true); return;
       }
-      if (su.status === 'approved' && !App.canApprove(App.state.role)) {
+      if (App.isApproved(su.status) && !App.canApprove(App.state.role)) {
         App.toast('Only Producer, Director or Manager can change an approved task', true); return;
       }
       const r = cell.getBoundingClientRect();

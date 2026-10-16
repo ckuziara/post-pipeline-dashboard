@@ -1200,7 +1200,7 @@ window.App = window.App || {};
       const buckets = {};
       PRIORITY_GROUPS.forEach(g => { buckets[g.key] = []; });
       scoped.forEach(x => {
-        if (x.su.status === 'approved') return;                      // done, not a priority
+        if (App.isApproved(x.su.status)) return;                      // done, not a priority
         if (x.su.status === 'review') { buckets.review.push(x); return; }
         if (x.su.due < todayIso) buckets.overdue.push(x);
         else if (x.su.due === todayIso) buckets.today.push(x);
@@ -1211,7 +1211,7 @@ window.App = window.App || {};
 
       const groups = PRIORITY_GROUPS.filter(g => buckets[g.key].length)
         .map(g => this.priorityGroup(g, buckets[g.key], t));
-      const open = scoped.filter(x => x.su.status !== 'approved').length;
+      const open = scoped.filter(x => !App.isApproved(x.su.status)).length;
 
       return {
         title: 'Priority',
@@ -1448,7 +1448,7 @@ window.App = window.App || {};
       const items = [];
       const todayIso = App.isoDate(App.today());
       m.subs.forEach(({ ep, su }) => {
-        if (su.status === 'approved') return;
+        if (App.isApproved(su.status)) return;
         const overdue = su.due < todayIso;
         const blocked = App.isRiskBlocked(ep, su.key);
         if (overdue || blocked) items.push({ ep, su, overdue, blocked, late: App.daysUntil(su.due) });
@@ -1518,7 +1518,7 @@ window.App = window.App || {};
     },
 
     deptLoad(m, t) {
-      const active = m.subs.filter(x => x.su.status !== 'approved');
+      const active = m.subs.filter(x => !App.isApproved(x.su.status));
       const max = Math.max(1, ...Object.keys(App.DEPARTMENTS).map(k => active.filter(x => x.su.dept === k).length));
       const rows = Object.keys(App.DEPARTMENTS)
         .map(dk => ({ d: App.dept(dk), n: active.filter(x => x.su.dept === dk).length }))

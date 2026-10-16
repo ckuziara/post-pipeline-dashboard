@@ -1511,7 +1511,7 @@ window.App = window.App || {};
           const mine = subs.filter(su => su.dept === dk);
           const a = mine.reduce((m, su) => su.start < m ? su.start : m, mine[0].start);
           const b = mine.reduce((m, su) => su.due > m ? su.due : m, mine[0].due);
-          const done = mine.filter(su => su.status === 'approved').length;
+          const done = mine.filter(su => App.isApproved(su.status)).length;
           const style = {}; setBarPos(style, axis, xOf, a, b);
           style.top = (5 + i * 6) + 'px';
           style.background = App.dept(dk).color;
@@ -1693,7 +1693,7 @@ window.App = window.App || {};
     // the useful thing to read off a bar is which show it belongs to.
     taskBar(track, ep, su, dep, xOf, dw, labelText, fill, axis) {
       const st = App.status(su.status);
-      const done = su.status === 'approved';
+      const done = App.isApproved(su.status);
       const ring = su.status === 'ready' || su.status === 'in_progress' || su.status === 'review';
       const bg = fill || dep.color;
       const bare = isCoarse(dw);                 // shape only — see isCoarse
@@ -2085,7 +2085,7 @@ window.App = window.App || {};
       // nobody has been given yet
       const deptTasks = {};
       App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
-        if (su.status !== 'approved') (deptTasks[su.dept] = deptTasks[su.dept] || []).push({ ep, su });
+        if (!App.isApproved(su.status)) (deptTasks[su.dept] = deptTasks[su.dept] || []).push({ ep, su });
       }));
       const byDept = {};
       people.forEach(p => { const d = App.roleDept(p.role); (byDept[d] = byDept[d] || []).push(p); });
@@ -2325,7 +2325,7 @@ window.App = window.App || {};
         all.forEach(({ su }) => {
           if (su.start < min) min = su.start;
           if (su.due > max) max = su.due;
-          if (su.status === 'approved') done++;
+          if (App.isApproved(su.status)) done++;
         });
         const prog = Math.round(done / all.length * 100);
         const epCount = new Set(all.map(x => x.ep.id)).size;
@@ -2484,7 +2484,7 @@ window.App = window.App || {};
         all.forEach(({ su }) => {
           if (su.start < min) min = su.start;
           if (su.due > max) max = su.due;
-          if (su.status === 'approved') done++;
+          if (App.isApproved(su.status)) done++;
         });
         const prog = Math.round(done / all.length * 100);
         const epCount = new Set(all.map(x => x.ep.id)).size;
@@ -2907,7 +2907,7 @@ window.App = window.App || {};
           down.forEach(k => {
             if (keys.has(k)) return;
             const su = App.subitem(ep, k);
-            if (su && su.status !== 'approved') add(ep, su);
+            if (su && !App.isApproved(su.status)) add(ep, su);
           });
         });
       }

@@ -853,16 +853,28 @@ window.App = window.App || {};
           // rest of this section's editing actions
           phone ? null : el('button.ws-x', { title: 'Remove link', onclick: () => { App.removeTaskLink(ep.id, su.key, l.id); this._render(); } }, '✕')
         ])));
+        /* The send button, once delivered: with QC it goes to QC (In QC),
+           without it the files are published (Delivered). Both need the
+           Director's approval first; before that, nothing to send. */
+        const needsQc = App.qcFor(ep, su.key).on;
+        const canSendHere = !phone && App.canEditTask(App.state.role, su) && su.status === 'approved';
+        const sendBtn = !canSendHere ? null
+          : needsQc
+            ? (App.qcState(ep, su.key) !== 'passed' ? el('button.btn-primary.ws-btn', {
+                onclick: () => { App.qcQueue.sendToQc(ep.id, su.key); this._render(); }
+              }, [App.icon('checkBadge'), ' Send to QC']) : null)
+            : (mezz.length ? el('button.btn-primary.ws-btn', {
+                onclick: () => App.promoteDelivered(ep.id, su.key)
+              }, [App.icon('package'), ' Send Delivery']) : null);
+        const chip = su.status === 'in_qc' ? el('span.ws-chip.pending', null, 'with QC')
+          : App.isApproved(su.status) ? el('span.ws-chip.ok', null, needsQc && App.qcState(ep, su.key) !== 'passed' ? 'approved — not sent to QC' : 'approved')
+          : el('span.ws-chip.pending', null, 'awaiting approval');
         wrap.appendChild(el('.ws-delivered', null, [
-          el('.ws-sub', null, [
-            'Delivered · ',
-            su.status === 'approved'
-              ? el('span.ws-chip.ok', null, 'approved')
-              : el('span.ws-chip.pending', null, 'awaiting approval')
-          ]),
+          el('.ws-sub', null, ['Delivered · ', chip]),
           list,
-          su.status === 'approved' ? null : el('.ws-note.tight', null,
-            'These stay out of the next department’s Assets until ' + su.name + ' is approved.')
+          sendBtn ? el('.ws-actions', null, sendBtn) : null,
+          App.isApproved(su.status) ? null : el('.ws-note.tight', null,
+            'These stay out of the next department’s Assets until ' + su.name + ' is approved' + (needsQc ? ' and through QC' : '') + '.')
         ]));
       }
 

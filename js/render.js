@@ -417,7 +417,7 @@ window.App = window.App || {};
         const tag = ep.code + ' — ' + su.name;
         if (su.status === 'in_progress') inProg.push(tag);
         if (su.status === 'review') review.push(tag);
-        if (su.status !== 'approved' && su.due < today) overdue.push(tag);
+        if (!App.isApproved(su.status) && su.due < today) overdue.push(tag);
         if (App.isRiskBlocked(ep, su.key)) blocked.push(tag);
       });
     });

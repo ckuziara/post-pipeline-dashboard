@@ -145,7 +145,7 @@ window.App = window.App || {};
       const out = [];
       App.reviewFlow.allSubs(m).forEach(({ ep, su }) => {
         const rev = App.review.get(ep.id, su.key);
-        if (su.status === 'approved') {
+        if (App.isApproved(su.status)) {
           const ts = rev && (rev.at || rev.sentAt);
           if (!ts || now - new Date(ts).getTime() > RECENT_HOURS * 3600e3) return;
         } else if (su.status !== 'review') return;
@@ -162,7 +162,7 @@ window.App = window.App || {};
           name: versionName(ep, su),
           added: (newest && newest.at) || (rev && rev.sentAt) || null,
           due: extra.feedbackDue || rec.date,
-          state: su.status === 'approved' ? 'approved'
+          state: App.isApproved(su.status) ? 'approved'
             : rev && rev.state === 'under' ? 'under'
             : rev && rev.frameUrl ? 'sent' : 'waiting'
         });
@@ -203,7 +203,7 @@ window.App = window.App || {};
       // the versions still to come, placed as late as they can go
       const reserved = [];
       let at = anchor;
-      if (su.status !== 'approved') {
+      if (!App.isApproved(su.status)) {
         for (let r = max - 1; r >= used; r--) {
           const n = Math.max(1, days[r] || 1);
           const end = before(at, work);

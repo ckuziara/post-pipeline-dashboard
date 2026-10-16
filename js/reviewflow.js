@@ -329,14 +329,24 @@ window.App = window.App || {};
         ]));
       }
 
+      /* Send for Review: once the cut is up, the department sends it on
+         here — the task goes to Ready for Review (App.setStatus, which still
+         checks there's an upload) and lands on Post Operations' desk. */
+      const canSend = canEdit && !phone && items.length && !sentUrl && !App.isApproved(su.status) && su.status !== 'review';
+      if (canSend) {
+        wrap.appendChild(el('.ws-actions', null, el('button.btn-primary.ws-btn', {
+          onclick: () => { App.setStatus(ep.id, su.key, 'review'); App.workspace && App.workspace.reload && App.workspace.reload(); }
+        }, [App.icon('target'), ' Send for Review'])));
+      }
+
       // What happens next, said once, in whichever of the three states this is
       wrap.appendChild(el('.ws-note.tight', null, sentUrl
         ? 'Sent for review — the Director has this on their Reviews tab.'
         : items.length
           ? (su.status === 'review'
-            ? 'Post Operations will set up the review and send it to the Director.'
-            : 'Set this task to ' + App.status('review').label + ' to put it on Post Operations’ desk.')
-          : 'Nothing here yet. A task can’t be set to ' + App.status('review').label + ' until the cut is up.'));
+            ? 'Sent — Post Operations will set up the review and send it to the Director.'
+            : 'Send it for review when it’s ready — it goes to ' + App.status('review').label + ' and onto Post Operations’ desk.')
+          : 'Nothing here yet. A task can’t be sent for review until the cut is up.'));
       return wrap;
     },
 

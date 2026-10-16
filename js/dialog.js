@@ -552,7 +552,7 @@ window.App = window.App || {};
       }
       App.track.feature('task.editDialog', { dept: su.dept });
       const canApprove = App.canApprove(role);
-      const lockedApproved = su.status === 'approved' && !canApprove;
+      const lockedApproved = App.isApproved(su.status) && !canApprove;
 
       const nameInput = el('input.fld', { type: 'text', value: su.name });
       const statusSel = el('select.fld');
@@ -560,10 +560,13 @@ window.App = window.App || {};
         const o = document.createElement('option'); o.value = sk; o.textContent = App.STATUSES[sk].label;
         if (sk === su.status) o.selected = true; statusSel.appendChild(o);
       });
-      if (lockedApproved) {
-        const o = document.createElement('option'); o.value = 'approved'; o.textContent = 'Approved'; o.selected = true;
-        statusSel.appendChild(o); statusSel.disabled = true;
+      // a status the role can't pick (Approved for a non-approver, In QC,
+      // Delivered — set by the app) is still shown as the current one
+      if (![...statusSel.options].some(o => o.value === su.status)) {
+        const o = document.createElement('option'); o.value = su.status; o.textContent = App.status(su.status).label; o.selected = true;
+        statusSel.appendChild(o);
       }
+      if (lockedApproved) statusSel.disabled = true;
 
       // owner — only staff from the task's department are eligible
       const canAssign = App.canAssignOwnersFor(role, su.dept);
@@ -931,8 +934,8 @@ window.App = window.App || {};
           const delta = App.diffDays(slotStarts[i], slotStarts[origIdx]);
           if (delta) moving++;
           const subs = App.subitems(ep);
-          const lockedCount = subs.filter(s => s.status === 'approved').length;
-          const movable = subs.filter(s => s.status !== 'approved');
+          const lockedCount = subs.filter(s => App.isApproved(s.status)).length;
+          const movable = subs.filter(s => !App.isApproved(s.status));
           // where the first task that CAN move ends up — not the slot date,
           // which an episode with lots of approved work never actually reaches
           const newStart = movable.length

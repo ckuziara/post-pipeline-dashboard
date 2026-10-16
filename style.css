@@ -41,6 +41,8 @@
   --st-in_progress: #fdab3d;
   --st-review:      #a25ddc;
   --st-approved:    #00c875;
+  --st-in_qc:       #26a69a;
+  --st-delivered:   #037f4c;
   --danger:         #ff5b6e;
 
   --radius: 10px;

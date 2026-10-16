@@ -69,11 +69,19 @@ window.App = window.App || {};
     ready:       { label: 'Ready to Start',   color: '#5fb0f0', ink: '#06203f', weight: 0.1,  group: 'pending' },
     in_progress: { label: 'In Progress',      color: '#fdab3d', ink: '#3a2400', weight: 0.5,  group: 'working' },
     review:      { label: 'Review', color: '#a25ddc', ink: '#ffffff', weight: 0.85, group: 'review'  },
-    approved:    { label: 'Approved',         color: '#00c875', ink: '#04321d', weight: 1.0,  group: 'done'    }
+    // set by the app, never picked: with QC (Send to QC → QC passes), and published
+    in_qc:       { label: 'In QC',            color: '#26a69a', ink: '#ffffff', weight: 0.95, group: 'review'  },
+    approved:    { label: 'Approved',         color: '#00c875', ink: '#04321d', weight: 1.0,  group: 'done'    },
+    delivered:   { label: 'Delivered',        color: '#037f4c', ink: '#ffffff', weight: 1.0,  group: 'done'    }
   };
   // order used by the status picker / cycling
-  App.STATUS_ORDER = ['not_started', 'ready', 'in_progress', 'review', 'approved'];
+  App.STATUS_ORDER = ['not_started', 'ready', 'in_progress', 'review', 'in_qc', 'approved', 'delivered'];
+  /* In QC and Delivered are statuses the work moves into on its own — Send to
+     QC, QC passing it, its files being published — so no picker offers them. */
+  App.AUTO_STATUSES = ['in_qc', 'delivered'];
   App.status = (k) => App.STATUSES[k] || App.STATUSES.not_started;
+  // the Director has signed it off: Approved, or on past that (In QC, Delivered)
+  App.isApproved = (st) => st === 'approved' || st === 'in_qc' || st === 'delivered';
 
   /* ---------------------------------------------------------------------------
      Workflow customisation (Admin → Workflow & Status Settings).
@@ -337,7 +345,7 @@ window.App = window.App || {};
     App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
       const k = ep.id + '::' + su.key;
       const who = k in assign ? assign[k] : su.assignee;
-      if (!who || su.status === 'approved') return;
+      if (!who || App.isApproved(su.status)) return;
       (tasks[who] = tasks[who] || []).push({ ep, su });
     }));
     // each bucket's working days, worked out once for everybody
@@ -361,7 +369,7 @@ window.App = window.App || {};
   };
 
   // status choices a role may set (non-approvers can't choose Approved)
-  App.statusOptionsFor = (k) => App.canApprove(k) ? App.STATUS_ORDER : App.STATUS_ORDER.filter(s => s !== 'approved');
+  App.statusOptionsFor = (k) => App.STATUS_ORDER.filter(s => !App.AUTO_STATUSES.includes(s) && (s !== 'approved' || App.canApprove(k)));
 
   /* ---------------------------------------------------------------------------
      THE PIPELINE TEMPLATE — 27 subitems, top to bottom, from the board.
@@ -527,7 +535,9 @@ window.App = window.App || {};
   };
   // Approved, and — when it needs QC — passed by QC. What dependents wait on.
   App.isCompleteKey = function (ep, key) {
-    if (((ep.statuses && ep.statuses[key]) || 'not_started') !== 'approved') return false;
+    const st = (ep.statuses && ep.statuses[key]) || 'not_started';
+    if (st === 'delivered') return true;              // published — past every gate
+    if (st !== 'approved') return false;              // In QC isn't finished yet
     return !App.qcFor(ep, key).on || App.qcState(ep, key) === 'passed';
   };
   App.isComplete = (ep, su) => App.isCompleteKey(ep, su.key);
@@ -553,10 +563,12 @@ window.App = window.App || {};
     const st = (ep.statuses && ep.statuses[key]) || 'not_started';
     const q = App.qcFor(ep, key), qs = App.qcState(ep, key), v = 'QC V' + App.qcVersion(ep, key);
     if (q.on && qs === 'failed') return 'QC sent a report back (' + v + ')';
-    if (st === 'approved') return q.on && qs !== 'passed' ? 'approved, waiting for ' + v : (q.on ? 'Approved · ' + v + ' passed' : 'Approved');
+    if (st === 'delivered') return 'Delivered';
+    if (st === 'in_qc') return 'with QC (' + v + ')';
+    if (st === 'approved') return q.on && qs !== 'passed' ? 'approved — delivery not sent to QC yet' : (q.on ? 'Approved · ' + v + ' passed' : 'Approved');
     return App.status(st).label + (q.on ? ' · needs QC once approved' : '');
   };
-  App.awaitingQc = (ep, su) => su.status === 'approved' && App.qcFor(ep, su.key).on && App.qcState(ep, su.key) !== 'passed';
+  App.awaitingQc = (ep, su) => su.status === 'in_qc';
   /* The QC days that follow `after` (a task's finish, revisions included), on
      QC's own calendar when the show keeps one. Returns { start, due }. */
   App.qcSpan = function (days, after, cal) {
@@ -567,10 +579,11 @@ window.App = window.App || {};
   };
   /* Keep each flagged task's check in step with its status, after any
      change (called from App.refreshReadiness, so every way a status moves is
-     covered — the Reviews tab, the Board, Edit Task, batch mates):
-       approved, no live check   → it joins the QC queue
-       no longer approved        → a waiting or passed check is withdrawn
-                                   (it'll be checked again once re-approved)
+     covered). The status leads:
+       In QC                     → the check is waiting in the QC queue
+       Approved, check waiting   → a board from before In QC: move it to In QC
+       moved back before approval → a waiting or passed check is withdrawn
+       QC taken off while In QC  → back to Approved, check withdrawn
      A failed check stays put — the department is fixing it — and the
      reports are always kept. */
   App.syncQcChecks = function (ep) {
@@ -578,15 +591,21 @@ window.App = window.App || {};
     App.pipelineFor(ep).forEach(t => {
       if (removed.includes(t.key)) return;
       const on = App.qcFor(ep, t.key).on;
-      const st = (ep.statuses && ep.statuses[t.key]) || 'not_started';
+      ep.statuses = ep.statuses || {};
+      const st = ep.statuses[t.key] || 'not_started';
       const c = ep.qcChecks && ep.qcChecks[t.key];
-      if (on && st === 'approved' && (!c || !c.state || c.state === 'failed')) {
-        ep.qcChecks = ep.qcChecks || {};
-        ep.qcChecks[t.key] = Object.assign({}, c, { state: 'waiting', queuedAt: App.isoDate(App.today()), planDate: null });
-      } else if (c && st !== 'approved' && (c.state === 'waiting' || c.state === 'passed')) {
-        ep.qcChecks[t.key] = Object.assign({}, c, { state: null, planDate: null });
-      } else if (c && !on && c.state === 'waiting') {
-        ep.qcChecks[t.key] = Object.assign({}, c, { state: null, planDate: null });   // QC taken off
+      const put = (patch) => { ep.qcChecks = ep.qcChecks || {}; ep.qcChecks[t.key] = Object.assign({}, c, patch); };
+      if (!on) {
+        if (st === 'in_qc') ep.statuses[t.key] = 'approved';
+        if (c && c.state === 'waiting') put({ state: null, planDate: null });
+        return;
+      }
+      if (st === 'in_qc') {
+        if (!c || c.state !== 'waiting') put({ state: 'waiting', queuedAt: App.isoDate(App.today()), planDate: null });
+      } else if (st === 'approved' && c && c.state === 'waiting') {
+        ep.statuses[t.key] = 'in_qc';
+      } else if (c && !App.isApproved(st) && (c.state === 'waiting' || c.state === 'passed')) {
+        put({ state: null, planDate: null });
       }
     });
   };
@@ -795,7 +814,7 @@ window.App = window.App || {};
     const out = [];
     App.state.data.episodes.filter(e => e.showId === showId && !e.archived).forEach(ep => {
       App.subitems(ep).forEach(su => {
-        if (su.status === 'approved') return;
+        if (App.isApproved(su.status)) return;
         if (onlyKey && onlyKey !== ep.id + '::' + su.key) return;
         // time off this task has already been planned around (see App.markHolidayOk)
         const ok = App.holidayOkRanges(ep, su.key);
@@ -1082,7 +1101,7 @@ window.App = window.App || {};
     });
     for (let pass = 0; pass < 4; pass++) {
       pipeline.forEach(t => {
-        const depsOK = t.deps.every(d => status[d] === 'approved' || status[d] === undefined);
+        const depsOK = t.deps.every(d => App.isApproved(status[d]) || status[d] === undefined);
         if (['approved', 'review', 'in_progress'].includes(status[t.key]) && !depsOK) {
           status[t.key] = 'not_started';
         } else if (status[t.key] === 'not_started' && depsOK && (
@@ -1317,7 +1336,7 @@ window.App = window.App || {};
      show for a task still open (it might yet use them) or once the producer
      has explicitly cleared it (see App.clearRevisionGhost). */
   App.revisionGhostDays = function (ep, su) {
-    if (su.status !== 'approved') return 0;
+    if (!App.isApproved(su.status)) return 0;
     if (ep.revisionsCleared && ep.revisionsCleared[su.key]) return 0;
     const { days, used } = App.taskRevisions(ep, su.key);
     return days.slice(used).reduce((a, n) => a + (n || 0), 0);
@@ -1330,7 +1349,7 @@ window.App = window.App || {};
      due date), so the next version number follows on from them. An approved
      task has nothing ahead (its unspent budget is the grey ghost instead). */
   App.plannedRevisions = function (ep, su) {
-    if (su.status === 'approved') return { revs: [], end: su.due };
+    if (App.isApproved(su.status)) return { revs: [], end: su.due };
     const t = App.revTask(ep, su.key);
     if (!t || !t.maxRev) return { revs: [], end: su.due };
     return App.revisionSteps(t, su.due, App.showCalendar(ep.showId),
@@ -1610,7 +1629,7 @@ window.App = window.App || {};
     App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
       const k = ep.id + '::' + su.key;
       const who = k in assign ? assign[k] : su.assignee;
-      if (who !== personId || su.status === 'approved' || su.due < from || su.start > to) return;
+      if (who !== personId || App.isApproved(su.status) || su.due < from || su.start > to) return;
       mine.push({ showId: ep.showId, su });
       (days[ep.showId] = days[ep.showId] || { days: 0, tasks: 0 }).tasks++;
     }));
@@ -1701,7 +1720,7 @@ window.App = window.App || {};
   /* An episode is in production once any of its work has started. Edit Show
      locks these by default — a plan change shouldn't quietly reach into work
      people are already doing. */
-  App.IN_PRODUCTION = ['in_progress', 'review', 'approved'];
+  App.IN_PRODUCTION = ['in_progress', 'review', 'approved', 'in_qc', 'delivered'];
   App.inProduction = function (ep) {
     const st = (ep && ep.statuses) || {};
     return Object.keys(st).some(k => App.IN_PRODUCTION.includes(st[k]));
@@ -1845,7 +1864,7 @@ window.App = window.App || {};
     return Math.round((sum / subs.length) * 100);
   };
   App.countByStatus = function (ep) {
-    const c = { not_started: 0, ready: 0, in_progress: 0, review: 0, approved: 0 };
+    const c = { not_started: 0, ready: 0, in_progress: 0, review: 0, in_qc: 0, approved: 0, delivered: 0 };
     App.subitems(ep).forEach(s => { c[s.status] = (c[s.status] || 0) + 1; });
     return c;
   };
@@ -1854,10 +1873,10 @@ window.App = window.App || {};
   // roll the episode up into one of the four swimlane groups
   App.epGroup = function (ep) {
     const c = App.countByStatus(ep);
-    if (c.approved === App.subitems(ep).length) return 'delivered';
+    if (App.isDelivered(ep)) return 'delivered';
     if (c.in_progress > 0) return 'working';
-    if (c.review > 0) return 'review';
-    if (c.approved > 0) return 'working';
+    if (c.review > 0 || c.in_qc > 0) return 'review';
+    if ((c.approved || 0) + (c.delivered || 0) > 0) return 'working';
     return 'pending';
   };
   App.epStatusLabel = function (ep) {
@@ -1878,7 +1897,7 @@ window.App = window.App || {};
   };
   App.epOverdueTasks = function (ep) {
     const today = App.isoDate(App.today());
-    return App.subitems(ep).filter(s => s.status !== 'approved' && s.due < today);
+    return App.subitems(ep).filter(s => !App.isApproved(s.status) && s.due < today);
   };
   App.epOverdueCount = function (ep) {
     return App.epOverdueTasks(ep).length;
@@ -1903,7 +1922,7 @@ window.App = window.App || {};
     // enforce dependency validity + surface "ready" tasks
     for (let pass = 0; pass < 4; pass++) {
       App.TEMPLATE.forEach(t => {
-        const depsOK = t.deps.every(d => status[d] === 'approved');
+        const depsOK = t.deps.every(d => App.isApproved(status[d]));
         if (['approved', 'review', 'in_progress'].includes(status[t.key]) && !depsOK) {
           status[t.key] = 'not_started';
         } else if (status[t.key] === 'not_started' && depsOK && at(t.start) <= App.addDays(today, 10)) {
