@@ -6280,8 +6280,8 @@ button.dsum-due-btn:hover { border-color: var(--border-2); }
 /* QC tab as a table, in the Board's columns */
 .qcq-card { overflow: hidden; }
 .qcq-card .rvq-ep-head { justify-content: space-between; }
-.qcq-grid { min-width: 836px; }   /* the columns below, summed */
-.qcq-grid .subrow { grid-template-columns: 30px minmax(170px, 1fr) 80px 116px 84px 84px 76px 196px; }
+.qcq-grid { min-width: 856px; }   /* the columns' minimums, summed; wider screens share the extra across all of them */   /* the columns below, summed */
+.qcq-grid .subrow { grid-template-columns: 30px minmax(170px, 3fr) minmax(100px, 1fr) minmax(116px, 1.1fr) minmax(84px, .8fr) minmax(84px, .8fr) minmax(76px, .7fr) minmax(196px, 1.4fr); }
 .qcq-grid .subrow .cell { padding-left: 8px; padding-right: 8px; }
 .qcq-grid .subrow.head .cell { padding-left: 8px; padding-right: 8px; white-space: nowrap; }
 .qcq-grid .qcq-go { color: var(--ink-info); border-color: rgba(91,108,255,.55); }
@@ -6297,3 +6297,6 @@ button.dsum-due-btn:hover { border-color: var(--border-2); }
 .qcq-grid .qcq-files { display: flex; flex-wrap: wrap; gap: 6px; }
 .qcq-pending { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-2); white-space: nowrap; }
 .qcq-pending .et-dot { width: 8px; height: 8px; border-radius: 50%; }
+.qcq-grid .ep-code { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
+.qcq-grid .subrow > .cell:last-child { padding-right: 18px; }   /* off the card's rounded edge */
+.qcq-grid .subrow > .cell:first-child { padding-left: 14px; }
