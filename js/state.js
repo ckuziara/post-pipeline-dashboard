@@ -569,6 +569,9 @@ window.App = window.App || {};
     return App.status(st).label + (q.on ? ' · needs QC once approved' : '');
   };
   App.awaitingQc = (ep, su) => su.status === 'in_qc';
+  /* Approved, but its final files haven't gone on yet: not sent to QC, not
+     published. A QC-passed task isn't waiting on anyone — QC publishes it. */
+  App.needsDelivery = (ep, su) => su.status === 'approved' && !(App.qcFor(ep, su.key).on && App.qcState(ep, su.key) === 'passed');
   /* Where a task is in its hand-offs — what the Edit Task dialog shows in
      full (js/workspace.js), and what its Next line says:
        start    not started / ready: make the project, gather the inputs
@@ -2075,6 +2078,29 @@ window.App = window.App || {};
         if (live) (ep.milestones = ep.milestones || {})[App.LIVE_KEY] = live;
       });
     } finally { App.state.data = prevBoard; }
+    /* Delivered is new. Before it, approving a task published its files and
+       the task just stayed Approved — so every task approved back then would
+       now look like it still needs delivering. Once per board, those become
+       Delivered. A task that needs QC and hasn't passed it is left alone:
+       it's genuinely waiting on its delivery. */
+    if (!data.deliveredBackfill) {
+      const showPipe = {};
+      (data.shows || []).forEach(sh => { showPipe[sh.id] = sh.pipeline || null; });
+      (data.episodes || []).forEach(e => {
+        if (!e.statuses) return;
+        const pipe = e.pipeline || showPipe[e.showId] || [];
+        Object.keys(e.statuses).forEach(k => {
+          if (e.statuses[k] !== 'approved') return;
+          const own = e.qcTasks && e.qcTasks[k];
+          const t = pipe.find(x => x.key === k);
+          const needsQc = own ? !!own.on : !!(t && t.needsQc);
+          const passed = e.qcChecks && e.qcChecks[k] && e.qcChecks[k].state === 'passed';
+          if (needsQc && !passed) return;
+          e.statuses[k] = 'delivered';
+        });
+      });
+      data.deliveredBackfill = new Date().toISOString().slice(0, 10);
+    }
     return data;
   };
   App.load = function () {

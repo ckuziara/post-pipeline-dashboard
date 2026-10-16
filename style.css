@@ -6329,3 +6329,14 @@ button.dsum-due-btn:hover { border-color: var(--border-2); }
 .ws-btn.ws-sent, .ws-btn.ws-sent:disabled { background: var(--st-approved, #00c875); border-color: transparent; color: #04321d; opacity: 1;
   animation: ws-sent-pop .5s cubic-bezier(.2,1.6,.4,1); }
 @keyframes ws-sent-pop { 0% { transform: scale(.92); } 60% { transform: scale(1.06); } 100% { transform: scale(1); } }
+
+/* Approved, but still to be delivered (App.needsDelivery) — the same badge
+   shape as QC's (.qcq-badge), top right beside it (.status-badges) */
+.status-badges { position: absolute; top: -5px; right: 2px; z-index: 2; display: flex; gap: 3px; pointer-events: none; }
+.status-badges:empty { display: none; }
+.status-badges > .qcq-badge, .status-badges > .deliver-badge { position: static; pointer-events: auto; }
+.deliver-badge {
+  font-size: 9px; font-weight: 800; line-height: 1; padding: 3px 5px; border-radius: 6px;
+  background: #ff5b6e; color: #fff; border: 1px solid transparent;   /* red: it's waiting on someone */
+}
+.deliver-badge.inline { position: static; display: inline-block; margin-left: 8px; vertical-align: 1px; }
