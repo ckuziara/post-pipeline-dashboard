@@ -380,7 +380,12 @@ window.App = window.App || {};
           }, [
             document.createTextNode(st.label),
             (blocked ? App.icon('blocked', { cls: 'blk', title: 'Waiting on a dependency' }) : null)
-          ]), App.qcQueue ? App.qcQueue.badge(ep, su) : null]),
+          ]),
+          // corner badge, top right: Deliver (approved, files still to go) — or, when
+          // there's nothing to deliver, the QC badge
+          el('.status-badges', null, App.needsDelivery(ep, su)
+            ? el('span.deliver-badge', { title: 'Approved — deliver the final files' + (App.qcFor(ep, su.key).on ? ' and Send to QC' : ' and Publish') }, 'Deliver')
+            : (App.qcQueue ? App.qcQueue.badge(ep, su) : null))]),
           el('.cell.c-date' + (overdue ? '.overdue' : ''), null, App.fmtDate(su.start)),
           el('.cell.c-date' + (overdue ? '.overdue' : ''), null, App.fmtDate(su.due)),
           el('.cell.c-deps', null, su.deps.length

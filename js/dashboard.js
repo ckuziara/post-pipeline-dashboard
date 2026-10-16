@@ -246,6 +246,7 @@ window.App = window.App || {};
      Overdue would read as a problem when it isn't one. */
   const PRIORITY_GROUPS = [
     { key: 'overdue',  label: 'Overdue',       sub: 'Past due, not done',       color: '#ff5b6e', open: true  },
+    { key: 'deliver',  label: 'Deliver',       sub: 'Approved — deliver the final files', color: '#00c875', open: true  },
     { key: 'today',    label: 'Due Today',     sub: 'Due by end of day',        color: '#fdab3d', open: true  },
     { key: 'week',     label: 'Due This Week', sub: 'Before the week is out',   color: '#f6be00', open: true  },
     { key: 'upcoming', label: 'Upcoming',      sub: 'Due later',                color: '#00c875', open: false },
@@ -1200,6 +1201,7 @@ window.App = window.App || {};
       const buckets = {};
       PRIORITY_GROUPS.forEach(g => { buckets[g.key] = []; });
       scoped.forEach(x => {
+        if (App.needsDelivery(x.ep, x.su)) { buckets.deliver.push(x); return; }   // approved, still to deliver
         if (App.isApproved(x.su.status)) return;                      // done, not a priority
         if (x.su.status === 'review') { buckets.review.push(x); return; }
         if (x.su.due < todayIso) buckets.overdue.push(x);
@@ -1211,7 +1213,7 @@ window.App = window.App || {};
 
       const groups = PRIORITY_GROUPS.filter(g => buckets[g.key].length)
         .map(g => this.priorityGroup(g, buckets[g.key], t));
-      const open = scoped.filter(x => !App.isApproved(x.su.status)).length;
+      const open = scoped.filter(x => !App.isApproved(x.su.status) || App.needsDelivery(x.ep, x.su)).length;
 
       return {
         title: 'Priority',
@@ -1255,7 +1257,11 @@ window.App = window.App || {};
             el('span.pr-code', null, ep.code),
             el('span.pr-task', null, '(' + su.name + ')'),
             el('span.pr-date', null, App.fmtDate(su.due)),
-            el('span.pr-chip', { style: { background: st.color, color: st.ink } }, st.label)
+            // approved but not delivered: a Deliver button in place of the status
+            App.needsDelivery(ep, su)
+              ? el('button.pr-chip.pr-deliver', { type: 'button', title: 'Approved — open it to deliver the final files',
+                  onclick: (e) => { e.stopPropagation(); App.editTask.open(ep.id, su.key, { focus: 'deliver' }); } }, 'Deliver')
+              : el('span.pr-chip', { style: { background: st.color, color: st.ink } }, st.label)
           ]));
         });
         if (items.length > cap) rows.appendChild(el('.pr-more', null, '+' + (items.length - cap) + ' more'));

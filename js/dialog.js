@@ -620,7 +620,9 @@ window.App = window.App || {};
       };
       const statusDisplay = () => {
         const st = App.status(statusSel.value);
-        return el('span.et-status', { style: { color: App.textInk(st.color) } }, [el('span.et-dot', { style: { background: st.color } }), st.label]);
+        const deliver = statusSel.value === 'approved' && App.needsDelivery(ep, Object.assign({}, su, { status: 'approved' }));
+        return el('span.et-status', { style: { color: App.textInk(st.color) } }, [el('span.et-dot', { style: { background: st.color } }), st.label,
+          deliver ? el('span.deliver-badge.inline', null, 'Deliver') : null]);
       };
       const ownerDisplay = () => {
         const id = ownerSel.value; if (!id) return el('span.et-empty', null, 'Unassigned');
@@ -726,7 +728,7 @@ window.App = window.App || {};
            production folders, so it needs a master directory. Without one, fall
            back to Smart Upload's metadata catalogue rather than showing nothing. */
         (viewOnly ? null : App.workspace && App.masterPathSet && App.masterPathSet()
-          ? App.workspace.inlineSection(epId, key)
+          ? App.workspace.inlineSection(epId, key, opts && opts.focus)
           : (App.uploads ? App.uploads.inlineSection(epId, key) : null))
       ]);
 
