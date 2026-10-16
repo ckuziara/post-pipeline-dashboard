@@ -377,6 +377,8 @@ window.App = window.App || {};
     qcProject(b)     { return this._post('/api/task/qc-project', b); },
     // opens a settled check's QC report (see /api/task/qc-report)
     qcReport(b)      { return this._post('/api/task/qc-report', b); },
+    // a task's QC folder and this version's report, if made (see /api/task/qc-folder)
+    qcFolder(b)      { return this._post('/api/task/qc-folder', b); },
     // open the folder a path on the volume sits in — confined server-side to
     // the master directory (see /api/task/reveal)
     taskReveal(b)    { return this._post('/api/task/reveal', b); },

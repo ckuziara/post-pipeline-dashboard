@@ -9,7 +9,8 @@
    due date.
 
    Two outcomes:
-     Pass            the check is done; dependents become Ready
+     Pass            with a pass report saying what was checked; the check is
+                     done, the files publish, dependents become Ready
      Send QC Report  notes (and a link to the full report) go back to the
                      department, and the task returns to In Progress. The
                      fix comes straight back here with Resubmit to QC, from
@@ -28,6 +29,18 @@ window.App = window.App || {};
   const safeHref = (u) => /^https?:\/\//i.test(String(u || '')) ? String(u) : null;
   const me = () => { const u = App.state.user; return { by: (u && u.personId) || null, byName: (u && u.name) || 'Someone' }; };
   const KEY = (epId, key) => epId + '::' + key;
+  // what QC can attach as its report — the server opens only these (QC_REPORT_EXT in server.js)
+  const REPORT_EXT = /\.(xlsx|xls|xlsm|csv|numbers|pdf|docx|doc|pages|txt|rtf)$/i;
+  const baseName = (p) => String(p).split(/[\\/]/).pop();
+  /* A report file is stored relative to the production folder, never as this
+     machine's absolute path: every machine mounts the volume somewhere of its
+     own, and the server resolves it against whichever machine opens it.
+     Null when the file isn't inside the production folder. */
+  const relToRoot = (p, root) => {
+    const norm = (x) => String(x || '').replace(/\\/g, '/').replace(/\/+$/, '');
+    const a = norm(p), r = norm(root);
+    return r && a.startsWith(r + '/') ? a.slice(r.length + 1) : null;
+  };
 
   // every check that's live, or settled in the last DONE_DAYS
   function collect(episodes, withDone) {
@@ -178,17 +191,26 @@ window.App = window.App || {};
     collect, plan,
     pendingCount(episodes) { return collect(episodes, false).length; },
 
-    pass(epId, key) {
-      if (!App.canDecideQc(App.state.role)) { App.toast('Only QC and Producers can pass a QC check', true); return; }
-      const g = find(epId, key); if (!g || App.qcState(g.ep, key) !== 'waiting') return;
-      const u = me();
+    /* A pass carries its own report, the same shape as one sent back, so the
+       task's QC history shows what was checked and found clean — not just
+       that someone clicked Pass. Both need the QC report file itself (`file`:
+       { path, name }, chosen from the volume in the dialog); notes are optional,
+       since the report file carries the detail. */
+    pass(epId, key, notes, file) {
+      if (!App.canDecideQc(App.state.role)) { App.toast('Only QC and Producers can pass a QC check', true); return false; }
+      const g = find(epId, key); if (!g || App.qcState(g.ep, key) !== 'waiting') return false;
+      notes = String(notes || '').trim();
+      if (!file || !file.path) { App.toast('Choose the QC report file first', true); return false; }
+      const u = me(), at = new Date().toISOString(), version = App.qcVersion(g.ep, key);
       mutateCheck(epId, key, 'passing QC', (e, c) => {
-        Object.assign(c, { state: 'passed', decidedAt: new Date().toISOString(), decidedBy: u.byName, planDate: null });
+        c.reports.push({ at, by: u.by, byName: u.byName, notes, file: file.path, fileName: file.name, version, result: 'pass' });
+        Object.assign(c, { state: 'passed', decidedAt: at, decidedBy: u.byName, planDate: null });
         e.statuses[key] = 'approved';      // out of QC; Delivered once its files are published
       });
       App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'passed', version: 'V' + App.qcVersion(g.ep, key) });
-      App.toast(g.su.name + ' passed QC V' + App.qcVersion(g.ep, key));
+      App.toast(g.su.name + ' passed QC V' + version);
       App.promoteDelivered(epId, key);
+      return true;
     },
 
     /* Take a pass back: the check goes back in the queue at the same
@@ -202,6 +224,9 @@ window.App = window.App || {};
       App.confirm('Revoke the ' + v + ' pass on “' + g.su.name + '” (' + g.ep.code + ')? It goes back in the QC queue, and anything waiting on it that hasn’t started waits again.', () => {
         const u = me();
         mutateCheck(epId, key, 'revoking the QC pass', (e, c) => {
+          // the pass report stays in the history, marked as taken back
+          const last = c.reports[c.reports.length - 1];
+          if (last && last.result === 'pass') c.reports[c.reports.length - 1] = Object.assign({}, last, { revokedAt: new Date().toISOString(), revokedBy: u.byName });
           Object.assign(c, { state: 'waiting', queuedAt: App.isoDate(App.today()), planDate: null, decidedAt: null, decidedBy: null,
             revokedAt: new Date().toISOString(), revokedBy: u.byName });
           e.statuses[key] = 'in_qc';
@@ -211,16 +236,14 @@ window.App = window.App || {};
       }, { title: 'Revoke QC Pass', yesLabel: 'Revoke' });
     },
 
-    fail(epId, key, notes, link) {
+    fail(epId, key, notes, file) {
       if (!App.canDecideQc(App.state.role)) { App.toast('Only QC and Producers can send a QC report', true); return false; }
       const g = find(epId, key); if (!g || App.qcState(g.ep, key) !== 'waiting') return false;
       notes = String(notes || '').trim();
-      if (!notes) { App.toast('Say what QC found', true); return false; }
-      const href = String(link || '').trim();
-      if (href && !safeHref(href)) { App.toast('The report link needs to start with https://', true); return false; }
+      if (!file || !file.path) { App.toast('Choose the QC report file first', true); return false; }
       const u = me(), at = new Date().toISOString(), version = App.qcVersion(g.ep, key);
       mutateCheck(epId, key, 'the QC report', (e, c) => {
-        c.reports.push({ at, by: u.by, byName: u.byName, notes, link: href || null, version });
+        c.reports.push({ at, by: u.by, byName: u.byName, notes, file: file.path, fileName: file.name, version });
         Object.assign(c, { state: 'failed', decidedAt: at, decidedBy: u.byName, planDate: null });
         e.statuses[key] = 'in_progress';         // back to the department to fix
       });
@@ -335,40 +358,101 @@ window.App = window.App || {};
       } catch (e) { App.toast('Couldn’t create the QC project: ' + e.message, true); }
     },
 
-    // a settled check's QC report — the version QC decided on
+    /* A settled check's QC report. The file QC attached when they decided it
+       (the newest report's), or — for checks decided before reports were
+       attached — the version's report by name in the QC folder. */
     async openReport(ep, su) {
+      const c = App.qcCheck(ep, su.key), last = c && c.reports && c.reports[c.reports.length - 1];
+      return this.openReportFile(ep, su, last && last.file);
+    },
+    async openReportFile(ep, su, file) {
       if (App.masterPathSet && !App.masterPathSet()) { App.toast('Connect this device to the production folder first (Preferences → Connect to Workspace)', true); return; }
       try {
-        const r = await App.api.qcReport({ epId: ep.id, taskKey: su.key, pipeline: App.pipelineFor(ep), version: App.qcVersion(ep, su.key) });
+        const r = await App.api.qcReport(Object.assign({ epId: ep.id, taskKey: su.key, pipeline: App.pipelineFor(ep), version: App.qcVersion(ep, su.key) }, file ? { path: file } : {}));
         if (!r.opened) App.toast('QC report: ' + r.path);
       } catch (e) { App.toast(e.message, true); }
     },
 
-    reportDialog(ep, su) {
-      const notes = el('textarea.fld.qcq-report-in', { rows: '6', placeholder: 'What QC found: timecodes, specs, what needs fixing…' });
-      const link = el('input.fld', { type: 'url', placeholder: 'https://… (optional — the full QC report)' });
-      const send = () => { if (this.fail(ep.id, su.key, notes.value, link.value)) App.modal.close(); };
+    passDialog(ep, su) { this.decisionDialog(ep, su, 'pass'); },
+    reportDialog(ep, su) { this.decisionDialog(ep, su, 'fail'); },
+
+    /* Pass, or Send QC Report: notes plus the QC report file itself, chosen
+       from the volume with the app's own picker (never a native dialog — see
+       App.folderPicker). This version's report from Create QC Project is
+       attached to start with when it's there. The picker replaces this
+       dialog, so what's been typed rides along in `st` and comes back. */
+    decisionDialog(ep, su, mode, st) {
+      const pass = mode === 'pass', v = App.qcVersion(ep, su.key);
+      const base = { epId: ep.id, taskKey: su.key, pipeline: App.pipelineFor(ep) };
+      st = st || { notes: pass ? 'All checks passed — no issues found.' : '', file: null, dir: null, root: null, looked: false };
+      const connected = !(App.masterPathSet && !App.masterPathSet());
+      const notes = el('textarea.fld.qcq-report-in', { rows: '6', placeholder: pass ? 'What QC checked: specs, picture, sound, file names…' : 'What QC found: timecodes, specs, what needs fixing…' });
+      notes.value = st.notes;
+      const again = () => this.decisionDialog(ep, su, mode, st);
+      const fileBox = el('.qcq-file');
+      const drawFile = () => {
+        fileBox.innerHTML = '';
+        fileBox.appendChild(st.file
+          ? el('.ws-item.static', null, [App.icon('file', { cls: 'ws-ic' }), el('span.ws-name', { title: st.file.path }, st.file.name)])
+          : el('.fld-hint', null, connected ? 'No report chosen yet.' : 'Connect this device to the production folder (Preferences → Connect to Workspace) to attach the report.'));
+        fileBox.appendChild(el('button.btn-ghost.ws-btn', {
+          disabled: !connected,
+          onclick: () => {
+            st.notes = notes.value;
+            App.folderPicker.open(st.dir || '', (chosen) => {
+              const p = Array.isArray(chosen) ? chosen[0] : chosen;
+              if (p && !REPORT_EXT.test(p)) App.toast('Choose the report document — a spreadsheet, PDF or text file', true);
+              else if (p && !relToRoot(p, st.root)) App.toast('Choose a report inside the production folder', true);
+              else if (p) st.file = { path: relToRoot(p, st.root), name: baseName(p) };
+              again();
+            }, {
+              pickFiles: true,
+              title: 'Choose the QC V' + v + ' report',
+              subtitle: 'Starts in this task’s QC folder. Nothing is moved — the report stays where it is and is attached to the ' + (pass ? 'pass' : 'report') + '.',
+              confirmLabel: 'Attach this report',
+              onCancel: again
+            });
+          }
+        }, [App.icon('archive'), st.file ? ' Choose another' : ' Choose the report file']));
+      };
+      drawFile();
+      // first time in: where the QC folder is, and this version's report if Create QC Project made one
+      if (connected && !st.looked) {
+        st.looked = true;
+        App.api.qcFolder(Object.assign({ version: v }, base)).then(r => {
+          st.dir = r.exists ? r.dir : (r.root || null);
+          st.root = r.root || null;
+          const rel = r.report && relToRoot(r.report, r.root);
+          if (!st.file && rel) { st.file = { path: rel, name: baseName(r.report) }; drawFile(); }
+        }).catch(() => {});
+      }
+      const send = () => {
+        st.notes = notes.value;
+        if ((pass ? this.pass : this.fail).call(this, ep.id, su.key, notes.value, st.file)) App.modal.close();
+      };
       App.modal.open(el('.modal-card.confirm-card', { onclick: e => e.stopPropagation() }, [
         el('.modal-head', null, [
           el('.modal-head-main', null, [
             App.icon('checkBadge', { cls: 'modal-ic' }),
             el('div', null, [
-              el('.modal-title', null, 'Send QC V' + App.qcVersion(ep, su.key) + ' Report'),
+              el('.modal-title', null, pass ? 'Pass QC V' + v : 'Send QC V' + v + ' Report'),
               el('.modal-subtitle', null, su.name + ' · ' + ep.code + ' ' + (ep.title || ''))
             ])
           ]),
           el('button.modal-x', { onclick: () => App.modal.close(), title: 'Close' }, '✕')
         ]),
         el('.modal-body', null, [
-          el('.modal-section-title', { style: { marginTop: '0' } }, 'Report'),
+          el('.modal-section-title', { style: { marginTop: '0' } }, [pass ? 'Pass notes' : 'Notes', el('span.qcq-optional', null, ' — optional')]),
           notes,
-          el('.modal-section-title', { style: { marginTop: '14px' } }, [App.icon('link'), ' Report link']),
-          link,
-          el('.fld-hint', null, 'The task goes back to ' + App.dept(su.dept).label + ' as In Progress, with this report. Their fix comes straight back to QC.')
+          el('.modal-section-title', { style: { marginTop: '14px' } }, [App.icon('file'), ' QC report file']),
+          fileBox,
+          el('.fld-hint', null, pass
+            ? 'Saved with the task as its QC V' + v + ' pass report. Passing publishes the delivered files and unlocks the tasks waiting on ' + su.name + '.'
+            : 'The task goes back to ' + App.dept(su.dept).label + ' as In Progress, with this report. Their fix comes straight back to QC.')
         ]),
         el('.modal-foot', null, [
           el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
-          el('button.btn-danger', { onclick: send }, 'Send QC Report')
+          pass ? el('button.btn-primary', { onclick: send }, '✓ Pass QC') : el('button.btn-danger', { onclick: send }, 'Send QC Report')
         ])
       ]));
       setTimeout(() => notes.focus(), 40);
@@ -407,11 +491,14 @@ window.App = window.App || {};
       reports.forEach((r, i) => {
         const href = safeHref(r.link);
         const body = [
-          el('.qcq-report-notes', null, r.notes),
+          r.notes ? el('.qcq-report-notes', null, r.notes) : null,
+          // the report file QC attached; older reports carried a link instead
+          r.file ? el('button.qcq-report-link', { type: 'button', title: r.file, onclick: () => App.qcQueue.openReportFile(ep, su, r.file) }, [App.icon('file'), ' ' + (r.fileName || 'QC report')]) : null,
           href ? el('a.qcq-report-link', { href, target: '_blank', rel: 'noopener' }, [App.icon('link'), ' Full report']) : null
         ];
-        const meta = 'QC V' + r.version + ' report · ' + (r.byName || 'QC') + ' · ' + App.fmtDate(String(r.at).slice(0, 10));
-        const open = i === 0 && (st === 'failed' || st === 'waiting');
+        const kind = r.result === 'pass' ? (r.revokedAt ? ' pass report (revoked)' : ' pass report') : ' report';
+        const meta = 'QC V' + r.version + kind + ' · ' + (r.byName || 'QC') + ' · ' + App.fmtDate(String(r.at).slice(0, 10));
+        const open = i === 0 && (st === 'failed' || st === 'waiting' || st === 'passed');
         kids.push(open
           ? el('.qcq-report', null, [el('.qcq-report-meta', null, meta)].concat(body))
           : el('details.qcq-report.past', null, [el('summary.qcq-report-meta', null, meta)].concat(body)));
@@ -510,7 +597,7 @@ window.App = window.App || {};
           [el('span.et-dot', { style: { background: st.color } }), sendable ? 'Approved · not sent' : st.label]));
       } else if (waiting) {
         acts.push(el('button.rvq-mini.ok', { disabled: !can, title: can ? 'Pass QC' : 'Only QC and Producers can pass a QC check',
-          onclick: () => App.qcQueue.pass(ep.id, su.key) }, '✓ Pass'));
+          onclick: () => App.qcQueue.passDialog(ep, su) }, '✓ Pass'));
         acts.push(el('button.rvq-mini.warn', { disabled: !can, title: can ? 'Send QC Report — back to ' + dep.label : 'Only QC and Producers can send a QC report',
           onclick: () => App.qcQueue.reportDialog(ep, su) }, '↺ Report'));
       } else if (x.state === 'passed') {

@@ -1019,6 +1019,8 @@ function qcFolderFor(ctx) {
   const qcRoot = qcPaths ? qcPaths.work : '0002_Episodes/' + folders.episodeFolder(ep) + '/zz_QC';
   return folders.resolveIn(masterPath, show, qcRoot + '/QC_' + paths.deliverable);
 }
+// what QC can attach as a report (and what /api/task/qc-report will open)
+const QC_REPORT_EXT = /\.(xlsx|xls|xlsm|csv|numbers|pdf|docx|doc|pages|txt|rtf)$/i;
 // <EPCODE>_<Deliverable>_V<n>_QC-REPORT.xlsx
 const qcReportName = (ep, paths, version) =>
   folders.safeFile(folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_V' + version + '_QC-REPORT.xlsx');
@@ -2077,14 +2079,47 @@ const server = http.createServer(async (req, res) => {
           report: reportName, reportCreated });
       }
 
+      /* Where a task's QC lives, for the Pass / Send QC Report dialogs: the
+         QC folder (the report picker starts there) and this version's report
+         if Create QC Project has made it (the dialog attaches it by default).
+         Reads only — nothing is created. */
+      if (route === 'POST /api/task/qc-folder') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { ep, paths } = ctx;
+        const dirAbs = qcFolderFor(ctx);
+        const version = Math.max(1, Math.min(99, parseInt(body.version, 10) || 1));
+        const reportAbs = path.join(dirAbs, qcReportName(ep, paths, version));
+        return sendJson(res, 200, { ok: true, dir: dirAbs, exists: fs.existsSync(dirAbs),
+          report: fs.existsSync(reportAbs) ? reportAbs : null, root: path.resolve(ctx.masterPath) });
+      }
+
       /* Open QC Report — the report for a check QC has settled, from the QC
          tab's Completed list: the asked-for version's, or failing that the
          newest earlier one (a version checked without Create QC Project has
-         none of its own). Opens in whatever the OS uses for .xlsx. */
+         none of its own). Opens in whatever the OS uses for .xlsx.
+
+         body.path opens the report file QC attached when they passed it or
+         sent it back — relative to the production folder. That path comes from the board, so it gets the same
+         bound as /api/task/reveal — inside the master directory — and only
+         document types, so it can never launch anything. */
       if (route === 'POST /api/task/qc-report') {
         const body = JSON.parse(await readBody(req) || '{}');
         const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        if (body.path) {
+          const base = path.resolve(ctx.masterPath);
+          // stored relative to the production folder (js/qc.js relToRoot), so it
+          // resolves on whichever machine opens it, wherever that one mounts the volume
+          const asked = path.resolve(base, String(body.path));
+          if (!asked.startsWith(base + path.sep)) return sendJson(res, 403, { error: 'That report is outside the master directory' });
+          if (!QC_REPORT_EXT.test(asked)) return sendJson(res, 400, { error: 'Only report documents can be opened here' });
+          if (!fs.existsSync(asked)) return sendJson(res, 404, { error: 'Not on the volume any more: ' + path.basename(asked) });
+          if (!isLocalRequest(req)) return sendJson(res, 200, { ok: true, opened: false, path: asked });
+          openNatively(asked);
+          return sendJson(res, 200, { ok: true, opened: true, path: asked });
+        }
         const { ep, paths } = ctx;
         const dirAbs = qcFolderFor(ctx);
         const want = Math.max(1, Math.min(99, parseInt(body.version, 10) || 1));
