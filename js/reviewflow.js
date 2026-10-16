@@ -80,6 +80,13 @@ window.App = window.App || {};
       return (d.reviewUploads && d.reviewUploads[KEY(epId, taskKey)]) || [];
     },
     has(epId, taskKey) { return this.list(epId, taskKey).length > 0; },
+    /* What's been put up since the Director last sent feedback — the cut for
+       the round in hand. Before any feedback, every upload counts. */
+    fresh(epId, taskKey) {
+      const since = App.review && App.review.feedbackAt(epId, taskKey);
+      const all = this.list(epId, taskKey);
+      return since ? all.filter(a => a.at && a.at > since) : all;
+    },
 
     _add(epId, taskKey, items, label) {
       if (!items.length) return;
@@ -152,6 +159,22 @@ window.App = window.App || {};
     // has Post Operations passed it to the Director yet?
     sent(epId, taskKey) { const r = this.get(epId, taskKey); return !!(r && r.frameUrl); },
     frameUrl(epId, taskKey) { const r = this.get(epId, taskKey); return (r && r.frameUrl) || null; },
+    feedbackAt(epId, taskKey) { const r = this.get(epId, taskKey); return (r && r.feedbackAt) || null; },
+
+    /* Send Feedback ends a round (App.requestRevision calls this inside its
+       mutate, with the draft). The sent link moves into `rounds` and the
+       record goes back to unsent, so the next cut goes through the same
+       desks as the first: the department uploads it and sends it, Post
+       Operations sends the new link, the Director reviews it. `feedbackAt`
+       is what tells the new cut from the old one (App.reviewUploads.fresh). */
+    closeRound(d, epId, taskKey, version) {
+      const k = KEY(epId, taskKey);
+      const old = (d.reviews && d.reviews[k]) || {};
+      const at = new Date().toISOString();
+      const round = { version, frameUrl: old.frameUrl || null, sentAt: old.sentAt || null, sentBy: old.sentBy || null, feedbackAt: at };
+      d.reviews = d.reviews || {};
+      d.reviews[k] = { rounds: (old.rounds || []).concat([round]), feedbackAt: at };
+    },
 
     /* Step 2 → 3. The Frame.io URL is the payload: it's the whole reason the
        Director's row is clickable, so it's stored ON the review record rather
@@ -228,7 +251,8 @@ window.App = window.App || {};
        so Post Operations sees those too, with "nothing uploaded" said plainly
        instead. */
     denyReady(ep, su) {
-      if (App.reviewUploads.has(ep.id, su.key)) return null;
+      if (App.reviewUploads.fresh(ep.id, su.key).length) return null;
+      if (this.feedbackAt(ep.id, su.key)) return 'Upload the revised cut to Review Uploads before sending ' + su.name + ' back for review';
       return 'Upload the cut to Review Uploads before setting ' + su.name + ' to ' + App.status('review').label;
     }
   };
@@ -295,6 +319,10 @@ window.App = window.App || {};
         ]));
       }
 
+      // after Send Feedback, only what's gone up since counts as the cut to send
+      const fresh = App.reviewUploads.fresh(ep.id, su.key);
+      const feedbackAt = App.review.feedbackAt(ep.id, su.key);
+      const nextV = 'V' + (App.revisionsUsed(ep, su.key) + 1);
       if (items.length) {
         const list = el('.ws-list');
         items.forEach(a => list.appendChild(el('.ws-item.static', null, [
@@ -302,7 +330,7 @@ window.App = window.App || {};
           a.kind === 'link'
             ? el('a.ws-name', { href: a.url, target: '_blank', rel: 'noopener noreferrer' }, a.name)
             : el('span.ws-name', null, a.name),
-          el('span.ws-meta', null, [a.sizeLabel, a.byName].filter(Boolean).join(' · ')),
+          el('span.ws-meta', null, [a.sizeLabel, a.byName, fresh.includes(a) ? '' : 'earlier cut'].filter(Boolean).join(' · ')),
           (canEdit && !phone && !sentUrl)
             ? el('button.ws-x', { title: 'Remove', onclick: () => App.reviewUploads.remove(ep.id, su.key, a.id) }, '✕')
             : null
@@ -332,7 +360,7 @@ window.App = window.App || {};
       /* Send for Review: once the cut is up, the department sends it on
          here — the task goes to Ready for Review (App.setStatus, which still
          checks there's an upload) and lands on Post Operations' desk. */
-      const canSend = canEdit && !phone && items.length && !sentUrl && !App.isApproved(su.status) && su.status !== 'review';
+      const canSend = canEdit && !phone && fresh.length && !sentUrl && !App.isApproved(su.status) && su.status !== 'review';
       if (canSend) {
         wrap.appendChild(el('.ws-actions', null, el('button.btn-primary.ws-btn', {
           onclick: (e) => App.sendPulse(e.currentTarget, () => { App.setStatus(ep.id, su.key, 'review'); App.workspace && App.workspace.reload && App.workspace.reload(); })
@@ -342,7 +370,9 @@ window.App = window.App || {};
       // What happens next, said once, in whichever of the three states this is
       wrap.appendChild(el('.ws-note.tight', null, sentUrl
         ? 'Sent for review — the Director has this on their Reviews tab.'
-        : items.length
+        : feedbackAt && !fresh.length && su.status !== 'review'
+          ? 'The Director sent feedback — upload the revised cut (' + nextV + '), then Send for Review again.'
+        : fresh.length
           ? (su.status === 'review'
             ? 'Sent — Post Operations will set up the review and send it to the Director.'
             : 'Send it for review when it’s ready — it goes to ' + App.status('review').label + ' and onto Post Operations’ desk.')

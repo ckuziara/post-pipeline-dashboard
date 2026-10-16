@@ -813,6 +813,8 @@ window.App = window.App || {};
       e.statuses[key] = 'in_progress';
       e.revisions = e.revisions || {};
       e.revisions[key] = used + 1;
+      // the reviewed cut (V used+1) is done with: the next one is sent afresh
+      if (App.review) App.review.closeRound(d, epId, key, used + 1);
       App.syncBatch(d, e, key);
       if (shiftDelivery) {
         e.milestones = e.milestones || {};

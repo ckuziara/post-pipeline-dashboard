@@ -213,6 +213,7 @@ window.App = window.App || {};
            in progress                 Project · Assets · Review Uploads
            review                      Review Uploads
            approved (to deliver)       Deliver · past reviews (compact)
+           back from QC (qcfix)        Deliver, with Resubmit to QC · Project · Assets
            in QC / done                past reviews · what was delivered (compact)
          Review Uploads sits before Deliver on purpose: it's the work BEFORE
          sign-off, Deliver what happens after. Owned by js/reviewflow.js. */
@@ -230,6 +231,8 @@ window.App = window.App || {};
         : stage === 'work' ? [project(), assets(), review()]
         : stage === 'review' ? [review(), folded('Project & files', [project(), assets()])]
         : stage === 'deliver' ? [deliver(), reviewPast(), folded('Project & files', [project(), assets()])]
+        // QC's fix is a delivery fix: the project to fix it in, and Deliver to put it back
+        : stage === 'qcfix' ? [deliver(), project(), folded('Assets & past reviews', [assets(), reviewPast()])]
         : /* qc, done */ [reviewPast(), folded(stage === 'qc' ? 'Delivered files & project' : 'Files & project', [deliver(), project(), assets()])];
       parts.filter(Boolean).forEach(n => box.appendChild(n));
       // opened to deliver (the Priority widget's Deliver button): bring that section into view
@@ -813,10 +816,12 @@ window.App = window.App || {};
       const phone = App.isPhone();
       if (!phone && d.masterOk) {
         const status = el('.ws-progress');
+        // what the files are waiting on: QC sent back a fix → QC passing it, not approval
+        const sentBack = App.qcFor(ep, su.key).on && su.status === 'in_progress' && App.qcState(ep, su.key) === 'failed';
         const drop = el('.ws-drop', null, [
-          el('.ws-drop-main', null, [App.icon('upload'), '  Drop files here to deliver']),
+          el('.ws-drop-main', null, [App.icon('upload'), sentBack ? '  Drop the fixed files here' : '  Drop files here to deliver']),
           el('.ws-drop-sub', null, 'or click to browse the volume — held in !!_Mezzanine/' +
-            d.deliverable + ' until this task is approved')
+            d.deliverable + (sentBack ? ' until QC passes the fix' : ' until this task is approved'))
         ]);
 
         ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => {
@@ -892,9 +897,15 @@ window.App = window.App || {};
            without it the files are published (Delivered). Both need the
            Director's approval first; before that, nothing to send. */
         const needsQc = App.qcFor(ep, su.key).on;
+        const qcFix = needsQc && su.status === 'in_progress' && App.qcState(ep, su.key) === 'failed';
         const canSendHere = !phone && App.canEditTask(App.state.role, su) && su.status === 'approved';
-        // QC tasks go to QC (passing QC publishes them); others are published here
-        const sendBtn = !canSendHere ? null
+        // QC tasks go to QC (passing QC publishes them); others are published here.
+        // Back from QC, the fixed delivery goes straight back to QC from here.
+        const sendBtn = qcFix && !phone && App.canEditTask(App.state.role, su)
+          ? el('button.btn-primary.ws-btn', {
+              onclick: (e) => App.sendPulse(e.currentTarget, () => { App.qcQueue.resubmit(ep.id, su.key); this._render(); })
+            }, [App.icon('checkBadge'), ' Resubmit to QC V' + (App.qcVersion(ep, su.key) + 1)])
+          : !canSendHere ? null
           : needsQc
             ? (App.qcState(ep, su.key) !== 'passed' ? el('button.btn-primary.ws-btn', {
                 onclick: (e) => App.sendPulse(e.currentTarget, () => { App.qcQueue.sendToQc(ep.id, su.key, { delivered: mezz.length + links.length }); this._render(); })
@@ -902,7 +913,8 @@ window.App = window.App || {};
             : (mezz.length ? el('button.btn-primary.ws-btn', {
                 onclick: (e) => App.sendPulse(e.currentTarget, () => App.promoteDelivered(ep.id, su.key))
               }, [App.icon('package'), ' Publish']) : null);
-        const chip = su.status === 'in_qc' ? el('span.ws-chip.pending', null, 'with QC')
+        const chip = qcFix ? el('span.ws-chip.pending', null, 'QC sent it back — fix it here')
+          : su.status === 'in_qc' ? el('span.ws-chip.pending', null, 'with QC')
           : App.isApproved(su.status) ? el('span.ws-chip.ok', null, needsQc && App.qcState(ep, su.key) !== 'passed' ? 'approved — not sent to QC' : 'approved')
           : el('span.ws-chip.pending', null, 'awaiting approval');
         wrap.appendChild(el('.ws-delivered', null, [
