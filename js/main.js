@@ -111,11 +111,9 @@ window.App = window.App || {};
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
     if (!guardReady(g, status)) return;
-    const wasApproved = App.isApproved(g.su.status);
     App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = status; App.refreshReadiness(e); App.syncBatch(d, e, key); }, 'the status change');
     App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: g.su.status, to: status });
     App.toast(g.su.name + ' → ' + App.status(status).label);
-    if (status === 'approved' && !wasApproved) App.askForDelivery(epId, key);
   };
 
   /* Take an approval back (right-click ✓ Approved on the Reviews tab): the
@@ -157,7 +155,6 @@ window.App = window.App || {};
         e.statuses[g.su.key] = status; App.refreshReadiness(e); App.syncBatch(d, e, g.su.key);
       }), 'the status change');
       ok.forEach(g => App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: g.su.status, to: status, bulk: ok.length }));
-      if (status === 'approved') ok.filter(g => !App.isApproved(g.su.status)).forEach(g => App.askForDelivery(g.ep.id, g.su.key));
     }
     const n = (k) => k + ' task' + (k === 1 ? '' : 's');
     App.toast((ok.length ? n(ok.length) + ' → ' + App.status(status).label : 'Nothing to change') +
@@ -250,7 +247,6 @@ window.App = window.App || {};
         if ('assignee' in w) changed.owner = { from: w.g.su.assignee || null, to: w.assignee };
         App.track.audit('task.edit', { episode: w.g.ep.code, task: w.g.su.name, changed, bulk: plan.length });
       });
-      plan.filter(w => App.isApproved(w.status)).forEach(w => App.askForDelivery(w.g.ep.id, w.g.su.key));
     }
     const n = (k) => k + ' task' + (k === 1 ? '' : 's');
     App.toast((plan.length ? 'Updated ' + n(plan.length) : 'Nothing to change') +
@@ -292,7 +288,6 @@ window.App = window.App || {};
       return;
     }
 
-    const wasApproved = App.isApproved(g.su.status);
     App.mutate(d => {
       const e = d.episodes.find(x => x.id === epId);
       e.names = e.names || {}; e.dates = e.dates || {};
@@ -316,7 +311,6 @@ window.App = window.App || {};
       App.track.audit('task.edit', { episode: g.ep.code, task: g.su.name, changed });
     }
     App.toast('Saved “' + (canName ? name : g.su.name) + '”');
-    if (canTouch && status === 'approved' && !wasApproved) App.askForDelivery(epId, key);
   };
 
   /* Delivered: its files are published (in Publish, where everything
@@ -331,26 +325,6 @@ window.App = window.App || {};
       App.refreshReadiness(e); App.syncBatch(d, e, key);
     }, 'publishing');
     App.track.audit('task.status', { episode: ep.code, task: App.taskNameFor(ep, key), from: 'approved', to: 'delivered' });
-  };
-
-  /* Approved, but it needs QC: QC can't have it until the department has
-     delivered the final files and sent them. Said to the task's owner
-     through the task's own Discussion — the message is what lights up their
-     bell (and mirrors to Slack) — once per QC version, never twice. */
-  App.askForDelivery = function (epId, key) {
-    const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
-    const su = App.subitem(ep, key);
-    if (!su || su.status !== 'approved' || !App.qcFor(ep, key).on || App.qcState(ep, key) === 'passed') return;
-    const v = App.qcVersion(ep, key), c = App.qcCheck(ep, key);
-    if (c && c.deliveryAskedV === v) return;
-    App.mutate(d => {
-      const e = d.episodes.find(x => x.id === epId);
-      e.qcChecks = Object.assign({}, e.qcChecks, { [key]: Object.assign({}, e.qcChecks && e.qcChecks[key], { deliveryAskedV: v }) });
-    }, 'asking for the delivery');
-    const owner = su.assignee && App.person(su.assignee);
-    const text = '✅ Approved — ' + (owner ? owner.name.split(' ')[0] + ', u' : 'U') +
-      'pload the delivery files in Deliver, then Send to QC. QC can’t start until they’re in.';
-    if (App.api && App.api.chatSend) App.api.chatSend(epId + '::' + key, text).catch(() => {});
   };
 
   /* Publish: a task's delivered files move from Mezzanine to Publish, where
