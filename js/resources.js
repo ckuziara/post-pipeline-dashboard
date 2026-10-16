@@ -64,7 +64,7 @@ window.App = window.App || {};
     const mates = App.state.data.people.filter(q => App.roleDept(q.role) === dept);
     const myTasks = [];
     App.activeEpisodes().forEach(ep => App.subitems(ep).forEach(su => {
-      if (su.assignee === id && su.status !== 'approved' && su.due >= from && su.start <= to) myTasks.push({ ep, su });
+      if (su.assignee === id && !App.isApproved(su.status) && su.due >= from && su.start <= to) myTasks.push({ ep, su });
     }));
     myTasks.sort((a, b) => a.su.start < b.su.start ? -1 : 1);
 

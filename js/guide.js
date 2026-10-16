@@ -237,7 +237,7 @@ window.App = window.App || {};
       eps.forEach(e => App.subitems(e).forEach(su => { if (su.status === 'review' && sent(e, su.key)) have++; }));
       const cands = [];
       eps.forEach(e => App.subitems(e).forEach(su => {
-        if (su.status === 'approved' || (su.status === 'review' && sent(e, su.key))) return;
+        if (App.isApproved(su.status) || (su.status === 'review' && sent(e, su.key))) return;
         if (su.start > today) return;
         cands.push({ e, su, gap: Math.abs(App.diffDays(su.due, today)) });
       }));

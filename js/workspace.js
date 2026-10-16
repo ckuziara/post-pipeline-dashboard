@@ -135,6 +135,16 @@ window.App = window.App || {};
     });
   };
 
+  /* A send button that's been pressed: it turns into a green "✓ Sent" with a
+     little pop, so the click visibly landed, then the step runs (which
+     redraws the section). */
+  App.sendPulse = function (btn, fn) {
+    if (!btn || btn.classList.contains('ws-sent')) return;
+    btn.classList.add('ws-sent'); btn.disabled = true;
+    btn.innerHTML = ''; btn.appendChild(document.createTextNode('✓ Sent'));
+    setTimeout(() => { fn(); App.editTask && App.editTask._refresh && App.editTask._refresh(); }, 650);
+  };
+
   App.workspace = {
     _mounted: null,   // { box, epId, taskKey } — the panel currently in a dialog
 
@@ -196,14 +206,33 @@ window.App = window.App || {};
       const wrongRoot = this._rootWarning(m.data);
       if (wrongRoot) box.appendChild(wrongRoot);
 
-      if (!App.isPhone()) box.appendChild(this._project(ep, su, m.data));
-      box.appendChild(this._assets(ep, su, m.data));
-      /* Review Uploads sits between the two on purpose: it's what happens
-         to the work BEFORE it's signed off, where Deliver is what happens
-         after. Owned by js/reviewflow.js, which also owns the Post
-         Operations end of the same hand-off. */
-      if (App.reviewFlow) box.appendChild(App.reviewFlow.inlineSection(ep, su, m.data));
-      box.appendChild(this._deliver(ep, su, m.data));
+      /* Only what this stage of the task needs, in full; the rest folds into
+         one "Project & files" line (or a compact history) so the dialog says
+         what's next instead of showing every tool at once:
+           not started                 Project · Assets
+           in progress                 Project · Assets · Review Uploads
+           review                      Review Uploads
+           approved (to deliver)       Deliver · past reviews (compact)
+           in QC / done                past reviews · what was delivered (compact)
+         Review Uploads sits before Deliver on purpose: it's the work BEFORE
+         sign-off, Deliver what happens after. Owned by js/reviewflow.js. */
+      const stage = App.taskStage(ep, su);
+      const project = () => App.isPhone() ? null : this._project(ep, su, m.data);
+      const assets = () => this._assets(ep, su, m.data);
+      const review = () => App.reviewFlow ? App.reviewFlow.inlineSection(ep, su, m.data) : null;
+      const reviewPast = () => App.reviewFlow ? App.reviewFlow.compactSection(ep, su) : null;
+      const deliver = () => this._deliver(ep, su, m.data);
+      const folded = (label, nodes) => {
+        nodes = nodes.filter(Boolean); if (!nodes.length) return null;
+        return el('details.ws-more', null, [el('summary', null, label)].concat(nodes));
+      };
+      const parts = stage === 'start' ? [project(), assets()]
+        : stage === 'work' ? [project(), assets(), review()]
+        : stage === 'review' ? [review(), folded('Project & files', [project(), assets()])]
+        : stage === 'deliver' ? [deliver(), reviewPast(), folded('Project & files', [project(), assets()])]
+        : /* qc, done */ [reviewPast(), folded(stage === 'qc' ? 'Delivered files & project' : 'Files & project', [deliver(), project(), assets()])];
+      parts.filter(Boolean).forEach(n => box.appendChild(n));
+      App.editTask && App.editTask._refresh && App.editTask._refresh();   // the To-Do follows the stage
     },
 
     /* Which machine's filesystem this panel is actually talking to.
@@ -853,16 +882,28 @@ window.App = window.App || {};
           // rest of this section's editing actions
           phone ? null : el('button.ws-x', { title: 'Remove link', onclick: () => { App.removeTaskLink(ep.id, su.key, l.id); this._render(); } }, '✕')
         ])));
+        /* The send button, once delivered: with QC it goes to QC (In QC),
+           without it the files are published (Delivered). Both need the
+           Director's approval first; before that, nothing to send. */
+        const needsQc = App.qcFor(ep, su.key).on;
+        const canSendHere = !phone && App.canEditTask(App.state.role, su) && su.status === 'approved';
+        const sendBtn = !canSendHere ? null
+          : needsQc && App.qcState(ep, su.key) !== 'passed'
+            ? el('button.btn-primary.ws-btn', {
+                onclick: (e) => App.sendPulse(e.currentTarget, () => { App.qcQueue.sendToQc(ep.id, su.key, { delivered: mezz.length + links.length }); this._render(); })
+              }, [App.icon('checkBadge'), ' Send to QC'])
+            : (mezz.length ? el('button.btn-primary.ws-btn', {
+                onclick: (e) => App.sendPulse(e.currentTarget, () => App.promoteDelivered(ep.id, su.key))
+              }, [App.icon('package'), ' Send Delivery']) : null);
+        const chip = su.status === 'in_qc' ? el('span.ws-chip.pending', null, 'with QC')
+          : App.isApproved(su.status) ? el('span.ws-chip.ok', null, needsQc && App.qcState(ep, su.key) !== 'passed' ? 'approved — not sent to QC' : 'approved')
+          : el('span.ws-chip.pending', null, 'awaiting approval');
         wrap.appendChild(el('.ws-delivered', null, [
-          el('.ws-sub', null, [
-            'Delivered · ',
-            su.status === 'approved'
-              ? el('span.ws-chip.ok', null, 'approved')
-              : el('span.ws-chip.pending', null, 'awaiting approval')
-          ]),
+          el('.ws-sub', null, ['Delivered · ', chip]),
           list,
-          su.status === 'approved' ? null : el('.ws-note.tight', null,
-            'These stay out of the next department’s Assets until ' + su.name + ' is approved.')
+          sendBtn ? el('.ws-actions', null, sendBtn) : null,
+          App.isApproved(su.status) ? null : el('.ws-note.tight', null,
+            'These stay out of the next department’s Assets until ' + su.name + ' is approved' + (needsQc ? ' and through QC' : '') + '.')
         ]));
       }
 

@@ -329,15 +329,51 @@ window.App = window.App || {};
         ]));
       }
 
+      /* Send for Review: once the cut is up, the department sends it on
+         here — the task goes to Ready for Review (App.setStatus, which still
+         checks there's an upload) and lands on Post Operations' desk. */
+      const canSend = canEdit && !phone && items.length && !sentUrl && !App.isApproved(su.status) && su.status !== 'review';
+      if (canSend) {
+        wrap.appendChild(el('.ws-actions', null, el('button.btn-primary.ws-btn', {
+          onclick: (e) => App.sendPulse(e.currentTarget, () => { App.setStatus(ep.id, su.key, 'review'); App.workspace && App.workspace.reload && App.workspace.reload(); })
+        }, [App.icon('target'), ' Send for Review'])));
+      }
+
       // What happens next, said once, in whichever of the three states this is
       wrap.appendChild(el('.ws-note.tight', null, sentUrl
         ? 'Sent for review — the Director has this on their Reviews tab.'
         : items.length
           ? (su.status === 'review'
-            ? 'Post Operations will set up the review and send it to the Director.'
-            : 'Set this task to ' + App.status('review').label + ' to put it on Post Operations’ desk.')
-          : 'Nothing here yet. A task can’t be set to ' + App.status('review').label + ' until the cut is up.'));
+            ? 'Sent — Post Operations will set up the review and send it to the Director.'
+            : 'Send it for review when it’s ready — it goes to ' + App.status('review').label + ' and onto Post Operations’ desk.')
+          : 'Nothing here yet. A task can’t be sent for review until the cut is up.'));
       return wrap;
+    },
+
+    /* Reviews that are over, kept short: each cut that went up (with when),
+       the review link, and how it ended. Shown once the task is past review. */
+    compactSection(ep, su) {
+      const items = App.reviewUploads.list(ep.id, su.key);
+      const link = App.review.frameUrl(ep.id, su.key);
+      if (!items.length && !link) return null;
+      const used = App.revisionsUsed(ep, su.key);
+      const rows = items.map(a => el('.ws-hist-row', null, [
+        App.icon(a.kind === 'link' ? 'link' : 'clapper', { cls: 'ws-ic' }),
+        a.kind === 'link' ? el('a.ws-name', { href: a.url, target: '_blank', rel: 'noopener noreferrer' }, a.name) : el('span.ws-name', null, a.name),
+        el('span.ws-meta', null, a.at ? App.fmtDate(String(a.at).slice(0, 10)) : '')
+      ]));
+      if (link) rows.push(el('.ws-hist-row', null, [
+        App.icon('target', { cls: 'ws-ic' }),
+        el('a.ws-name', { href: link, target: '_blank', rel: 'noopener noreferrer' }, App.reviewLinkLabel(link)),
+        el('span.ws-meta', null, 'review link')
+      ]));
+      return el('.ws-block.ws-compact', null, [
+        el('.ws-head', null, [
+          el('.modal-section-title', { style: { margin: '0' } }, [App.icon('target'), ' Reviews']),
+          el('span.ws-chip.ok', null, 'Approved' + (used ? ' · after ' + used + ' revision' + (used === 1 ? '' : 's') : ''))
+        ]),
+        el('.ws-hist', null, rows)
+      ]);
     },
 
     _pickFromVolume(ep, su, d) {

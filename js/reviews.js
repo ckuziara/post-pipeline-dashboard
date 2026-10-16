@@ -50,7 +50,7 @@ window.App = window.App || {};
   const KEY = (epId, key) => epId + '::' + key;
 
   function stage(ep, su) {
-    if (su.status === 'approved') return 'done';
+    if (App.isApproved(su.status)) return 'done';
     const r = record(ep.id, su.key);
     return r && r.state === 'under' ? 'under' : 'waiting';
   }

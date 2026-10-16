@@ -111,7 +111,7 @@ window.App = window.App || {};
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
     if (!guardReady(g, status)) return;
-    const wasApproved = g.su.status === 'approved';
+    const wasApproved = App.isApproved(g.su.status);
     App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = status; App.refreshReadiness(e); App.syncBatch(d, e, key); }, 'the status change');
     App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: g.su.status, to: status });
     App.toast(g.su.name + ' → ' + App.status(status).label);
@@ -125,7 +125,7 @@ window.App = window.App || {};
   App.reverseApproval = function (epId, key) {
     const g = guardEdit(epId, key); if (!g) return;
     if (!App.canApprove(App.state.role)) { App.toast('Only Producer, Director or Manager can reverse an approval', true); return; }
-    if (g.su.status !== 'approved') return;
+    if (!App.isApproved(g.su.status)) return;
     App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = 'review'; App.refreshReadiness(e); App.syncBatch(d, e, key); }, 'reversing the approval');
     App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: 'approved', to: 'review', reversed: true });
     App.toast('Approval reversed — ' + g.su.name + ' is back to ' + App.status('review').label);
@@ -148,7 +148,7 @@ window.App = window.App || {};
     items.forEach(({ epId, suKey }) => {
       const g = findTask(epId, suKey); if (!g) return;
       const deny = status === 'review' && g.su.status !== 'review' && App.review && App.review.denyReady(g.ep, g.su);
-      if (!App.canEditTask(role, g.su) || (g.su.status === 'approved' && !App.canApprove(role)) || deny) skipped.push(g);
+      if (!App.canEditTask(role, g.su) || (App.isApproved(g.su.status) && !App.canApprove(role)) || deny) skipped.push(g);
       else if (g.su.status !== status) ok.push(g);
     });
     if (ok.length) {
@@ -157,7 +157,7 @@ window.App = window.App || {};
         e.statuses[g.su.key] = status; App.refreshReadiness(e); App.syncBatch(d, e, g.su.key);
       }), 'the status change');
       ok.forEach(g => App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: g.su.status, to: status, bulk: ok.length }));
-      if (status === 'approved') ok.filter(g => g.su.status !== 'approved').forEach(g => App.promoteDelivered(g.ep.id, g.su.key));
+      if (status === 'approved') ok.filter(g => !App.isApproved(g.su.status)).forEach(g => App.promoteDelivered(g.ep.id, g.su.key));
     }
     const n = (k) => k + ' task' + (k === 1 ? '' : 's');
     App.toast((ok.length ? n(ok.length) + ' → ' + App.status(status).label : 'Nothing to change') +
@@ -220,7 +220,7 @@ window.App = window.App || {};
       if (canName && name !== g.su.name) w.name = name;
       if (status !== undefined && status !== g.su.status) {
         const deny = status === 'review' && App.review && App.review.denyReady(g.ep, g.su);
-        if (!canTouch || (g.su.status === 'approved' && !App.canApprove(role)) || deny) refused = true;
+        if (!canTouch || (App.isApproved(g.su.status) && !App.canApprove(role)) || deny) refused = true;
         else w.status = status;
       }
       if (canAssign && (g.su.assignee || null) !== (assignee || null)) {
@@ -250,7 +250,7 @@ window.App = window.App || {};
         if ('assignee' in w) changed.owner = { from: w.g.su.assignee || null, to: w.assignee };
         App.track.audit('task.edit', { episode: w.g.ep.code, task: w.g.su.name, changed, bulk: plan.length });
       });
-      plan.filter(w => w.status === 'approved').forEach(w => App.promoteDelivered(w.g.ep.id, w.g.su.key));
+      plan.filter(w => App.isApproved(w.status)).forEach(w => App.promoteDelivered(w.g.ep.id, w.g.su.key));
     }
     const n = (k) => k + ' task' + (k === 1 ? '' : 's');
     App.toast((plan.length ? 'Updated ' + n(plan.length) : 'Nothing to change') +
@@ -270,7 +270,7 @@ window.App = window.App || {};
       App.toast('Your role can only edit ' + (d ? App.dept(d).label : 'permitted') + ' tasks', true);
       return;
     }
-    if (canTouch && status === 'approved' && g.su.status !== 'approved' && !App.canApprove(role)) {
+    if (canTouch && status === 'approved' && !App.isApproved(g.su.status) && !App.canApprove(role)) {
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
     if (canTouch && !guardReady(g, status)) return;
@@ -292,7 +292,7 @@ window.App = window.App || {};
       return;
     }
 
-    const wasApproved = g.su.status === 'approved';
+    const wasApproved = App.isApproved(g.su.status);
     App.mutate(d => {
       const e = d.episodes.find(x => x.id === epId);
       e.names = e.names || {}; e.dates = e.dates || {};
@@ -323,7 +323,42 @@ window.App = window.App || {};
      use, so that's the moment the files move out of the episode's Mezzanine
      folder into Publish. Silent when there's nothing waiting — plenty of tasks
      are approved without a file attached. */
+  /* Delivered: its files are published (in Publish, where everything
+     downstream reads them). Set by the app, never picked — only for a task
+     that's finished, i.e. approved and through QC where it needs it. */
+  App.markDelivered = function (epId, key) {
+    const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
+    if (!App.isCompleteKey(ep, key) || (ep.statuses || {})[key] === 'delivered') return;
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.statuses[key] = 'delivered';
+      App.refreshReadiness(e); App.syncBatch(d, e, key);
+    }, 'publishing');
+    App.track.audit('task.status', { episode: ep.code, task: App.taskNameFor(ep, key), from: 'approved', to: 'delivered' });
+  };
+
+  /* Approved, but it needs QC: QC can't have it until the department has
+     delivered the final files and sent them. Said to the task's owner
+     through the task's own Discussion — the message is what lights up their
+     bell (and mirrors to Slack) — once per QC version, never twice. */
+  App.askForDelivery = function (epId, key) {
+    const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
+    const su = App.subitem(ep, key);
+    if (!su || su.status !== 'approved' || !App.qcFor(ep, key).on || App.qcState(ep, key) === 'passed') return;
+    const v = App.qcVersion(ep, key), c = App.qcCheck(ep, key);
+    if (c && c.deliveryAskedV === v) return;
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId);
+      e.qcChecks = Object.assign({}, e.qcChecks, { [key]: Object.assign({}, e.qcChecks && e.qcChecks[key], { deliveryAskedV: v }) });
+    }, 'asking for the delivery');
+    const owner = su.assignee && App.person(su.assignee);
+    const text = '✅ Approved — ' + (owner ? owner.name.split(' ')[0] + ', u' : 'U') +
+      'pload the delivery files in Deliver, then Send to QC. QC can’t start until they’re in.';
+    if (App.api && App.api.chatSend) App.api.chatSend(epId + '::' + key, text).catch(() => {});
+  };
+
   App.promoteDelivered = function (epId, key) {
+    App.askForDelivery(epId, key);         // a QC task waits for its delivery instead
     if (!App.masterPathSet || !App.masterPathSet()) return;
     const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
     // a deliverable that needs QC is published when QC passes it, not before
@@ -332,7 +367,8 @@ window.App = window.App || {};
       .then(() => App.api.taskPromote({ epId, taskKey: key, pipeline: App.pipelineFor(ep) }))
       .then(r => {
         if (!r.promoted) return;
-        App.toast(r.promoted + ' delivered file' + (r.promoted === 1 ? '' : 's') + ' published');
+        App.markDelivered(epId, key);      // published → Delivered
+        App.toast(r.promoted + ' delivered file' + (r.promoted === 1 ? '' : 's') + ' published · ' + App.status('delivered').label);
         App.workspace && App.workspace.reload && App.workspace.reload();
       })
       .catch(e => App.toast('Approved, but publishing the files failed: ' + e.message, true));
@@ -467,7 +503,7 @@ window.App = window.App || {};
     const qcOf = (k) => (opts && opts.qc && opts.qc[k]) || App.qcFor(ep, k);
     const doneOf = (k) => {
       const t = App.revTask(ep, k), su = subs[k];
-      const base = (!t || !t.maxRev || su.status === 'approved') ? dates[k].due
+      const base = (!t || !t.maxRev || App.isApproved(su.status)) ? dates[k].due
         : App.revisionSteps(t, dates[k].due, cal, { dept: su.dept, person: su.assignee }, App.revisionsUsed(ep, k)).end;
       // then QC's days, unless QC has already passed it
       const q = qcOf(k);
@@ -477,7 +513,7 @@ window.App = window.App || {};
     order.forEach(k => {
       if (k === key || !down.has(k) || !subs[k]) return;
       const su = subs[k], t = byKey[k];
-      if (['in_progress', 'review', 'approved'].includes(su.status)) return;
+      if (['in_progress', 'review', 'approved', 'in_qc', 'delivered'].includes(su.status)) return;
       let need = null;
       t.deps.forEach(d => {
         if (!dates[d]) return;
@@ -1003,7 +1039,7 @@ window.App = window.App || {};
         const subs = App.subitems(e);          // snapshot before writing back into e.dates
         e.dates = e.dates || {};
         if (m.delta) subs.forEach(su => {
-          if (su.status === 'approved') { locked++; return; }   // stays put, by design
+          if (App.isApproved(su.status)) { locked++; return; }   // stays put, by design
           e.dates[su.key] = { start: App.shiftIso(su.start, m.delta), due: App.shiftIso(su.due, m.delta) };
           shifted++;
         });
@@ -1448,7 +1484,7 @@ window.App = window.App || {};
       const days = App.diffDays(last, splitIso) + 1;
       const moves = [];
       App.subitems(ep).forEach(su => {
-        if (su.status === 'approved' || su.due < splitIso) return;
+        if (App.isApproved(su.status) || su.due < splitIso) return;
         const start = su.start < splitIso ? su.start : App.shiftIso(su.start, days);
         moves.push({ epId: ep.id, suKey: su.key, start, due: App.shiftIso(su.due, days), name: su.name, from: su.start });
       });
@@ -1847,7 +1883,7 @@ window.App = window.App || {};
       if (t.needsQc) { o.needsQc = true; o.qcDays = App.qcDaysOf(t); }
       return o;
     });
-    const LOCKED = ['in_progress', 'review', 'approved'];
+    const LOCKED = ['in_progress', 'review', 'approved', 'in_qc', 'delivered'];
 
     // what the pipeline edit touched, then everything that waits on it
     const old = {};

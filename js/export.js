@@ -205,7 +205,7 @@ window.App = window.App || {};
         const owner = su.assignee && App.person(su.assignee);
         const rev = App.taskRevisions(ep, su.key);
         const flags = [];
-        if (su.status !== 'approved' && su.due < t0) flags.push('Overdue');
+        if (!App.isApproved(su.status) && su.due < t0) flags.push('Overdue');
         if (App.isRiskBlocked(ep, su.key)) flags.push('Blocked');
         if (cal && App.hasHolidayClash(ep, su)) flags.push('Holiday clash');
         const st = App.status(su.status), d = App.dept(su.dept);
@@ -488,7 +488,7 @@ window.App = window.App || {};
         : [cal.workWeekends ? '7-day week' : 'Mon–Fri', cal.region === 'none' ? 'no national holidays' : cal.region.toUpperCase() + ' holidays', plural(cal.offDays.length, 'time-off entry').replace('entrys', 'entries')].join(' · '));
     if (snap.id) {
       const open = [];
-      eps.forEach(e => e.ep && App.subitems(e.ep).forEach(su => { if (su.status !== 'approved' && !su.assignee) open.push(su); }));
+      eps.forEach(e => e.ep && App.subitems(e.ep).forEach(su => { if (!App.isApproved(su.status) && !su.assignee) open.push(su); }));
       add(open.length ? 'todo' : 'ok', 'Task owners', open.length ? plural(open.length, 'open task') + ' without an owner' : 'Every open task has an owner');
       const cl = App.holidayClashes(snap.id);
       if (cl.length) add('todo', 'Holiday clashes', plural(cl.length, 'task') + ' run into time off');

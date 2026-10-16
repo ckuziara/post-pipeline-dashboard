@@ -54,7 +54,7 @@ window.App = window.App || {};
   function pendingFor(episodes) {
     const out = [];
     episodes.forEach(ep => App.subitems(ep).forEach(su => {
-      if (su.status === 'approved' || !App.qcFor(ep, su.key).on) return;
+      if (!App.qcFor(ep, su.key).on || su.status === 'in_qc' || App.isCompleteKey(ep, su.key)) return;
       if (App.qcState(ep, su.key) === 'failed') return;
       const w = App.qcWindow(ep, su);
       out.push({ ep, su, check: App.qcCheck(ep, su.key) || {}, state: 'pending', qcDue: w ? w.due : null, date: w ? w.start : null });
@@ -184,6 +184,7 @@ window.App = window.App || {};
       const u = me();
       mutateCheck(epId, key, 'passing QC', (e, c) => {
         Object.assign(c, { state: 'passed', decidedAt: new Date().toISOString(), decidedBy: u.byName, planDate: null });
+        e.statuses[key] = 'approved';      // out of QC; Delivered once its files are published
       });
       App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'passed', version: 'V' + App.qcVersion(g.ep, key) });
       App.toast(g.su.name + ' passed QC V' + App.qcVersion(g.ep, key));
@@ -203,6 +204,7 @@ window.App = window.App || {};
         mutateCheck(epId, key, 'revoking the QC pass', (e, c) => {
           Object.assign(c, { state: 'waiting', queuedAt: App.isoDate(App.today()), planDate: null, decidedAt: null, decidedBy: null,
             revokedAt: new Date().toISOString(), revokedBy: u.byName });
+          e.statuses[key] = 'in_qc';
         });
         App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'pass revoked', version: v });
         App.toast(v + ' pass revoked — ' + g.su.name + ' is back in the QC queue');
@@ -235,11 +237,28 @@ window.App = window.App || {};
       if (!App.canEditTask(App.state.role, g.su)) { App.toast('Only the ' + App.dept(g.su.dept).label + ' team can resubmit this', true); return; }
       if (App.qcState(g.ep, key) !== 'failed') return;
       mutateCheck(epId, key, 'resubmitting to QC', (e, c) => {
-        e.statuses[key] = 'approved';             // App.syncQcChecks puts it back in the queue
+        e.statuses[key] = 'in_qc';                // App.syncQcChecks puts it back in the queue
         c.resubmittedAt = new Date().toISOString();
       });
       App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'resubmitted' });
       App.toast(g.su.name + ' resubmitted to QC — now QC V' + App.qcVersion(App.state.data.episodes.find(e => e.id === epId), key));
+    },
+
+    /* Send to QC — the department's Delivery send button, once the Director
+       has approved the task and its final files are delivered. The task goes
+       In QC and joins the queue. Their own department's task, so no approver
+       needed: approval already happened. */
+    sendToQc(epId, key, opts) {
+      const g = find(epId, key); if (!g) return;
+      // QC checks the delivered files, so there must be some (Deliver passes delivered: n)
+      if (!(opts && opts.delivered > 0)) { App.toast('Upload the delivery files in Deliver first — QC checks those', true); return; }
+      if (!App.canEditTask(App.state.role, g.su)) { App.toast('Only the ' + App.dept(g.su.dept).label + ' team can send this to QC', true); return; }
+      if (!App.qcFor(g.ep, key).on) return;
+      if (g.su.status !== 'approved') { App.toast(g.su.name + ' needs the Director’s approval before it goes to QC', true); return; }
+      if (App.qcState(g.ep, key) === 'passed') return;
+      mutateCheck(epId, key, 'sending to QC', (e) => { e.statuses[key] = 'in_qc'; });
+      App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'sent to QC', version: 'V' + App.qcVersion(App.state.data.episodes.find(e => e.id === epId), key) });
+      App.toast(g.su.name + ' sent to QC');
     },
 
     // hand a check to another QC person, or back to the default (null)
@@ -359,7 +378,7 @@ window.App = window.App || {};
       const st = App.qcState(ep, su.key), v = 'V' + App.qcVersion(ep, su.key);
       const [txt, cls, tip] = st === 'passed' ? ['QC ' + v + ' ✓', '.passed', 'QC ' + v + ' passed']
         : st === 'failed' ? ['QC ' + v + ' ✕', '.failed', 'QC ' + v + ' sent a report back — fix it and resubmit to QC']
-        : su.status === 'approved' ? ['QC ' + v + ' ◷', '.waiting', 'Approved — waiting for QC ' + v]
+        : su.status === 'in_qc' ? ['QC ' + v + ' ◷', '.waiting', 'In QC — waiting for QC ' + v]
         : ['QC', '', 'Needs QC once approved (' + q.days + ' day' + (q.days === 1 ? '' : 's') + ')'];
       return el('span.qcq-badge' + cls, { title: tip }, txt);
     },
@@ -374,9 +393,10 @@ window.App = window.App || {};
       const w = App.qcWindow(ep, su);
       const v = 'QC V' + App.qcVersion(ep, su.key);
       const head = st === 'passed' ? v + ' passed' + (c.decidedBy ? ' by ' + c.decidedBy : '') + (c.decidedAt ? ' on ' + App.fmtDate(c.decidedAt.slice(0, 10)) : '')
-        : st === 'waiting' ? 'Approved — waiting for ' + v + (w ? ', due ' + App.fmtDate(w.due) : '')
+        : st === 'waiting' ? 'In QC — waiting for ' + v + (w ? ', due ' + App.fmtDate(w.due) : '')
         : st === 'failed' ? v + ' — QC sent a report back'
-        : q.on ? 'Goes to QC once approved' + (w ? ' — QC held ' + App.fmtRange(w.start, w.due) : '') : 'QC no longer needed';
+        : q.on ? (su.status === 'approved' ? 'Approved — send the delivery to QC from Deliver' : 'Goes to QC once approved and the delivery is sent') +
+            (w ? ' — QC held ' + App.fmtRange(w.start, w.due) : '') : 'QC no longer needed';
       const kids = [el('.qcq-sec-head', null, [App.icon('checkBadge'), ' ', head])];
       /* Every QC report, newest first, each under the version it was about.
          The latest is open while it's the one being fixed or re-checked;
@@ -439,7 +459,7 @@ window.App = window.App || {};
       };
       const pending = pendingFor(episodes).sort(sortChecks());
       if (open.length) wrap.appendChild(card('Waiting for QC', open, true));
-      if (pending.length) wrap.appendChild(card('Pending QC — not approved yet', pending, false));
+      if (pending.length) wrap.appendChild(card('Pending QC — not sent to QC yet', pending, false));
       if (done.length) wrap.appendChild(card('Completed', done, false));
       return wrap;
     },
@@ -482,7 +502,9 @@ window.App = window.App || {};
       if (pending) {
         // nothing to check until it's approved: say where the task is instead
         const st = App.status(su.status);
-        acts.push(el('span.qcq-pending', { title: 'Can’t be QC’d until it’s approved' }, [el('span.et-dot', { style: { background: st.color } }), st.label]));
+        const sendable = su.status === 'approved';
+        acts.push(el('span.qcq-pending', { title: sendable ? 'Approved — QC starts once ' + dep.label + ' sends the delivery to QC' : 'Can’t be QC’d until it’s approved and sent to QC' },
+          [el('span.et-dot', { style: { background: st.color } }), sendable ? 'Approved · not sent' : st.label]));
       } else if (waiting) {
         acts.push(el('button.rvq-mini.ok', { disabled: !can, title: can ? 'Pass QC' : 'Only QC and Producers can pass a QC check',
           onclick: () => App.qcQueue.pass(ep.id, su.key) }, '✓ Pass'));
