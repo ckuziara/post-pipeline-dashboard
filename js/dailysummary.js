@@ -440,7 +440,7 @@ window.App = window.App || {};
       }
       const act = (fn) => () => { App.filterMenu.close(); fn(); };
       const btn = App.choiceMenu('dsum:qc:' + r.id, v, [
-        [{ label: 'Passed', tip: 'Pass the QC check', on: false, pick: act(() => App.qcQueue.pass(r.ep.id, r.su.key)) },
+        [{ label: 'Passed', tip: 'Pass the QC check', on: false, pick: act(() => App.qcQueue.passDialog(r.ep, r.su)) },
          { label: 'Failed', tip: 'Send a QC report back to the department', on: false, pick: act(() => App.qcQueue.reportDialog(r.ep, r.su)) }],
         [{ label: 'Open on the QC tab', on: false, pick: act(() => App.qcQueue.focus(r.ep.id, r.su.key)) }]
       ], 'QC — from the QC queue');

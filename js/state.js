@@ -496,7 +496,8 @@ window.App = window.App || {};
        state    'waiting' (approved, in the QC queue) | 'passed' | 'failed' | null
        queuedAt the date it joined the queue
        planDate a day QC pinned it to on the QC tab
-       reports  [{ at, by, byName, notes, link }] — every QC report sent back
+       reports  [{ at, by, byName, notes, link, version, result }] — every QC
+                report: sent back (no result), or a pass report (result 'pass')
      Not a status of its own: the task stays Approved while it waits, so the
      five-status workflow (and Admin's labels for it) is untouched. What
      changes is when an approved task counts as finished — see App.isComplete.
@@ -528,9 +529,10 @@ window.App = window.App || {};
   App.qcState = (ep, key) => { const c = App.qcCheck(ep, key); return (c && c.state) || null; };
   /* Which QC pass a task is on: V1 is the first check, and every QC report
      sent back makes the resubmitted fix the next version (V2, V3 …). A failed
-     check is still the version that failed until it's resubmitted. */
+     check is still the version that failed until it's resubmitted. A pass
+     report closes its version, so it doesn't count towards the next one. */
   App.qcVersion = function (ep, key) {
-    const c = App.qcCheck(ep, key), n = (c && c.reports && c.reports.length) || 0;
+    const c = App.qcCheck(ep, key), n = ((c && c.reports) || []).filter(r => r.result !== 'pass').length;
     return n + ((c && c.state === 'failed') ? 0 : 1);
   };
   // Approved, and — when it needs QC — passed by QC. What dependents wait on.
