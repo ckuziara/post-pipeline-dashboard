@@ -887,14 +887,15 @@ window.App = window.App || {};
            Director's approval first; before that, nothing to send. */
         const needsQc = App.qcFor(ep, su.key).on;
         const canSendHere = !phone && App.canEditTask(App.state.role, su) && su.status === 'approved';
+        // QC tasks go to QC (passing QC publishes them); others are published here
         const sendBtn = !canSendHere ? null
-          : needsQc && App.qcState(ep, su.key) !== 'passed'
-            ? el('button.btn-primary.ws-btn', {
+          : needsQc
+            ? (App.qcState(ep, su.key) !== 'passed' ? el('button.btn-primary.ws-btn', {
                 onclick: (e) => App.sendPulse(e.currentTarget, () => { App.qcQueue.sendToQc(ep.id, su.key, { delivered: mezz.length + links.length }); this._render(); })
-              }, [App.icon('checkBadge'), ' Send to QC'])
+              }, [App.icon('checkBadge'), ' Send to QC']) : null)
             : (mezz.length ? el('button.btn-primary.ws-btn', {
                 onclick: (e) => App.sendPulse(e.currentTarget, () => App.promoteDelivered(ep.id, su.key))
-              }, [App.icon('package'), ' Send Delivery']) : null);
+              }, [App.icon('package'), ' Publish']) : null);
         const chip = su.status === 'in_qc' ? el('span.ws-chip.pending', null, 'with QC')
           : App.isApproved(su.status) ? el('span.ws-chip.ok', null, needsQc && App.qcState(ep, su.key) !== 'passed' ? 'approved — not sent to QC' : 'approved')
           : el('span.ws-chip.pending', null, 'awaiting approval');
@@ -903,7 +904,7 @@ window.App = window.App || {};
           list,
           sendBtn ? el('.ws-actions', null, sendBtn) : null,
           App.isApproved(su.status) ? null : el('.ws-note.tight', null,
-            'These stay out of the next department’s Assets until ' + su.name + ' is approved' + (needsQc ? ' and through QC' : '') + '.')
+            'These stay out of the next department’s Assets until ' + su.name + (needsQc ? ' passes QC' : ' is approved and published') + '.')
         ]));
       }
 
