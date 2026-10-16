@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const branding = require('./qcbranding');
+const naming = require('./js/naming.js');
 
 const TEMPLATE = path.join(__dirname, 'templates', 'qc-report.xlsx');
 
@@ -106,8 +107,9 @@ function setCell(xml, ref, value) {
 const excelDate = (d) => Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 864e5);
 
 const VIDEO = ['mov', 'mp4', 'mxf', 'm4v', 'avi', 'mkv', 'r3d', 'braw'];
-// "MOV", "WAV", "AEP" … the Assets column, as the form writes it
-const assetType = (name) => { const e = String(name).includes('.') ? String(name).split('.').pop() : ''; return e ? e.toUpperCase() : 'FOLDER'; };
+// the Assets column: what each file is by the naming convention — "ACA" for
+// EMWW0103_ACA.wav (Admin → Workflow → Naming Conventions; see js/naming.js)
+const assetType = (name, suffixes) => naming.assetLabel(name, suffixes);
 
 /* The hidden QCdropdownlists sheet: the form's dropdowns read their choices
    from it. IP and QC Operator come from the board (its shows, and the QC
@@ -138,12 +140,14 @@ function listsSheet(base, ips, operators) {
 /* info: {
      show, contentCode, operator, date (Date), task, version (n),
      files: [names delivered], ips: [show names], operators: [QC people],
+     suffixes: [the naming convention's suffix codes] (optional — the defaults),
      branding: { logo: data URL, title } (optional — data.formBranding)
    } → the finished .xlsx as a Buffer */
 function build(info) {
   const parts = readZip(fs.readFileSync(TEMPLATE));
   const get = (n) => parts.find(p => p.name === n);
   const v = 'V' + (info.version || 1);
+  const suffixes = Array.isArray(info.suffixes) && info.suffixes.length ? info.suffixes : naming.namingSuffixes(null);
 
   let s = get('xl/worksheets/sheet1.xml').data.toString('utf8');
   s = setCell(s, 'A1', branding.titleFor(info.branding, info.show) || (info.show ? info.show + ' ' : '') + 'QC Report');
@@ -157,13 +161,13 @@ function build(info) {
   if (!files.length) s = setCell(s, 'B7', info.task || '');
   files.forEach((f, i) => {
     const r = 7 + i;
-    s = setCell(s, 'B' + r, assetType(f));
+    s = setCell(s, 'B' + r, assetType(f, suffixes));
     s = setCell(s, 'C' + r, f);
     s = setCell(s, 'D' + r, v);
   });
   // Vidchecker: the video files (2 rows on the form)
   files.filter(f => VIDEO.includes(String(f).split('.').pop().toLowerCase())).slice(0, 2).forEach((f, i) => {
-    s = setCell(s, 'B' + (17 + i), assetType(f));
+    s = setCell(s, 'B' + (17 + i), assetType(f, suffixes));
     s = setCell(s, 'C' + (17 + i), f);
   });
   s = setCell(s, 'G32', v);

@@ -19,6 +19,7 @@ const os = require('os');
 const crypto = require('crypto');
 const folders = require('./folders');
 const qcReport = require('./qcreport');
+const namingJs = require('./js/naming.js');
 const { makePgChat, parseTaskId } = require('./chat-store');
 const { makeKeyVault } = require('./keyvault');
 const { makeSlackBridge } = require('./slack-bridge');
@@ -2056,11 +2057,13 @@ const server = http.createServer(async (req, res) => {
           // the studio's branding (Admin → Workflow → Brand Configuration): the board's own, or — for a
           // companion, which has no board — the copy the client sent
           const fb = (ctx.data ? ctx.data.formBranding : r.branding) || {};
+          // the naming convention's suffixes label the Assets column — the board's, or the client's copy
+          const suffixes = ctx.data ? namingJs.namingSuffixes(ctx.data.naming || null) : list(r.suffixes, 500);
           fs.writeFileSync(reportAbs, qcReport.build({
             show: show.name, contentCode: ep.code, episode: ep.title || '',
             task: str(r.task) || (task && task.name) || body.taskKey, dept: str(r.dept, 40),
             operator: str(r.operator, 60), version, qcDue: str(r.qcDue, 40), date: new Date(),
-            files, ips: list(r.ips, 39), operators: list(r.operators, 14),
+            files, ips: list(r.ips, 39), operators: list(r.operators, 14), suffixes,
             branding: { logo: typeof fb.logo === 'string' ? fb.logo : null, title: str(fb.title) }
           }));
           reportCreated = true;

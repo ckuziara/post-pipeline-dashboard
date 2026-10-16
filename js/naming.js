@@ -1,9 +1,12 @@
 /* Naming Conventions (Admin → Workflow → Naming Conventions): how delivered
    files are named, and the codes each part of a name can take. The defaults
    are the company's standard document; admins edit any table, and an edited
-   table replaces its default for everyone (d.naming). */
-window.App = window.App || {};
-(function () {
+   table replaces its default for everyone (d.naming).
+
+   Also loaded by the server (require('./js/naming.js')), where the QC report
+   uses the suffix table to label its Assets column — so nothing above the
+   Admin panel may touch the DOM. */
+(function (App) {
   App.NAMING_DEFAULTS = {
     pattern: '[Content Code][Language]_[Format]_[Suffix]',
     examples: ['KYI0246ENUS_SONG_SONGMASTER', 'KYI0246ENUS_SONG_NOIO-TEXTED-BITC'],
@@ -35,8 +38,9 @@ window.App = window.App || {};
   /* The live convention: each part falls back to its default until an admin
      saves their own. Tables are copied, so callers can't edit state by accident;
      a row naming several types (the source document does) becomes one row each. */
-  App.namingConfig = function () {
-    const raw = (App.state.data && App.state.data.naming) || {};
+  App.namingConfig = function (stored) {
+    // stored: a board's d.naming — the server passes its own; the browser reads the live board
+    const raw = (stored !== undefined ? stored : App.state && App.state.data && App.state.data.naming) || {};
     const D = App.NAMING_DEFAULTS;
     return {
       pattern: raw.pattern || D.pattern,
@@ -54,6 +58,32 @@ window.App = window.App || {};
         return Object.assign({}, t, { rows, custom: src !== t.rows });
       })
     };
+  };
+
+  /* The suffix codes, longest first, so NOIO-TEXTED-BITC is found before
+     TEXTED-BITC could be. */
+  App.namingSuffixes = (stored) => {
+    const t = App.namingConfig(stored).tables.find(x => x.key === 'suffixes');
+    return t.rows.map(r => r[0].trim()).filter((v, i, a) => v && a.indexOf(v) === i).sort((a, b) => b.length - a.length);
+  };
+
+  /* What a delivered file is, by the naming convention: the suffix the name
+     ends with. "EMWW0103_ACA.wav" → ACA, "KYI0246ENUS_SONG_NOIO-TEXTED-BITC.mp4"
+     → NOIO-TEXTED-BITC. A version tag after the suffix is looked past
+     ("EMWW0122_SFX_v2.mov" → SFX). A name that follows no known suffix falls
+     back to its last _-separated part, then to its file type, so the row
+     still says something. */
+  App.assetLabel = (name, suffixes) => {
+    const n = String(name || '');
+    const dot = n.lastIndexOf('.');
+    const ext = dot > 0 ? n.slice(dot + 1).toUpperCase() : '';
+    const base = (dot > 0 ? n.slice(0, dot) : n).replace(/[_\- ]v\d+$/i, '');
+    const B = base.toUpperCase();
+    const hit = (suffixes || []).find(sx => { const S = sx.toUpperCase(); return B === S || B.endsWith('_' + S); });
+    if (hit) return hit;
+    const parts = base.split('_');
+    if (parts.length > 1 && parts[parts.length - 1]) return parts[parts.length - 1].toUpperCase();
+    return ext || 'FOLDER';
   };
 
   /* patch: { pattern, examples, notes } and/or { table: key, rows } —
@@ -286,4 +316,4 @@ window.App = window.App || {};
     combo.input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== combo.input) combo.set(r[i]); }, 0));
     return combo.input;
   }
-})();
+})(typeof window !== 'undefined' ? (window.App = window.App || {}) : module.exports);
