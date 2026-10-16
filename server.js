@@ -1968,7 +1968,9 @@ const server = http.createServer(async (req, res) => {
           absolute: { work: workAbs, mezzanine: rel(paths.mezzanine), publish: rel(paths.publish) },
           work: work.map(i => ({ name: i.name, dir: i.dir, size: i.size, mtime: i.mtime })),
           // delivered but awaiting approval
-          mezzanine: folders.listDir(rel(paths.mezzanine)).map(i => ({ name: i.name, dir: i.dir, size: i.size })),
+          // mtime = when it was delivered (deliver/prepare stamps it), so a QC fix
+          // can be told from the delivery QC already reported on
+          mezzanine: folders.listDir(rel(paths.mezzanine)).map(i => ({ name: i.name, dir: i.dir, size: i.size, mtime: i.mtime })),
           publish: folders.listDir(rel(paths.publish)).map(i => ({ name: i.name, dir: i.dir, size: i.size })),
           templates, deps
         });
@@ -2293,6 +2295,10 @@ const server = http.createServer(async (req, res) => {
           } catch (e) {
             return sendJson(res, 400, { error: (moved ? 'move' : 'copy') + ' failed: ' + e.message });
           }
+          /* A move keeps the export's own modified time; stamp it with now, so in
+             Mezzanine it reads as when it was DELIVERED — what Resubmit to QC
+             checks to tell a fix from the delivery QC already reported on. */
+          try { const now = new Date(); fs.utimesSync(dest, now, now); } catch (e) { /* cosmetic */ }
           console.log('[deliver] ' + ((getSession(req) || {}).email || 'companion') + ' ' + (moved ? 'moved' : 'copied') + ' ' + src + ' → ' + dest);
           return sendJson(res, 200, {
             ok: true, filed: path.basename(dest), dir: destAbs,

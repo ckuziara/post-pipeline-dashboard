@@ -252,13 +252,27 @@ window.App = window.App || {};
       return true;
     },
 
+    /* What's been delivered since QC's last report — the fix. A Mezzanine
+       file counts by its modified time (stamped when it's delivered, see
+       /api/task/deliver/prepare), a link by when it was added. */
+    fixDelivered(ep, key, mezz, links) {
+      const reps = ((App.qcCheck(ep, key) || {}).reports || []).filter(r => r.result !== 'pass');
+      const last = reps[reps.length - 1];
+      const since = last ? Date.parse(last.at) : 0;
+      return (mezz || []).filter(f => (f.mtime || 0) > since).length +
+        (links || []).filter(l => Date.parse(l.at || 0) > since).length;
+    },
+
     /* The department's fix goes straight back to QC. Approved without an
        approver, on purpose: the Director already signed the creative off,
-       and QC's report was about the deliverable, not the cut. */
-    resubmit(epId, key) {
+       and QC's report was about the deliverable, not the cut. It has to be
+       a fix, though: something delivered since the report (Deliver passes
+       fresh: n, from fixDelivered), or QC would just get the same files. */
+    resubmit(epId, key, opts) {
       const g = find(epId, key); if (!g) return;
       if (!App.canEditTask(App.state.role, g.su)) { App.toast('Only the ' + App.dept(g.su.dept).label + ' team can resubmit this', true); return; }
       if (App.qcState(g.ep, key) !== 'failed') return;
+      if (!(opts && opts.fresh > 0)) { App.toast('Deliver the fix first — nothing new has been delivered since the QC V' + App.qcVersion(g.ep, key) + ' report', true); return; }
       mutateCheck(epId, key, 'resubmitting to QC', (e, c) => {
         e.statuses[key] = 'in_qc';                // App.syncQcChecks puts it back in the queue
         c.resubmittedAt = new Date().toISOString();
@@ -503,12 +517,8 @@ window.App = window.App || {};
           ? el('.qcq-report', null, [el('.qcq-report-meta', null, meta)].concat(body))
           : el('details.qcq-report.past', null, [el('summary.qcq-report-meta', null, meta)].concat(body)));
       });
-      // off a phone, Resubmit lives in Edit Task's Deliver section, beside the fix itself
-      if (st === 'failed' && App.canEditTask(App.state.role, su) && App.isPhone()) {
-        kids.push(el('button.btn-primary.qcq-resubmit', {
-          onclick: () => { App.modal.close(); App.qcQueue.resubmit(ep.id, su.key); }
-        }, 'Resubmit to QC V' + (App.qcVersion(ep, su.key) + 1)));
-      }
+      // Resubmit lives in Edit Task's Deliver section, beside the fix it sends
+      // (a connected computer: there's nothing to deliver from a phone)
       return el('.qcq-sec' + (st ? '.' + st : ''), null, kids);
     },
 

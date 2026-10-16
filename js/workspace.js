@@ -901,9 +901,13 @@ window.App = window.App || {};
         const canSendHere = !phone && App.canEditTask(App.state.role, su) && su.status === 'approved';
         // QC tasks go to QC (passing QC publishes them); others are published here.
         // Back from QC, the fixed delivery goes straight back to QC from here.
+        // the fix: what's gone into Deliver since QC's report — nothing new, nothing to resubmit
+        const fresh = qcFix ? App.qcQueue.fixDelivered(ep, su.key, mezz, links) : 0;
         const sendBtn = qcFix && !phone && App.canEditTask(App.state.role, su)
           ? el('button.btn-primary.ws-btn', {
-              onclick: (e) => App.sendPulse(e.currentTarget, () => { App.qcQueue.resubmit(ep.id, su.key); this._render(); })
+              disabled: !fresh,
+              title: fresh ? '' : 'Deliver the fix first',
+              onclick: (e) => App.sendPulse(e.currentTarget, () => { App.qcQueue.resubmit(ep.id, su.key, { fresh }); this._render(); })
             }, [App.icon('checkBadge'), ' Resubmit to QC V' + (App.qcVersion(ep, su.key) + 1)])
           : !canSendHere ? null
           : needsQc
@@ -921,7 +925,10 @@ window.App = window.App || {};
           el('.ws-sub', null, ['Delivered · ', chip]),
           list,
           sendBtn ? el('.ws-actions', null, sendBtn) : null,
-          App.isApproved(su.status) ? null : el('.ws-note.tight', null,
+          qcFix ? el('.ws-note.tight', null, fresh
+            ? fresh + ' new since QC’s report — Resubmit sends the fix back to QC.'
+            : 'Nothing new since QC’s report yet — deliver the fixed files (or a link) here, then Resubmit.') : null,
+          App.isApproved(su.status) || qcFix ? null : el('.ws-note.tight', null,
             'These stay out of the next department’s Assets until ' + su.name + (needsQc ? ' passes QC' : ' is approved and published') + '.')
         ]));
       }
