@@ -209,14 +209,18 @@
       t.cols.forEach((_, i) => {
         const mono = i === 0 ? '.ncv-mono' : '';
         if (!edit) {
-          rowEl.appendChild(el('.ncv-td' + mono, { title: r[i].length > 28 ? r[i] : null },
+          rowEl.appendChild(el('.ncv-td' + mono, null,
             i === t.typeCol && r[i] ? el('span.ncv-chip', null, r[i]) : r[i]));
         } else if (i === t.typeCol) {
           rowEl.appendChild(typeCell(r, i, () => rows));
         } else {
-          const inp = el('input.ncv-cell' + mono, { type: 'text', spellcheck: 'false', 'aria-label': t.cols[i] });
+          // grows with what's typed, so a long description is all on show
+          const inp = el('textarea.ncv-cell' + mono, { rows: '1', spellcheck: 'false', 'aria-label': t.cols[i] });
           inp.value = r[i];
-          inp.addEventListener('input', () => { r[i] = inp.value; });
+          const fit = () => { inp.style.height = 'auto'; inp.style.height = inp.scrollHeight + 'px'; };
+          inp.addEventListener('input', () => { r[i] = inp.value.replace(/\n/g, ' '); fit(); });
+          inp.addEventListener('keydown', e => { if (e.key === 'Enter') e.preventDefault(); });
+          requestAnimationFrame(fit);
           rowEl.appendChild(inp);
         }
       });
@@ -225,7 +229,7 @@
         onclick: () => { rows.splice(rows.indexOf(r), 1); rowEl.remove(); touch(); }
       }, App.icon('trash', { size: 13 })));
       grid.appendChild(rowEl);
-      if (focus) rowEl.querySelector('input').focus();
+      if (focus) rowEl.querySelector('textarea, input').focus();
     };
     list.forEach(r => addRowEl(r));
 
