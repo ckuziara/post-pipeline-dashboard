@@ -113,10 +113,34 @@ const VIDEO = ['mov', 'mp4', 'mxf', 'm4v', 'avi', 'mkv', 'r3d', 'braw'];
    Assets, FLAG in QC Result (the form colours it) and the reason in Summary
    of QC. All three are QC's to change. */
 const OFF_CONVENTION = 'File name doesn’t follow the naming convention: no known suffix';
+/* File names have no spaces, and Excel only wraps at spaces and hyphens, so a
+   long one ran off the edge of the File Name column. An invisible break
+   (zero-width space) after each underscore lets it wrap there, and the row is
+   made tall enough for the lines it takes. The column is 24.5 characters wide;
+   lines are packed the way Excel will, part by part. */
+const FILE_COL_CHARS = 24;
+const ZWSP = '\u200b';
+function wrapName(name) {
+  const parts = String(name).split(/(?<=_)/);
+  let lines = 1, len = 0;
+  parts.forEach(p => {
+    if (len && len + p.length > FILE_COL_CHARS) { lines++; len = 0; }
+    len += p.length;
+    while (len > FILE_COL_CHARS) { lines++; len -= FILE_COL_CHARS; }   // a part longer than a line breaks anywhere
+  });
+  return { text: parts.join(ZWSP), lines };
+}
+function fitRow(s, r, lines) {
+  const need = lines * 14.5 + 8;                       // 11pt Arial lines, plus the cell's padding
+  return s.replace(new RegExp('(<row r="' + r + '"[^>]*?) ht="([\\d.]+)"'), (m, head, ht) =>
+    head + ' ht="' + Math.max(+ht, need) + '"');
+}
 function assetRow(s, r, name, suffixes, cols) {
   const hit = naming.assetSuffix(name, suffixes);
+  const w = wrapName(name);
   s = setCell(s, 'B' + r, hit || 'UNKNOWN');
-  s = setCell(s, 'C' + r, name);
+  s = setCell(s, 'C' + r, w.text);
+  s = fitRow(s, r, w.lines);
   if (!hit) {
     s = setCell(s, cols.summary + r, OFF_CONVENTION);
     s = setCell(s, cols.result + r, 'FLAG');
