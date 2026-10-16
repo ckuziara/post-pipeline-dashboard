@@ -70,20 +70,14 @@
   /* What a delivered file is, by the naming convention: the suffix the name
      ends with. "EMWW0103_ACA.wav" → ACA, "KYI0246ENUS_SONG_NOIO-TEXTED-BITC.mp4"
      → NOIO-TEXTED-BITC. A version tag after the suffix is looked past
-     ("EMWW0122_SFX_v2.mov" → SFX). A name that follows no known suffix falls
-     back to its last _-separated part, then to its file type, so the row
-     still says something. */
-  App.assetLabel = (name, suffixes) => {
+     ("EMWW0122_SFX_v2.mov" → SFX). null when the name ends in no known
+     suffix — the file doesn't follow the convention, and the QC report
+     flags it rather than guessing. */
+  App.assetSuffix = (name, suffixes) => {
     const n = String(name || '');
     const dot = n.lastIndexOf('.');
-    const ext = dot > 0 ? n.slice(dot + 1).toUpperCase() : '';
-    const base = (dot > 0 ? n.slice(0, dot) : n).replace(/[_\- ]v\d+$/i, '');
-    const B = base.toUpperCase();
-    const hit = (suffixes || []).find(sx => { const S = sx.toUpperCase(); return B === S || B.endsWith('_' + S); });
-    if (hit) return hit;
-    const parts = base.split('_');
-    if (parts.length > 1 && parts[parts.length - 1]) return parts[parts.length - 1].toUpperCase();
-    return ext || 'FOLDER';
+    const B = (dot > 0 ? n.slice(0, dot) : n).replace(/[_\- ]v\d+$/i, '').toUpperCase();
+    return (suffixes || []).find(sx => { const S = sx.toUpperCase(); return B === S || B.endsWith('_' + S); }) || null;
   };
 
   /* patch: { pattern, examples, notes } and/or { table: key, rows } —

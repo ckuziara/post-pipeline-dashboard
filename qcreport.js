@@ -107,9 +107,22 @@ function setCell(xml, ref, value) {
 const excelDate = (d) => Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 864e5);
 
 const VIDEO = ['mov', 'mp4', 'mxf', 'm4v', 'avi', 'mkv', 'r3d', 'braw'];
-// the Assets column: what each file is by the naming convention — "ACA" for
-// EMWW0103_ACA.wav (Admin → Workflow → Naming Conventions; see js/naming.js)
-const assetType = (name, suffixes) => naming.assetLabel(name, suffixes);
+/* The Assets column: what each file is by the naming convention — "ACA" for
+   EMWW0103_ACA.wav (Admin → Workflow → Naming Conventions; see js/naming.js).
+   A name ending in no known suffix is flagged on the row instead: UNKNOWN in
+   Assets, FLAG in QC Result (the form colours it) and the reason in Summary
+   of QC. All three are QC's to change. */
+const OFF_CONVENTION = 'File name doesn’t follow the naming convention: no known suffix';
+function assetRow(s, r, name, suffixes, cols) {
+  const hit = naming.assetSuffix(name, suffixes);
+  s = setCell(s, 'B' + r, hit || 'UNKNOWN');
+  s = setCell(s, 'C' + r, name);
+  if (!hit) {
+    s = setCell(s, cols.summary + r, OFF_CONVENTION);
+    s = setCell(s, cols.result + r, 'FLAG');
+  }
+  return s;
+}
 
 /* The hidden QCdropdownlists sheet: the form's dropdowns read their choices
    from it. IP and QC Operator come from the board (its shows, and the QC
@@ -161,14 +174,13 @@ function build(info) {
   if (!files.length) s = setCell(s, 'B7', info.task || '');
   files.forEach((f, i) => {
     const r = 7 + i;
-    s = setCell(s, 'B' + r, assetType(f, suffixes));
-    s = setCell(s, 'C' + r, f);
+    s = assetRow(s, r, f, suffixes, { summary: 'E', result: 'F' });
     s = setCell(s, 'D' + r, v);
   });
   // Vidchecker: the video files (2 rows on the form)
   files.filter(f => VIDEO.includes(String(f).split('.').pop().toLowerCase())).slice(0, 2).forEach((f, i) => {
-    s = setCell(s, 'B' + (17 + i), assetType(f, suffixes));
-    s = setCell(s, 'C' + (17 + i), f);
+    // here the summary is D (merged across D:E)
+    s = assetRow(s, 17 + i, f, suffixes, { summary: 'D', result: 'F' });
   });
   s = setCell(s, 'G32', v);
   get('xl/worksheets/sheet1.xml').data = Buffer.from(s, 'utf8');
