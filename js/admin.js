@@ -435,13 +435,13 @@ window.App = window.App || {};
     box.appendChild(crumb('Workflow & Status'));
     const tab = App.state.admin.wfTab || 'statuses';
     box.appendChild(head('Workflow & Status Settings',
-      'Statuses, departments and reusable pipelines. Changes apply across the whole tracker for everyone.',
+      'Statuses, departments, reusable pipelines and naming conventions. Changes apply across the whole tracker for everyone.',
       (tab === 'statuses' || tab === 'departments') ? el('button.ghost', { onclick: () => App.resetWorkflow() }, '↺ Reset colours & names') : null));
 
     const layout = el('.adm-split');
     const side = el('.adm-side');
     side.appendChild(el('.adm-side-label', null, 'Workflow'));
-    [['statuses', 'palette', 'Task statuses'], ['departments', 'tag', 'Departments'], ['software', 'mixer', 'Software'], ['pipelines', 'pipeline', 'Pipelines'], ['shows', 'book', 'Shows'], ['storage', 'folderOpen', 'Storage'], ['connectors', 'plug', 'Connectors'], ['guide', 'sparkle', 'Guide Configuration'], ['branding', 'image', 'Brand Configuration']].forEach(([k, ic, lbl]) => {
+    [['statuses', 'palette', 'Task statuses'], ['departments', 'tag', 'Departments'], ['software', 'mixer', 'Software'], ['pipelines', 'pipeline', 'Pipelines'], ['shows', 'book', 'Shows'], ['storage', 'folderOpen', 'Storage'], ['naming', 'file', 'Naming Conventions'], ['connectors', 'plug', 'Connectors'], ['guide', 'sparkle', 'Guide Configuration'], ['branding', 'image', 'Brand Configuration']].forEach(([k, ic, lbl]) => {
       side.appendChild(el('button.adm-role' + (tab === k ? '.active' : ''), {
         onclick: () => { App.state.admin.wfTab = k; App.render(); }
       }, [App.icon(ic, { cls: 'adm-role-ic' }), lbl]));
@@ -450,13 +450,14 @@ window.App = window.App || {};
     // the pipeline editor's rows need real width for their columns (name,
     // dept, days, min, deps) — the 640px cap that suits the toggle-style
     // statuses/departments lists would clip its controls
-    const panel = el('.adm-perms' + (tab === 'pipelines' ? '.wide' : ''));
+    const panel = el('.adm-perms' + (tab === 'pipelines' || tab === 'naming' ? '.wide' : ''));
     panel.appendChild(
       tab === 'departments' ? departmentsCard()
       : tab === 'software' ? deptSoftwareCard()
       : tab === 'pipelines' ? pipelinesPanel()
       : tab === 'shows' ? showsPanel()
       : tab === 'storage' ? storageCard()
+      : tab === 'naming' ? App.namingAdmin()
       : tab === 'connectors' ? connectorsCard()
       : tab === 'guide' ? guideCard()
       : tab === 'branding' ? brandingPanel()
@@ -1500,6 +1501,7 @@ window.App = window.App || {};
     'person.add': 'Team member added', 'person.remove': 'Team member removed', 'person.role': 'Role reassigned',
     'perm.change': 'Permission changed',
     'guide.config': 'Guide configuration changed',
+    'naming.change': 'Naming conventions changed',
     'workflow.status': 'Status style changed', 'workflow.department': 'Department style changed',
     'workflow.deptAdd': 'Department added', 'workflow.deptRemove': 'Department removed',
     'workflow.reset': 'Workflow reset',
