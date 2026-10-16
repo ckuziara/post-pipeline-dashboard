@@ -416,7 +416,8 @@ window.App = window.App || {};
           ? el('.qcq-report', null, [el('.qcq-report-meta', null, meta)].concat(body))
           : el('details.qcq-report.past', null, [el('summary.qcq-report-meta', null, meta)].concat(body)));
       });
-      if (st === 'failed' && App.canEditTask(App.state.role, su)) {
+      // off a phone, Resubmit lives in Edit Task's Deliver section, beside the fix itself
+      if (st === 'failed' && App.canEditTask(App.state.role, su) && App.isPhone()) {
         kids.push(el('button.btn-primary.qcq-resubmit', {
           onclick: () => { App.modal.close(); App.qcQueue.resubmit(ep.id, su.key); }
         }, 'Resubmit to QC V' + (App.qcVersion(ep, su.key) + 1)));

@@ -579,6 +579,7 @@ window.App = window.App || {};
        review   with Post Operations / the Director
        deliver  approved: deliver the final files and send them on
        qc       In QC
+       qcfix    back from QC: deliver the fix, then Resubmit to QC
        done     Delivered, or finished with nothing left to send */
   App.taskStage = function (ep, su) {
     const st = su.status;
@@ -587,6 +588,7 @@ window.App = window.App || {};
     if (st === 'review') return 'review';
     if (st === 'approved') return 'deliver';
     if (st === 'not_started' || st === 'ready') return 'start';
+    if (App.qcFor(ep, su.key).on && App.qcState(ep, su.key) === 'failed') return 'qcfix';
     return 'work';
   };
   /* The one next step for a task, and whose it is — always shown at the top
@@ -609,7 +611,8 @@ window.App = window.App || {};
     const q = App.qcFor(ep, su.key), qs = App.qcState(ep, su.key);
     const blockedBy = su.deps.filter(d => !App.isCompleteKey(ep, d)).map(d => App.taskNameFor(ep, d));
     const sent = App.review && App.review.sent(ep.id, su.key);
-    const ups = App.reviewUploads ? App.reviewUploads.list(ep.id, su.key).length : 0;
+    const ups = App.reviewUploads ? App.reviewUploads.fresh(ep.id, su.key).length : 0;
+    const feedback = App.review && App.review.feedbackAt(ep.id, su.key);
     switch (su.status) {
       case 'not_started':
       case 'ready':
@@ -620,7 +623,9 @@ window.App = window.App || {};
         if (q.on && qs === 'failed') return { aud: 'dept', who: dept, text: 'Fix what QC reported, deliver the fix, then Resubmit to QC.', tone: 'bad' };
         return ups
           ? { aud: 'dept', who: dept, text: 'The cut is up — Send for Review when it’s ready.', tone: 'go' }
-          : { aud: 'dept', who: dept, text: 'Upload the cut to Review Uploads, then Send for Review.', tone: 'go' };
+          : feedback
+            ? { aud: 'dept', who: dept, text: 'Work the Director’s feedback, upload the revised cut (V' + (App.revisionsUsed(ep, su.key) + 1) + '), then Send for Review.', tone: 'go' }
+            : { aud: 'dept', who: dept, text: 'Upload the cut to Review Uploads, then Send for Review.', tone: 'go' };
       case 'review':
         return sent
           ? { aud: 'director', who: 'Director', text: 'Watch the cut and Approve it or Send Feedback.', tone: 'wait' }
