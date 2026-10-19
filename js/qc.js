@@ -203,7 +203,7 @@ window.App = window.App || {};
       if (!file || !file.path) { App.toast('Choose the QC report file first', true); return false; }
       const u = me(), at = new Date().toISOString(), version = App.qcVersion(g.ep, key);
       mutateCheck(epId, key, 'passing QC', (e, c) => {
-        c.reports.push({ at, by: u.by, byName: u.byName, notes, file: file.path, fileName: file.name, version, result: 'pass' });
+        c.reports.push({ at, by: u.by, byName: u.byName, notes, file: file.path, fileName: file.name, version, result: 'pass', queuedAt: c.queuedAt || null });
         Object.assign(c, { state: 'passed', decidedAt: at, decidedBy: u.byName, planDate: null });
         e.statuses[key] = 'approved';      // out of QC; Delivered once its files are published
       });
@@ -243,9 +243,10 @@ window.App = window.App || {};
       if (!file || !file.path) { App.toast('Choose the QC report file first', true); return false; }
       const u = me(), at = new Date().toISOString(), version = App.qcVersion(g.ep, key);
       mutateCheck(epId, key, 'the QC report', (e, c) => {
-        c.reports.push({ at, by: u.by, byName: u.byName, notes, file: file.path, fileName: file.name, version });
+        // queuedAt: when this round joined the queue, so the Timeline can grey out the time it spent with QC
+        c.reports.push({ at, by: u.by, byName: u.byName, notes, file: file.path, fileName: file.name, version, queuedAt: c.queuedAt || null });
         Object.assign(c, { state: 'failed', decidedAt: at, decidedBy: u.byName, planDate: null });
-        e.statuses[key] = 'in_progress';         // back to the department to fix
+        e.statuses[key] = 'ready';               // back to the department, Ready to Start on the fix (App.isQcFix)
       });
       App.track.audit('task.qc', { episode: g.ep.code, task: g.su.name, result: 'report', version: 'V' + version });
       App.toast('QC V' + version + ' report sent — ' + g.su.name + ' is back with ' + App.dept(g.su.dept).label);

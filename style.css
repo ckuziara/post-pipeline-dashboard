@@ -4688,19 +4688,18 @@ textarea.fld, :root[data-skin] textarea.fld { border-radius: min(var(--r-ctl, 8p
 .gantt.gantt-portrait .bar-hol { left: 0; right: 0; top: auto; bottom: auto;
   border: 0; border-top: 2px solid rgba(255,255,255,.85); border-bottom: 2px solid rgba(255,255,255,.85); }
 .bar > span { position: relative; z-index: 1; }
-/* a requested version inside its task's bar: the wait for review before it
-   (hatched), and a V2/V3 tag where it starts (see taskBar in gantt.js) */
+/* a requested version inside its task's bar: the time in review before it
+   (greyed), and a V2/V3 tag where it starts (see taskBar in gantt.js) */
 .bar-revgap {
   position: absolute; top: 0; bottom: 0; z-index: 0;
-  background: repeating-linear-gradient(45deg, rgba(20,22,30,.55) 0 4px, rgba(20,22,30,.3) 4px 8px);
-  box-sizing: border-box; border-left: 1px solid rgba(255,255,255,.6);
+  background: #8b8f9c;
 }
 .bar > span.bar-vmark {
   position: absolute; top: 0; bottom: 0; z-index: 2; display: flex; align-items: center;
   padding: 0 3px; font-size: 8px; font-weight: 800; letter-spacing: .2px;
   border-left: 2px solid rgba(255,255,255,.9); background: rgba(0,0,0,.18);
 }
-.gantt.gantt-portrait .bar-revgap { left: 0; right: 0; border-left: 0; border-top: 1px solid rgba(255,255,255,.6); }
+.gantt.gantt-portrait .bar-revgap { left: 0; right: 0; }
 .gantt.gantt-portrait .bar > span.bar-vmark { left: 0; right: 0; top: auto; bottom: auto; border-left: 0; border-top: 2px solid rgba(255,255,255,.9); justify-content: center; }
 
 /* Holiday clashes dialog */
@@ -6226,6 +6225,16 @@ button.dsum-due-btn:hover { border-color: var(--border-2); }
 .qc-plan.bare { padding: 0; min-width: 2px; }
 .qc-plan.waiting { background: rgba(255,107,107,.38); }
 .qc-plan.failed { box-shadow: inset 0 0 0 2px #ff6b6b; }
+/* a QC round that sent a report back: the time it spent with QC, greyed
+   like the review time between versions (.bar-revgap) */
+.qc-past {
+  position: absolute; top: 50%; transform: translateY(-50%); height: 17px; z-index: 1;
+  border-radius: 4px; display: flex; align-items: center; padding: 0 5px; overflow: hidden;
+  font-size: 9px; font-weight: 800; letter-spacing: .3px; color: #fff; white-space: nowrap; cursor: default;
+  background: #8b8f9c;
+}
+.g-row.sub .qc-past { height: 12px; border-radius: 3px; font-size: 8px; }
+.qc-past.bare { padding: 0; min-width: 2px; }
 
 /* Board / Edit Task pill */
 .subrow .cell.c-status { position: relative; }

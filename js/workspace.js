@@ -817,7 +817,7 @@ window.App = window.App || {};
       if (!phone && d.masterOk) {
         const status = el('.ws-progress');
         // what the files are waiting on: QC sent back a fix → QC passing it, not approval
-        const sentBack = App.qcFor(ep, su.key).on && su.status === 'in_progress' && App.qcState(ep, su.key) === 'failed';
+        const sentBack = App.isQcFix(ep, su);
         const drop = el('.ws-drop', null, [
           el('.ws-drop-main', null, [App.icon('upload'), sentBack ? '  Drop the fixed files here' : '  Drop files here to deliver']),
           el('.ws-drop-sub', null, 'or click to browse the volume — held in !!_Mezzanine/' +
@@ -897,7 +897,7 @@ window.App = window.App || {};
            without it the files are published (Delivered). Both need the
            Director's approval first; before that, nothing to send. */
         const needsQc = App.qcFor(ep, su.key).on;
-        const qcFix = needsQc && su.status === 'in_progress' && App.qcState(ep, su.key) === 'failed';
+        const qcFix = needsQc && App.isQcFix(ep, su);
         const canSendHere = !phone && App.canEditTask(App.state.role, su) && su.status === 'approved';
         // QC tasks go to QC (passing QC publishes them); others are published here.
         // Back from QC, the fixed delivery goes straight back to QC from here.

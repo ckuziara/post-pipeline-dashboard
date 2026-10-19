@@ -571,6 +571,12 @@ window.App = window.App || {};
     return App.status(st).label + (q.on ? ' · needs QC once approved' : '');
   };
   App.awaitingQc = (ep, su) => su.status === 'in_qc';
+  /* Back from QC with a report: the department's fix, whether it's been
+     picked up yet (In Progress) or not (Ready to Start — where a QC report
+     puts it, see App.qcQueue.fail). Not Started too, in case a dependency
+     came undone meanwhile. */
+  App.isQcFix = (ep, su) => App.qcFor(ep, su.key).on && App.qcState(ep, su.key) === 'failed' &&
+    ['not_started', 'ready', 'in_progress'].includes(su.status);
   /* Approved, but its final files haven't gone on yet: not sent to QC, not
      published. A QC-passed task isn't waiting on anyone — QC publishes it. */
   App.needsDelivery = (ep, su) => su.status === 'approved' && !(App.qcFor(ep, su.key).on && App.qcState(ep, su.key) === 'passed');
@@ -589,8 +595,8 @@ window.App = window.App || {};
     if (st === 'in_qc') return 'qc';
     if (st === 'review') return 'review';
     if (st === 'approved') return 'deliver';
+    if (App.isQcFix(ep, su)) return 'qcfix';
     if (st === 'not_started' || st === 'ready') return 'start';
-    if (App.qcFor(ep, su.key).on && App.qcState(ep, su.key) === 'failed') return 'qcfix';
     return 'work';
   };
   /* The one next step for a task, and whose it is — always shown at the top
@@ -618,6 +624,11 @@ window.App = window.App || {};
     switch (su.status) {
       case 'not_started':
       case 'ready':
+        if (App.isQcFix(ep, su)) return { aud: 'dept', who: dept, text: 'Fix what QC reported, deliver the fix, then Resubmit to QC.', tone: 'bad' };
+        // sent back by the Director (App.requestRevision): the next version is waiting to be picked up
+        if (feedback && App.revisionsUsed(ep, su.key) > 0 && !blockedBy.length) {
+          return { aud: 'dept', who: dept, text: 'Start V' + (App.revisionsUsed(ep, su.key) + 1) + ' — set it In Progress, then work the Director’s feedback.', tone: 'go' };
+        }
         return blockedBy.length
           ? { aud: 'dept', who: 'Waiting', text: 'Can’t start until ' + blockedBy.join(', ') + (blockedBy.length === 1 ? ' is' : ' are') + ' finished.', tone: 'wait' }
           : { aud: 'dept', who: dept, text: 'Start the work — create the project, then set it In Progress.', tone: 'go' };
@@ -1501,6 +1512,8 @@ window.App = window.App || {};
     if (state === 'passed') return null;
     let after = App.plannedRevisions(ep, su).end;
     if (state === 'waiting' && c.queuedAt && App.shiftIso(c.queuedAt, -1) > after) after = App.shiftIso(c.queuedAt, -1);
+    // sent back: the fix comes first, so the next check is tomorrow at the soonest
+    if (state === 'failed') { const t = App.isoDate(App.today()); if (t > after) after = t; }
     const span = App.qcSpan(q.days, after, App.showCalendar(ep.showId));
     return { start: span.start, due: span.due, days: q.days, state };
   };

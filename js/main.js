@@ -807,7 +807,7 @@ window.App = window.App || {};
     // when it will really finish: the versions still planned after this one, then QC
     const after = Object.assign({}, g.ep, {
       dates: Object.assign({}, g.ep.dates, { [key]: { start: g.su.start, due: newDue } }),
-      statuses: Object.assign({}, g.ep.statuses, { [key]: 'in_progress' }),
+      statuses: Object.assign({}, g.ep.statuses, { [key]: 'ready' }),
       revisions: Object.assign({}, g.ep.revisions, { [key]: used + 1 })
     });
     const finish = App.taskEnd(after, App.subitem(after, key));
@@ -826,7 +826,10 @@ window.App = window.App || {};
       const e = d.episodes.find(x => x.id === epId);
       e.dates = e.dates || {};
       e.dates[key] = { start: g.su.start, due: newDue };
-      e.statuses[key] = 'in_progress';
+      // back to Ready to Start: the next version is queued for the department,
+      // not yet picked up (App.refreshReadiness drops it to Not Started if a
+      // dependency has since come undone)
+      e.statuses[key] = 'ready';
       e.revisions = e.revisions || {};
       e.revisions[key] = used + 1;
       /* where this version sits inside the now-longer bar, so the Timeline
