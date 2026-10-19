@@ -1740,8 +1740,8 @@ window.App = window.App || {};
 
         /* Versions already asked for (App.requestRevision) run inside the
            bar. Where one started later than the one before was due — the
-           review came late, or the pipeline held review days — the wait is
-           shown as a break, and each version is marked where it begins. */
+           review came late, or the pipeline held review days — that time in
+           review is greyed out, and each version is marked where it begins. */
         ((ep.revSpans && ep.revSpans[su.key]) || []).forEach((sp, i) => {
           if (!sp) return;
           const prevDue = App.shiftIso(su.start, sp.after), vStart = App.shiftIso(su.start, sp.start);
@@ -1749,7 +1749,7 @@ window.App = window.App || {};
           const ga = App.shiftIso(prevDue, 1), gb = App.shiftIso(vStart, -1);
           if (ga <= gb) {
             const wait = el('.bar-revgap', {
-              title: 'Waiting for review — V' + (i + 1) + ' was due ' + App.fmtDate(prevDue) + ', V' + (i + 2) + ' started ' + App.fmtDate(vStart)
+              title: 'In review — V' + (i + 1) + ' was due ' + App.fmtDate(prevDue) + ', V' + (i + 2) + ' started ' + App.fmtDate(vStart)
             });
             wait.style[p0] = (xOf(ga) - at0) + 'px';
             wait.style[sz] = xOf.width(ga, gb) + 'px';
@@ -1780,6 +1780,24 @@ window.App = window.App || {};
         rbar.dataset.suKey = su.key;
         rbar.dataset.rev = rv.idx;
         track.appendChild(rbar);
+      });
+
+      /* Time already spent with QC on rounds that sent a report back: from
+         when the round joined the queue to the day of the report, greyed —
+         the counterpart of the grey review time between versions. */
+      ((App.qcCheck(ep, su.key) || {}).reports || []).forEach(rp => {
+        if (rp.result === 'pass' || !rp.at) return;
+        const to = App.isoDate(new Date(rp.at));
+        const from = rp.queuedAt && rp.queuedAt <= to ? rp.queuedAt : to;
+        const pStyle = {};
+        setBarPos(pStyle, axis, xOf, from, to);
+        const past = el('.qc-past' + (bare ? '.bare' : ''), {
+          title: su.name + ' — with QC ' + (from === to ? App.fmtDate(to) : App.fmtRange(from, to)) + ' · QC V' + rp.version + ' sent a report back',
+          style: pStyle
+        }, bare ? null : el('span', null, 'QC V' + rp.version));
+        past.dataset.episodeId = ep.id;
+        past.dataset.suKey = su.key;
+        track.appendChild(past);
       });
 
       /* Requires QC: the days held for QC after the task (after its last
