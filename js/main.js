@@ -1681,6 +1681,25 @@ window.App = window.App || {};
     App.toast('Removed “' + g.su.name + '”');
   };
 
+  /* Remove a whole selection at once (Batch Edit Tasks → Remove), as ONE undo
+     step. Same right as removing one task; items is [{ epId, suKey }]. */
+  App.removeTaskMany = function (items) {
+    if (!App.canRemoveTask(App.state.role)) {
+      App.toast('Only Producers and Managers can remove tasks', true); return;
+    }
+    const gone = items.map(({ epId, suKey }) => findTask(epId, suKey)).filter(Boolean);
+    if (!gone.length) return;
+    App.mutate(d => gone.forEach(g => {
+      const e = d.episodes.find(x => x.id === g.ep.id);
+      e.removed = e.removed || []; if (!e.removed.includes(g.su.key)) e.removed.push(g.su.key);
+      App.refreshReadiness(e);
+    }), 'removing ' + gone.length + ' tasks');
+    gone.forEach(g => App.track.audit('task.remove', { episode: g.ep.code, task: g.su.name, bulk: gone.length }));
+    App.ganttSelection && App.ganttSelection.clear();
+    App.render();
+    App.toast('Removed ' + gone.length + ' task' + (gone.length === 1 ? '' : 's'));
+  };
+
   /* Add one new task to a show's pipeline, with real dates rather than a
      template duration — the counterpart to the Pipeline Editor's addTask()
      (which only edits the in-memory template) for when the dates are already

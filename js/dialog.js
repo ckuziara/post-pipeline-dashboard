@@ -900,8 +900,15 @@ window.App = window.App || {};
         ? el('.fld-hint', { style: { margin: '10px 2px 0' } }, 'Owner isn’t shown: the selection spans ' + depts.length + ' departments, and owners come from a task’s own department.')
         : null;
 
+      const eps0 = new Set(items.map(it => it.epId)).size;
       const footer = [
         el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Cancel'),
+        // the same Remove the single-task dialog has, for the whole selection
+        (App.canRemoveTask(role) ? el('button.btn-danger', {
+          onclick: () => App.confirm('Remove ' + items.length + ' tasks from ' + eps0 + ' episode' + (eps0 === 1 ? '' : 's') + '?',
+            () => { App.modal.close(); App.removeTaskMany(items.map(it => ({ epId: it.epId, suKey: it.suKey }))); },
+            { title: 'Remove tasks', yesLabel: 'Remove ' + items.length, onNo: () => App.editTask.openBatch(items) })
+        }, [App.icon('trash'), ' Remove ' + items.length]) : null),
         el('button.btn-primary', {
           onclick: () => {
             const patch = {};
