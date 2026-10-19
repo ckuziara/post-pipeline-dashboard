@@ -4688,6 +4688,20 @@ textarea.fld, :root[data-skin] textarea.fld { border-radius: min(var(--r-ctl, 8p
 .gantt.gantt-portrait .bar-hol { left: 0; right: 0; top: auto; bottom: auto;
   border: 0; border-top: 2px solid rgba(255,255,255,.85); border-bottom: 2px solid rgba(255,255,255,.85); }
 .bar > span { position: relative; z-index: 1; }
+/* a requested version inside its task's bar: the wait for review before it
+   (hatched), and a V2/V3 tag where it starts (see taskBar in gantt.js) */
+.bar-revgap {
+  position: absolute; top: 0; bottom: 0; z-index: 0;
+  background: repeating-linear-gradient(45deg, rgba(20,22,30,.55) 0 4px, rgba(20,22,30,.3) 4px 8px);
+  box-sizing: border-box; border-left: 1px solid rgba(255,255,255,.6);
+}
+.bar > span.bar-vmark {
+  position: absolute; top: 0; bottom: 0; z-index: 2; display: flex; align-items: center;
+  padding: 0 3px; font-size: 8px; font-weight: 800; letter-spacing: .2px;
+  border-left: 2px solid rgba(255,255,255,.9); background: rgba(0,0,0,.18);
+}
+.gantt.gantt-portrait .bar-revgap { left: 0; right: 0; border-left: 0; border-top: 1px solid rgba(255,255,255,.6); }
+.gantt.gantt-portrait .bar > span.bar-vmark { left: 0; right: 0; top: auto; bottom: auto; border-left: 0; border-top: 2px solid rgba(255,255,255,.9); justify-content: center; }
 
 /* Holiday clashes dialog */
 .hc-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
@@ -4707,8 +4721,11 @@ textarea.fld, :root[data-skin] textarea.fld { border-radius: min(var(--r-ctl, 8p
 .hc-plan.blocked { border-color: rgba(255,91,110,.35); background: rgba(255,91,110,.06); }
 .hc-details > summary { font-size: 12px; font-weight: 600; color: var(--text-2); cursor: pointer; margin-bottom: 8px; }
 .hc-details > summary:hover { color: var(--accent-text); }
-/* a task bar that runs into its people's time off */
-.bar.hol-clash { outline: 2px dashed #ff5b6e; outline-offset: 1px; }
+/* a clash — runs into time off (hol-clash), or starts before something it
+   depends on has really finished (dep-clash, App.depClashes): the same red
+   dashes either way. !important so it shows over a status ring, whose
+   colour is set inline on the bar. */
+.bar.hol-clash, .bar.dep-clash { outline: 2px dashed #ff5b6e !important; outline-offset: 1px !important; }
 
 .pn-hol-editor { width: 240px; }
 .pn-hol-title { font-weight: 800; font-size: 12.5px; }

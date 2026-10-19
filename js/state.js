@@ -1429,8 +1429,47 @@ window.App = window.App || {};
     if (App.isApproved(su.status)) return { revs: [], end: su.due };
     const t = App.revTask(ep, su.key);
     if (!t || !t.maxRev) return { revs: [], end: su.due };
-    return App.revisionSteps(t, su.due, App.showCalendar(ep.showId),
-      { dept: su.dept, person: su.assignee }, App.revisionsUsed(ep, su.key));
+    const cal = App.showCalendar(ep.showId), who = { dept: su.dept, person: su.assignee };
+    const used = App.revisionsUsed(ep, su.key);
+    const steps = App.revisionSteps(t, su.due, cal, who, used);
+    /* A task still waiting in review can't be sent back before today, so a
+       version whose slot has already gone by moves up to start today — the
+       same place App.requestRevision will put it. A late review shows its
+       knock-on (App.depClashes) while it's late, not once someone acts. */
+    const today = App.isoDate(App.today());
+    if (su.status === 'review' && steps.revs.length && steps.revs[0].start < today) {
+      return App.revisionSteps(t, App.shiftIso(today, -1), cal, who, used, { now: true });
+    }
+    return steps;
+  };
+
+  /* Tasks that the versions, review or QC of something they depend on now
+     run into: the dependent starts after that task's first pass was due (so
+     the plan itself had them in order) but before it really finishes — its
+     last planned version, then QC (App.taskEnd). The schedule plans for every
+     version, so this only happens when work slips: a late review, a revision
+     past its slot. A dependent planned to overlap the first pass is a choice
+     made on purpose (and dragging one there is already asked about), so it
+     isn't counted. Keyed by the dependent's task key: { up, end, by } — the
+     upstream task that finishes latest, when, and how many days the
+     dependent starts too early. Approved dependents are left out. */
+  App.depClashes = function (ep) {
+    const out = {};
+    const byKey = {}; App.subitems(ep).forEach(s => { byKey[s.key] = s; });
+    App.pipelineFor(ep).forEach(t => {
+      const su = byKey[t.key];
+      if (!su || App.isApproved(su.status)) return;
+      (t.deps || []).forEach(dk => {
+        const up = byKey[dk]; if (!up) return;
+        // the first pass: V1's due date, from before any revision stretched the bar
+        const sp = ep.revSpans && ep.revSpans[dk] && ep.revSpans[dk][0];
+        const firstDue = sp ? App.shiftIso(up.start, sp.after) : up.due;
+        const end = App.taskEnd(ep, up);
+        if (su.start <= firstDue || su.start > end) return;
+        if (!out[t.key] || end > out[t.key].end) out[t.key] = { up, end, by: App.diffDays(end, su.start) + 1 };
+      });
+    });
+    return out;
   };
 
   /* The QC days held after a flagged task: after its last planned version
@@ -1470,7 +1509,11 @@ window.App = window.App || {};
      Without it a group move reads as a wall of clashes between tasks that are
      all moving together and so never actually collide — the ordering between
      two selected tasks is preserved by the move, not broken by it. */
-  App.scheduleImpact = function (ep, key, newStart, newDue, alsoMoving) {
+  /* opts.finish: when the task will really be done, if later than newDue —
+     a revision request passes its last planned version (and QC) here, so a
+     dependent the final review would run into is caught too. */
+  App.scheduleImpact = function (ep, key, newStart, newDue, alsoMoving, opts) {
+    const finish = (opts && opts.finish && opts.finish > newDue) ? opts.finish : newDue;
     const pipe = App.pipelineFor(ep);
     const task = pipe.find(t => t.key === key);
     const byKey = {};
@@ -1501,11 +1544,11 @@ window.App = window.App || {};
     pipe.forEach(t => {
       if (t.key === key || !t.deps.includes(key)) return;
       const dependent = byKey[t.key];
-      if (dependent && dependent.start <= newDue) {
+      if (dependent && dependent.start <= finish) {
         clashes.push({
           dir: 'downstream', task: dependent,
-          earlyBy: App.diffDays(newDue, dependent.start) + 1,
-          text: 'starts before this would finish'
+          earlyBy: App.diffDays(finish, dependent.start) + 1,
+          text: dependent.start <= newDue ? 'starts before this would finish' : 'starts before its last version would finish'
         });
       }
     });
