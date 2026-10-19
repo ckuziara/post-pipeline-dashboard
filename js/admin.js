@@ -275,7 +275,7 @@ window.App = window.App || {};
               return el('button.adm-subrole' + (on ? '.on' : ''), {
                 type: 'button',
                 title: on ? label + ' — click to remove'
-                  : d ? 'Make ' + p.name + ' manager of ' + App.dept(d).label + ': assign owners and change dates for ' + App.dept(d).label + ' tasks' + (d === 'qc' ? ', and reassign QC checks' : '') + '. No Admin access.'
+                  : d ? 'Make ' + p.name + ' manager of ' + App.dept(d).label + ': assign owners and change dates for ' + App.dept(d).label + ' tasks' + (d === 'qc' ? ', and delegate QC checks and their due dates' : '') + '. No Admin access.'
                   : 'Also make ' + p.name + ' a Manager',
                 onclick: (e) => { e.stopPropagation(); App.setPersonManager(p.id, !on); }
               }, (on ? '✓ ' : '+ ') + label);
@@ -323,7 +323,7 @@ window.App = window.App || {};
       { title: 'QC Tab', desc: 'Can open the QC tab — every approved deliverable waiting on a QC check, planned against QC’s daily capacity.',
         get: k => App.rolePermOf(k, 'qcQueue', App.role(k).qcQueue), set: (k, v) => App.setRolePerm(k, 'qcQueue', v, 'QC Tab') },
       { title: 'Reassign QC', desc: 'Can hand a QC check to a different QC person on the QC tab (a QC Manager’s job).',
-        get: k => App.rolePermOf(k, 'qcAssign', App.role(k).qcAssign), set: (k, v) => App.setRolePerm(k, 'qcAssign', v, 'Reassign QC') },
+        get: k => App.rolePermOf(k, 'qcAssign', App.role(k).qcAssign), set: (k, v) => App.setRolePerm(k, 'qcAssign', v, 'Delegate QC') },
       { title: 'Pass or Fail QC', desc: 'Can pass a QC check, or send a QC report back to the department, and plan checks onto days.',
         get: k => App.rolePermOf(k, 'qcDecide', App.role(k).qcDecide), set: (k, v) => App.setRolePerm(k, 'qcDecide', v, 'Pass or Fail QC') },
       { title: 'Change the Schedule', desc: 'Can move task dates — in the Edit Task dialog and by dragging bars on the Timeline — for every department, not just their own.',

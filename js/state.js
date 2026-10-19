@@ -543,21 +543,60 @@ window.App = window.App || {};
     return !App.qcFor(ep, key).on || App.qcState(ep, key) === 'passed';
   };
   App.isComplete = (ep, su) => App.isCompleteKey(ep, su.key);
-  /* Who does a QC check. QC staff are put on a show (Add / Edit Show →
-     Production Team) and the show's QC tasks fall to them, so by default a
-     check is the episode's own QC task's owner, else the show's QC lead (or
-     first QC person on it). A QC Manager can hand one to someone else from
-     the QC tab (ep.qcChecks[key].owner). → { id, auto } */
-  App.qcOwner = function (ep, key, opts) {
+  /* Who does a QC check: its operator (ep.qcChecks[key].owner), set by a
+     QC Manager from the QC tab or delegated automatically when the check
+     joins the queue (App.qcAutoAssign). Nobody, until one of those happens —
+     a check is never quietly given to someone. → { id, auto } */
+  App.qcOwner = function (ep, key) {
     const c = App.qcCheck(ep, key);
-    if (!(opts && opts.ignoreOwner) && c && c.owner && App.person(c.owner)) return { id: c.owner, auto: false };
-    const pipe = App.pipelineFor(ep);
-    const qcTask = pipe.find(t => t.key === 'qc') || pipe.find(t => t.dept === 'qc');
-    const own = qcTask && ep.assignees && ep.assignees[qcTask.key];
-    if (own && App.person(own)) return { id: own, auto: true };
-    const show = App.show(ep.showId);
-    const pool = show ? App.deptPool(show, 'qc') : [];
-    return { id: pool[0] || null, auto: true };
+    const id = c && c.owner && App.person(c.owner) ? c.owner : null;
+    return { id, auto: !!(id && c.ownerAuto) };
+  };
+  /* A show's QC operators: the QC people on its Production Team — an
+     operator's default shows, set from Add / Edit Show or the QC tab's
+     workload panel. Only these take a show's checks automatically. */
+  App.qcOperatorsFor = (show) => show ? App.deptTeam(show, 'qc').ids : [];
+  /* Every QC operator's load, board-wide (filters don't change who's busy):
+       open      In QC with them now
+       today     of those, due today
+       late      of those, past their QC due date
+       upcoming  delegated ahead, not in QC yet
+       days      QC days the open ones hold
+     plus '' for the unassigned. → { [personId|'']: { open, today, late, upcoming, days } } */
+  App.qcWorkload = function (episodes) {
+    const out = {}, today = App.isoDate(App.today());
+    const row = (id) => out[id] || (out[id] = { open: 0, today: 0, late: 0, upcoming: 0, days: 0 });
+    (episodes || App.activeEpisodes()).forEach(ep => {
+      if (!ep.qcChecks && !ep.qcTasks && !App.pipelineFor(ep).some(t => t.needsQc)) return;
+      App.subitems(ep).forEach(su => {
+        const q = App.qcFor(ep, su.key); if (!q.on) return;
+        const st = App.qcState(ep, su.key), id = App.qcOwner(ep, su.key).id || '';
+        if (st === 'waiting') {
+          const r = row(id), w = App.qcWindow(ep, su);
+          r.open++; r.days += q.days;
+          if (w && w.due < today) r.late++; else if (w && w.due === today) r.today++;
+        } else if (id && st !== 'passed' && st !== 'failed' && !App.isCompleteKey(ep, su.key)) row(id).upcoming++;
+      });
+    });
+    return out;
+  };
+  /* Automatic delegation: a check joining the queue with no operator goes to
+     one of its show's QC operators — whoever has the fewest open checks
+     (then the fewest QC days, then the fewest delegated ahead), so the work
+     spreads evenly. A show with no QC operator on it gets nobody: the check
+     waits, unassigned, for a QC Manager. Neither does a check a QC Manager
+     deliberately left unassigned (ownerManual). Returns the id, or null. */
+  App.qcAutoAssign = function (ep, key) {
+    const c = ep.qcChecks && ep.qcChecks[key];
+    if (!c || c.state !== 'waiting' || c.ownerManual || (c.owner && App.person(c.owner))) return null;
+    const ids = App.qcOperatorsFor(App.show(ep.showId)).filter(id => App.person(id));
+    if (!ids.length) return null;
+    const load = App.qcWorkload(App.activeEpisodes());
+    const l = (id) => load[id] || { open: 0, days: 0, upcoming: 0 };
+    const id = ids.slice().sort((a, b) => l(a).open - l(b).open || l(a).days - l(b).days ||
+      l(a).upcoming - l(b).upcoming || ids.indexOf(a) - ids.indexOf(b))[0];
+    ep.qcChecks[key] = Object.assign({}, c, { owner: id, ownerAuto: true });
+    return id;
   };
   /* Where a dependency stands, in words, for hovers: "Approved", "approved,
      waiting for QC V2", "QC sent a report back (QC V1)", or its status. */
@@ -695,6 +734,7 @@ window.App = window.App || {};
       } else if (c && !App.isApproved(st) && (c.state === 'waiting' || c.state === 'passed')) {
         put({ state: null, planDate: null });
       }
+      App.qcAutoAssign(ep, t.key);         // in the queue with nobody on it: delegate it
     });
   };
   App.taskNameFor = function (ep, key) {
@@ -1515,6 +1555,8 @@ window.App = window.App || {};
     // sent back: the fix comes first, so the next check is tomorrow at the soonest
     if (state === 'failed') { const t = App.isoDate(App.today()); if (t > after) after = t; }
     const span = App.qcSpan(q.days, after, App.showCalendar(ep.showId));
+    // a QC Manager moved the due date (App.qcQueue.setDue): theirs wins
+    if (c && c.due) return { start: c.due < span.start ? c.due : span.start, due: c.due, days: q.days, state, set: true, planned: span.due };
     return { start: span.start, due: span.due, days: q.days, state };
   };
   // when a task is really finished: revisions, then QC
