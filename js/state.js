@@ -1443,6 +1443,25 @@ window.App = window.App || {};
     return steps;
   };
 
+  /* The fix for one of App.depClashes: the dependent moved to start just
+     after what it waits on really finishes (plus any lag), keeping its
+     working-day length. Null when it isn't clashing. */
+  App.depClashFix = function (ep, key) {
+    const c = App.depClashes(ep)[key]; if (!c) return null;
+    const su = App.subitem(ep, key), t = App.pTask(ep, key);
+    const cal = App.showCalendar(ep.showId), who = { dept: su.dept, person: su.assignee };
+    const need = App.shiftIso(c.end, t && t.lag > 0 ? t.lag : 1);
+    let start, due;
+    if (cal) {
+      let n = 0;
+      for (let x = su.start; x <= su.due; x = App.shiftIso(x, 1)) if (!cal.isOff(x, who)) n++;
+      start = cal.nextWork(need, who); due = cal.addWork(start, Math.max(1, n), who);
+    } else {
+      start = need; due = App.shiftIso(need, App.diffDays(su.due, su.start));
+    }
+    return Object.assign({ start, due }, c);
+  };
+
   /* Tasks that the versions, review or QC of something they depend on now
      run into: the dependent starts after that task's first pass was due (so
      the plan itself had them in order) but before it really finishes — its
