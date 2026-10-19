@@ -6332,13 +6332,49 @@ button.qcq-report-link:hover { text-decoration: underline; }
 .qcq-task { gap: 6px; }
 .qcq-grid .cell.c-name.qcq-task > span:first-child { flex: 0 1 auto; }
 .qcq-task .rvq-ver { flex: none; font-size: 11px; }
-.qcq-task .qcq-flag { flex: none; }
+.qcq-task .qcq-flag, .cell.c-name.qcq-task > span.qcq-flag { flex: none; }
 .qcq-grid .qcq-files { display: flex; flex-wrap: wrap; gap: 6px; }
 .qcq-pending { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-2); white-space: nowrap; }
 .qcq-pending .et-dot { width: 8px; height: 8px; border-radius: 50%; }
 .qcq-grid .ep-code { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
 .qcq-grid .subrow > .cell:last-child { padding-right: 18px; }   /* off the card's rounded edge */
 .qcq-grid .subrow > .cell:first-child { padding-left: 14px; }
+
+/* QC operators' workload (App.qcQueue.workload): one tile per operator */
+.qcq-load .rvq-ep-head { justify-content: space-between; }
+.qcq-ops { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; padding: 12px; }
+.qcq-op { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--surface-2); cursor: pointer; display: flex; flex-direction: column; gap: 7px; min-width: 0; transition: border-color .12s, box-shadow .12s; }
+.qcq-op:hover { border-color: var(--text-3); }
+.qcq-op.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.qcq-op.unassigned { border-style: dashed; }
+.qcq-op-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.qcq-op-name { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
+.qcq-op-n { flex: none; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.qcq-op-n b { font-size: 17px; color: var(--text); margin-right: 1px; }
+.qcq-op-bar { height: 5px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.qcq-op-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width .2s; }
+.qcq-op-bar > span.late { background: #ff6b6b; }
+.qcq-op-stats { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--text-3); min-height: 15px; }
+.qcq-op-stat.late { color: #ff8b8b; font-weight: 700; }
+.qcq-op-stat.today { color: var(--ink-warn); font-weight: 700; }
+.qcq-op-stat.free { color: var(--ink-ok); }
+.qcq-op-shows { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.qcq-op-show { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qcq-op-none { font-size: 10.5px; color: var(--text-3); font-style: italic; }
+.qcq-op-shows .qcq-op-edit { font-size: 10.5px; padding: 1px 8px; height: auto; min-height: 0; margin-left: auto; }
+.qcq-op-clear { font-size: 11.5px; padding: 3px 10px; }
+.qcq-op-warn { margin: 0 12px 12px; padding: 8px 10px; border-radius: 8px; font-size: 12px; background: rgba(253,171,61,.12); color: var(--ink-warn); display: flex; align-items: center; gap: 6px; }
+
+/* QC due on a row — a QC Manager's button to move it */
+.qcq-due { font: inherit; color: inherit; background: none; border: 0; padding: 2px 4px; margin-left: -4px; border-radius: 5px; }
+.qcq-due.can { cursor: pointer; }
+.qcq-due.can:hover { background: var(--surface-3); }
+.qcq-due.set { font-weight: 700; color: var(--ink-info); }
+.qcq-due.set::after { content: ' •'; }
+.qcq-due-pop { padding: 10px; width: 230px; display: flex; flex-direction: column; gap: 8px; }
+.qcq-pop-title { font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qcq-pop-hint { font-size: 11px; color: var(--text-3); }
+.qcq-pop-actions { display: flex; justify-content: flex-end; gap: 6px; }
 
 /* Edit Task: the next step, and the compact parts (js/dialog.js, js/workspace.js) */
 .et-next { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 12px 0 0; padding: 10px 14px; border-radius: 10px;
