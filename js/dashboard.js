@@ -1250,12 +1250,15 @@ window.App = window.App || {};
         const cap = capOf('priority', t.h);
         items.slice(0, cap).forEach(({ ep, su }) => {
           const st = App.status(su.status);
+          // the version it's on, the way Reviews writes it: V1 until it's sent back
+          const ver = 'V' + (App.revisionsUsed(ep, su.key) + 1);
           rows.appendChild(el('.pr-row', {
-            title: ep.title + ' — ' + su.name + ' · due ' + App.fmtDate(su.due),
+            title: ep.title + ' — ' + su.name + ' ' + ver + ' · due ' + App.fmtDate(su.due),
             onclick: () => App.editTask.open(ep.id, su.key)
           }, [
             el('span.pr-code', null, ep.code),
-            el('span.pr-task', null, '(' + su.name + ')'),
+            // "(Design V1)": the name gives way to a narrow tile, the version never does
+            el('span.pr-task', null, ['(', el('span.pr-task-name', null, su.name), '\u00a0', el('span.pr-ver', null, ver), ')']),
             el('span.pr-date', null, App.fmtDate(su.due)),
             // approved but not delivered: a Deliver button in place of the status
             App.needsDelivery(ep, su)
