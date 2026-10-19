@@ -1701,10 +1701,13 @@ window.App = window.App || {};
       setBarPos(style, axis, xOf, su.start, su.due);
       if (ring) style.outlineColor = st.color;
       const clash = this.clashes(ep.showId)[ep.id + '::' + su.key];
+      const late = this.depClashes(ep)[su.key];
       const sbar = el('.bar' + (done ? '.delivered' : '') + (ring ? '.st-ring' : '') + (bare ? '.bare' : '') +
-                      (selHas(ep.id, su.key) ? '.selected' : '') + (clash ? '.hol-clash' : ''), {
+                      (selHas(ep.id, su.key) ? '.selected' : '') + (clash ? '.hol-clash' : '') + (late ? '.dep-clash' : ''), {
         title: (labelText ? labelText + ' — ' : '') + su.name + ' — ' + st.label + ' · ' + App.fmtRange(su.start, su.due) +
-               (clash ? '\n⚠ Runs into ' + clash.reason + ' — right-click to reassign or shift' : ''),
+               (clash ? '\n⚠ Runs into ' + clash.reason + ' — right-click to reassign or shift' : '') +
+               (late ? '\n⚠ Starts ' + late.by + ' day' + (late.by === 1 ? '' : 's') + ' before “' + late.up.name + '” finishes (' +
+                 App.fmtDate(late.end) + ', last version' + (App.qcWindow(ep, late.up) ? ' + QC' : '') + ')' : ''),
         style
       }, bare ? null : [
         el('span.bar-label', { style: { overflow: 'hidden', textOverflow: 'ellipsis' }, 'data-abbr': labelText ? null : abbreviate(su.name) || null }, labelText || su.name),
@@ -1730,6 +1733,28 @@ window.App = window.App || {};
           pause.style[p0] = (xOf(a) - at0) + 'px';
           pause.style[sz] = xOf.width(a, b) + 'px';
           sbar.appendChild(pause);
+        });
+
+        /* Versions already asked for (App.requestRevision) run inside the
+           bar. Where one started later than the one before was due — the
+           review came late, or the pipeline held review days — the wait is
+           shown as a break, and each version is marked where it begins. */
+        ((ep.revSpans && ep.revSpans[su.key]) || []).forEach((sp, i) => {
+          if (!sp) return;
+          const prevDue = App.shiftIso(su.start, sp.after), vStart = App.shiftIso(su.start, sp.start);
+          if (vStart <= su.start || vStart > su.due) return;       // the bar's since been reshaped past it
+          const ga = App.shiftIso(prevDue, 1), gb = App.shiftIso(vStart, -1);
+          if (ga <= gb) {
+            const wait = el('.bar-revgap', {
+              title: 'Waiting for review — V' + (i + 1) + ' was due ' + App.fmtDate(prevDue) + ', V' + (i + 2) + ' started ' + App.fmtDate(vStart)
+            });
+            wait.style[p0] = (xOf(ga) - at0) + 'px';
+            wait.style[sz] = xOf.width(ga, gb) + 'px';
+            sbar.appendChild(wait);
+          }
+          const mark = el('span.bar-vmark', { title: 'V' + (i + 2) + ' from ' + App.fmtDate(vStart) }, 'V' + (i + 2));
+          mark.style[p0] = (xOf(vStart) - at0) + 'px';
+          sbar.appendChild(mark);
         });
       }
       attachBar(sbar, { color: st.color, label: st.label }, false);
@@ -1834,6 +1859,14 @@ window.App = window.App || {};
       }
       if (this._holCache) this._holCache[key] = out;
       return out;
+    },
+    // this episode's dependency clashes (App.depClashes) — once per render
+    depClashes(ep) {
+      const key = 'dep|' + ep.id;
+      if (this._holCache && this._holCache[key]) return this._holCache[key];
+      const map = App.depClashes(ep);
+      if (this._holCache) this._holCache[key] = map;
+      return map;
     },
     // this show's holiday clashes, keyed "epId::taskKey" — once per render
     clashes(showId) {

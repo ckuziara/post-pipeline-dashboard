@@ -25,6 +25,7 @@ window.App = window.App || {};
       if (e.dates && e.dates[key]) m.dates[key] = Object.assign({}, e.dates[key]);
       if (e.statuses && e.statuses[key]) m.statuses[key] = e.statuses[key];
       if (e.revisions && e.revisions[key] != null) { m.revisions = m.revisions || {}; m.revisions[key] = e.revisions[key]; }
+      if (e.revSpans && e.revSpans[key]) { m.revSpans = m.revSpans || {}; m.revSpans[key] = e.revSpans[key].slice(); }
       App.refreshReadiness(m);
     });
   };
@@ -790,12 +791,27 @@ window.App = window.App || {};
     // working days when the show keeps a calendar
     const cal = App.showCalendar(g.ep.showId);
     const who = { dept: g.su.dept, person: g.su.assignee };
-    const newDue = cal
-      ? (over
-        ? cal.addWork(cal.nextWork(App.shiftIso(g.su.due, 1), who), revDays, who)
-        : App.revisionSteps(App.revTask(g.ep, key), g.su.due, cal, who, used, { now: true }).revs[0].due)
-      : App.shiftIso(g.su.due, App.REVIEW_DAYS + revDays);
-    const impact = App.scheduleImpact(g.ep, key, g.su.start, newDue);
+    /* Where the new version goes: its planned slot (after any review time
+       the pipeline holds before it), unless the review came later than that
+       — then it starts on the day it was asked for, the soonest the work can
+       really begin. Either way it keeps its own length. Over budget there's
+       no planned slot, so it's straight after the current due date. */
+    const planned = over ? null : App.revisionSteps(App.revTask(g.ep, key), g.su.due, cal, who, used).revs[0];
+    const n = over ? revDays : Math.max(1, (App.revTask(g.ep, key).revDays || [])[used] || 1);
+    const slot = planned ? planned.start : (cal ? cal.nextWork(App.shiftIso(g.su.due, 1), who) : App.shiftIso(g.su.due, 1));
+    const today = App.isoDate(App.today());
+    const soonest = cal ? cal.nextWork(today, who) : today;
+    const vStart = soonest > slot ? soonest : slot;
+    const newDue = planned && vStart === planned.start ? planned.due
+      : (cal ? cal.addWork(vStart, n, who) : App.shiftIso(vStart, n - 1));
+    // when it will really finish: the versions still planned after this one, then QC
+    const after = Object.assign({}, g.ep, {
+      dates: Object.assign({}, g.ep.dates, { [key]: { start: g.su.start, due: newDue } }),
+      statuses: Object.assign({}, g.ep.statuses, { [key]: 'in_progress' }),
+      revisions: Object.assign({}, g.ep.revisions, { [key]: used + 1 })
+    });
+    const finish = App.taskEnd(after, App.subitem(after, key));
+    const impact = App.scheduleImpact(g.ep, key, g.su.start, newDue, null, { finish });
     if (impact.deny) { App.toast(impact.deny.text + ' — nothing changed', true); return; }
     if ((impact.clashes.length || impact.delivery) && !(opts && opts.confirmed) && App.impactDialog) {
       App.impactDialog.open(g.ep, key, impact, {
@@ -813,6 +829,13 @@ window.App = window.App || {};
       e.statuses[key] = 'in_progress';
       e.revisions = e.revisions || {};
       e.revisions[key] = used + 1;
+      /* where this version sits inside the now-longer bar, so the Timeline
+         can show it: when the one before was due, and when this one starts.
+         Days from the task's start, so they move with the bar if it's dragged. */
+      e.revSpans = e.revSpans || {};
+      const spans = (e.revSpans[key] || []).slice();
+      spans[used] = { after: App.diffDays(g.su.due, g.su.start), start: App.diffDays(vStart, g.su.start) };
+      e.revSpans[key] = spans;
       // the reviewed cut (V used+1) is done with: the next one is sent afresh
       if (App.review) App.review.closeRound(d, epId, key, used + 1);
       App.syncBatch(d, e, key);
@@ -825,10 +848,10 @@ window.App = window.App || {};
 
     App.track.audit('task.revision', {
       episode: g.ep.code, task: g.su.name, revision: used + 1, of: max,
-      days: revDays, due: g.su.due + '→' + newDue
+      days: n, starts: vStart, due: g.su.due + '→' + newDue
     });
     const leftNow = left - 1;
-    App.toast('Revision sent for “' + g.su.name + '” — due ' + App.fmtDate(newDue) +
+    App.toast('Revision sent for “' + g.su.name + '” — V' + (used + 2) + ' ' + App.fmtRange(vStart, newDue) +
       (over ? (max ? ' · over its budget of ' + max : ' · none were budgeted') : leftNow > 0 ? ' · ' + leftNow + ' left' : ' · none left'));
   };
 
