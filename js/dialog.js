@@ -4102,6 +4102,56 @@ window.App = window.App || {};
     }
   };
 
+  /* ---- Dependency clash (right-click a bar with the red dashes) ----
+     The holiday clash dialog's sibling, for a task that starts before
+     something it waits on has really finished (App.depClashes) — usually a
+     late review, or versions run past their slots. The fix is to push it
+     back to start just after, which goes through Push Schedule: whatever
+     waits on it moves too, everything that would move is shown first, and
+     the live and delivery dates are still guarded. */
+  App.depClashDialog = {
+    open(epId, key) {
+      const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
+      const fix = App.depClashFix(ep, key);
+      if (!fix) { App.toast('That clash has already been resolved'); return; }
+      const su = App.subitem(ep, key), up = fix.up;
+      const canMove = App.canEditSchedule(App.state.role);
+      const why = 'Starts ' + fix.by + ' day' + (fix.by === 1 ? '' : 's') + ' before “' + up.name + '” finishes — ' +
+        App.fmtDate(fix.end) + ', after its last version' + (App.qcWindow(ep, up) ? ' and QC' : '');
+      const row = el('.hc-row', null, [
+        el('.hc-main', null, [
+          el('.hc-title', null, [
+            el('span.dot', { style: { background: App.dept(su.dept).color } }),
+            el('span.hc-task', null, su.name), el('span.hc-ep', null, ep.code + ' · ' + App.fmtRange(su.start, su.due))
+          ]),
+          el('.hc-why', null, [App.icon('warn'), ' ' + why])
+        ]),
+        el('.hc-actions', null, [
+          /* just this task — the way out when pushing the whole chain would
+             reach the live date; anything it then runs into is asked about */
+          el('button.btn-ghost.hc-btn', {
+            type: 'button', disabled: canMove ? null : 'disabled',
+            title: canMove ? 'Move only “' + su.name + '” to ' + App.fmtRange(fix.start, fix.due) + ' — nothing after it moves' : 'Your role can’t change the schedule',
+            onclick: () => { App.modal.close(); App.moveTask(ep.id, key, fix.start, fix.due); }
+          }, 'Move only this'),
+          el('button.btn-primary.hc-btn', {
+            type: 'button', disabled: canMove ? null : 'disabled',
+            title: canMove ? 'Start it the day after “' + up.name + '” finishes, and push back anything waiting on it' : 'Your role can’t change the schedule',
+            onclick: () => { App.modal.close(); App.pushSchedule(ep.id, key, fix.start, fix.due); }
+          }, 'Push → ' + App.fmtRange(fix.start, fix.due))
+        ])
+      ]);
+      const sections = [
+        el('.fld-hint', { style: { marginBottom: '10px' } },
+          '“' + up.name + '” now runs later than planned — a late review, or versions past their slots — so “' + su.name +
+          '” would start before it’s done. Push it back with everything after it, move just this task, or leave it if the work can overlap.'),
+        el('.hc-list', null, [row])
+      ];
+      const footer = [el('button.btn-ghost', { onclick: () => App.modal.close() }, 'Leave for now')];
+      App.modal.open(card('warn', 'Dependency clash', ep.code + ' — ' + ep.title, sections, footer, 'wide'));
+    }
+  };
+
   /* ---- Show Team (Admin → Shows → Team) ----
      The same editor Add Show's step 2 uses, pointed at a show that already
      exists. Re-staffing changes who new work opens against; episodes already

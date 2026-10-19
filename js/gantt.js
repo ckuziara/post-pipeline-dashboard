@@ -749,6 +749,9 @@ window.App = window.App || {};
         if (ep && this.clashes(ep.showId)[epId + '::' + suKey] && App.canManageShows(App.state.role)) {
           menu.appendChild(item('Resolve holiday clash…', null, () => App.holidayClashDialog.open(ep.showId, { onlyKey: epId + '::' + suKey })));
         }
+        if (ep && this.depClashes(ep)[suKey] && App.canEditSchedule(App.state.role)) {
+          menu.appendChild(item('Resolve dependency clash…', null, () => App.depClashDialog.open(epId, suKey)));
+        }
       }
       if (sel.length) {
         menu.appendChild(item('Clear selection', 'Esc', () => { selClear(); App.render(); }));
@@ -1707,7 +1710,7 @@ window.App = window.App || {};
         title: (labelText ? labelText + ' — ' : '') + su.name + ' — ' + st.label + ' · ' + App.fmtRange(su.start, su.due) +
                (clash ? '\n⚠ Runs into ' + clash.reason + ' — right-click to reassign or shift' : '') +
                (late ? '\n⚠ Starts ' + late.by + ' day' + (late.by === 1 ? '' : 's') + ' before “' + late.up.name + '” finishes (' +
-                 App.fmtDate(late.end) + ', last version' + (App.qcWindow(ep, late.up) ? ' + QC' : '') + ')' : ''),
+                 App.fmtDate(late.end) + ', last version' + (App.qcWindow(ep, late.up) ? ' + QC' : '') + ') — right-click to fix' : ''),
         style
       }, bare ? null : [
         el('span.bar-label', { style: { overflow: 'hidden', textOverflow: 'ellipsis' }, 'data-abbr': labelText ? null : abbreviate(su.name) || null }, labelText || su.name),
