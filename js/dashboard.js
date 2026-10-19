@@ -1257,8 +1257,8 @@ window.App = window.App || {};
             onclick: () => App.editTask.open(ep.id, su.key)
           }, [
             el('span.pr-code', null, ep.code),
-            el('span.pr-task', null, '(' + su.name + ')'),
-            el('span.pr-ver', null, ver),
+            // "(Design V1)": the name gives way to a narrow tile, the version never does
+            el('span.pr-task', null, ['(', el('span.pr-task-name', null, su.name), '\u00a0', el('span.pr-ver', null, ver), ')']),
             el('span.pr-date', null, App.fmtDate(su.due)),
             // approved but not delivered: a Deliver button in place of the status
             App.needsDelivery(ep, su)
