@@ -1544,6 +1544,8 @@ body.gantt-shift .subrow:not(.head) { cursor: pointer; user-select: none; }
 .pr-row:hover { background: var(--hover); }
 .pr-code { font-size: 11.5px; font-weight: 700; flex: none; }
 .pr-task { font-size: 11.5px; color: var(--text-2); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the version stays whole even when a long task name is cut short */
+.pr-ver { font-size: 11.5px; font-weight: 700; color: var(--text-2); flex: none; }
 .pr-date { font-size: 11px; color: var(--text-3); flex: none; margin-left: auto; white-space: nowrap; }
 .pr-chip {
   font-size: 10px; font-weight: 700; border-radius: 6px; padding: 3px 9px;
