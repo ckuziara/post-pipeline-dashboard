@@ -651,6 +651,7 @@ window.App = window.App || {};
       pop.style.top = (r.bottom + 6) + 'px';
       pop.style.left = r.left + 'px';
       document.body.appendChild(pop);
+      App.fitPop(pop, r);
       App.filterMenu._pop = pop;
     };
 
@@ -689,6 +690,7 @@ window.App = window.App || {};
       pop.style.top = (r.bottom + 6) + 'px';
       pop.style.left = r.left + 'px';
       document.body.appendChild(pop);
+      App.fitPop(pop, r);
       App.filterMenu._pop = pop;
     };
     btn.addEventListener('click', e => {
@@ -739,6 +741,7 @@ window.App = window.App || {};
       pop.style.top = (r.bottom + 6) + 'px';
       pop.style.left = Math.min(r.left, window.innerWidth - 200) + 'px';
       document.body.appendChild(pop);
+      App.fitPop(pop, r);
       App.filterMenu._pop = pop;
     };
     btn.addEventListener('click', e => {

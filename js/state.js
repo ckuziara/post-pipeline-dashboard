@@ -2741,6 +2741,28 @@ window.App = window.App || {};
      bubbling (so the backdrop can tell a click on the card from a click
      beside it) — a plain document click listener never hears a press inside
      a dialog, which left menus open over the form. Returns the un-listener. */
+  /* Keep a dropdown that opens under its button on screen. Call once it's in
+     the page (it has to be measured). It stays below when it fits; otherwise
+     it opens above if there's more room there, and either way its height is
+     capped to the room it has, so a long list scrolls instead of running off
+     the bottom of the window. */
+  App.fitPop = function (pop, r, gap) {
+    gap = gap == null ? 6 : gap;
+    // undo only a cap this set last time (combo re-places as it filters) — a
+    // menu's own max-height, like Sort's 'none', is left alone
+    if (pop.dataset.fitCap) { pop.style.maxHeight = pop.dataset.fitCap === '-' ? '' : pop.dataset.fitCap; delete pop.dataset.fitCap; }
+    const h = pop.offsetHeight, vh = window.innerHeight;
+    const cap = (px) => { pop.dataset.fitCap = pop.style.maxHeight || '-'; pop.style.maxHeight = px + 'px'; pop.style.overflowY = 'auto'; };
+    const below = vh - r.bottom - gap - 8, above = r.top - gap - 8;
+    if (h <= below || below >= above) {
+      pop.style.top = (r.bottom + gap) + 'px';
+      if (h > below) cap(Math.max(80, below));
+    } else {
+      if (h > above) cap(above);
+      pop.style.top = Math.max(8, r.top - gap - Math.min(h, above)) + 'px';
+    }
+  };
+
   App.onPressOutside = function (menu, close) {
     const h = (e) => { if (menu.isConnected && !menu.contains(e.target)) close(); };
     // armed on the next tick so the press that opened the menu can't close it

@@ -409,6 +409,7 @@ window.App = window.App || {};
     // keep it on screen when the button is near the right edge
     pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 308)) + 'px';
     document.body.appendChild(pop);
+    App.fitPop(pop, r);
     note.pop = pop;
     ta.focus();
     ta.addEventListener('keydown', (e) => {

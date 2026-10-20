@@ -690,6 +690,7 @@ window.App = window.App || {};
       pop.style.top = (r.bottom + 6) + 'px';
       pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 220)) + 'px';
       document.body.appendChild(pop);
+      App.fitPop(pop, r);
       App.filterMenu._pop = pop;
     },
     clearTeamDefault() {

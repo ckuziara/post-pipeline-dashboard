@@ -355,7 +355,8 @@ window.App = window.App || {};
       if (!pop) return;
       if (!inp.isConnected) { close(); return; }
       const r = inp.getBoundingClientRect();
-      pop.style.width = r.width + 'px'; pop.style.top = (r.bottom + 4) + 'px';
+      pop.style.width = r.width + 'px';
+      App.fitPop(pop, r, 4);
       // at least as wide as its box, but kept on screen when that's the last column
       pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + 'px';
     };
