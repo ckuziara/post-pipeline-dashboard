@@ -617,7 +617,7 @@ window.App = window.App || {};
         if (!row) { App.toast('That check is hidden by the current filters', true); return; }
         row.scrollIntoView({ block: 'center', behavior: 'smooth' });
         row.classList.remove('rvq-flash'); void row.offsetWidth; row.classList.add('rvq-flash');
-        setTimeout(() => row.classList.remove('rvq-flash'), 1400);
+        setTimeout(() => row.classList.remove('rvq-flash'), 1700);
       });
     },
 

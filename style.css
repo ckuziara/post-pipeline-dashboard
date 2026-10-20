@@ -4549,6 +4549,9 @@ textarea.fld, :root[data-skin] textarea.fld { border-radius: min(var(--r-ctl, 8p
 /* a review opened from the Dashboard's Priority calendar flashes once */
 @keyframes rvq-flash { 0%, 60% { box-shadow: 0 0 0 2px var(--accent), 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent); } 100% { box-shadow: none; } }
 .rvq-row.rvq-flash { animation: rvq-flash 1.3s ease-out; border-radius: 8px; }
+/* a QC check opened from elsewhere (App.qcQueue.focus): inset, since its card clips anything outside */
+@keyframes qcq-flash { 0%, 60% { box-shadow: inset 0 0 0 2px var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); } 100% { box-shadow: none; background: transparent; } }
+.qcq-row.rvq-flash { animation: qcq-flash 1.6s ease-out; }
 .rvq-row {
   display: grid;
   grid-template-columns: minmax(160px, 1.5fr) minmax(200px, 1.2fr) 96px auto;
