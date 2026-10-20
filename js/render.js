@@ -239,10 +239,11 @@ window.App = window.App || {};
     // budget modelling is oversight work, so it rides the same gate as Admin
     if (!phone && App.isAdminRole(App.state.role)) tabs.push(['planning', 'sparkle', 'Planning']);
     if (App.isAdminRole(App.state.role)) tabs.push(['admin', 'tools', 'Admin']);
-    // the person's own priority order (set in the setup wizard) leads; the
+    // the person's own priority order (set in the setup wizard, else their
+    // role's — see ROLE_TAB_ORDER in js/guide.js) leads; the
     // tabs they didn't rank (Planning, Admin) keep their place after
     const rank = App.profile ? App.profile.viewOrder() : [];
-    if (rank.length && App.profile.hasOrder()) {
+    if (rank.length && App.profile.ranked()) {
       const pos = (v) => { const i = rank.indexOf(v); return i < 0 ? 100 : i; };
       tabs.sort((a, b) => pos(a[0]) - pos(b[0]));
     }
