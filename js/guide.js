@@ -138,6 +138,20 @@ window.App = window.App || {};
       this.tabOrder().forEach(k => { const v = k === 'resources' ? 'timeline' : k; if (!out.includes(v)) out.push(v); });
       return out;
     },
+    /* The tab bar's own reorder (right-click a tab → Reorder tabs) hands back
+       views in their new order; this writes them as the ranking. Resourcing
+       rides with the Timeline, keeping whichever of the two was ahead. */
+    setViewOrder(views) {
+      const cur = this.tabOrder();
+      const ri = cur.indexOf('resources'), ti = cur.indexOf('timeline');
+      const out = [];
+      views.forEach(v => {
+        if (v === 'timeline' && ri >= 0) out.push(...(ri < ti ? ['resources', 'timeline'] : ['timeline', 'resources']));
+        else if (cur.includes(v)) out.push(v);
+      });
+      cur.forEach(k => { if (!out.includes(k)) out.push(k); });
+      this.set({ tabOrder: out });
+    },
     // where a new day starts: the first-ranked tab
     applyStart() {
       if (!this.hasOrder()) return false;

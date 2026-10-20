@@ -222,7 +222,9 @@ window.App = window.App || {};
   }
 
   function renderViewTabs() {
-    const box = document.getElementById('view-tabs'); box.innerHTML = '';
+    const box = document.getElementById('view-tabs');
+    if (tabArrange.drag) return;             // a render mid-drag would pull the tab out from under the pointer
+    box.innerHTML = '';
     const phone = App.isPhone();
     /* Phone mode caps the tab bar at Dashboard, Board and (role permitting)
        Admin — Timeline's drag-to-reschedule and hover tooltips and
@@ -247,12 +249,122 @@ window.App = window.App || {};
       const pos = (v) => { const i = rank.indexOf(v); return i < 0 ? 100 : i; };
       tabs.sort((a, b) => pos(a[0]) - pos(b[0]));
     }
+    const movable = (v) => !!App.profile && rank.includes(v);
+    box.classList.toggle('arranging', tabArrange.on);
     tabs.forEach(([v, ic, lbl]) => {
-      box.appendChild(el('button.view-tab' + (App.state.view === v ? '.active' : ''),
-        { 'data-view': v, onclick: () => { App.state.view = v; App.render(); } },
-        [App.icon(ic, { cls: 'ic' }), lbl]));
+      box.appendChild(el('button.view-tab' + (App.state.view === v ? '.active' : '') + (tabArrange.on && movable(v) ? '.movable' : ''), {
+        'data-view': v,
+        title: tabArrange.on ? (movable(v) ? 'Drag to move' : 'This tab stays at the end') : null,
+        onclick: () => { if (tabArrange.on) return; App.state.view = v; App.render(); },
+        oncontextmenu: (e) => { if (!phone && rank.length) tabMenu(e); }
+      }, [App.icon(ic, { cls: 'ic' }), lbl]));
     });
+    if (tabArrange.on) box.appendChild(el('button.view-tab.tab-arrange-done', { type: 'button', onclick: () => tabArrange.stop() }, 'Done'));
   }
+
+  /* Right-click a tab → Reorder tabs. The tabs then drag sideways with the
+     setup wizard's own sticky-note motion (IF.arrange in js/guide.js): the
+     others slide out of the way, and every drop saves the order to the
+     person's profile, the same ranking the wizard sets. Tabs nobody ranks
+     (Planning, Admin) stay put at the end. Done, Esc or a click away ends it. */
+  function tabMenu(e) {
+    e.preventDefault(); e.stopPropagation();
+    const close = () => { menu.remove(); document.removeEventListener('mousedown', off, true); document.removeEventListener('keydown', esc, true); };
+    const off = (ev) => { if (!menu.contains(ev.target)) close(); };
+    const esc = (ev) => { if (ev.key === 'Escape') close(); };
+    const menu = el('.ctx-menu.no-copy', null, [
+      el('button.ctx-item', { type: 'button', onclick: (ev) => { ev.stopPropagation(); close(); tabArrange.start(); } },
+        [el('span.ctx-item-lbl', null, 'Reorder tabs'), el('span.ctx-item-sub', null, 'drag to arrange')])
+    ]);
+    document.body.appendChild(menu);
+    menu.style.top = Math.min(e.clientY + 2, window.innerHeight - menu.offsetHeight - 8) + 'px';
+    menu.style.left = Math.min(e.clientX + 2, window.innerWidth - menu.offsetWidth - 8) + 'px';
+    setTimeout(() => { document.addEventListener('mousedown', off, true); document.addEventListener('keydown', esc, true); }, 0);
+  }
+
+  const tabArrange = {
+    on: false, drag: null,
+    start() {
+      if (this.on) return;
+      this.on = true;
+      const box = document.getElementById('view-tabs');
+      this._down = (e) => this.down(e);
+      this._move = (e) => this.move(e);
+      this._up = () => this.drop();
+      this._esc = (e) => { if (e.key === 'Escape') this.stop(); };
+      this._away = (e) => { if (!box.contains(e.target)) this.stop(); };
+      box.addEventListener('pointerdown', this._down);
+      box.addEventListener('pointermove', this._move);
+      box.addEventListener('pointerup', this._up);
+      box.addEventListener('pointercancel', this._up);
+      document.addEventListener('keydown', this._esc, true);
+      setTimeout(() => document.addEventListener('mousedown', this._away, true), 0);
+      renderViewTabs();
+    },
+    stop() {
+      if (!this.on) return;
+      this.drop();
+      this.on = false;
+      const box = document.getElementById('view-tabs');
+      box.removeEventListener('pointerdown', this._down);
+      box.removeEventListener('pointermove', this._move);
+      box.removeEventListener('pointerup', this._up);
+      box.removeEventListener('pointercancel', this._up);
+      document.removeEventListener('keydown', this._esc, true);
+      document.removeEventListener('mousedown', this._away, true);
+      renderViewTabs();
+    },
+    movables() { return Array.from(document.querySelectorAll('#view-tabs .view-tab.movable')); },
+    // slide the tabs that moved from where they were to where they are (FLIP)
+    shuffle(fn) {
+      const tabs = this.movables();
+      const before = new Map(tabs.map(t => [t, t.getBoundingClientRect().left]));
+      fn();
+      tabs.forEach(t => {
+        if (t.classList.contains('dragging')) return;
+        const dx = before.get(t) - t.getBoundingClientRect().left;
+        if (!dx) return;
+        t.style.transition = 'none'; t.style.translate = dx + 'px 0';
+        requestAnimationFrame(() => { t.style.transition = ''; t.style.translate = ''; });
+      });
+    },
+    down(e) {
+      const t = e.target.closest('.view-tab.movable');
+      if (!t) return;
+      e.preventDefault();
+      this.drag = { t, x0: e.clientX };
+      t.classList.add('dragging');
+      try { t.setPointerCapture(e.pointerId); } catch (err) {}
+    },
+    move(e) {
+      if (!this.drag) return;
+      const d = this.drag, t = d.t;
+      t.style.translate = (e.clientX - d.x0) + 'px 0';
+      const swap = (n, after) => {
+        const was = t.getBoundingClientRect().left - parseFloat(t.style.translate || 0);
+        this.shuffle(() => after ? n.after(t) : n.before(t));
+        t.style.translate = '0px 0';
+        d.x0 += t.getBoundingClientRect().left - was;
+        t.style.translate = (e.clientX - d.x0) + 'px 0';
+      };
+      // only past other movable tabs — Planning, Admin and Done hold their places
+      const isMov = (n) => n && n.classList.contains('movable');
+      for (let guard = 0; guard < 12; guard++) {
+        const m = t.getBoundingClientRect().left + t.offsetWidth / 2;
+        const next = t.nextElementSibling, prev = t.previousElementSibling;
+        if (isMov(next) && m > next.getBoundingClientRect().left + next.offsetWidth / 2) swap(next, true);
+        else if (isMov(prev) && m < prev.getBoundingClientRect().left + prev.offsetWidth / 2) swap(prev, false);
+        else break;
+      }
+    },
+    drop() {
+      if (!this.drag) return;
+      const t = this.drag.t; this.drag = null;
+      t.classList.remove('dragging');
+      t.style.translate = '';
+      App.profile.setViewOrder(this.movables().map(n => n.dataset.view));
+    }
+  };
 
   function renderRoleSelect() {
     const box = document.getElementById('role-select'); box.innerHTML = '';
