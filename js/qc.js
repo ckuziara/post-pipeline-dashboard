@@ -233,11 +233,7 @@ window.App = window.App || {};
     setTimeout(() => input.focus(), 20);
   }
 
-  // which operator the list is narrowed to from the workload panel: a person
-  // id, '' for the unassigned, or null for everyone (this session only)
-  let opFilter = null;
   let curLoad = null;     // App.qcWorkload(), once per render — every row's picker reads it
-  const ownerMatches = (x) => opFilter == null || (App.qcOwner(x.ep, x.su.key).id || '') === opFilter;
 
   App.qcQueue = {
     collect, plan,
@@ -614,6 +610,7 @@ window.App = window.App || {};
 
     focus(epId, key) {
       App.state.view = 'qc';
+      if (App.qcMode() !== 'checks') App.prefs.set('qcMode', 'checks');
       App.render();
       requestAnimationFrame(() => {
         const row = document.querySelector('.qcq-row[data-key="' + CSS.escape(KEY(epId, key)) + '"]');
@@ -629,11 +626,13 @@ window.App = window.App || {};
        columns sort (ascending, descending, then back to QC due) — the same
        setting as the toolbar's Sort menu (sortBy.qc). */
     render(episodes) {
+      // the toolbar's Checks / Resources toggle (App.qcMode)
+      if (App.qcMode() === 'resources') return this.resources();
       const wrap = el('.rvq.qcq');
       wrap.appendChild(el('.section-title', null, [App.icon('checkBadge'), ' QC']));
-      wrap.appendChild(this.workload(episodes));
-      const open = plan(episodes).items.filter(ownerMatches).sort(sortChecks());
-      const done = collect(episodes, true).filter(x => x.state !== 'waiting').filter(ownerMatches)
+      curLoad = App.qcWorkload();
+      const open = plan(episodes).items.sort(sortChecks());
+      const done = collect(episodes, true).filter(x => x.state !== 'waiting')
         .sort((a, b) => String(b.check.decidedAt) < String(a.check.decidedAt) ? -1 : 1);
       if (!open.length && !done.length && !pendingFor(episodes).length) {
         wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' Nothing is waiting for QC right now.']));
@@ -648,35 +647,95 @@ window.App = window.App || {};
           el('.subtable', null, grid)
         ]);
       };
-      const pending = pendingFor(episodes).filter(ownerMatches).sort(sortChecks());
-      if (opFilter != null && !open.length && !pending.length && !done.length) {
-        wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' Nothing ' + (opFilter ? 'delegated to ' + ((App.person(opFilter) || {}).name || 'them') : 'unassigned') + ' right now.']));
-      }
+      const pending = pendingFor(episodes).sort(sortChecks());
       if (open.length) wrap.appendChild(card('Waiting for QC', open, true));
       if (pending.length) wrap.appendChild(card('Pending QC — not sent to QC yet', pending, false));
       if (done.length) wrap.appendChild(card('Completed', done, false));
       return wrap;
     },
 
-    /* Who's carrying what, so delegating is a glance: one tile per QC
-       operator — open checks (a bar against the busiest), what's due today
-       or late, what's delegated ahead — and their default shows, which a QC
-       Manager edits here. Unassigned checks get a tile of their own, and
-       shows with QC work but no operator are called out, since nothing
-       delegates itself there. A tile narrows the lists to that operator. */
-    workload(episodes) {
-      const load = curLoad = App.qcWorkload();
+    /* QC → Resources: the QC operators' workload, full page — the Team
+       Workload widget's rows (App.resourceLoad, which counts the QC checks
+       delegated to them as well as any tasks they own) with eight weeks of
+       circles, plus what's on their desk in QC and their default shows (the
+       shows whose checks are delegated to them; a QC Manager edits them
+       here). A row opens that person's workload page
+       (App.resources.openPerson). Unassigned checks get a row of their own,
+       and shows with QC work but no operator are called out, since nothing
+       delegates itself there. */
+    resources() {
+      const wrap = el('.rvq.qcq.qcr');
+      wrap.appendChild(el('.section-title', null, [App.icon('users'), ' QC Resources']));
       const staff = App.deptStaff('qc').slice().sort((a, b) => a.name.localeCompare(b.name));
       const canEdit = App.canAssignQc(App.state.role);
-      const max = Math.max(1, ...staff.map(p => (load[p.id] || {}).open || 0));
       const shows = App.activeShows();
-      const toggle = (id) => { opFilter = opFilter === id ? null : id; App.render(); };
-      const tiles = el('.qcq-ops');
-      staff.forEach(p => {
-        const l = load[p.id] || { open: 0, today: 0, late: 0, upcoming: 0, days: 0 };
+      const qcLoad = App.qcWorkload();
+      const mon = App.mondayIso(App.isoDate(App.today()));
+      const weeks = [];
+      for (let i = 0; i < 8; i++) { const start = App.shiftIso(mon, i * 7); weeks.push({ key: start, start, end: App.shiftIso(start, 4) }); }
+      const load = App.resourceLoad(staff, weeks);
+      const r1 = (n) => Math.round(n * 10) / 10;
+      const busyOf = (l) => Math.max(l.booked, l.planned);
+      const levelOf = (l) => l.cap <= 0 ? (busyOf(l) > 0 ? 'over' : 'off') : busyOf(l) > l.cap + 0.01 ? 'over' : busyOf(l) >= l.cap * 0.8 ? 'full' : 'ok';
+      const LEVEL_C = { ok: '#37b679', full: '#f6a609', over: 'var(--danger)', off: 'var(--text-3)' };
+
+      const rows = staff.map(p => ({ p, l: load[p.id][mon], q: qcLoad[p.id] || { open: 0, today: 0, late: 0, upcoming: 0 } }));
+      // the team at a glance: this week's use of the days it has
+      const cap = rows.reduce((n, r) => n + r.l.cap, 0), used = rows.reduce((n, r) => n + Math.min(busyOf(r.l), r.l.cap), 0);
+      const n = { over: 0, full: 0, ok: 0, off: 0 };
+      rows.forEach(r => n[levelOf(r.l)]++);
+      const un = qcLoad[''] || { open: 0 };
+      const pct = cap > 0 ? Math.round(used / cap * 100) : 0;
+      const summary = el('.tw-sum', null, [
+        el('.tw-gauge', null, [el('span', null, pct + '%')]),
+        el('.tw-sum-txt', null, [
+          el('.tw-sum-head', null, r1(used) + ' of ' + r1(cap) + ' QC days used this week'),
+          el('.tw-chips', null, [
+            n.over ? el('span.tw-chip.over', null, n.over + ' over') : null,
+            n.full ? el('span.tw-chip.full', null, n.full + ' at capacity') : null,
+            n.ok ? el('span.tw-chip.ok', null, n.ok + ' with room') : null,
+            n.off ? el('span.tw-chip.off', null, n.off + ' away') : null,
+            un.open ? el('span.tw-chip.over', null, un.open + ' unassigned') : null
+          ])
+        ])
+      ]);
+      summary.querySelector('.tw-gauge').style.setProperty('--tw-p', pct);
+
+      const tipFor = (p, wk, l) => () => {
+        const box = el('.res-tip');
+        box.appendChild(el('.res-tip-head', null, p.name + ' · w/c ' + App.fmtDate(wk.start)));
+        box.appendChild(el('.res-tip-sub', null, r1(l.booked) + ' d booked of ' + r1(l.cap) + ' d' + (l.off ? ' (' + l.off + ' d off)' : '')));
+        l.tasks.slice().sort((a, b) => a.su.start < b.su.start ? -1 : 1).slice(0, 10).forEach(({ ep, su }) =>
+          box.appendChild(el('.res-tip-task', { style: { borderLeftColor: App.dept(su.dept).color } }, [
+            el('span.res-tip-code', null, ep.code), ' ' + su.name, el('span.res-tip-meta', null, App.fmtRange(su.start, su.due))
+          ])));
+        if (l.tasks.length > 10) box.appendChild(el('.res-tip-sub', null, '+ ' + (l.tasks.length - 10) + ' more'));
+        return box;
+      };
+
+      const list = el('.tw.qcr-tw');
+      list.appendChild(el('.tw-weekhead.qcr-row', null, [
+        el('span.qcr-h', null, 'Operator'), el('span.qcr-h', null, 'This week'), el('span'),
+        el('.tw-weeks', null, weeks.map((wk, i) => el('.tw-wk.lbl', null, i === 0 ? 'Now' : App.fmtDate(wk.start)))),
+        el('span.qcr-h', null, 'Default shows')
+      ]));
+      rows.forEach(({ p, l, q }) => {
+        const busy = busyOf(l), lvl = levelOf(l);
+        const scale = Math.max(l.cap, busy, 0.01);
+        const within = Math.min(busy, l.cap) / scale * 100, past = Math.max(0, busy - l.cap) / scale * 100;
+        const bar = el('.tw-bar', { title: tipFor(p, weeks[0], l) }, [
+          el('.tw-fill', { style: { width: within + '%', background: LEVEL_C[lvl] } }),
+          past ? el('.tw-over', { style: { left: within + '%', width: past + '%' } }) : null,
+          l.cap > 0 && busy > l.cap ? el('.tw-cap', { style: { left: (l.cap / scale * 100) + '%' } }) : null
+        ]);
+        const desk = [q.open + ' in QC'];
+        if (q.late) desk.push(el('span.qcr-late', null, q.late + ' late'));
+        if (q.today) desk.push(el('span.qcr-today', null, q.today + ' due today'));
+        if (q.upcoming) desk.push(q.upcoming + ' ahead');
         const mine = shows.filter(s => App.qcOperatorsFor(s).includes(p.id));
-        const showChips = el('.qcq-op-shows', null, mine.map(s => el('span.qcq-op-show', { style: { borderColor: s.color }, title: 'Default show — ' + s.name + '’s checks are delegated to its operators' }, s.name)));
-        if (!mine.length) showChips.appendChild(el('span.qcq-op-none', null, 'No default show'));
+        const showCell = el('.qcr-shows', null, mine.length
+          ? mine.map(s => el('span.qcq-op-show', { style: { borderColor: s.color }, title: s.name + '’s checks are delegated to its QC operators' }, s.name))
+          : [el('span.qcq-op-none', null, 'No default show')]);
         if (canEdit) {
           const menu = App.choiceMenu('qc:opshows:' + p.id, 'Shows', [shows.map(s => {
             const on = mine.includes(s);
@@ -684,50 +743,48 @@ window.App = window.App || {};
               pick: () => App.qcQueue.setOperatorShow(p.id, s.id, !on) };
           })], 'Default shows: the shows whose checks are delegated to ' + p.name);
           menu.classList.add('qcq-op-edit');
-          showChips.appendChild(menu);
+          showCell.appendChild(menu);
         }
-        const bits = [];
-        if (l.late) bits.push(el('span.qcq-op-stat.late', null, l.late + ' late'));
-        if (l.today) bits.push(el('span.qcq-op-stat.today', null, l.today + ' due today'));
-        if (l.upcoming) bits.push(el('span.qcq-op-stat', { title: 'Delegated to them, not in QC yet' }, l.upcoming + ' ahead'));
-        if (l.days) bits.push(el('span.qcq-op-stat', { title: 'QC days the open checks hold' }, l.days + ' QC day' + (l.days === 1 ? '' : 's')));
-        const tile = el('.qcq-op' + (opFilter === p.id ? '.on' : ''), { title: 'Show only ' + p.name + '’s checks', onclick: (e) => { if (!e.target.closest('button, .filter-pop')) toggle(p.id); } }, [
-          el('.qcq-op-head', null, [
-            el('span.avatar.qcq-av', { style: { background: p.color, color: App.pickInk(p.color) } }, App.initials(p.name)),
-            el('span.qcq-op-name', null, p.name),
-            el('span.qcq-op-n', { title: l.open + ' open check' + (l.open === 1 ? '' : 's') }, [el('b', null, String(l.open)), ' open'])
+        list.appendChild(el('.tw-row.qcr-row.' + lvl, { title: 'Open ' + p.name + '’s workload',
+          onclick: (e) => { if (!e.target.closest('button, .filter-pop')) App.resources.openPerson(p.id); } }, [
+          el('.tw-who', null, [
+            el('span.avatar', { style: { width: '28px', height: '28px', fontSize: '10px', background: p.color, flex: 'none', color: App.pickInk(p.color) } }, App.initials(p.name)),
+            el('.tw-name', null, [el('span', null, p.name), el('span.tw-dept.qcr-desk', null, desk.reduce((a, x, i) => a.concat(i ? [' · ', x] : [x]), []))])
           ]),
-          el('.qcq-op-bar', null, el('span', { style: { width: (l.open / max * 100) + '%' }, class: l.late ? 'late' : '' })),
-          el('.qcq-op-stats', null, bits.length ? bits : [el('span.qcq-op-stat.free', null, l.open ? '' : 'Free')]),
-          showChips
-        ]);
-        tiles.appendChild(tile);
+          lvl === 'off' && l.days && l.off >= l.days ? el('.tw-away', null, 'Away this week') : bar,
+          el('.tw-val', null, [el('b', null, r1(busy)), '/' + r1(l.cap) + 'd']),
+          el('.tw-weeks', null, weeks.map((wk, i) => {
+            const wl = load[p.id][wk.key], wb = busyOf(wl);
+            if (wl.days && wl.off >= wl.days) return el('.tw-wk.away', { title: 'w/c ' + App.fmtDate(wk.start) + ' — away' });
+            const ratio = wl.cap > 0 ? wb / wl.cap : (wb > 0 ? 2 : 0);
+            const ring = el('.res-ring.tw-ring' + (ratio > 1.001 ? '.over' : '') + (i === 0 ? '.now' : ''), { title: tipFor(p, wk, wl) },
+              [el('.res-disc', { style: { width: (18 * Math.sqrt(Math.min(1, ratio))) + 'px', height: (18 * Math.sqrt(Math.min(1, ratio))) + 'px' } })]);
+            ring.style.setProperty('--res-c', LEVEL_C[ratio > 1.001 ? 'over' : ratio >= 0.8 ? 'full' : 'ok']);
+            return el('.tw-wk', null, ring);
+          })),
+          showCell
+        ]));
       });
-      const un = load[''] || { open: 0 };
-      if (un.open || opFilter === '') {
-        tiles.appendChild(el('.qcq-op.unassigned' + (opFilter === '' ? '.on' : ''), { title: 'Show only the unassigned checks', onclick: () => toggle('') }, [
-          el('.qcq-op-head', null, [
-            el('span.avatar.avatar-none.qcq-av', null, '?'),
-            el('span.qcq-op-name', null, 'Unassigned'),
-            el('span.qcq-op-n', null, [el('b', null, String(un.open)), ' open'])
+      if (un.open) {
+        list.appendChild(el('.tw-row.qcr-row.qcr-un', { title: 'Back to the checks, to delegate them', onclick: () => { App.prefs.set('qcMode', 'checks'); App.render(); } }, [
+          el('.tw-who', null, [
+            el('span.avatar.avatar-none', { style: { width: '28px', height: '28px', fontSize: '10px', flex: 'none' } }, '?'),
+            el('.tw-name', null, [el('span', null, 'Unassigned'), el('span.tw-dept', null, un.open + ' in QC with nobody on ' + (un.open === 1 ? 'it' : 'them'))])
           ]),
-          el('.qcq-op-stats', null, el('span.qcq-op-stat', null, canEdit ? 'Click a row’s operator to delegate' : 'Waiting for a QC Manager'))
+          el('span.qcr-un-hint', null, canEdit ? 'Open Checks and click a row’s operator to delegate' : 'Waiting for a QC Manager')
         ]));
       }
-      if (!staff.length) tiles.appendChild(el('.empty', null, 'No QC operators yet — add people with the QC role in Admin.'));
-      // shows that have QC work but nobody to delegate it to
+      if (!staff.length) list.appendChild(el('.empty', null, 'No QC operators yet — add people with the QC role in Admin.'));
       const bare = shows.filter(s => !App.qcOperatorsFor(s).length &&
         App.activeEpisodes().some(ep => ep.showId === s.id && App.subitems(ep).some(su => App.qcFor(ep, su.key).on && !App.isCompleteKey(ep, su.key))));
-      const head = el('.rvq-ep-head', null, [
-        el('span.rvq-ep-title', null, 'QC operators'),
-        opFilter != null ? el('button.btn-ghost.qcq-op-clear', { onclick: () => toggle(opFilter) }, 'Show everyone') : el('span.rvq-dept-n', null, staff.length)
-      ]);
-      return el('.rvq-ep.qcq-card.qcq-load', null, [
-        head,
-        tiles,
-        bare.length ? el('.qcq-op-warn', null, [App.icon('warn'), ' No QC operator on ' + bare.map(s => s.name).join(', ') +
-          ' — ' + (bare.length === 1 ? 'its' : 'their') + ' checks aren’t delegated automatically.' + (canEdit ? ' Add one with an operator’s Shows menu.' : '')]) : null
-      ]);
+      wrap.appendChild(el('.rvq-ep.qcq-card.qcr-card', null, [
+        el('.rvq-ep-head', null, [el('span.rvq-ep-title', null, 'QC operators'), el('span.rvq-dept-n', null, 'this week · vs capacity')]),
+        el('.qcr-body', null, [summary,
+          bare.length ? el('.qcq-op-warn', null, [App.icon('warn'), ' No QC operator on ' + bare.map(s => s.name).join(', ') +
+            ' — ' + (bare.length === 1 ? 'its' : 'their') + ' checks aren’t delegated automatically.' + (canEdit ? ' Add one with an operator’s Shows menu.' : '')]) : null,
+          el('.qcr-scroll', null, list)])
+      ]));
+      return wrap;
     },
 
     // the header row: the sortable columns drive the same Sort By as the toolbar

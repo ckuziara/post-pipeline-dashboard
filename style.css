@@ -6340,30 +6340,35 @@ button.qcq-report-link:hover { text-decoration: underline; }
 .qcq-grid .subrow > .cell:last-child { padding-right: 18px; }   /* off the card's rounded edge */
 .qcq-grid .subrow > .cell:first-child { padding-left: 14px; }
 
-/* QC operators' workload (App.qcQueue.workload): one tile per operator */
-.qcq-load .rvq-ep-head { justify-content: space-between; }
-.qcq-ops { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; padding: 12px; }
-.qcq-op { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--surface-2); cursor: pointer; display: flex; flex-direction: column; gap: 7px; min-width: 0; transition: border-color .12s, box-shadow .12s; }
-.qcq-op:hover { border-color: var(--text-3); }
-.qcq-op.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-.qcq-op.unassigned { border-style: dashed; }
-.qcq-op-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.qcq-op-name { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
-.qcq-op-n { flex: none; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
-.qcq-op-n b { font-size: 17px; color: var(--text); margin-right: 1px; }
-.qcq-op-bar { height: 5px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
-.qcq-op-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width .2s; }
-.qcq-op-bar > span.late { background: #ff6b6b; }
-.qcq-op-stats { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--text-3); min-height: 15px; }
-.qcq-op-stat.late { color: #ff8b8b; font-weight: 700; }
-.qcq-op-stat.today { color: var(--ink-warn); font-weight: 700; }
-.qcq-op-stat.free { color: var(--ink-ok); }
-.qcq-op-shows { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+/* QC → Resources (App.qcQueue.resources): the Team Workload widget's rows, full page */
+.qcr-card .rvq-ep-head { justify-content: space-between; }
+.qcr-body { padding: 12px 16px 14px; display: flex; flex-direction: column; gap: 10px; }
+.qcr-scroll { overflow-x: auto; }
+.qcr-tw { min-width: 900px; gap: 2px; }
+.qcr-tw .qcr-row { grid-template-columns: minmax(200px, 240px) minmax(120px, 1fr) 64px auto minmax(200px, 1.3fr); gap: 16px; }
+.qcr-tw .tw-row.qcr-row { min-height: 48px; padding: 6px 10px; margin: 0; }
+.qcr-tw .tw-weekhead.qcr-row { padding: 0 10px 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.qcr-h { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); }
+.qcr-tw .tw-name span:first-child { font-size: 13px; font-weight: 600; }
+.qcr-tw .tw-dept { font-size: 11px; }
+.qcr-tw .tw-weeks { gap: 8px; }
+.qcr-tw .tw-wk { width: 34px; }
+.qcr-tw .tw-wk.lbl { font-size: 10px; }
+.qcr-late { color: #ff8b8b; font-weight: 700; }
+.qcr-today { color: var(--ink-warn); font-weight: 700; }
+.qcr-shows { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.qcr-shows .qcq-op-edit { font-size: 10.5px; padding: 1px 8px; height: auto; min-height: 0; margin-left: auto; }
+.qcr-un { border: 1px dashed var(--border); }
+.qcr-un-hint { grid-column: 2 / -1; font-size: 11.5px; color: var(--text-3); }
 .qcq-op-show { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qcq-op-none { font-size: 10.5px; color: var(--text-3); font-style: italic; }
-.qcq-op-shows .qcq-op-edit { font-size: 10.5px; padding: 1px 8px; height: auto; min-height: 0; margin-left: auto; }
-.qcq-op-clear { font-size: 11.5px; padding: 3px 10px; }
-.qcq-op-warn { margin: 0 12px 12px; padding: 8px 10px; border-radius: 8px; font-size: 12px; background: rgba(253,171,61,.12); color: var(--ink-warn); display: flex; align-items: center; gap: 6px; }
+.qcq-op-warn { padding: 8px 10px; border-radius: 8px; font-size: 12px; background: rgba(253,171,61,.12); color: var(--ink-warn); display: flex; align-items: center; gap: 6px; }
+
+/* a QC operator's checks on their workload page (js/resources.js) */
+.rp-task.rp-qc { cursor: pointer; }
+.rp-task.rp-qc:hover { background: var(--hover); }
+.rp-qc-v { font-size: 11px; color: var(--text-3); }
+.rp-task-meta.late { color: #ff8b8b; }
 
 /* QC due on a row — a QC Manager's button to move it */
 .qcq-due { font: inherit; color: inherit; background: none; border: 0; padding: 2px 4px; margin-left: -4px; border-radius: 5px; }

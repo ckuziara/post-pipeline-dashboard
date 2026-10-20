@@ -67,6 +67,8 @@ window.App = window.App || {};
       if (su.assignee === id && !App.isApproved(su.status) && su.due >= from && su.start <= to) myTasks.push({ ep, su });
     }));
     myTasks.sort((a, b) => a.su.start < b.su.start ? -1 : 1);
+    // QC checks delegated to them (a QC operator's real work)
+    const myChecks = App.qcAssignedChecks().filter(x => x.owner === id).sort((a, b) => a.su.due < b.su.due ? -1 : 1);
 
     const gaugeBox = el('.rp-gauge-box');
     const body = el('.modal-body.rp-body');
@@ -182,7 +184,7 @@ window.App = window.App || {};
       const split = commit.length ? el('.rp-split', null, commit.map(c => el('.rp-split-seg', {
         title: c.show.name + ' — ' + c.pct + '%', style: { width: c.pct + '%', background: c.show.color }
       }))) : null;
-      const open = App.activeShows().filter(sh => !draft.shows.includes(sh.id) && (!dept || App.showDepts(sh).includes(dept)));
+      const open = App.activeShows().filter(sh => !draft.shows.includes(sh.id) && (!dept || App.teamDepts(App.showPipeline(sh)).includes(dept)));
       let picker = null;
       if (edit && adding) {
         picker = el('.rp-picker', null, open.length ? open.map(sh => {
@@ -226,6 +228,25 @@ window.App = window.App || {};
           who
         ]);
       });
+      // a QC operator's checks: open one on the QC tab
+      if (myChecks.length || dept === 'qc') {
+        const today = App.isoDate(App.today());
+        const checkRows = myChecks.map(({ ep, su, state }) => {
+          const real = App.subitem(ep, su.key) || su, w = App.qcWindow(ep, real);
+          const late = state === 'waiting' && w && w.due < today;
+          const [label, bg] = state === 'waiting' ? ['In QC', '#ff6b6b'] : state === 'failed' ? ['Sent back', '#b3261e'] : ['Not in QC yet', 'var(--surface-3)'];
+          return el('.rp-task.rp-qc', { style: { borderLeftColor: App.dept(real.dept).color }, title: 'Open on the QC tab',
+            onclick: () => { App.modal.close(); App.qcQueue.focus(ep.id, su.key); } }, [
+            el('.rp-task-main', null, [
+              el('.rp-task-name', null, [el('b', null, ep.code), ' ' + real.name, el('span.rp-qc-v', null, ' QC V' + App.qcVersion(ep, su.key))]),
+              el('.rp-task-meta' + (late ? '.late' : ''), null, w ? (late ? 'Was due ' : 'QC due ') + App.fmtDate(w.due) : '')
+            ]),
+            el('span.res-pill', { style: { background: bg, color: state ? '#fff' : 'var(--text-2)' } }, label)
+          ]);
+        });
+        body.appendChild(section('QC checks', myChecks.length ? myChecks.length + ' delegated' : null,
+          checkRows.length ? checkRows : [el('span.res-none', null, 'No QC checks delegated to them.')]));
+      }
       body.appendChild(section('Open tasks', App.fmtRange(from, to), taskRows.length ? taskRows : [el('span.res-none', null, 'No open tasks in the next ' + WEEKS + ' weeks.')]));
 
       // ---- footer ----

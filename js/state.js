@@ -309,6 +309,8 @@ window.App = window.App || {};
   App.canManageResources = (k) => App.rolePerm(k, 'manageResources', App.role(k).manageResources);
   // the Timeline's Schedule / Resources switch — this device's choice, and
   // only Resources for a role that may see it
+  // the QC tab: the checks themselves, or the QC operators' workload
+  App.qcMode = () => App.prefs.get('qcMode', 'checks') === 'resources' ? 'resources' : 'checks';
   App.timelineMode = () => App.prefs.get('timelineMode', 'schedule') === 'resources' && App.canSeeResources(App.state.role) ? 'resources' : 'schedule';
 
   /* Load for the Timeline's Resources view, in working days, for any run of
@@ -324,7 +326,9 @@ window.App = window.App || {};
        planned — 0; kept so callers can still read it (manual % allocations
                  were replaced by production teams + App.personCommitment)
        off     — working days of time off
-       tasks   — their open tasks that touch the bucket, as { ep, su } */
+       tasks   — their open tasks that touch the bucket, as { ep, su } —
+                 and, for QC operators, the QC checks delegated to them
+                 ({ ep, su, qc: true }, see App.qcAssignedChecks) */
   App.mondayIso = function (iso) {
     const d = App.parseDate(iso); const dow = (d.getDay() + 6) % 7;
     return App.isoDate(App.addDays(d, -dow));
@@ -348,6 +352,8 @@ window.App = window.App || {};
       if (!who || App.isApproved(su.status)) return;
       (tasks[who] = tasks[who] || []).push({ ep, su });
     }));
+    // a QC check is a QC operator's work: its QC days count like a task's
+    App.qcAssignedChecks().forEach(x => (tasks[x.owner] = tasks[x.owner] || []).push(x));
     // each bucket's working days, worked out once for everybody
     const workdays = buckets.map(b => App.workdaysIn(b.start, b.end));
     people.forEach(p => {
@@ -597,6 +603,27 @@ window.App = window.App || {};
       l(a).upcoming - l(b).upcoming || ids.indexOf(a) - ids.indexOf(b))[0];
     ep.qcChecks[key] = Object.assign({}, c, { owner: id, ownerAuto: true });
     return id;
+  };
+  /* The QC checks delegated to someone and not finished: in QC with them,
+     sent back (the fix comes back to them), or delegated ahead. Each is
+     { ep, su, qc: true, owner } with su a copy carrying the check's QC days
+     as its start / due — so App.resourceLoad books them like a task. A
+     check past its QC due date sits on today: it's still on their desk. */
+  App.qcAssignedChecks = function () {
+    const out = [], today = App.isoDate(App.today());
+    App.activeEpisodes().forEach(ep => {
+      if (!ep.qcChecks) return;
+      App.subitems(ep).forEach(su => {
+        const c = App.qcCheck(ep, su.key);
+        if (!c || !c.owner || !App.person(c.owner) || !App.qcFor(ep, su.key).on) return;
+        if (c.state === 'passed' || App.isCompleteKey(ep, su.key)) return;
+        const w = App.qcWindow(ep, su); if (!w) return;
+        let start = w.start, due = w.due;
+        if (due < today) start = due = today;
+        out.push({ ep, su: Object.assign({}, su, { start, due, name: su.name + ' · QC' }), qc: true, owner: c.owner, state: c.state || null });
+      });
+    });
+    return out;
   };
   /* Where a dependency stands, in words, for hovers: "Approved", "approved,
      waiting for QC V2", "QC sent a report back (QC V1)", or its status. */
@@ -1827,6 +1854,12 @@ window.App = window.App || {};
       mine.push({ showId: ep.showId, su });
       (days[ep.showId] = days[ep.showId] || { days: 0, tasks: 0 }).tasks++;
     }));
+    // and the QC checks delegated to them (App.qcAssignedChecks)
+    App.qcAssignedChecks().forEach(({ ep, su, owner }) => {
+      if (owner !== personId || su.due < from || su.start > to) return;
+      mine.push({ showId: ep.showId, su });
+      (days[ep.showId] = days[ep.showId] || { days: 0, tasks: 0 }).tasks++;
+    });
     App.workdaysIn(from, to).forEach(day => {
       const on = mine.filter(m => m.su.start <= day && m.su.due >= day);
       on.forEach(m => { days[m.showId].days += 1 / on.length; });

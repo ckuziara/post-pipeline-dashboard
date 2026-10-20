@@ -341,7 +341,16 @@ window.App = window.App || {};
 
     // Sort By — the Board and the QC tab, each with its own options. The same trigger and popover as
     // the filters beside it; direction is picked in the same menu rather than on a separate button.
-    if (App.state.view === 'board' || App.state.view === 'qc') {
+    // QC: its checks, or its operators' workload (full page — js/qc.js resources)
+    if (App.state.view === 'qc') {
+      const mode = App.qcMode();
+      bar.appendChild(el('.prefs-seg.toolbar-seg', null, [['checks', 'Checks'], ['resources', 'Resources']].map(([v, label]) =>
+        el('button.seg' + (mode === v ? '.active' : ''), {
+          title: v === 'resources' ? 'The QC operators’ workload, week by week' : 'The checks waiting for QC',
+          onclick: () => { App.prefs.set('qcMode', v); App.render(); }
+        }, label))));
+    }
+    if (App.state.view === 'board' || (App.state.view === 'qc' && App.qcMode() === 'checks')) {
       const view = App.state.view, cur = App.sortPref(view), opts = App.sortOptionsFor(view);
       const setSort = (patch) => { App.prefs.set('sortBy.' + view, Object.assign({}, cur, patch)); App.filterMenu.close(); App.render(); };
       const opt = opts.find(o => o[0] === cur.key);
