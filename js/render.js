@@ -25,9 +25,15 @@ window.App = window.App || {};
   App.subsView = function (ep) {
     const f = App.state.filters;
     return App.subitems(ep).filter(su =>
-      App.filterHas(f.dept, su.dept) &&
+      App.deptFilterHas(f.dept, ep, su) &&
       App.filterHas(f.person, su.assignee));
   };
+  /* The Dept filter. QC owns no tasks of its own — it checks other
+     departments' — so ticking it ("With QC") means every department's tasks
+     that require QC (and not an old board's own QC-department task). */
+  App.deptFilterHas = (depts, ep, su) => !depts.length ||
+    (su.dept !== 'qc' && depts.includes(su.dept)) ||
+    (depts.includes('qc') && App.qcFor(ep, su.key).on);
 
   /* Sort By — the Board's episode order (the Timeline stays in start
      order). Device-local like the other view settings, never synced to teammates. Every
@@ -91,7 +97,8 @@ window.App = window.App || {};
     let eps = App.activeEpisodes().filter(ep =>      // archived shows/episodes never surface
       App.filterHas(f.show, ep.showId) &&
       (f.q === '' || (ep.title + ' ' + ep.code).toLowerCase().includes(f.q.toLowerCase())));
-    if (f.person.length) eps = eps.filter(ep => Object.values(ep.assignees || {}).some(a => f.person.includes(a)));
+    // (the QC tab filters its checks by operator instead — App.qcOperatorMatch)
+    if (f.person.length && App.state.view !== 'qc') eps = eps.filter(ep => Object.values(ep.assignees || {}).some(a => f.person.includes(a)));
     // Timeline and Board each have their own "Hide completed episodes" preference
     const v = App.state.view;
     if ((v === 'timeline' || v === 'board') && App.prefs.get(v === 'board' ? 'hideDoneBoard' : 'hideDoneTimeline', false)) {
@@ -232,10 +239,11 @@ window.App = window.App || {};
     // budget modelling is oversight work, so it rides the same gate as Admin
     if (!phone && App.isAdminRole(App.state.role)) tabs.push(['planning', 'sparkle', 'Planning']);
     if (App.isAdminRole(App.state.role)) tabs.push(['admin', 'tools', 'Admin']);
-    // the person's own priority order (set in the setup wizard) leads; the
+    // the person's own priority order (set in the setup wizard, else their
+    // role's — see ROLE_TAB_ORDER in js/guide.js) leads; the
     // tabs they didn't rank (Planning, Admin) keep their place after
     const rank = App.profile ? App.profile.viewOrder() : [];
-    if (rank.length && App.profile.hasOrder()) {
+    if (rank.length && App.profile.ranked()) {
       const pos = (v) => { const i = rank.indexOf(v); return i < 0 ? 100 : i; };
       tabs.sort((a, b) => pos(a[0]) - pos(b[0]));
     }
@@ -318,11 +326,21 @@ window.App = window.App || {};
     const keep = (sel) => (o) => sel.includes(o[0]);
     let depts = Object.keys(App.DEPARTMENTS);
     if (shows) { const used = new Set(); shows.forEach(s => App.showDepts(s).forEach(d => used.add(d))); depts = depts.filter(d => used.has(d)); }
-    const deptOpts = Object.keys(App.DEPARTMENTS).map(k => [k, App.DEPARTMENTS[k].label])
+    if (!depts.includes('qc') && App.DEPARTMENTS.qc) depts.push('qc');    // "With QC" spans every show
+    const deptOpts = Object.keys(App.DEPARTMENTS).map(k => [k, k === 'qc' ? 'With QC' : App.DEPARTMENTS[k].label])
       .filter(o => depts.includes(o[0]) || keep(f.dept)(o));
     bar.appendChild(el('span.toolbar-label', null, 'Dept'));
-    bar.appendChild(multiSelectEl('dept', deptOpts, f.dept, 'All departments',
-      arr => { f.dept = arr; App.render(); }));
+    if (App.state.view === 'qc') {
+      /* On the QC tab every check already needs QC, so Dept narrows them to
+         the departments whose work it is — no With QC. A With QC ticked
+         elsewhere is left alone for the other tabs. */
+      const keepQc = f.dept.includes('qc') ? ['qc'] : [];
+      bar.appendChild(multiSelectEl('dept', deptOpts.filter(o => o[0] !== 'qc'), f.dept.filter(d => d !== 'qc'), 'All departments',
+        arr => { f.dept = arr.concat(keepQc); App.render(); }));
+    } else {
+      bar.appendChild(multiSelectEl('dept', deptOpts, f.dept, 'All departments',
+        arr => { f.dept = arr; App.render(); }));
+    }
 
     let onShow = null;
     if (shows) {
@@ -333,15 +351,33 @@ window.App = window.App || {};
     }
     const personOpts = App.state.data.people.filter(p => App.roleDept(p.role))
       .filter(p => f.person.includes(p.id) ||
-        ((!onShow || onShow.has(p.id)) && (!f.dept.length || f.dept.includes(App.roleDept(p.role)))))
+        ((!onShow || onShow.has(p.id)) && (!f.dept.length || f.dept.includes('qc') || f.dept.includes(App.roleDept(p.role)))))
       .map(p => [p.id, p.name]);
-    bar.appendChild(el('span.toolbar-label', null, 'Owner'));
-    bar.appendChild(multiSelectEl('person', personOpts, f.person, 'Everyone',
-      arr => { f.person = arr; App.render(); }));
+    if (App.state.view === 'qc') {
+      // QC's checks have an operator, not an owner: its own filter (App.qcOperatorMatch)
+      f.operator = f.operator || [];
+      const opOpts = App.deptStaff('qc').map(p => [p.id, p.name]).concat([[App.QC_UNASSIGNED, 'Unassigned']]);
+      bar.appendChild(el('span.toolbar-label', null, 'Operator'));
+      bar.appendChild(multiSelectEl('operator', opOpts, f.operator, 'Everyone',
+        arr => { f.operator = arr; App.render(); }));
+    } else {
+      bar.appendChild(el('span.toolbar-label', null, 'Owner'));
+      bar.appendChild(multiSelectEl('person', personOpts, f.person, 'Everyone',
+        arr => { f.person = arr; App.render(); }));
+    }
 
     // Sort By — the Board and the QC tab, each with its own options. The same trigger and popover as
     // the filters beside it; direction is picked in the same menu rather than on a separate button.
-    if (App.state.view === 'board' || App.state.view === 'qc') {
+    // QC: its checks, or its operators' workload (full page — js/qc.js resources)
+    if (App.state.view === 'qc') {
+      const mode = App.qcMode();
+      bar.appendChild(el('.prefs-seg.toolbar-seg', null, [['checks', 'Checks'], ['resources', 'Resources']].map(([v, label]) =>
+        el('button.seg' + (mode === v ? '.active' : ''), {
+          title: v === 'resources' ? 'The QC operators’ workload, week by week' : 'The checks waiting for QC',
+          onclick: () => { App.prefs.set('qcMode', v); App.render(); }
+        }, label))));
+    }
+    if (App.state.view === 'board' || (App.state.view === 'qc' && App.qcMode() === 'checks')) {
       const view = App.state.view, cur = App.sortPref(view), opts = App.sortOptionsFor(view);
       const setSort = (patch) => { App.prefs.set('sortBy.' + view, Object.assign({}, cur, patch)); App.filterMenu.close(); App.render(); };
       const opt = opts.find(o => o[0] === cur.key);

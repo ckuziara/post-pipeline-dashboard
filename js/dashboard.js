@@ -59,7 +59,7 @@ window.App = window.App || {};
     upcoming:  { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
     teamLoad:  { minW: 3, maxW: 12, minH: 130, maxH: 900, itemPx: 38, headPx: 52 },
     reviewUploads: { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
-    qcQueue:   { minW: 3, maxW: 12, minH: 150, maxH: 900, itemPx: 52, headPx: 82 },
+    qcQueue:   { minW: 3, maxW: 12, minH: 140, maxH: 900, itemPx: 34, headPx: 90 },
     directorCal: { minW: 3, maxW: 12, minH: 260, maxH: 900, itemPx: 22, headPx: 120 },
     // a sheet, not a list: it scrolls inside its tile rather than counting rows
     dailySummary: { minW: 6, maxW: 12, minH: 220, maxH: 1400 }
@@ -231,7 +231,7 @@ window.App = window.App || {};
   const WIDGET_TITLE = {
     priority: 'Priority', atRisk: 'At Risk', journal: 'Journal', delivered: 'Delivered Episodes',
     pipeline: 'Pipeline Status', deptLoad: 'Department Workload', upcoming: 'Upcoming Deliveries',
-    teamLoad: 'Team Workload', reviewUploads: 'Review Uploads', qcQueue: 'QC Today', directorCal: 'Priority',
+    teamLoad: 'Team Workload', reviewUploads: 'Review Uploads', qcQueue: 'QC Priority', directorCal: 'Priority',
     dailySummary: 'Daily Summary'
   };
 
@@ -251,6 +251,14 @@ window.App = window.App || {};
     { key: 'week',     label: 'Due This Week', sub: 'Before the week is out',   color: '#f6be00', open: true  },
     { key: 'upcoming', label: 'Upcoming',      sub: 'Due later',                color: '#00c875', open: false },
     { key: 'review',   label: 'In Review',     sub: 'Currently being reviewed', color: '#a25ddc', open: true  }
+  ];
+  // QC Priority's groups: the same card, by QC due date
+  const QC_PRIORITY_GROUPS = [
+    { key: 'overdue',  label: 'Overdue',       sub: 'Past its QC due date',          color: '#ff5b6e', open: true  },
+    { key: 'today',    label: 'Due Today',     sub: 'QC due by end of day',          color: '#fdab3d', open: true  },
+    { key: 'week',     label: 'Due This Week', sub: 'Before the week is out',        color: '#f6be00', open: true  },
+    { key: 'upcoming', label: 'Upcoming',      sub: 'QC due later',                  color: '#00c875', open: false },
+    { key: 'coming',   label: 'Coming to QC',  sub: 'Approved — not sent to QC yet', color: '#579bfc', open: false }
   ];
 
   const rectsOverlap = (a, b) =>
@@ -1225,8 +1233,12 @@ window.App = window.App || {};
       };
     },
 
-    priorityGroup(g, items, t) {
-      const pkey = 'dashPri:' + g.key;
+    /* One collapsible group of a Priority card. `o` lets QC Priority reuse
+       it: its own groups, saved open/closed state and rows. */
+    priorityGroup(g, items, t, o) {
+      o = o || {};
+      const all = o.groups || PRIORITY_GROUPS, pre = o.pref || 'dashPri:';
+      const pkey = pre + g.key;
       const open = App.prefs.get(pkey, g.open);
       const box = el('.pr-group', { style: { borderLeftColor: g.color } });
 
@@ -1234,7 +1246,7 @@ window.App = window.App || {};
         type: 'button',
         // Opt: every group on the card opens or closes with this one
         onclick: (e) => {
-          (e.altKey ? PRIORITY_GROUPS : [g]).forEach(x => App.prefs.set('dashPri:' + x.key, !open));
+          (e.altKey ? all : [g]).forEach(x => App.prefs.set(pre + x.key, !open));
           App.render();
         }
       }, [
@@ -1248,7 +1260,8 @@ window.App = window.App || {};
         const rows = el('.pr-rows');
         // capped to what the tile can actually hold at this height
         const cap = capOf('priority', t.h);
-        items.slice(0, cap).forEach(({ ep, su }) => {
+        if (o.row) items.slice(0, cap).forEach(x => rows.appendChild(o.row(x)));
+        else items.slice(0, cap).forEach(({ ep, su }) => {
           const st = App.status(su.status);
           // the version it's on, the way Reviews writes it: V1 until it's sent back
           const ver = 'V' + (App.revisionsUsed(ep, su.key) + 1);
@@ -1440,10 +1453,54 @@ window.App = window.App || {};
       };
     },
 
-    // QC's checks for today (and anything overdue or at risk) — js/qc.js
-    qcQueue(m) {
-      const n = App.qcQueue.pendingCount(m.episodes);
-      return { title: 'QC Today', sub: n ? n + ' waiting for QC' : 'nothing waiting', body: App.qcQueue.widget(m) };
+    /* QC Priority — the Priority card for QC: the checks to do, grouped by
+       their QC due date, plus what's been approved and is about to arrive.
+       A QC operator sees the checks delegated to them; anyone else (a
+       Producer, a QC person not on the team list) sees all of QC's. A row
+       opens the check on the QC tab. */
+    qcQueue(m, t) {
+      const meId = App.state.user && App.state.user.personId;
+      const mine = !!(meId && App.roleDept(App.state.role) === 'qc' && App.person(meId));
+      const ours = (ep, su) => !mine || App.qcOwner(ep, su.key).id === meId;
+      const todayIso = App.isoDate(App.today());
+      const today = App.today();
+      const weekIso = App.isoDate(App.addDays(today, 7 - (((today.getDay() + 6) % 7) + 1)));
+      const buckets = {};
+      QC_PRIORITY_GROUPS.forEach(g => { buckets[g.key] = []; });
+      App.qcQueue.collect(m.episodes, false).forEach(x => {
+        if (!ours(x.ep, x.su)) return;
+        const d = x.qcDue || '9999';
+        buckets[d < todayIso ? 'overdue' : d === todayIso ? 'today' : d <= weekIso ? 'week' : 'upcoming'].push(x);
+      });
+      m.episodes.forEach(ep => App.subitems(ep).forEach(su => {
+        if (su.status !== 'approved' || !App.qcFor(ep, su.key).on || App.qcState(ep, su.key) === 'passed' || !ours(ep, su)) return;
+        const w = App.qcWindow(ep, su);
+        buckets.coming.push({ ep, su, qcDue: w ? w.due : null, coming: true });
+      }));
+      Object.keys(buckets).forEach(k => buckets[k].sort((a, b) => (a.qcDue || '9999') < (b.qcDue || '9999') ? -1 : 1));
+      const row = (x) => {
+        const { ep, su } = x, ver = 'QC V' + App.qcVersion(ep, su.key);
+        const o = App.qcOwner(ep, su.key), who = o.id && App.person(o.id);
+        return el('.pr-row', {
+          title: ep.title + ' — ' + su.name + ' ' + ver + (x.qcDue ? ' · QC due ' + App.fmtDate(x.qcDue) : '') + (mine ? '' : ' · ' + (who ? who.name : 'unassigned')),
+          onclick: () => App.qcQueue.focus(ep.id, su.key)
+        }, [
+          el('span.pr-code', null, ep.code),
+          el('span.pr-task', null, ['(', el('span.pr-task-name', null, su.name), '\u00a0', el('span.pr-ver', null, ver), ')']),
+          el('span.pr-date', null, x.qcDue ? App.fmtDate(x.qcDue) : '—'),
+          x.coming ? el('span.pr-chip', { style: { background: 'var(--surface-3)', color: 'var(--text-2)' } }, 'Approved')
+            : el('span.pr-chip', { style: { background: '#ff6b6b', color: '#fff' } }, 'In QC')
+        ]);
+      };
+      const groups = QC_PRIORITY_GROUPS.filter(g => buckets[g.key].length)
+        .map(g => this.priorityGroup(g, buckets[g.key], t, { groups: QC_PRIORITY_GROUPS, pref: 'dashQcPri:', row }));
+      const open = ['overdue', 'today', 'week', 'upcoming'].reduce((n, k) => n + buckets[k].length, 0);
+      return {
+        title: 'QC Priority',
+        sub: (mine ? 'Delegated to you' : 'All of QC') + ' · ' + open + ' in QC',
+        body: groups.length ? el('.pr-list', null, groups)
+          : el('.dw-calm', null, mine ? 'No QC checks delegated to you right now.' : 'Nothing waiting for QC — all clear.')
+      };
     },
 
     // Post Operations' review sheet — all of it lives in js/dailysummary.js

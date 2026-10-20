@@ -67,6 +67,8 @@ window.App = window.App || {};
       if (su.assignee === id && !App.isApproved(su.status) && su.due >= from && su.start <= to) myTasks.push({ ep, su });
     }));
     myTasks.sort((a, b) => a.su.start < b.su.start ? -1 : 1);
+    // QC checks delegated to them (a QC operator's real work)
+    const myChecks = App.qcAssignedChecks().filter(x => x.owner === id).sort((a, b) => a.su.due < b.su.due ? -1 : 1);
 
     const gaugeBox = el('.rp-gauge-box');
     const body = el('.modal-body.rp-body');
@@ -104,21 +106,54 @@ window.App = window.App || {};
       g.style.setProperty('--rp-p', pct); g.style.setProperty('--rp-c', LEVEL_C[lvlNow]);
       gaugeBox.appendChild(el('.rp-gauge-wrap', { title: 'This week: ' + r1(busyNow) + ' of ' + r1(now.cap) + ' days' }, [g, el('.rp-gauge-lbl', null, 'This week')]));
 
-      // ---- the weeks ahead ----
-      body.appendChild(el('.rp-weeks', null, weeks.map((w, i) => {
-        const l = load[w.key], busy = Math.max(l.booked, l.planned), lvl = levelOf(busy, l.cap);
-        const away = l.days && l.off >= l.days;
-        const ratio = l.cap > 0 ? busy / l.cap : (busy > 0 ? 2 : 0);
+      // ---- this week, day by day ----
+      /* A QC operator's day is the checks the QC plan puts on it (the QC
+         tab's plan — App.qcQueue.plan), against QC's checks per day, as on
+         QC → Resources. Anyone else's is whether they're booked, against
+         their share of the day. */
+      const today = App.isoDate(App.today());
+      const wkDays = [0, 1, 2, 3, 4].map(i => App.shiftIso(mon, i));
+      const DAY = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+      const isQc = dept === 'qc';
+      const perDay = App.qcSettings().perDay;
+      const dayLoad = isQc ? null : App.resourceLoad([pDraft], wkDays.map(d => ({ key: d, start: d, end: d })), { assign: draft.assign })[id];
+      const planned = isQc ? App.qcQueue.plan(App.activeEpisodes()).items.filter(x => App.qcOwner(x.ep, x.su.key).id === id) : [];
+      const doneQc = isQc ? (App.qcQueue.doneByDay(wkDays[0], wkDays[4])[id] || {}) : {};
+      const awayOn = (day) => draft.timeOff.some(t => t.start <= day && (t.end || t.start) >= day);
+      if (isQc) {
+        // the hero's week, in the same terms: checks planned of what QC takes on the days they're in
+        const inWeek = planned.filter(x => wkDays.includes(x.date)).length + wkDays.reduce((n, d) => n + (doneQc[d] || []).length, 0);
+        const capWk = perDay * wkDays.filter(d => !awayOn(d)).length;
+        const lv = levelOf(inWeek, capWk), pc = capWk > 0 ? Math.min(100, Math.round(inWeek / capWk * 100)) : (inWeek ? 100 : 0);
+        gaugeBox.innerHTML = '';
+        const g2 = el('.rp-gauge', null, [el('span', null, [el('b', null, String(inWeek)), '/' + capWk])]);
+        g2.style.setProperty('--rp-p', pc); g2.style.setProperty('--rp-c', LEVEL_C[lv]);
+        gaugeBox.appendChild(el('.rp-gauge-wrap', { title: 'This week: ' + inWeek + ' QC checks planned of ' + capWk }, [g2, el('.rp-gauge-lbl', null, 'Checks this week')]));
+      }
+      body.appendChild(el('.rp-weeks.rp-days-strip', null, wkDays.map((day, i) => {
+        const away = awayOn(day);
+        let busy, cap, tip;
+        if (isQc) {
+          const list = (doneQc[day] || []).concat(planned.filter(x => x.date === day));
+          const nd = (doneQc[day] || []).length;
+          busy = list.length; cap = perDay;
+          tip = App.fmtDate(day) + ' — ' + [nd ? nd + ' QC check' + (nd === 1 ? '' : 's') + ' done' : null, busy - nd ? (busy - nd) + ' planned' : null].filter(Boolean).join(', ') +
+            (busy ? '' : 'no QC checks') + ' · QC takes up to ' + perDay + ' a day' +
+            (list.length ? '\n' + list.slice(0, 8).map(x => (x.done ? '✓ ' : '• ') + x.ep.code + ' ' + x.su.name).join('\n') : '');
+        } else {
+          const l = dayLoad[day];
+          busy = Math.max(l.booked, l.planned); cap = l.cap;
+          tip = App.fmtDate(day) + ' — ' + (l.tasks.length ? l.tasks.length + ' task' + (l.tasks.length === 1 ? '' : 's') + '\n' + l.tasks.slice(0, 8).map(({ ep, su }) => '• ' + ep.code + ' ' + su.name).join('\n') : 'nothing booked');
+        }
+        const lvl = levelOf(busy, cap);
+        const ratio = cap > 0 ? busy / cap : (busy > 0 ? 2 : 0);
         const ring = el('.res-ring.rp-ring' + (lvl === 'over' ? '.over' : ''), null,
           [el('.res-disc', { style: { width: (26 * Math.sqrt(Math.min(1, ratio))) + 'px', height: (26 * Math.sqrt(Math.min(1, ratio))) + 'px' } })]);
         ring.style.setProperty('--res-c', LEVEL_C[lvl]);
-        return el('.rp-wk' + (i === 0 ? '.now' : '') + (away ? '.away' : ''), {
-          title: 'w/c ' + App.fmtDate(w.start) + ' — ' + r1(l.booked) + ' d booked' + (l.planned ? ', ' + r1(l.planned) + ' d planned' : '') +
-                 ' of ' + r1(l.cap) + ' d' + (l.off ? ' (' + l.off + ' d off)' : '') + ' · ' + l.tasks.length + ' task' + (l.tasks.length === 1 ? '' : 's')
-        }, [
-          el('.rp-wk-lbl', null, i === 0 ? 'This wk' : App.fmtDate(w.start)),
+        return el('.rp-wk' + (day === today ? '.now' : '') + (day < today ? '.past' : '') + (away ? '.away' : ''), { title: away ? App.fmtDate(day) + ' — away' : tip }, [
+          el('.rp-wk-lbl', null, [el('b', null, DAY[i]), ' ' + App.parseDate(day).getDate()]),
           away ? el('.rp-wk-away', null, 'Away') : ring,
-          el('.rp-wk-val.' + lvl, null, away ? '—' : r1(busy) + '/' + r1(l.cap))
+          el('.rp-wk-val.' + lvl, null, away ? '—' : isQc ? String(busy) + '/' + cap : r1(busy) + '/' + r1(cap))
         ]);
       })));
 
@@ -182,7 +217,7 @@ window.App = window.App || {};
       const split = commit.length ? el('.rp-split', null, commit.map(c => el('.rp-split-seg', {
         title: c.show.name + ' — ' + c.pct + '%', style: { width: c.pct + '%', background: c.show.color }
       }))) : null;
-      const open = App.activeShows().filter(sh => !draft.shows.includes(sh.id) && (!dept || App.showDepts(sh).includes(dept)));
+      const open = App.activeShows().filter(sh => !draft.shows.includes(sh.id) && (!dept || App.teamDepts(App.showPipeline(sh)).includes(dept)));
       let picker = null;
       if (edit && adding) {
         picker = el('.rp-picker', null, open.length ? open.map(sh => {
@@ -226,6 +261,25 @@ window.App = window.App || {};
           who
         ]);
       });
+      // a QC operator's checks: open one on the QC tab
+      if (myChecks.length || dept === 'qc') {
+        const today = App.isoDate(App.today());
+        const checkRows = myChecks.map(({ ep, su, state }) => {
+          const real = App.subitem(ep, su.key) || su, w = App.qcWindow(ep, real);
+          const late = state === 'waiting' && w && w.due < today;
+          const [label, bg] = state === 'waiting' ? ['In QC', '#ff6b6b'] : state === 'failed' ? ['Sent back', '#b3261e'] : ['Not in QC yet', 'var(--surface-3)'];
+          return el('.rp-task.rp-qc', { style: { borderLeftColor: App.dept(real.dept).color }, title: 'Open on the QC tab',
+            onclick: () => { App.modal.close(); App.qcQueue.focus(ep.id, su.key); } }, [
+            el('.rp-task-main', null, [
+              el('.rp-task-name', null, [el('b', null, ep.code), ' ' + real.name, el('span.rp-qc-v', null, ' QC V' + App.qcVersion(ep, su.key))]),
+              el('.rp-task-meta' + (late ? '.late' : ''), null, w ? (late ? 'Was due ' : 'QC due ') + App.fmtDate(w.due) : '')
+            ]),
+            el('span.res-pill', { style: { background: bg, color: state ? '#fff' : 'var(--text-2)' } }, label)
+          ]);
+        });
+        body.appendChild(section('QC checks', myChecks.length ? myChecks.length + ' delegated' : null,
+          checkRows.length ? checkRows : [el('span.res-none', null, 'No QC checks delegated to them.')]));
+      }
       body.appendChild(section('Open tasks', App.fmtRange(from, to), taskRows.length ? taskRows : [el('span.res-none', null, 'No open tasks in the next ' + WEEKS + ' weeks.')]));
 
       // ---- footer ----

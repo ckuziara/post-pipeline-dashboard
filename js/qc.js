@@ -233,14 +233,40 @@ window.App = window.App || {};
     setTimeout(() => input.focus(), 20);
   }
 
-  // which operator the list is narrowed to from the workload panel: a person
-  // id, '' for the unassigned, or null for everyone (this session only)
-  let opFilter = null;
+  /* The QC tab's Operator filter (the toolbar's Owner, renamed there):
+     the checks delegated to the picked people, or unassigned. */
+  App.QC_UNASSIGNED = '__unassigned';
+  App.qcOperatorMatch = (ep, key) => {
+    const ops = (App.state.filters && App.state.filters.operator) || [];
+    if (!ops.length) return true;
+    const id = App.qcOwner(ep, key).id;
+    return id ? ops.includes(id) : ops.includes(App.QC_UNASSIGNED);
+  };
+  // ...and its Dept filter: the department whose deliverable it is (With QC means nothing here)
+  const deptOk = (su) => { const d = ((App.state.filters && App.state.filters.dept) || []).filter(k => k !== 'qc'); return !d.length || d.includes(su.dept); };
+  /* QC's finished work, by who did it and the day: every pass and every
+     report sent back (a revoked pass doesn't count), from `from` to `to`.
+     Who is whoever sent it, else the check's operator.
+     → { [personId]: { [iso]: [{ ep, su, done: true, result }] } } */
+  function doneByDay(from, to) {
+    const out = {};
+    App.activeEpisodes().forEach(ep => Object.keys(ep.qcChecks || {}).forEach(key => {
+      const c = ep.qcChecks[key], su = App.subitem(ep, key); if (!su) return;
+      (c.reports || []).forEach(r => {
+        if (r.revokedAt) return;
+        const day = App.isoDate(new Date(r.at));
+        if (day < from || day > to) return;
+        const who = r.by && App.person(r.by) ? r.by : c.owner; if (!who) return;
+        ((out[who] = out[who] || {})[day] = out[who][day] || []).push({ ep, su, done: true, result: r.result === 'pass' ? 'passed' : 'report sent' });
+      });
+    }));
+    return out;
+  }
+  const opOk = (x) => App.qcOperatorMatch(x.ep, x.su.key) && deptOk(x.su);
   let curLoad = null;     // App.qcWorkload(), once per render — every row's picker reads it
-  const ownerMatches = (x) => opFilter == null || (App.qcOwner(x.ep, x.su.key).id || '') === opFilter;
 
   App.qcQueue = {
-    collect, plan,
+    collect, plan, doneByDay,
     pendingCount(episodes) { return collect(episodes, false).length; },
 
     /* A pass carries its own report, the same shape as one sent back, so the
@@ -614,13 +640,14 @@ window.App = window.App || {};
 
     focus(epId, key) {
       App.state.view = 'qc';
+      if (App.qcMode() !== 'checks') App.prefs.set('qcMode', 'checks');
       App.render();
       requestAnimationFrame(() => {
         const row = document.querySelector('.qcq-row[data-key="' + CSS.escape(KEY(epId, key)) + '"]');
         if (!row) { App.toast('That check is hidden by the current filters', true); return; }
         row.scrollIntoView({ block: 'center', behavior: 'smooth' });
         row.classList.remove('rvq-flash'); void row.offsetWidth; row.classList.add('rvq-flash');
-        setTimeout(() => row.classList.remove('rvq-flash'), 1400);
+        setTimeout(() => row.classList.remove('rvq-flash'), 1700);
       });
     },
 
@@ -629,11 +656,13 @@ window.App = window.App || {};
        columns sort (ascending, descending, then back to QC due) — the same
        setting as the toolbar's Sort menu (sortBy.qc). */
     render(episodes) {
+      // the toolbar's Checks / Resources toggle (App.qcMode)
+      if (App.qcMode() === 'resources') return this.resources();
       const wrap = el('.rvq.qcq');
       wrap.appendChild(el('.section-title', null, [App.icon('checkBadge'), ' QC']));
-      wrap.appendChild(this.workload(episodes));
-      const open = plan(episodes).items.filter(ownerMatches).sort(sortChecks());
-      const done = collect(episodes, true).filter(x => x.state !== 'waiting').filter(ownerMatches)
+      curLoad = App.qcWorkload();
+      const open = plan(episodes).items.filter(opOk).sort(sortChecks());
+      const done = collect(episodes, true).filter(x => x.state !== 'waiting' && opOk(x))
         .sort((a, b) => String(b.check.decidedAt) < String(a.check.decidedAt) ? -1 : 1);
       if (!open.length && !done.length && !pendingFor(episodes).length) {
         wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' Nothing is waiting for QC right now.']));
@@ -648,9 +677,9 @@ window.App = window.App || {};
           el('.subtable', null, grid)
         ]);
       };
-      const pending = pendingFor(episodes).filter(ownerMatches).sort(sortChecks());
-      if (opFilter != null && !open.length && !pending.length && !done.length) {
-        wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' Nothing ' + (opFilter ? 'delegated to ' + ((App.person(opFilter) || {}).name || 'them') : 'unassigned') + ' right now.']));
+      const pending = pendingFor(episodes).filter(opOk).sort(sortChecks());
+      if (!open.length && !pending.length && !done.length) {
+        wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' No checks match the filters.']));
       }
       if (open.length) wrap.appendChild(card('Waiting for QC', open, true));
       if (pending.length) wrap.appendChild(card('Pending QC — not sent to QC yet', pending, false));
@@ -658,76 +687,149 @@ window.App = window.App || {};
       return wrap;
     },
 
-    /* Who's carrying what, so delegating is a glance: one tile per QC
-       operator — open checks (a bar against the busiest), what's due today
-       or late, what's delegated ahead — and their default shows, which a QC
-       Manager edits here. Unassigned checks get a tile of their own, and
-       shows with QC work but no operator are called out, since nothing
-       delegates itself there. A tile narrows the lists to that operator. */
-    workload(episodes) {
-      const load = curLoad = App.qcWorkload();
+    /* QC → Resources: the QC operators' week, day by day. Each operator's
+       checks fall on the days the QC plan puts them (the same plan as the
+       Checks list — plan(): from the day a check joins the queue, at most
+       App.qcSettings().perDay a day, late ones on today), drawn as the
+       Timeline's ring-and-disc against that daily figure. Under each name:
+       what's in QC with them, and their default shows (the shows whose
+       checks are delegated to them; a QC Manager edits them here). A row
+       opens that person's workload page (App.resources.openPerson).
+       Unassigned checks get a row of their own, and shows with QC work but
+       no operator are called out, since nothing delegates itself there. */
+    resources() {
+      const wrap = el('.rvq.qcq.qcr');
+      wrap.appendChild(el('.section-title', null, [App.icon('users'), ' QC Resources']));
       const staff = App.deptStaff('qc').slice().sort((a, b) => a.name.localeCompare(b.name));
       const canEdit = App.canAssignQc(App.state.role);
-      const max = Math.max(1, ...staff.map(p => (load[p.id] || {}).open || 0));
       const shows = App.activeShows();
-      const toggle = (id) => { opFilter = opFilter === id ? null : id; App.render(); };
-      const tiles = el('.qcq-ops');
+      const qcLoad = App.qcWorkload();
+      const perDay = App.qcSettings().perDay;
+      const today = App.isoDate(App.today());
+      const mon = App.mondayIso(today);
+      const days = [0, 1, 2, 3, 4].map(i => App.shiftIso(mon, i));
+      const DAY = ['M', 'T', 'W', 'T', 'F'];
+      // the plan, by operator and day
+      const byDay = {};
+      plan(App.activeEpisodes()).items.forEach(x => {
+        const id = App.qcOwner(x.ep, x.su.key).id || '';
+        ((byDay[id] = byDay[id] || {})[x.date] = byDay[id][x.date] || []).push(x);
+      });
+      // and what they've already finished this week, so past days aren't blank
+      const done = doneByDay(days[0], days[4]);
+      Object.keys(done).forEach(id => Object.keys(done[id]).forEach(day => {
+        ((byDay[id] = byDay[id] || {})[day] = byDay[id][day] || []).unshift(...done[id][day]);
+      }));
+      const awayOn = (p, day) => (p.timeOff || []).some(t => t.start <= day && (t.end || t.start) >= day);
+      const LEVEL_C = { ok: '#37b679', full: '#f6a609', over: 'var(--danger)' };
+      const levelOf = (n) => n > perDay ? 'over' : n >= perDay * 0.8 ? 'full' : 'ok';
+
+      const dayTip = (who, day, list) => () => {
+        const box = el('.res-tip');
+        box.appendChild(el('.res-tip-head', null, who + ' · ' + App.fmtDate(day)));
+        const nd = list.filter(x => x.done).length, np = list.length - nd;
+        box.appendChild(el('.res-tip-sub', null, [nd ? nd + ' done' : null, np ? np + ' planned' : null].filter(Boolean).join(' · ') + ' · QC takes up to ' + perDay + ' a day'));
+        list.slice(0, 10).forEach(x => box.appendChild(el('.res-tip-task', { style: { borderLeftColor: App.dept(x.su.dept).color } }, [
+          el('span.res-tip-code', null, x.ep.code), ' ' + x.su.name,
+          el('span.res-tip-meta', null, x.done ? '✓ ' + x.result : x.overdue ? 'late' : x.atRisk ? 'at risk' : x.qcDue ? 'due ' + App.fmtDate(x.qcDue) : '')
+        ])));
+        if (list.length > 10) box.appendChild(el('.res-tip-sub', null, '+ ' + (list.length - 10) + ' more'));
+        return box;
+      };
+      const dayCells = (id, who, p) => days.map((day, i) => {
+        const past = day < today;
+        if (p && awayOn(p, day)) return el('.qcr-day.away', { title: who + ' — away ' + App.fmtDate(day) }, el('span.qcr-day-n', null, 'Off'));
+        const list = (byDay[id] && byDay[id][day]) || [];
+        const n = list.length, ratio = Math.min(1, n / perDay);
+        const ring = el('.res-ring.qcr-ring' + (n > perDay ? '.over' : '') + (day === today ? '.now' : ''), { title: n ? dayTip(who, day, list) : who + ' — nothing ' + (past ? 'done ' : 'planned ') + App.fmtDate(day) },
+          [el('.res-disc', { style: { width: (20 * Math.sqrt(ratio)) + 'px', height: (20 * Math.sqrt(ratio)) + 'px' } })]);
+        ring.style.setProperty('--res-c', LEVEL_C[levelOf(n)]);
+        return el('.qcr-day' + (past ? '.past' : ''), null, [ring, el('span.qcr-day-n', null, n ? String(n) : '')]);
+      });
+
+      const list = el('.qcr-list');
+      const DAYNAME = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+      list.appendChild(el('.qcr-row.qcr-head', null, [
+        el('span.qcr-h', null, 'Operator'),
+        el('span.qcr-h', null, 'In QC'),
+        el('span.qcr-h', null, 'Shows'),
+        el('.qcr-days', null, days.map((day, i) => el('span.qcr-h.qcr-dh' + (day === today ? '.now' : ''), { title: App.fmtDate(day) },
+          [DAYNAME[i], el('span.qcr-dd', null, String(App.parseDate(day).getDate()))]))),
+        el('span.qcr-h.qcr-wk', null, 'Week')
+      ]));
+      let weekTotal = 0;
       staff.forEach(p => {
-        const l = load[p.id] || { open: 0, today: 0, late: 0, upcoming: 0, days: 0 };
+        const q = qcLoad[p.id] || { open: 0, today: 0, late: 0, upcoming: 0 };
+        const wk = days.reduce((n, d) => n + ((byDay[p.id] && byDay[p.id][d]) || []).length, 0);
+        weekTotal += wk;
+        const desk = el('.qcr-desk', null, [
+          el('span.qcr-open', null, [el('b', null, String(q.open)), ' open']),
+          q.late ? el('span.qcr-late', null, q.late + ' late') : null,
+          q.today ? el('span.qcr-today', null, q.today + ' due today') : null,
+          q.upcoming ? el('span', { title: 'Delegated to them, not in QC yet' }, q.upcoming + ' ahead') : null
+        ]);
         const mine = shows.filter(s => App.qcOperatorsFor(s).includes(p.id));
-        const showChips = el('.qcq-op-shows', null, mine.map(s => el('span.qcq-op-show', { style: { borderColor: s.color }, title: 'Default show — ' + s.name + '’s checks are delegated to its operators' }, s.name)));
-        if (!mine.length) showChips.appendChild(el('span.qcq-op-none', null, 'No default show'));
+        const showLine = el('.qcr-shows', null, mine.length
+          ? mine.map(s => el('span.qcq-op-show', { style: { borderColor: s.color }, title: s.name + '’s checks are delegated to its QC operators' }, s.name))
+          : [el('span.qcq-op-none', null, 'No default show')]);
         if (canEdit) {
           const menu = App.choiceMenu('qc:opshows:' + p.id, 'Shows', [shows.map(s => {
             const on = mine.includes(s);
             return { label: s.name, on, tip: on ? 'Stop delegating ' + s.name + ' to ' + p.name : 'Delegate ' + s.name + '’s checks to ' + p.name,
               pick: () => App.qcQueue.setOperatorShow(p.id, s.id, !on) };
           })], 'Default shows: the shows whose checks are delegated to ' + p.name);
-          menu.classList.add('qcq-op-edit');
-          showChips.appendChild(menu);
+          // just a +: the chips beside it already say which shows
+          menu.className = 'qcq-op-edit';
+          menu.innerHTML = '';
+          menu.appendChild(document.createTextNode('+'));
+          menu.setAttribute('aria-label', 'Default shows for ' + p.name);
+          showLine.appendChild(menu);
         }
-        const bits = [];
-        if (l.late) bits.push(el('span.qcq-op-stat.late', null, l.late + ' late'));
-        if (l.today) bits.push(el('span.qcq-op-stat.today', null, l.today + ' due today'));
-        if (l.upcoming) bits.push(el('span.qcq-op-stat', { title: 'Delegated to them, not in QC yet' }, l.upcoming + ' ahead'));
-        if (l.days) bits.push(el('span.qcq-op-stat', { title: 'QC days the open checks hold' }, l.days + ' QC day' + (l.days === 1 ? '' : 's')));
-        const tile = el('.qcq-op' + (opFilter === p.id ? '.on' : ''), { title: 'Show only ' + p.name + '’s checks', onclick: (e) => { if (!e.target.closest('button, .filter-pop')) toggle(p.id); } }, [
-          el('.qcq-op-head', null, [
-            el('span.avatar.qcq-av', { style: { background: p.color, color: App.pickInk(p.color) } }, App.initials(p.name)),
-            el('span.qcq-op-name', null, p.name),
-            el('span.qcq-op-n', { title: l.open + ' open check' + (l.open === 1 ? '' : 's') }, [el('b', null, String(l.open)), ' open'])
+        list.appendChild(el('.qcr-row', { title: 'Open ' + p.name + '’s workload',
+          onclick: (e) => { if (!e.target.closest('button, .filter-pop')) App.resources.openPerson(p.id); } }, [
+          el('.qcr-who', null, [
+            el('span.avatar', { style: { width: '28px', height: '28px', fontSize: '10px', background: p.color, flex: 'none', color: App.pickInk(p.color) } }, App.initials(p.name)),
+            el('.qcr-id', null, [
+              el('.qcr-name', null, p.name),
+              el('.qcr-sub', null, App.personCapacity(p) + ' days a week' + ((p.timeOff || []).some(t => (t.end || t.start) >= mon && t.start <= days[4]) ? ' · time off this week' : ''))
+            ])
           ]),
-          el('.qcq-op-bar', null, el('span', { style: { width: (l.open / max * 100) + '%' }, class: l.late ? 'late' : '' })),
-          el('.qcq-op-stats', null, bits.length ? bits : [el('span.qcq-op-stat.free', null, l.open ? '' : 'Free')]),
-          showChips
-        ]);
-        tiles.appendChild(tile);
+          desk,
+          showLine,
+          el('.qcr-days', null, dayCells(p.id, p.name, p)),
+          el('.qcr-wk', { title: wk + ' check' + (wk === 1 ? '' : 's') + ' planned this week' }, [el('b', null, String(wk))])
+        ]));
       });
-      const un = load[''] || { open: 0 };
-      if (un.open || opFilter === '') {
-        tiles.appendChild(el('.qcq-op.unassigned' + (opFilter === '' ? '.on' : ''), { title: 'Show only the unassigned checks', onclick: () => toggle('') }, [
-          el('.qcq-op-head', null, [
-            el('span.avatar.avatar-none.qcq-av', null, '?'),
-            el('span.qcq-op-name', null, 'Unassigned'),
-            el('span.qcq-op-n', null, [el('b', null, String(un.open)), ' open'])
+      const un = qcLoad[''] || { open: 0 };
+      if (un.open) {
+        list.appendChild(el('.qcr-row.qcr-un', { title: 'Back to the checks, to delegate them', onclick: () => { App.prefs.set('qcMode', 'checks'); App.render(); } }, [
+          el('.qcr-who', null, [
+            el('span.avatar.avatar-none', { style: { width: '28px', height: '28px', fontSize: '10px', flex: 'none' } }, '?'),
+            el('.qcr-id', null, [
+              el('.qcr-name', null, 'Unassigned'),
+              el('.qcr-sub', null, canEdit ? 'Open Checks to delegate' : 'Waiting for a QC Manager')
+            ])
           ]),
-          el('.qcq-op-stats', null, el('span.qcq-op-stat', null, canEdit ? 'Click a row’s operator to delegate' : 'Waiting for a QC Manager'))
+          el('.qcr-desk', null, el('span.qcr-open', null, [el('b', null, String(un.open)), ' open'])),
+          el('span'),
+          el('.qcr-days', null, dayCells('', 'Unassigned', null)),
+          el('.qcr-wk', null, el('b', null, String(days.reduce((n, d) => n + ((byDay[''] && byDay[''][d]) || []).length, 0))))
         ]));
       }
-      if (!staff.length) tiles.appendChild(el('.empty', null, 'No QC operators yet — add people with the QC role in Admin.'));
-      // shows that have QC work but nobody to delegate it to
+      if (!staff.length) list.appendChild(el('.empty', null, 'No QC operators yet — add people with the QC role in Admin.'));
       const bare = shows.filter(s => !App.qcOperatorsFor(s).length &&
         App.activeEpisodes().some(ep => ep.showId === s.id && App.subitems(ep).some(su => App.qcFor(ep, su.key).on && !App.isCompleteKey(ep, su.key))));
-      const head = el('.rvq-ep-head', null, [
-        el('span.rvq-ep-title', null, 'QC operators'),
-        opFilter != null ? el('button.btn-ghost.qcq-op-clear', { onclick: () => toggle(opFilter) }, 'Show everyone') : el('span.rvq-dept-n', null, staff.length)
-      ]);
-      return el('.rvq-ep.qcq-card.qcq-load', null, [
-        head,
-        tiles,
-        bare.length ? el('.qcq-op-warn', null, [App.icon('warn'), ' No QC operator on ' + bare.map(s => s.name).join(', ') +
-          ' — ' + (bare.length === 1 ? 'its' : 'their') + ' checks aren’t delegated automatically.' + (canEdit ? ' Add one with an operator’s Shows menu.' : '')]) : null
-      ]);
+      wrap.appendChild(el('.rvq-ep.qcq-card.qcr-card', null, [
+        el('.rvq-ep-head', null, [
+          el('span.rvq-ep-title', null, 'This week · w/c ' + App.fmtDate(mon)),
+          el('span.rvq-dept-n', { title: 'QC checks per day — Admin → Workflow' }, (() => { const nd = Object.values(done).reduce((n, byD) => n + Object.values(byD).reduce((m, l) => m + l.length, 0), 0); return (nd ? nd + ' done · ' : '') + (weekTotal - nd) + ' planned · up to ' + perDay + ' a day'; })())
+        ]),
+        el('.qcr-body', null, [
+          bare.length ? el('.qcq-op-warn', null, [App.icon('warn'), ' No QC operator on ' + bare.map(s => s.name).join(', ') +
+            ' — ' + (bare.length === 1 ? 'its' : 'their') + ' checks aren’t delegated automatically.' + (canEdit ? ' Add one with the + beside an operator’s shows.' : '')]) : null,
+          list])
+      ]));
+      return wrap;
     },
 
     // the header row: the sortable columns drive the same Sort By as the toolbar
@@ -814,27 +916,6 @@ window.App = window.App || {};
         App.editTask.open(ep.id, su.key, { preview: true });   // view-only when it's another department's
       });
       return row;
-    },
-
-    // (m.episodes, not m.subs: for the QC role m.subs is QC's own tasks only)
-    widget(m) {
-      const todayIso = App.isoDate(App.today());
-      const items = plan(m.episodes).items.filter(x => x.date <= todayIso || x.atRisk);
-      const list = el('.pr-list');
-      if (!items.length) { list.appendChild(el('.empty', null, 'Nothing to QC today')); return list; }
-      items.slice(0, 8).forEach(x => {
-        const show = App.show(x.ep.showId), dep = App.dept(x.su.dept);
-        list.appendChild(el('.pr-item', { onclick: () => App.qcQueue.focus(x.ep.id, x.su.key) }, [
-          el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color), fontSize: '10px', padding: '2px 7px' } }, x.ep.code),
-          el('.ri-main', null, [
-            el('.ri-title', null, x.su.name),
-            el('.ri-sub', null, [el('span.dept-chip', { style: { padding: '1px 7px', fontSize: '10px' } }, [el('span.dot', { style: { background: dep.color } }), dep.label])])
-          ]),
-          el('span.qcq-flag' + (x.overdue ? '.late' : x.atRisk ? '.risk' : ''), null, x.overdue ? 'Overdue' : x.atRisk ? 'At risk' : 'Today')
-        ]));
-      });
-      if (items.length > 8) list.appendChild(el('.pr-more', null, '+' + (items.length - 8) + ' more'));
-      return list;
     }
   };
 })();

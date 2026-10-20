@@ -83,6 +83,9 @@ window.App = window.App || {};
     { key: 'resources', label: 'Resourcing',          blurb: 'who’s busy, week by week', when: () => App.canSeeResources(App.state.role) }
   ];
   const availableTabs = () => PRIORITY_TABS.filter(t => !t.when || t.when());
+  /* A role's own starting order, until the person ranks their tabs in the
+     setup guide: QC's day starts with its queue. */
+  const ROLE_TAB_ORDER = { qc: ['dashboard', 'qc', 'timeline', 'board'] };
 
   /* ------------------------------------------------------------ profile */
   App.profile = {
@@ -121,9 +124,12 @@ window.App = window.App || {};
     // anything they've not ranked yet (a tab granted since) on the end
     tabOrder() {
       const avail = availableTabs().map(t => t.key);
-      const saved = ((this.get() || {}).tabOrder || []).filter(k => avail.includes(k));
+      const own = (this.get() || {}).tabOrder;
+      const saved = ((own && own.length ? own : ROLE_TAB_ORDER[App.state.role]) || []).filter(k => avail.includes(k));
       return saved.concat(avail.filter(k => !saved.includes(k)));
     },
+    // a ranked order to lay the tabs out by: theirs, or their role's own
+    ranked() { return this.hasOrder() || !!ROLE_TAB_ORDER[App.state.role]; },
     hasOrder() { const p = this.get(); return !!(p && Array.isArray(p.tabOrder) && p.tabOrder.length); },
     // the view-tab order: a ranked list of views, with Resourcing folded
     // into the Timeline wherever it ranks higher
@@ -1801,7 +1807,7 @@ window.App = window.App || {};
           await IF.type('Let’s plan your mornings. Drag these into the order you check them each day — first on the left. I’ll pin them to the board.');
           const label = (k) => (PRIORITY_TABS.find(t => t.key === k) || {}).label || k;
           // arrange → pin → look; Back from the pinned board unpins them to rearrange
-          let order = pick.tabOrder || availableTabs().map(t => t.key);
+          let order = pick.tabOrder || App.profile.tabOrder();
           for (;;) {
             IF.setNotes([]);                       // the board's empty until they're pinned up
             const r = await IF.arrange(order.map(k => {
