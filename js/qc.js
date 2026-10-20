@@ -713,7 +713,7 @@ window.App = window.App || {};
       list.appendChild(el('.qcr-row.qcr-head', null, [
         el('span.qcr-h', null, 'Operator'),
         el('span.qcr-h', null, 'In QC'),
-        el('span.qcr-h', null, 'Default shows'),
+        el('span.qcr-h', null, 'Shows'),
         el('.qcr-days', null, days.map((day, i) => el('span.qcr-h.qcr-dh' + (day === today ? '.now' : ''), { title: App.fmtDate(day) },
           [DAYNAME[i], el('span.qcr-dd', null, String(App.parseDate(day).getDate()))]))),
         el('span.qcr-h.qcr-wk', null, 'Week')
@@ -739,7 +739,11 @@ window.App = window.App || {};
             return { label: s.name, on, tip: on ? 'Stop delegating ' + s.name + ' to ' + p.name : 'Delegate ' + s.name + '’s checks to ' + p.name,
               pick: () => App.qcQueue.setOperatorShow(p.id, s.id, !on) };
           })], 'Default shows: the shows whose checks are delegated to ' + p.name);
-          menu.classList.add('qcq-op-edit');
+          // just a +: the chips beside it already say which shows
+          menu.className = 'qcq-op-edit';
+          menu.innerHTML = '';
+          menu.appendChild(document.createTextNode('+'));
+          menu.setAttribute('aria-label', 'Default shows for ' + p.name);
           showLine.appendChild(menu);
         }
         list.appendChild(el('.qcr-row', { title: 'Open ' + p.name + '’s workload',
@@ -783,7 +787,7 @@ window.App = window.App || {};
         ]),
         el('.qcr-body', null, [
           bare.length ? el('.qcq-op-warn', null, [App.icon('warn'), ' No QC operator on ' + bare.map(s => s.name).join(', ') +
-            ' — ' + (bare.length === 1 ? 'its' : 'their') + ' checks aren’t delegated automatically.' + (canEdit ? ' Add one with an operator’s Shows menu.' : '')]) : null,
+            ' — ' + (bare.length === 1 ? 'its' : 'their') + ' checks aren’t delegated automatically.' + (canEdit ? ' Add one with the + beside an operator’s shows.' : '')]) : null,
           list])
       ]));
       return wrap;

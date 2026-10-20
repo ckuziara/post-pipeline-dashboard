@@ -6362,7 +6362,9 @@ button.qcq-report-link:hover { text-decoration: underline; }
 .qcr-late { color: #ff8b8b; font-weight: 700; }
 .qcr-today { color: var(--ink-warn); font-weight: 700; }
 .qcr-shows { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.qcr-shows .qcq-op-edit { font-size: 10.5px; padding: 1px 8px; height: auto; min-height: 0; }
+.qcr-shows .qcq-op-edit { width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
+  font-size: 14px; line-height: 1; display: inline-grid; place-items: center; cursor: pointer; }
+.qcr-shows .qcq-op-edit:hover { border-color: var(--accent); color: var(--accent); }
 .qcr-days { display: flex; gap: 6px; }
 .qcr-day, .qcr-dh { width: 46px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .qcr-dh { text-align: center; gap: 0; }
