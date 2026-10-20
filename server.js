@@ -311,7 +311,7 @@ function makeFileActivity() {
       if (rows.length > ACTIVITY_CAP) rows = rows.slice(-ACTIVITY_CAP);
       dirty = true;
     },
-    async query({ kind, role, dept, email, action, since, limit, offset }) {
+    async query({ kind, role, dept, email, action, since, text, noTime, limit, offset }) {
       let out = rows;
       if (kind) out = out.filter(r => r.kind === kind);
       if (role) out = out.filter(r => r.role === role);
@@ -319,6 +319,12 @@ function makeFileActivity() {
       if (email) out = out.filter(r => r.email === email);
       if (action) out = out.filter(r => r.action === action);
       if (since) out = out.filter(r => r.ts >= since);
+      if (noTime) out = out.filter(r => r.action !== 'sig.time');
+      // free-text: the event key and anything in its details
+      if (text) {
+        const t = text.toLowerCase();
+        out = out.filter(r => (r.action + ' ' + JSON.stringify(r.detail || {})).toLowerCase().includes(t));
+      }
       const total = out.length;
       out = out.slice().reverse().slice(offset || 0, (offset || 0) + (limit || 100));  // newest first
       return { total, rows: out };
@@ -327,6 +333,7 @@ function makeFileActivity() {
       let src = prevSince ? rows.filter(r => r.ts >= prevSince) : rows;
       if (filt && filt.role) src = src.filter(r => r.role === filt.role);
       if (filt && filt.dept) src = src.filter(r => r.dept === filt.dept);
+      if (filt && filt.email) src = src.filter(r => r.email === filt.email);
       return aggregate(src, since);
     }
   };
@@ -358,7 +365,7 @@ function makePgActivity(connectionString) {
         'DELETE FROM activity_log WHERE id < (SELECT COALESCE(MAX(id),0) - $1 FROM activity_log)', [ACTIVITY_CAP]
       );
     },
-    async query({ kind, role, dept, email, action, since, limit, offset }) {
+    async query({ kind, role, dept, email, action, since, text, noTime, limit, offset }) {
       const w = [], p = [];
       const add = (sql, v) => { p.push(v); w.push(sql.replace('?', '$' + p.length)); };
       if (kind) add('kind = ?', kind);
@@ -367,6 +374,9 @@ function makePgActivity(connectionString) {
       if (email) add('email = ?', email);
       if (action) add('action = ?', action);
       if (since) add('ts >= ?', since);
+      if (noTime) w.push("action <> 'sig.time'");
+      // free-text: the event key and anything in its details (LIKE wildcards escaped)
+      if (text) add("(action || ' ' || COALESCE(detail::text, '')) ILIKE ?", '%' + text.replace(/[\\%_]/g, '\\$&') + '%');
       const where = w.length ? ' WHERE ' + w.join(' AND ') : '';
       const cnt = await pool.query('SELECT count(*)::int AS n FROM activity_log' + where, p);
       const r = await pool.query(
@@ -382,6 +392,7 @@ function makePgActivity(connectionString) {
       if (prevSince) add('ts >= ?', prevSince);
       if (filt && filt.role) add('role = ?', filt.role);
       if (filt && filt.dept) add('dept = ?', filt.dept);
+      if (filt && filt.email) add('email = ?', filt.email);
       const where = w.length ? ' WHERE ' + w.join(' AND ') : '';
       const r = await pool.query('SELECT ts, email, role, dept, kind, action, detail FROM activity_log' + where, p);
       return aggregate(r.rows.map(x => ({ ...x, ts: new Date(x.ts).toISOString() })), since);
@@ -394,6 +405,9 @@ function makePgActivity(connectionString) {
    is the boundary — so every headline number ships with what it was last period
    and the page can talk in trends rather than totals. Series are bucketed by day
    (or by week once the range is long enough that daily points turn to noise). */
+// product telemetry the client sends alongside real feature use (js/track.js)
+const isTelemetry = (action) => action.startsWith('flow.') || action.startsWith('sig.');
+
 function aggregate(rows, since) {
   const mondayOf = (iso) => {
     const d = new Date(iso + 'T00:00:00Z');
@@ -444,7 +458,8 @@ function aggregate(rows, since) {
         const f = F(flow); f.completed++;
         if (typeof (r.detail || {}).ms === 'number') f.times.push(r.detail.ms);
       } else if (r.action === 'flow.abandon' && flow) F(flow).abandoned++;
-      else if (r.kind === 'error') {
+      // error toasts get their own by-message list (insightsOf), not one lump here
+      else if (r.kind === 'error' && r.action !== 'ui.errorToast') {
         const e = errors[r.action] = errors[r.action] || { count: 0, flow: flow || null };
         e.count++;
       }
@@ -496,6 +511,48 @@ function aggregate(rows, since) {
   };
 
   const now = tally(cur), before = tally(prev);
+
+  /* Where time goes, and where people struggle — from the client's sig.*
+     events and error toasts (see js/track.js). Each struggle list is ranked
+     by how many people hit it, then how often: one person rage-clicking all
+     afternoon matters less than the same button tripping up five of them. */
+  const insightsOf = (src) => {
+    const time = {};
+    src.forEach(r => {
+      if (r.action !== 'sig.time' || !r.detail || !r.detail.views) return;
+      Object.keys(r.detail.views).forEach(v => {
+        const ms = +r.detail.views[v] || 0;
+        const t = time[v] = time[v] || { view: v, ms: 0, users: new Set() };
+        t.ms += ms; if (r.email) t.users.add(r.email);
+      });
+    });
+    const group = (action, keyOf) => {
+      const g = {};
+      src.forEach(r => {
+        if (r.action !== action) return;
+        const d = r.detail || {}, k = keyOf(d);
+        if (!k) return;
+        const e = g[k] = g[k] || { key: k, count: 0, users: new Set(), views: {} };
+        e.count++; if (r.email) e.users.add(r.email);
+        if (d.view) e.views[d.view] = (e.views[d.view] || 0) + 1;
+      });
+      return Object.values(g)
+        .map(e => ({ key: e.key, count: e.count, users: e.users.size,
+                     view: Object.keys(e.views).sort((a, b) => e.views[b] - e.views[a])[0] || null }))
+        .sort((a, b) => b.users - a.users || b.count - a.count).slice(0, 12);
+    };
+    const totalMs = Object.values(time).reduce((a, t) => a + t.ms, 0);
+    return {
+      timeTotalMs: totalMs,
+      time: Object.values(time).map(t => ({ view: t.view, ms: t.ms, users: t.users.size }))
+        .sort((a, b) => b.ms - a.ms),
+      errorToasts: group('ui.errorToast', d => d.msg),
+      rage: group('sig.rage', d => d.target),
+      undos: group('sig.undo', d => d.label),
+      emptySearches: group('sig.searchEmpty', d => d.q && d.q.toLowerCase())
+    };
+  };
+  const insights = insightsOf(cur), insightsPrev = insightsOf(prev);
 
   // --- time series over the current window ---
   const dayKeys = [...new Set(cur.map(r => r.ts.slice(0, 10)))].sort();
@@ -554,7 +611,7 @@ function aggregate(rows, since) {
   // "Top feature leveraged" — the busiest *feature* (a usage event), not an audit
   // row, since audit rows record data changes rather than a tool being reached for.
   const featureCounts = {};
-  cur.forEach(r => { if (r.kind === 'usage' && !r.action.startsWith('flow.')) featureCounts[r.action] = (featureCounts[r.action] || 0) + 1; });
+  cur.forEach(r => { if (r.kind === 'usage' && !isTelemetry(r.action)) featureCounts[r.action] = (featureCounts[r.action] || 0) + 1; });
   const featureRank = Object.keys(featureCounts).sort((a, b) => featureCounts[b] - featureCounts[a]);
   const featureTotal = Object.values(featureCounts).reduce((a, b) => a + b, 0);
   const topFeature = featureRank.length
@@ -563,7 +620,7 @@ function aggregate(rows, since) {
     : null;
 
   const prevFeature = {};
-  prev.forEach(r => { if (r.kind === 'usage' && !r.action.startsWith('flow.')) prevFeature[r.action] = (prevFeature[r.action] || 0) + 1; });
+  prev.forEach(r => { if (r.kind === 'usage' && !isTelemetry(r.action)) prevFeature[r.action] = (prevFeature[r.action] || 0) + 1; });
 
   return {
     bucket, buckets, series,
@@ -572,6 +629,11 @@ function aggregate(rows, since) {
     dau, dauByRole, topFeature, featureCounts,
     byRole: now.byRole, byAction: now.byAction, byRoleAction: now.byRoleAction, byDept: now.byDept,
     friction: frictionOf(cur),
+    insights,
+    insightsPrev: since ? { timeTotalMs: insightsPrev.timeTotalMs,
+      time: Object.fromEntries(insightsPrev.time.map(t => [t.view, t.ms])),
+      struggles: insightsPrev.errorToasts.reduce((a, e) => a + e.count, 0) + insightsPrev.rage.reduce((a, e) => a + e.count, 0) +
+        insightsPrev.undos.reduce((a, e) => a + e.count, 0) + insightsPrev.emptySearches.reduce((a, e) => a + e.count, 0) } : null,
     // the comparison window — absent when the caller asked for all time
     prev: since ? {
       total: before.total, usage: before.usage, audit: before.audit, errors: before.errors,
@@ -2540,7 +2602,8 @@ const server = http.createServer(async (req, res) => {
         const days = parseInt(q.get('days') || '0', 10);
         const winMs = hours > 0 ? hours * 3600000 : days > 0 ? days * 86400000 : 0;
         const since = winMs ? new Date(Date.now() - winMs).toISOString() : null;
-        const filt = { role: q.get('role') || null, dept: q.get('dept') || null };
+        const filt = { role: q.get('role') || null, dept: q.get('dept') || null,
+          email: (q.get('email') || '').toLowerCase() || null };
         if (route === 'GET /api/activity/stats') {
           // pull an equal window before `since` too, so every figure has a
           // previous-period counterpart to trend against
@@ -2551,9 +2614,11 @@ const server = http.createServer(async (req, res) => {
           kind: q.get('kind') || null,
           role: filt.role,
           dept: filt.dept,
-          email: q.get('email') || null,
+          email: filt.email,
           action: q.get('action') || null,
           since,
+          text: (q.get('text') || '').trim().slice(0, 100) || null,
+          noTime: q.get('noTime') === '1',
           limit: Math.min(parseInt(q.get('limit') || '100', 10) || 100, 500),
           offset: parseInt(q.get('offset') || '0', 10) || 0
         }));

@@ -1520,7 +1520,11 @@ window.App = window.App || {};
     'assistant.parsed': 'Assistant understood', 'assistant.blocked': 'Assistant unavailable',
     'assistant.cancelled': 'Assistant plan cancelled',
     'assistant.replicate': 'Pipeline replicated', 'assistant.dependency': 'Dependency changed',
-    'view.workspace': 'Task workspace', 'admin.logs': 'Audit logs'
+    'view.workspace': 'Task workspace', 'admin.logs': 'Audit logs',
+    'view.qc': 'QC view', 'view.planning': 'Planning view',
+    // product signals (js/track.js) — read on Feature Usage
+    'sig.time': 'Active time', 'sig.rage': 'Repeated clicking', 'sig.undo': 'Undo', 'sig.redo': 'Redo',
+    'sig.searchEmpty': 'Search found nothing', 'ui.errorToast': 'Error message shown'
   };
   const actionLabel = (a) => ACTION_LABELS[a] || a;
 
@@ -1540,8 +1544,12 @@ window.App = window.App || {};
     Object.keys(d).forEach(k => {
       const v = d[k];
       if (v == null || v === '' || k === 'changed') return;
+      if (k === 'views' && typeof v === 'object') {
+        Object.keys(v).sort((a, b) => v[b] - v[a]).forEach(view => bits.push(viewLabel(view) + ' ' + fmtDur(v[view])));
+        return;
+      }
       if (typeof v === 'object') return;
-      bits.push(k + ': ' + v);
+      bits.push(k + ': ' + (k === 'ms' && typeof v === 'number' ? fmtDur(v) : v));
     });
     if (d.changed && typeof d.changed === 'object') {
       Object.keys(d.changed).forEach(f => {
@@ -1570,7 +1578,7 @@ window.App = window.App || {};
         { onclick: () => { st.logTab = 'usage'; App.render(); } }, 'Feature Usage')
     ]);
     const rangeSel = el('select.filter');
-    [[7, 'Last 7 days'], [30, 'Last 30 days'], [90, 'Last 90 days'], [0, 'All time']].forEach(([v, label]) => {
+    [[-1, 'Last 24 hours'], [7, 'Last 7 days'], [30, 'Last 30 days'], [90, 'Last 90 days'], [0, 'All time']].forEach(([v, label]) => {
       const o = document.createElement('option'); o.value = v; o.textContent = label;
       if (v === st.logDays) o.selected = true; rangeSel.appendChild(o);
     });
@@ -1592,49 +1600,96 @@ window.App = window.App || {};
   }
 
   function renderActivity(panel, st) {
-    const filters = st.logFilters = st.logFilters || { kind: 'audit', role: '', action: '' };
-    let offset = 0, loaded = [];
+    const filters = st.logFilters = Object.assign({ kind: 'audit', role: '', dept: '', email: '', action: '', text: '' }, st.logFilters || {});
+    let offset = 0, loaded = [], total = 0, seq = 0;
+    const range = () => st.logDays === -1 ? { hours: 24 } : { days: st.logDays || '' };
+    const query = (extra) => Object.assign({
+      kind: filters.kind, role: filters.role, dept: filters.dept, email: filters.email,
+      action: filters.action, text: filters.text, noTime: 1
+    }, range(), extra);
+    const people = (App.state.data.people || []).filter(p => p.email)
+      .slice().sort((a, b) => a.name.localeCompare(b.name));
+    const personOf = (email) => people.find(p => p.email.toLowerCase() === (email || '').toLowerCase()) || null;
+    const nameOf = (email) => { const p = personOf(email); return p ? p.name : (email || '—'); };
 
-    const draw = (total) => {
-      panel.innerHTML = '';
-
-      const kindSel = el('select.filter');
-      // 'error' was always stored and counted, but had no way to be filtered to
-      // — which is where the assistant's miss log and the LucidLink failures live
-      [['', 'All events'], ['audit', 'Changes only'], ['usage', 'Feature usage only'],
-       ['error', 'Problems only']].forEach(([v, l]) => {
+    // ---- filter bar: built once, so typing in the search box keeps its focus ----
+    const sel = (opts, value, onPick) => {
+      const s = el('select.filter');
+      opts.forEach(([v, l]) => {
         const o = document.createElement('option'); o.value = v; o.textContent = l;
-        if (v === filters.kind) o.selected = true; kindSel.appendChild(o);
+        if (v === value) o.selected = true; s.appendChild(o);
       });
-      kindSel.addEventListener('change', e => { filters.kind = e.target.value; App.render(); });
+      s.addEventListener('change', e => onPick(e.target.value));
+      return s;
+    };
+    const set = (patch) => { Object.assign(filters, patch); App.render(); };
 
-      const roleSel2 = el('select.filter');
-      [['', 'All roles']].concat(App.ROLES.map(r => [r.key, r.label])).forEach(([v, l]) => {
-        const o = document.createElement('option'); o.value = v; o.textContent = l;
-        if (v === filters.role) o.selected = true; roleSel2.appendChild(o);
-      });
-      roleSel2.addEventListener('change', e => { filters.role = e.target.value; App.render(); });
+    const personOpts = [['', 'Everyone']].concat(people.map(p => [p.email.toLowerCase(), p.name]));
+    if (filters.email && !personOf(filters.email)) personOpts.push([filters.email, filters.email]);
+    const actionOpts = [['', 'All event types']].concat(
+      [...new Set(Object.keys(ACTION_LABELS))].map(k => [k, actionLabel(k)]).sort((a, b) => a[1].localeCompare(b[1])));
+    const search = el('input.fld.adm-logsearch', { type: 'search', placeholder: 'Search details…', value: filters.text });
+    let tSearch = null;
+    search.addEventListener('input', () => {
+      clearTimeout(tSearch);
+      tSearch = setTimeout(() => { filters.text = search.value.trim(); offset = 0; load(false); }, 350);
+    });
+    const anyFilter = filters.role || filters.dept || filters.email || filters.action || filters.text || filters.kind !== 'audit';
+    const count = el('span.adm-logcount', null, 'Loading…');
+    const exportBtn = el('button.adm-btn', { title: 'Download everything these filters match as a spreadsheet', onclick: () => exportCsv(exportBtn) }, 'Export CSV');
 
-      panel.appendChild(el('.adm-logfilters', null, [
-        kindSel, roleSel2,
-        el('span.adm-logcount', null, total + ' event' + (total === 1 ? '' : 's'))
-      ]));
+    panel.innerHTML = '';
+    panel.appendChild(el('.adm-logfilters', null, [
+      sel(personOpts, filters.email, v => set({ email: v, kind: v && filters.kind === 'audit' ? '' : filters.kind })),
+      sel([['', 'All events'], ['audit', 'Changes only'], ['usage', 'Feature usage only'], ['error', 'Problems only']],
+        filters.kind, v => set({ kind: v })),
+      sel(actionOpts, filters.action, v => set({ action: v })),
+      sel([['', 'All roles']].concat(App.ROLES.map(r => [r.key, r.label])), filters.role, v => set({ role: v })),
+      sel([['', 'All departments']].concat(Object.keys(App.DEPARTMENTS).map(k => [k, App.DEPARTMENTS[k].label])),
+        filters.dept, v => set({ dept: v })),
+      search,
+      anyFilter ? el('button.adm-linkbtn', { onclick: () => { st.logFilters = null; App.render(); } }, 'Clear filters') : null,
+      count, exportBtn
+    ]));
+    const summary = el('div');
+    const results = el('div', null, el('.adm-empty', null, 'Loading…'));
+    panel.appendChild(summary);
+    panel.appendChild(results);
+    if (filters.email) personSummary(summary, filters.email, nameOf(filters.email), personOf(filters.email), range());
 
+    const dayLabel = (iso) => {
+      const d = new Date(iso), t = new Date();
+      const k = (x) => x.toDateString();
+      if (k(d) === k(t)) return 'Today';
+      const y = new Date(t); y.setDate(t.getDate() - 1);
+      if (k(d) === k(y)) return 'Yesterday';
+      return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+    };
+
+    const draw = () => {
+      count.textContent = total.toLocaleString() + ' event' + (total === 1 ? '' : 's');
+      results.innerHTML = '';
       if (!loaded.length) {
-        panel.appendChild(el('.adm-empty', null, 'No activity recorded yet for this range.'));
+        results.appendChild(el('.adm-empty', null, anyFilter || filters.text
+          ? 'Nothing matches these filters in this range.' : 'No activity recorded yet for this range.'));
         return;
       }
-
       const table = el('.adm-table');
       table.appendChild(el('.adm-logrow.head', null, [
         el('.cell', null, 'When'), el('.cell', null, 'Who'), el('.cell', null, 'Role'),
         el('.cell', null, 'Event'), el('.cell', null, 'Details')
       ]));
+      let lastDay = null;
       loaded.forEach(r => {
-        const person = (App.state.data.people || []).find(p => (p.email || '').toLowerCase() === (r.email || '').toLowerCase());
+        // day headings make one person's events read as a timeline
+        const day = new Date(r.ts).toDateString();
+        if (day !== lastDay) { lastDay = day; table.appendChild(el('.adm-logday', null, dayLabel(r.ts))); }
         table.appendChild(el('.adm-logrow', null, [
           el('.cell.adm-when', { title: new Date(r.ts).toLocaleString() }, relTime(r.ts)),
-          el('.cell.adm-who', null, person ? person.name : (r.email || '—')),
+          el('.cell.adm-who' + (r.email && !filters.email ? '.adm-who-link' : ''), {
+            title: r.email && !filters.email ? 'Show only ' + nameOf(r.email) + '’s activity' : (r.email || ''),
+            onclick: r.email && !filters.email ? () => set({ email: r.email.toLowerCase(), kind: filters.kind === 'audit' ? '' : filters.kind }) : null
+          }, nameOf(r.email)),
           el('.cell', null, el('span.adm-role-chip', null, r.role ? App.role(r.role).label : '—')),
           el('.cell', null, [
             el('span.adm-kind.' + (r.kind === 'audit' ? 'audit' : r.kind === 'error' ? 'error' : 'usage'), null,
@@ -1644,10 +1699,9 @@ window.App = window.App || {};
           el('.cell.adm-detail', { title: detailText(r.detail) }, detailText(r.detail))
         ]));
       });
-      panel.appendChild(table);
-
+      results.appendChild(table);
       if (loaded.length < total) {
-        panel.appendChild(el('button.adm-btn', {
+        results.appendChild(el('button.adm-btn', {
           style: { marginTop: '12px' },
           onclick: (e) => { e.target.textContent = 'Loading…'; offset = loaded.length; load(true); }
         }, 'Load older events'));
@@ -1655,15 +1709,162 @@ window.App = window.App || {};
     };
 
     const load = (append) => {
-      App.api.activity({
-        kind: filters.kind, role: filters.role,
-        days: st.logDays || '', limit: 100, offset
-      }).then(r => {
+      const mine = ++seq;
+      if (!append) offset = 0;
+      App.api.activity(query({ limit: 100, offset })).then(r => {
+        if (mine !== seq) return;                      // a newer search has overtaken this one
         loaded = append ? loaded.concat(r.rows) : r.rows;
-        draw(r.total);
-      }).catch(e => fail(panel, e));
+        total = r.total;
+        draw();
+      }).catch(e => fail(results, e));
     };
+
+    // everything these filters match (up to 5,000 rows), not just the page on screen
+    async function exportCsv(btn) {
+      btn.disabled = true; btn.textContent = 'Exporting…';
+      try {
+        let rows = [], off = 0, tot = Infinity;
+        while (rows.length < tot && rows.length < 5000) {
+          const r = await App.api.activity(query({ limit: 500, offset: off }));
+          tot = r.total; rows = rows.concat(r.rows); off += r.rows.length;
+          if (!r.rows.length) break;
+        }
+        const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+        const lines = [['When', 'Who', 'Email', 'Role', 'Department', 'Kind', 'Event', 'Details'].map(q).join(',')]
+          .concat(rows.map(r => [new Date(r.ts).toLocaleString(), nameOf(r.email), r.email, r.role ? App.role(r.role).label : '',
+            r.dept ? App.dept(r.dept).label : '', r.kind, actionLabel(r.action), detailText(r.detail)].map(q).join(',')));
+        const who = filters.email ? '-' + nameOf(filters.email).replace(/[^\w]+/g, '-') : '';
+        const a = el('a', { href: URL.createObjectURL(new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })),
+          download: 'activity' + who + '-' + new Date().toISOString().slice(0, 10) + '.csv' });
+        document.body.appendChild(a); a.click(); a.remove();
+        App.toast('Exported ' + rows.length.toLocaleString() + ' event' + (rows.length === 1 ? '' : 's'));
+      } catch (e) { App.toast('Could not export — ' + e.message, true); }
+      btn.disabled = false; btn.textContent = 'Export CSV';
+    }
+
     load(false);
+  }
+
+  /* One person, at a glance: when they were last in, how much time they put
+     in and where, what they lean on, and what tripped them up. */
+  function personSummary(box, email, name, person, range) {
+    box.appendChild(el('.adm-person.loading', null, 'Loading ' + name + '…'));
+    Promise.all([
+      App.api.activityStats(Object.assign({ email }, range)),
+      App.api.activity({ email, limit: 1 })
+    ]).then(([s, last]) => {
+      box.innerHTML = '';
+      const ins = s.insights || { time: [], errorToasts: [], rage: [], undos: [], emptySearches: [], timeTotalMs: 0 };
+      const sum = (l) => l.reduce((a, e) => a + e.count, 0);
+      const struggles = sum(ins.errorToasts) + sum(ins.rage) + sum(ins.undos) + sum(ins.emptySearches);
+      const lastTs = last.rows[0] && last.rows[0].ts;
+      const tile = (n, l, sub) => el('.adm-person-tile', null, [el('.adm-person-n', null, n), el('.adm-person-l', null, l), sub ? el('.adm-person-sub', null, sub) : null]);
+      const list = (title, items, fmt) => el('.adm-person-list', null, [el('.adm-person-h', null, title)].concat(
+        items.length ? items.map(fmt) : [el('.adm-person-none', null, 'Nothing yet')]));
+      const top = Object.keys(s.featureCounts || {}).sort((a, b) => s.featureCounts[b] - s.featureCounts[a]).slice(0, 5);
+      const trips = [].concat(
+        ins.errorToasts.map(e => ({ t: '“' + e.key + '”', n: e.count, k: 'error message' })),
+        ins.rage.map(e => ({ t: e.key, n: e.count, k: 'repeated clicks' })),
+        ins.undos.map(e => ({ t: e.key, n: e.count, k: 'undone' })),
+        ins.emptySearches.map(e => ({ t: '“' + e.key + '”', n: e.count, k: 'search found nothing' }))
+      ).sort((a, b) => b.n - a.n).slice(0, 5);
+      const maxMs = ins.time.length ? ins.time[0].ms : 0;
+      box.appendChild(el('.adm-person', null, [
+        el('.adm-person-head', null, [
+          el('.adm-person-av', null, (name || '?').trim().charAt(0).toUpperCase()),
+          el('div', null, [
+            el('.adm-person-name', null, name),
+            el('.adm-person-meta', null, [person ? App.role(person.role).label : null, email,
+              lastTs ? 'last active ' + relTime(lastTs) : 'no activity recorded'].filter(Boolean).join('  ·  '))
+          ])
+        ]),
+        el('.adm-person-tiles', null, [
+          tile(fmtDur(ins.timeTotalMs), 'Active time', 'mouse or keyboard in the last 2 min'),
+          tile(String(s.sessions || 0), 'Sessions', s.avgSessionMs ? 'avg ' + fmtDur(s.avgSessionMs) : null),
+          tile((s.audit || 0).toLocaleString(), 'Changes made'),
+          tile(struggles.toLocaleString(), 'Struggle signals', 'errors, repeat clicks, undos, dead searches')
+        ]),
+        el('.adm-person-cols', null, [
+          list('Where their time goes', ins.time.slice(0, 5), t => el('.adm-tw-row', null, [
+            el('span.adm-tw-lab', null, viewLabel(t.view)),
+            el('.adm-tw-bar', null, el('.adm-tw-fill', { style: { width: (maxMs ? t.ms / maxMs * 100 : 0) + '%' } })),
+            el('span.adm-tw-val', null, fmtDur(t.ms))
+          ])),
+          list('Features they use most', top, a => el('.adm-person-item', null, [el('span', null, actionLabel(a)), el('b', null, String(s.featureCounts[a]))])),
+          list('What tripped them up', trips, t => el('.adm-person-item', { title: t.k }, [el('span', null, [t.t, el('em', null, ' · ' + t.k)]), el('b', null, String(t.n))]))
+        ])
+      ]));
+    }).catch(e => { box.innerHTML = ''; box.appendChild(el('.adm-empty', null, 'Could not load ' + name + '’s summary — ' + e.message)); });
+  }
+
+  // a page the time tracker reports, in words: 'board', 'admin.directory' …
+  function viewLabel(v) {
+    if (v === 'admin.hub' || v === 'admin') return 'Admin';
+    if (v.startsWith('admin.')) return 'Admin · ' + actionLabel(v);
+    const l = actionLabel('view.' + v);
+    return l === 'view.' + v ? v.charAt(0).toUpperCase() + v.slice(1) : l.replace(/ view$/, '');
+  }
+
+  /* ---- Where time goes ----
+     Active time per page across everyone in the segment: the pages people
+     live in are where polish pays off most; a page nobody stays on is either
+     done quickly (good) or abandoned (look at its struggle signals). */
+  function timeCard(s, pct) {
+    const ins = s.insights || { time: [], timeTotalMs: 0 };
+    const prev = s.insightsPrev || null;
+    const card = chartCard('Where time goes',
+      'Active time on each page: the tab in front and someone using mouse or keyboard in the last 2 minutes. Idle and background time never counts.');
+    if (!ins.time.length) {
+      card.appendChild(el('.adm-empty', null, 'No active time recorded in this segment yet. It starts collecting from this release.'));
+      return card;
+    }
+    const max = ins.time[0].ms;
+    const body = el('.adm-tw');
+    body.appendChild(el('.adm-tw-total', null, [
+      el('b', null, fmtDur(ins.timeTotalMs)), ' of active time',
+      prev && prev.timeTotalMs ? (() => { const d = pct(ins.timeTotalMs, prev.timeTotalMs); return d == null ? null : el('span.adm-delta.' + (d > 0 ? 'up' : d < 0 ? 'down' : 'flat'), null, (d > 0 ? '▲ +' : d < 0 ? '▼ ' : '') + d + '%'); })() : null
+    ]));
+    ins.time.slice(0, 10).forEach(t => {
+      const share = ins.timeTotalMs ? Math.round(t.ms / ins.timeTotalMs * 100) : 0;
+      const was = prev && prev.time ? prev.time[t.view] : null;
+      const d = was ? pct(t.ms, was) : null;
+      body.appendChild(el('.adm-tw-row', null, [
+        el('span.adm-tw-lab', null, viewLabel(t.view)),
+        el('.adm-tw-bar', null, el('.adm-tw-fill', { style: { width: (t.ms / max * 100) + '%' } })),
+        el('span.adm-tw-val', null, fmtDur(t.ms)),
+        el('span.adm-tw-sub', null, share + '% · ' + fmtDur(t.users ? t.ms / t.users : 0) + ' per person'),
+        d == null ? el('span') : el('span.adm-delta.' + (d > 0 ? 'up' : d < 0 ? 'down' : 'flat'), null, (d > 0 ? '▲ +' : d < 0 ? '▼ ' : '') + d + '%')
+      ]));
+    });
+    card.appendChild(body);
+    return card;
+  }
+
+  /* ---- Struggle signals ----
+     The small moments the tool gets in someone's way, ranked by how many
+     people hit each one. Every row is a lead for what to fix next. */
+  function struggleCard(s) {
+    const ins = s.insights || {};
+    const card = chartCard('Struggle signals',
+      'Where people get stuck, ranked by how many people hit it. Each one is a lead for what to fix or explain next.');
+    const block = (title, hint, items, fmt) => el('.adm-st-block', null, [
+      el('.adm-fr-h', null, title), el('.adm-st-hint', null, hint),
+      items && items.length
+        ? el('.adm-st-list', null, items.slice(0, 6).map(e => el('.adm-st-row', null, [
+            el('span.adm-st-lab', { title: fmt(e) }, fmt(e)),
+            el('span.adm-st-where', null, e.view ? viewLabel(e.view) : ''),
+            el('span.adm-st-n', { title: e.count + ' time' + (e.count === 1 ? '' : 's') + ' by ' + e.users + ' ' + (e.users === 1 ? 'person' : 'people') },
+              e.users + (e.users === 1 ? ' person' : ' people') + ' · ' + e.count + '×')
+          ])))
+        : el('.adm-fr-none', null, [App.icon('check', { cls: 'adm-fr-ok' }), ' None in this segment.'])
+    ]);
+    card.appendChild(el('.adm-st-grid', null, [
+      block('Error messages people saw', 'Every red warning, word for word: blocked actions and confusing rules.', ins.errorToasts, e => e.key),
+      block('Repeated clicking', 'Three fast clicks on one spot: something looks clickable but isn’t, or answers too slowly.', ins.rage, e => e.key),
+      block('Undone straight away', 'Changes people took back: often a mis-click or a result they didn’t expect.', ins.undos, e => e.key),
+      block('Searches that found nothing', 'What people looked for and couldn’t find: naming mismatches, or features they expect.', ins.emptySearches, e => '“' + e.key + '”')
+    ]));
+    return card;
   }
 
   /* The usage view answers "where is the tool actually being used, and is that
@@ -1732,6 +1933,10 @@ window.App = window.App || {};
         spark: null, color: C.seriesColor(3)
       }));
       panel.appendChild(cards);
+
+      /* ---- where time goes, and where people struggle ---- */
+      panel.appendChild(timeCard(s, pct));
+      panel.appendChild(struggleCard(s));
 
       /* ---- 2. Feature adoption ---- */
       // A named shortlist, so the question is "is adoption sticking?" for the

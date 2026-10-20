@@ -202,6 +202,7 @@ window.App = window.App || {};
     // Which views each role actually works in. Deduped to once a minute inside
     // App.track, so the constant re-renders here cost one event, not hundreds.
     App.track && App.track.feature('view.' + App.state.view);
+    App.track && App.track.setView(App.state.view === 'admin' ? 'admin.' + (App.state.admin.view || 'hub') : App.state.view);
     if (App.state.view === 'admin') App.track.feature('admin.' + (App.state.admin.view || 'hub'));
     App.state._lastRenderedView = App.state.view;
     // The assistant lives on <body>, outside the view that was just rebuilt, so
@@ -574,6 +575,8 @@ window.App = window.App || {};
       search.focus();
       try { search.setSelectionRange(caret[0], caret[1]); } catch (e) {}   // not all inputs allow it
     }
+    // a search that matched nothing — Feature Usage → Struggle signals
+    App.track && App.track.searchResult(f.q, episodes.length);
   }
 
   function renderKpis(episodes) {

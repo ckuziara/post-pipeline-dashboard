@@ -2947,6 +2947,7 @@ window.App = window.App || {};
         e.preventDefault();
         const r = redo ? App.history.redo() : App.history.undo();
         if (!r) return;
+        App.track && App.track.signal(redo ? 'redo' : 'undo', { label: r.label, ok: !!r.ok, view: App.state.view });
         if (r.ok) App.toast((redo ? 'Redid ' : 'Undid ') + r.label);
         // refused: a teammate has changed the same thing since. The step stays
         // on the stack — once they're done, or once you've looked, try again.

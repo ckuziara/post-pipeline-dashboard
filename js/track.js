@@ -16,6 +16,7 @@ window.App = window.App || {};
   'use strict';
 
   const FLUSH_MS = 4000, MAX_BUFFER = 50;
+  const TICK_MS = 15000, IDLE_MS = 2 * 60 * 1000, TIME_SEND_MS = 30 * 60 * 1000;
   let buffer = [], timer = null, sending = false;
 
   function post(events, useBeacon) {
@@ -96,6 +97,69 @@ window.App = window.App || {};
       this.usage(action, detail);
     },
 
+    /* ---- signals: where time goes, and where people struggle ----
+       Product telemetry rather than features, so each is 'sig.'-prefixed and
+       the server keeps them out of the feature rankings. Read in Admin →
+       Audit & Event Logs → Feature Usage ("Where time goes", "Struggle
+       signals") and in a person's summary on the Activity tab. */
+    signal(name, detail) { this.usage('sig.' + name, detail); },
+
+    /* Active time per view. Time only counts while the tab is visible and
+       someone has touched mouse or keyboard in the last two minutes, so a tab
+       left open overnight counts nothing. It's summed here and sent as ONE
+       event per half hour (and when the tab is hidden or closed), keeping the
+       log's 20,000-row cap for real history. */
+    _time: { view: null, acc: {}, lastInput: 0, lastTick: 0, sentAt: 0 },
+    setView(view) { this._tick(); this._time.view = view; },
+    _tick() {
+      const T = this._time, now = Date.now();
+      if (T.view && T.lastTick && !document.hidden && now - T.lastInput < IDLE_MS) {
+        T.acc[T.view] = (T.acc[T.view] || 0) + Math.min(now - T.lastTick, TICK_MS * 2);
+      }
+      T.lastTick = now;
+    },
+    flushTime() {
+      this._tick();
+      const T = this._time;
+      const views = {}; let total = 0;
+      Object.keys(T.acc).forEach(v => { const ms = Math.round(T.acc[v]); if (ms >= 1000) { views[v] = ms; total += ms; } });
+      T.acc = {}; T.sentAt = Date.now();
+      if (total) this.signal('time', { views, ms: total });
+    },
+
+    // the same few-pixel spot clicked 3+ times inside 0.8s — something that
+    // looks clickable but isn't, or is too slow to answer
+    _clicks: [],
+    _click(e) {
+      const now = Date.now();
+      this._clicks = this._clicks.filter(c => now - c.t < 800 && Math.abs(c.x - e.clientX) < 24 && Math.abs(c.y - e.clientY) < 24);
+      this._clicks.push({ t: now, x: e.clientX, y: e.clientY });
+      if (this._clicks.length < 3) return;
+      this._clicks = [];
+      const t = e.target && e.target.closest ? e.target : null;
+      if (!t) return;
+      // name the control that was hit; anything else (a bar, a row, empty
+      // space) by its element and class, which is what a developer can find
+      const n = t.closest('button, a, [role="button"], [role="tab"], input, select, label, [aria-label], [title]');
+      const label = n ? (n.getAttribute('aria-label') || n.getAttribute('title') || n.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40) : '';
+      const what = label || (t.tagName.toLowerCase() + (t.classList[0] ? '.' + t.classList[0] : ''));
+      this.signal('rage', { target: what, view: App.state && App.state.view });
+    },
+
+    // a query someone typed that matched nothing, once it's settled for 2s
+    _searchTimer: null,
+    searchResult(q, count) {
+      clearTimeout(this._searchTimer);
+      q = (q || '').trim();
+      // every render passes through here, so the same dead query is only told once
+      if (!q || count) { this._emptyQ = null; return; }
+      if (this._emptyQ === q) return;
+      this._searchTimer = setTimeout(() => {
+        this._emptyQ = q;
+        this.signal('searchEmpty', { q: q.slice(0, 60), view: App.state && App.state.view });
+      }, 2000);
+    },
+
     flush(useBeacon) {
       clearTimeout(timer); timer = null;
       if (!buffer.length || (sending && !useBeacon)) return;
@@ -107,6 +171,18 @@ window.App = window.App || {};
   };
 
   // Don't lose the tail of a session when the tab closes or is backgrounded.
-  addEventListener('pagehide', () => App.track.flush(true));
-  addEventListener('visibilitychange', () => { if (document.hidden) App.track.flush(true); });
+  addEventListener('pagehide', () => { App.track.flushTime(); App.track.flush(true); });
+  addEventListener('visibilitychange', () => {
+    if (document.hidden) { App.track.flushTime(); App.track.flush(true); }
+    else App.track._time.lastTick = Date.now();   // hidden time never counts
+  });
+  // active-time clock: any input marks the person present
+  const present = () => { const T = App.track._time; if (!T.lastInput || Date.now() - T.lastInput > IDLE_MS) T.lastTick = Date.now(); T.lastInput = Date.now(); };
+  ['pointerdown', 'keydown', 'wheel', 'pointermove'].forEach(ev => addEventListener(ev, present, { passive: true, capture: true }));
+  addEventListener('click', e => App.track._click(e), true);
+  setInterval(() => {
+    App.track._tick();
+    if (Date.now() - App.track._time.sentAt > TIME_SEND_MS) App.track.flushTime();
+  }, TICK_MS);
+  App.track._time.sentAt = Date.now();
 })();
