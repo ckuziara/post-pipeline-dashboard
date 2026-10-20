@@ -877,27 +877,6 @@ window.App = window.App || {};
         App.editTask.open(ep.id, su.key, { preview: true });   // view-only when it's another department's
       });
       return row;
-    },
-
-    // (m.episodes, not m.subs: for the QC role m.subs is QC's own tasks only)
-    widget(m) {
-      const todayIso = App.isoDate(App.today());
-      const items = plan(m.episodes).items.filter(x => x.date <= todayIso || x.atRisk);
-      const list = el('.pr-list');
-      if (!items.length) { list.appendChild(el('.empty', null, 'Nothing to QC today')); return list; }
-      items.slice(0, 8).forEach(x => {
-        const show = App.show(x.ep.showId), dep = App.dept(x.su.dept);
-        list.appendChild(el('.pr-item', { onclick: () => App.qcQueue.focus(x.ep.id, x.su.key) }, [
-          el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color), fontSize: '10px', padding: '2px 7px' } }, x.ep.code),
-          el('.ri-main', null, [
-            el('.ri-title', null, x.su.name),
-            el('.ri-sub', null, [el('span.dept-chip', { style: { padding: '1px 7px', fontSize: '10px' } }, [el('span.dot', { style: { background: dep.color } }), dep.label])])
-          ]),
-          el('span.qcq-flag' + (x.overdue ? '.late' : x.atRisk ? '.risk' : ''), null, x.overdue ? 'Overdue' : x.atRisk ? 'At risk' : 'Today')
-        ]));
-      });
-      if (items.length > 8) list.appendChild(el('.pr-more', null, '+' + (items.length - 8) + ' more'));
-      return list;
     }
   };
 })();
