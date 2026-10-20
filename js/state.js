@@ -510,7 +510,7 @@ window.App = window.App || {};
      The names keep clear of the `qc` task key and the `qc` department. */
   App.qcSettings = function () {
     const q = (App.state.data && App.state.data.qcSettings) || {};
-    return { perDay: Math.max(1, Math.round(q.perDay || 4)), defaultDays: Math.max(1, Math.round(q.defaultDays || 1)) };
+    return { perDay: Math.max(1, Math.round(q.perDay || 5)), defaultDays: Math.max(1, Math.round(q.defaultDays || 1)) };
   };
   /* Brand Configuration (Admin → Workflow): the studio's logo (a PNG or
      JPEG data URL, scaled down when it's set) on everything PipeDream
