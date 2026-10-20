@@ -2887,6 +2887,8 @@ window.App = window.App || {};
     const t = App.el('div.toast' + (isError ? '.error' : ''), null,
       isError ? [App.icon('warn'), ' ' + msg] : msg);
     root.appendChild(t);
+    // every error message someone sees, for Feature Usage → Struggle signals
+    if (isError && App.track) App.track.error('ui.errorToast', { msg: String(msg).slice(0, 140), view: App.state && App.state.view });
     setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); },
       (opts && opts.ms) || (isError ? 5000 : 2800));
   };
