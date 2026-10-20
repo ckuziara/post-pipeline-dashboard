@@ -244,11 +244,29 @@ window.App = window.App || {};
   };
   // ...and its Dept filter: the department whose deliverable it is (With QC means nothing here)
   const deptOk = (su) => { const d = ((App.state.filters && App.state.filters.dept) || []).filter(k => k !== 'qc'); return !d.length || d.includes(su.dept); };
+  /* QC's finished work, by who did it and the day: every pass and every
+     report sent back (a revoked pass doesn't count), from `from` to `to`.
+     Who is whoever sent it, else the check's operator.
+     → { [personId]: { [iso]: [{ ep, su, done: true, result }] } } */
+  function doneByDay(from, to) {
+    const out = {};
+    App.activeEpisodes().forEach(ep => Object.keys(ep.qcChecks || {}).forEach(key => {
+      const c = ep.qcChecks[key], su = App.subitem(ep, key); if (!su) return;
+      (c.reports || []).forEach(r => {
+        if (r.revokedAt) return;
+        const day = App.isoDate(new Date(r.at));
+        if (day < from || day > to) return;
+        const who = r.by && App.person(r.by) ? r.by : c.owner; if (!who) return;
+        ((out[who] = out[who] || {})[day] = out[who][day] || []).push({ ep, su, done: true, result: r.result === 'pass' ? 'passed' : 'report sent' });
+      });
+    }));
+    return out;
+  }
   const opOk = (x) => App.qcOperatorMatch(x.ep, x.su.key) && deptOk(x.su);
   let curLoad = null;     // App.qcWorkload(), once per render — every row's picker reads it
 
   App.qcQueue = {
-    collect, plan,
+    collect, plan, doneByDay,
     pendingCount(episodes) { return collect(episodes, false).length; },
 
     /* A pass carries its own report, the same shape as one sent back, so the
@@ -697,6 +715,11 @@ window.App = window.App || {};
         const id = App.qcOwner(x.ep, x.su.key).id || '';
         ((byDay[id] = byDay[id] || {})[x.date] = byDay[id][x.date] || []).push(x);
       });
+      // and what they've already finished this week, so past days aren't blank
+      const done = doneByDay(days[0], days[4]);
+      Object.keys(done).forEach(id => Object.keys(done[id]).forEach(day => {
+        ((byDay[id] = byDay[id] || {})[day] = byDay[id][day] || []).unshift(...done[id][day]);
+      }));
       const awayOn = (p, day) => (p.timeOff || []).some(t => t.start <= day && (t.end || t.start) >= day);
       const LEVEL_C = { ok: '#37b679', full: '#f6a609', over: 'var(--danger)' };
       const levelOf = (n) => n > perDay ? 'over' : n >= perDay * 0.8 ? 'full' : 'ok';
@@ -704,10 +727,11 @@ window.App = window.App || {};
       const dayTip = (who, day, list) => () => {
         const box = el('.res-tip');
         box.appendChild(el('.res-tip-head', null, who + ' · ' + App.fmtDate(day)));
-        box.appendChild(el('.res-tip-sub', null, list.length + ' check' + (list.length === 1 ? '' : 's') + ' planned · QC takes up to ' + perDay + ' a day'));
+        const nd = list.filter(x => x.done).length, np = list.length - nd;
+        box.appendChild(el('.res-tip-sub', null, [nd ? nd + ' done' : null, np ? np + ' planned' : null].filter(Boolean).join(' · ') + ' · QC takes up to ' + perDay + ' a day'));
         list.slice(0, 10).forEach(x => box.appendChild(el('.res-tip-task', { style: { borderLeftColor: App.dept(x.su.dept).color } }, [
           el('span.res-tip-code', null, x.ep.code), ' ' + x.su.name,
-          el('span.res-tip-meta', null, x.overdue ? 'late' : x.atRisk ? 'at risk' : x.qcDue ? 'due ' + App.fmtDate(x.qcDue) : '')
+          el('span.res-tip-meta', null, x.done ? '✓ ' + x.result : x.overdue ? 'late' : x.atRisk ? 'at risk' : x.qcDue ? 'due ' + App.fmtDate(x.qcDue) : '')
         ])));
         if (list.length > 10) box.appendChild(el('.res-tip-sub', null, '+ ' + (list.length - 10) + ' more'));
         return box;
@@ -716,11 +740,11 @@ window.App = window.App || {};
         const past = day < today;
         if (p && awayOn(p, day)) return el('.qcr-day.away', { title: who + ' — away ' + App.fmtDate(day) }, el('span.qcr-day-n', null, 'Off'));
         const list = (byDay[id] && byDay[id][day]) || [];
-        const n = list.length, ratio = Math.min(1, n / perDay);
-        const ring = el('.res-ring.qcr-ring' + (n > perDay ? '.over' : '') + (day === today ? '.now' : ''), { title: n ? dayTip(who, day, list) : who + ' — nothing planned ' + App.fmtDate(day) },
+        const n = list.length, nd = list.filter(x => x.done).length, ratio = Math.min(1, n / perDay);
+        const ring = el('.res-ring.qcr-ring' + (n > perDay ? '.over' : '') + (day === today ? '.now' : ''), { title: n ? dayTip(who, day, list) : who + ' — nothing ' + (past ? 'done ' : 'planned ') + App.fmtDate(day) },
           [el('.res-disc', { style: { width: (20 * Math.sqrt(ratio)) + 'px', height: (20 * Math.sqrt(ratio)) + 'px' } })]);
         ring.style.setProperty('--res-c', LEVEL_C[levelOf(n)]);
-        return el('.qcr-day' + (past ? '.past' : ''), null, [ring, el('span.qcr-day-n', null, n ? String(n) : '')]);
+        return el('.qcr-day' + (past ? '.past' : ''), null, [ring, el('span.qcr-day-n', null, n ? [String(n), nd ? el('span.qcr-done', { title: nd + ' done' }, ' ✓' + (nd < n ? nd : '')) : null] : '')]);
       });
 
       const list = el('.qcr-list');
@@ -798,7 +822,7 @@ window.App = window.App || {};
       wrap.appendChild(el('.rvq-ep.qcq-card.qcr-card', null, [
         el('.rvq-ep-head', null, [
           el('span.rvq-ep-title', null, 'This week · w/c ' + App.fmtDate(mon)),
-          el('span.rvq-dept-n', { title: 'QC checks per day — Admin → Workflow' }, weekTotal + ' planned · up to ' + perDay + ' a day')
+          el('span.rvq-dept-n', { title: 'QC checks per day — Admin → Workflow' }, (() => { const nd = Object.values(done).reduce((n, byD) => n + Object.values(byD).reduce((m, l) => m + l.length, 0), 0); return (nd ? nd + ' done · ' : '') + (weekTotal - nd) + ' planned · up to ' + perDay + ' a day'; })())
         ]),
         el('.qcr-body', null, [
           bare.length ? el('.qcq-op-warn', null, [App.icon('warn'), ' No QC operator on ' + bare.map(s => s.name).join(', ') +

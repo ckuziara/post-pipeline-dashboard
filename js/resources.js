@@ -118,10 +118,11 @@ window.App = window.App || {};
       const perDay = App.qcSettings().perDay;
       const dayLoad = isQc ? null : App.resourceLoad([pDraft], wkDays.map(d => ({ key: d, start: d, end: d })), { assign: draft.assign })[id];
       const planned = isQc ? App.qcQueue.plan(App.activeEpisodes()).items.filter(x => App.qcOwner(x.ep, x.su.key).id === id) : [];
+      const doneQc = isQc ? (App.qcQueue.doneByDay(wkDays[0], wkDays[4])[id] || {}) : {};
       const awayOn = (day) => draft.timeOff.some(t => t.start <= day && (t.end || t.start) >= day);
       if (isQc) {
         // the hero's week, in the same terms: checks planned of what QC takes on the days they're in
-        const inWeek = planned.filter(x => wkDays.includes(x.date)).length;
+        const inWeek = planned.filter(x => wkDays.includes(x.date)).length + wkDays.reduce((n, d) => n + (doneQc[d] || []).length, 0);
         const capWk = perDay * wkDays.filter(d => !awayOn(d)).length;
         const lv = levelOf(inWeek, capWk), pc = capWk > 0 ? Math.min(100, Math.round(inWeek / capWk * 100)) : (inWeek ? 100 : 0);
         gaugeBox.innerHTML = '';
@@ -133,10 +134,12 @@ window.App = window.App || {};
         const away = awayOn(day);
         let busy, cap, tip;
         if (isQc) {
-          const list = planned.filter(x => x.date === day);
+          const list = (doneQc[day] || []).concat(planned.filter(x => x.date === day));
+          const nd = (doneQc[day] || []).length;
           busy = list.length; cap = perDay;
-          tip = App.fmtDate(day) + ' — ' + busy + ' QC check' + (busy === 1 ? '' : 's') + ' planned of ' + perDay + ' a day' +
-            (list.length ? '\n' + list.slice(0, 8).map(x => '• ' + x.ep.code + ' ' + x.su.name).join('\n') : '');
+          tip = App.fmtDate(day) + ' — ' + [nd ? nd + ' QC check' + (nd === 1 ? '' : 's') + ' done' : null, busy - nd ? (busy - nd) + ' planned' : null].filter(Boolean).join(', ') +
+            (busy ? '' : 'no QC checks') + ' · QC takes up to ' + perDay + ' a day' +
+            (list.length ? '\n' + list.slice(0, 8).map(x => (x.done ? '✓ ' : '• ') + x.ep.code + ' ' + x.su.name).join('\n') : '');
         } else {
           const l = dayLoad[day];
           busy = Math.max(l.booked, l.planned); cap = l.cap;

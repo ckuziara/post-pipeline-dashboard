@@ -5268,7 +5268,7 @@ body.has-draft #toast-root { bottom: 92px; }
 .rp-body { padding: 16px 22px 8px !important; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
 .rp-weeks { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; padding: 10px 6px; border-radius: 12px; background: var(--bg-2); }
 .rp-weeks.rp-days-strip { grid-template-columns: repeat(5, 1fr); }
-.rp-wk.past { opacity: .5; }
+.rp-wk.past { opacity: .8; }
 .rp-wk-lbl b { font-weight: 700; }
 .rp-wk { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 4px 0; border-radius: 8px; }
 .rp-wk.now { background: rgba(91,108,255,.10); }
@@ -6373,7 +6373,8 @@ button.qcq-report-link:hover { text-decoration: underline; }
 .qcr-dh { text-align: center; gap: 0; }
 .qcr-dd { font-weight: 500; letter-spacing: 0; }
 .qcr-dh.now { color: var(--accent); }
-.qcr-day.past { opacity: .45; }
+.qcr-day.past { opacity: .8; }
+.qcr-done { color: var(--ink-ok); font-weight: 700; }
 .qcr-day.away { height: 40px; justify-content: center; border-radius: 6px; background: repeating-linear-gradient(135deg, transparent 0 3px, var(--bg-2) 3px 6px); }
 .qcr-day-n { font-size: 10.5px; color: var(--text-2); font-variant-numeric: tabular-nums; min-height: 13px; }
 .res-ring.qcr-ring { width: 24px; height: 24px; }
