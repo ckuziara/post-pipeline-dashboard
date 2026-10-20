@@ -242,7 +242,9 @@ window.App = window.App || {};
     const id = App.qcOwner(ep, key).id;
     return id ? ops.includes(id) : ops.includes(App.QC_UNASSIGNED);
   };
-  const opOk = (x) => App.qcOperatorMatch(x.ep, x.su.key);
+  // ...and its Dept filter: the department whose deliverable it is (With QC means nothing here)
+  const deptOk = (su) => { const d = ((App.state.filters && App.state.filters.dept) || []).filter(k => k !== 'qc'); return !d.length || d.includes(su.dept); };
+  const opOk = (x) => App.qcOperatorMatch(x.ep, x.su.key) && deptOk(x.su);
   let curLoad = null;     // App.qcWorkload(), once per render — every row's picker reads it
 
   App.qcQueue = {
@@ -659,7 +661,7 @@ window.App = window.App || {};
       };
       const pending = pendingFor(episodes).filter(opOk).sort(sortChecks());
       if (!open.length && !pending.length && !done.length) {
-        wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' No checks for the picked operator' + ((App.state.filters.operator || []).length === 1 ? '' : 's') + '.']));
+        wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' No checks match the filters.']));
       }
       if (open.length) wrap.appendChild(card('Waiting for QC', open, true));
       if (pending.length) wrap.appendChild(card('Pending QC — not sent to QC yet', pending, false));

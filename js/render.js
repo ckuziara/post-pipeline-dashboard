@@ -329,8 +329,17 @@ window.App = window.App || {};
     const deptOpts = Object.keys(App.DEPARTMENTS).map(k => [k, k === 'qc' ? 'With QC' : App.DEPARTMENTS[k].label])
       .filter(o => depts.includes(o[0]) || keep(f.dept)(o));
     bar.appendChild(el('span.toolbar-label', null, 'Dept'));
-    bar.appendChild(multiSelectEl('dept', deptOpts, f.dept, 'All departments',
-      arr => { f.dept = arr; App.render(); }));
+    if (App.state.view === 'qc') {
+      /* On the QC tab every check already needs QC, so Dept narrows them to
+         the departments whose work it is — no With QC. A With QC ticked
+         elsewhere is left alone for the other tabs. */
+      const keepQc = f.dept.includes('qc') ? ['qc'] : [];
+      bar.appendChild(multiSelectEl('dept', deptOpts.filter(o => o[0] !== 'qc'), f.dept.filter(d => d !== 'qc'), 'All departments',
+        arr => { f.dept = arr.concat(keepQc); App.render(); }));
+    } else {
+      bar.appendChild(multiSelectEl('dept', deptOpts, f.dept, 'All departments',
+        arr => { f.dept = arr; App.render(); }));
+    }
 
     let onShow = null;
     if (shows) {
