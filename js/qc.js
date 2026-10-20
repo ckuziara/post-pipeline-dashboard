@@ -709,9 +709,13 @@ window.App = window.App || {};
       });
 
       const list = el('.qcr-list');
+      const DAYNAME = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
       list.appendChild(el('.qcr-row.qcr-head', null, [
         el('span.qcr-h', null, 'Operator'),
-        el('.qcr-days', null, days.map((day, i) => el('span.qcr-h.qcr-dh' + (day === today ? '.now' : ''), { title: App.fmtDate(day) }, DAY[i]))),
+        el('span.qcr-h', null, 'In QC'),
+        el('span.qcr-h', null, 'Default shows'),
+        el('.qcr-days', null, days.map((day, i) => el('span.qcr-h.qcr-dh' + (day === today ? '.now' : ''), { title: App.fmtDate(day) },
+          [DAYNAME[i], el('span.qcr-dd', null, String(App.parseDate(day).getDate()))]))),
         el('span.qcr-h.qcr-wk', null, 'Week')
       ]));
       let weekTotal = 0;
@@ -719,10 +723,12 @@ window.App = window.App || {};
         const q = qcLoad[p.id] || { open: 0, today: 0, late: 0, upcoming: 0 };
         const wk = days.reduce((n, d) => n + ((byDay[p.id] && byDay[p.id][d]) || []).length, 0);
         weekTotal += wk;
-        const desk = [q.open + ' in QC'];
-        if (q.late) desk.push(el('span.qcr-late', null, q.late + ' late'));
-        if (q.today) desk.push(el('span.qcr-today', null, q.today + ' due today'));
-        if (q.upcoming) desk.push(q.upcoming + ' ahead');
+        const desk = el('.qcr-desk', null, [
+          el('span.qcr-open', null, [el('b', null, String(q.open)), ' open']),
+          q.late ? el('span.qcr-late', null, q.late + ' late') : null,
+          q.today ? el('span.qcr-today', null, q.today + ' due today') : null,
+          q.upcoming ? el('span', { title: 'Delegated to them, not in QC yet' }, q.upcoming + ' ahead') : null
+        ]);
         const mine = shows.filter(s => App.qcOperatorsFor(s).includes(p.id));
         const showLine = el('.qcr-shows', null, mine.length
           ? mine.map(s => el('span.qcq-op-show', { style: { borderColor: s.color }, title: s.name + '’s checks are delegated to its QC operators' }, s.name))
@@ -742,10 +748,11 @@ window.App = window.App || {};
             el('span.avatar', { style: { width: '28px', height: '28px', fontSize: '10px', background: p.color, flex: 'none', color: App.pickInk(p.color) } }, App.initials(p.name)),
             el('.qcr-id', null, [
               el('.qcr-name', null, p.name),
-              el('.qcr-desk', null, desk.reduce((a, x, i) => a.concat(i ? [' · ', x] : [x]), [])),
-              showLine
+              el('.qcr-sub', null, App.personCapacity(p) + ' days a week' + ((p.timeOff || []).some(t => (t.end || t.start) >= mon && t.start <= days[4]) ? ' · time off this week' : ''))
             ])
           ]),
+          desk,
+          showLine,
           el('.qcr-days', null, dayCells(p.id, p.name, p)),
           el('.qcr-wk', { title: wk + ' check' + (wk === 1 ? '' : 's') + ' planned this week' }, [el('b', null, String(wk))])
         ]));
@@ -757,9 +764,11 @@ window.App = window.App || {};
             el('span.avatar.avatar-none', { style: { width: '28px', height: '28px', fontSize: '10px', flex: 'none' } }, '?'),
             el('.qcr-id', null, [
               el('.qcr-name', null, 'Unassigned'),
-              el('.qcr-desk', null, un.open + ' in QC with nobody on ' + (un.open === 1 ? 'it' : 'them') + (canEdit ? ' — open Checks to delegate' : ''))
+              el('.qcr-sub', null, canEdit ? 'Open Checks to delegate' : 'Waiting for a QC Manager')
             ])
           ]),
+          el('.qcr-desk', null, el('span.qcr-open', null, [el('b', null, String(un.open)), ' open'])),
+          el('span'),
           el('.qcr-days', null, dayCells('', 'Unassigned', null)),
           el('.qcr-wk', null, el('b', null, String(days.reduce((n, d) => n + ((byDay[''] && byDay[''][d]) || []).length, 0))))
         ]));

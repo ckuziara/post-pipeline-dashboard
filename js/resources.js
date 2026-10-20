@@ -106,21 +106,51 @@ window.App = window.App || {};
       g.style.setProperty('--rp-p', pct); g.style.setProperty('--rp-c', LEVEL_C[lvlNow]);
       gaugeBox.appendChild(el('.rp-gauge-wrap', { title: 'This week: ' + r1(busyNow) + ' of ' + r1(now.cap) + ' days' }, [g, el('.rp-gauge-lbl', null, 'This week')]));
 
-      // ---- the weeks ahead ----
-      body.appendChild(el('.rp-weeks', null, weeks.map((w, i) => {
-        const l = load[w.key], busy = Math.max(l.booked, l.planned), lvl = levelOf(busy, l.cap);
-        const away = l.days && l.off >= l.days;
-        const ratio = l.cap > 0 ? busy / l.cap : (busy > 0 ? 2 : 0);
+      // ---- this week, day by day ----
+      /* A QC operator's day is the checks the QC plan puts on it (the QC
+         tab's plan — App.qcQueue.plan), against QC's checks per day, as on
+         QC → Resources. Anyone else's is whether they're booked, against
+         their share of the day. */
+      const today = App.isoDate(App.today());
+      const wkDays = [0, 1, 2, 3, 4].map(i => App.shiftIso(mon, i));
+      const DAY = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+      const isQc = dept === 'qc';
+      const perDay = App.qcSettings().perDay;
+      const dayLoad = isQc ? null : App.resourceLoad([pDraft], wkDays.map(d => ({ key: d, start: d, end: d })), { assign: draft.assign })[id];
+      const planned = isQc ? App.qcQueue.plan(App.activeEpisodes()).items.filter(x => App.qcOwner(x.ep, x.su.key).id === id) : [];
+      const awayOn = (day) => draft.timeOff.some(t => t.start <= day && (t.end || t.start) >= day);
+      if (isQc) {
+        // the hero's week, in the same terms: checks planned of what QC takes on the days they're in
+        const inWeek = planned.filter(x => wkDays.includes(x.date)).length;
+        const capWk = perDay * wkDays.filter(d => !awayOn(d)).length;
+        const lv = levelOf(inWeek, capWk), pc = capWk > 0 ? Math.min(100, Math.round(inWeek / capWk * 100)) : (inWeek ? 100 : 0);
+        gaugeBox.innerHTML = '';
+        const g2 = el('.rp-gauge', null, [el('span', null, [el('b', null, String(inWeek)), '/' + capWk])]);
+        g2.style.setProperty('--rp-p', pc); g2.style.setProperty('--rp-c', LEVEL_C[lv]);
+        gaugeBox.appendChild(el('.rp-gauge-wrap', { title: 'This week: ' + inWeek + ' QC checks planned of ' + capWk }, [g2, el('.rp-gauge-lbl', null, 'Checks this week')]));
+      }
+      body.appendChild(el('.rp-weeks.rp-days-strip', null, wkDays.map((day, i) => {
+        const away = awayOn(day);
+        let busy, cap, tip;
+        if (isQc) {
+          const list = planned.filter(x => x.date === day);
+          busy = list.length; cap = perDay;
+          tip = App.fmtDate(day) + ' — ' + busy + ' QC check' + (busy === 1 ? '' : 's') + ' planned of ' + perDay + ' a day' +
+            (list.length ? '\n' + list.slice(0, 8).map(x => '• ' + x.ep.code + ' ' + x.su.name).join('\n') : '');
+        } else {
+          const l = dayLoad[day];
+          busy = Math.max(l.booked, l.planned); cap = l.cap;
+          tip = App.fmtDate(day) + ' — ' + (l.tasks.length ? l.tasks.length + ' task' + (l.tasks.length === 1 ? '' : 's') + '\n' + l.tasks.slice(0, 8).map(({ ep, su }) => '• ' + ep.code + ' ' + su.name).join('\n') : 'nothing booked');
+        }
+        const lvl = levelOf(busy, cap);
+        const ratio = cap > 0 ? busy / cap : (busy > 0 ? 2 : 0);
         const ring = el('.res-ring.rp-ring' + (lvl === 'over' ? '.over' : ''), null,
           [el('.res-disc', { style: { width: (26 * Math.sqrt(Math.min(1, ratio))) + 'px', height: (26 * Math.sqrt(Math.min(1, ratio))) + 'px' } })]);
         ring.style.setProperty('--res-c', LEVEL_C[lvl]);
-        return el('.rp-wk' + (i === 0 ? '.now' : '') + (away ? '.away' : ''), {
-          title: 'w/c ' + App.fmtDate(w.start) + ' — ' + r1(l.booked) + ' d booked' + (l.planned ? ', ' + r1(l.planned) + ' d planned' : '') +
-                 ' of ' + r1(l.cap) + ' d' + (l.off ? ' (' + l.off + ' d off)' : '') + ' · ' + l.tasks.length + ' task' + (l.tasks.length === 1 ? '' : 's')
-        }, [
-          el('.rp-wk-lbl', null, i === 0 ? 'This wk' : App.fmtDate(w.start)),
+        return el('.rp-wk' + (day === today ? '.now' : '') + (day < today ? '.past' : '') + (away ? '.away' : ''), { title: away ? App.fmtDate(day) + ' — away' : tip }, [
+          el('.rp-wk-lbl', null, [el('b', null, DAY[i]), ' ' + App.parseDate(day).getDate()]),
           away ? el('.rp-wk-away', null, 'Away') : ring,
-          el('.rp-wk-val.' + lvl, null, away ? '—' : r1(busy) + '/' + r1(l.cap))
+          el('.rp-wk-val.' + lvl, null, away ? '—' : isQc ? String(busy) + '/' + cap : r1(busy) + '/' + r1(cap))
         ]);
       })));
 
