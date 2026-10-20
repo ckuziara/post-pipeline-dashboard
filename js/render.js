@@ -97,7 +97,8 @@ window.App = window.App || {};
     let eps = App.activeEpisodes().filter(ep =>      // archived shows/episodes never surface
       App.filterHas(f.show, ep.showId) &&
       (f.q === '' || (ep.title + ' ' + ep.code).toLowerCase().includes(f.q.toLowerCase())));
-    if (f.person.length) eps = eps.filter(ep => Object.values(ep.assignees || {}).some(a => f.person.includes(a)));
+    // (the QC tab filters its checks by operator instead — App.qcOperatorMatch)
+    if (f.person.length && App.state.view !== 'qc') eps = eps.filter(ep => Object.values(ep.assignees || {}).some(a => f.person.includes(a)));
     // Timeline and Board each have their own "Hide completed episodes" preference
     const v = App.state.view;
     if ((v === 'timeline' || v === 'board') && App.prefs.get(v === 'board' ? 'hideDoneBoard' : 'hideDoneTimeline', false)) {
@@ -342,9 +343,18 @@ window.App = window.App || {};
       .filter(p => f.person.includes(p.id) ||
         ((!onShow || onShow.has(p.id)) && (!f.dept.length || f.dept.includes('qc') || f.dept.includes(App.roleDept(p.role)))))
       .map(p => [p.id, p.name]);
-    bar.appendChild(el('span.toolbar-label', null, 'Owner'));
-    bar.appendChild(multiSelectEl('person', personOpts, f.person, 'Everyone',
-      arr => { f.person = arr; App.render(); }));
+    if (App.state.view === 'qc') {
+      // QC's checks have an operator, not an owner: its own filter (App.qcOperatorMatch)
+      f.operator = f.operator || [];
+      const opOpts = App.deptStaff('qc').map(p => [p.id, p.name]).concat([[App.QC_UNASSIGNED, 'Unassigned']]);
+      bar.appendChild(el('span.toolbar-label', null, 'Operator'));
+      bar.appendChild(multiSelectEl('operator', opOpts, f.operator, 'Everyone',
+        arr => { f.operator = arr; App.render(); }));
+    } else {
+      bar.appendChild(el('span.toolbar-label', null, 'Owner'));
+      bar.appendChild(multiSelectEl('person', personOpts, f.person, 'Everyone',
+        arr => { f.person = arr; App.render(); }));
+    }
 
     // Sort By — the Board and the QC tab, each with its own options. The same trigger and popover as
     // the filters beside it; direction is picked in the same menu rather than on a separate button.

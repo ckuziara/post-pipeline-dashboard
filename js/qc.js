@@ -233,6 +233,16 @@ window.App = window.App || {};
     setTimeout(() => input.focus(), 20);
   }
 
+  /* The QC tab's Operator filter (the toolbar's Owner, renamed there):
+     the checks delegated to the picked people, or unassigned. */
+  App.QC_UNASSIGNED = '__unassigned';
+  App.qcOperatorMatch = (ep, key) => {
+    const ops = (App.state.filters && App.state.filters.operator) || [];
+    if (!ops.length) return true;
+    const id = App.qcOwner(ep, key).id;
+    return id ? ops.includes(id) : ops.includes(App.QC_UNASSIGNED);
+  };
+  const opOk = (x) => App.qcOperatorMatch(x.ep, x.su.key);
   let curLoad = null;     // App.qcWorkload(), once per render — every row's picker reads it
 
   App.qcQueue = {
@@ -631,8 +641,8 @@ window.App = window.App || {};
       const wrap = el('.rvq.qcq');
       wrap.appendChild(el('.section-title', null, [App.icon('checkBadge'), ' QC']));
       curLoad = App.qcWorkload();
-      const open = plan(episodes).items.sort(sortChecks());
-      const done = collect(episodes, true).filter(x => x.state !== 'waiting')
+      const open = plan(episodes).items.filter(opOk).sort(sortChecks());
+      const done = collect(episodes, true).filter(x => x.state !== 'waiting' && opOk(x))
         .sort((a, b) => String(b.check.decidedAt) < String(a.check.decidedAt) ? -1 : 1);
       if (!open.length && !done.length && !pendingFor(episodes).length) {
         wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' Nothing is waiting for QC right now.']));
@@ -647,7 +657,10 @@ window.App = window.App || {};
           el('.subtable', null, grid)
         ]);
       };
-      const pending = pendingFor(episodes).sort(sortChecks());
+      const pending = pendingFor(episodes).filter(opOk).sort(sortChecks());
+      if (!open.length && !pending.length && !done.length) {
+        wrap.appendChild(el('.empty', null, [App.icon('checkBadge'), ' No checks for the picked operator' + ((App.state.filters.operator || []).length === 1 ? '' : 's') + '.']));
+      }
       if (open.length) wrap.appendChild(card('Waiting for QC', open, true));
       if (pending.length) wrap.appendChild(card('Pending QC — not sent to QC yet', pending, false));
       if (done.length) wrap.appendChild(card('Completed', done, false));
