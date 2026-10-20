@@ -309,12 +309,34 @@ window.App = window.App || {};
     bar.appendChild(multiSelectEl('show', App.activeShows().map(s => [s.id, s.name]), f.show, 'All shows',
       arr => { f.show = arr; App.render(); }));
 
+    /* Each filter only offers what the ones before it leave relevant: picking
+       a show narrows Dept to the departments its pipeline uses, and Owner to
+       the people on it (staffed on its team or owning one of its tasks) in
+       the picked departments. Anything already ticked stays listed, so it can
+       always be unticked. */
+    const shows = f.show.length ? App.activeShows().filter(s => f.show.includes(s.id)) : null;
+    const keep = (sel) => (o) => sel.includes(o[0]);
+    let depts = Object.keys(App.DEPARTMENTS);
+    if (shows) { const used = new Set(); shows.forEach(s => App.showDepts(s).forEach(d => used.add(d))); depts = depts.filter(d => used.has(d)); }
+    const deptOpts = Object.keys(App.DEPARTMENTS).map(k => [k, App.DEPARTMENTS[k].label])
+      .filter(o => depts.includes(o[0]) || keep(f.dept)(o));
     bar.appendChild(el('span.toolbar-label', null, 'Dept'));
-    bar.appendChild(multiSelectEl('dept', Object.keys(App.DEPARTMENTS).map(k => [k, App.DEPARTMENTS[k].label]), f.dept, 'All departments',
+    bar.appendChild(multiSelectEl('dept', deptOpts, f.dept, 'All departments',
       arr => { f.dept = arr; App.render(); }));
 
+    let onShow = null;
+    if (shows) {
+      onShow = new Set();
+      shows.forEach(s => Object.values(s.team || {}).forEach(t => (t && t.ids || []).forEach(id => onShow.add(id))));
+      App.activeEpisodes().filter(ep => f.show.includes(ep.showId))
+        .forEach(ep => App.subitems(ep).forEach(su => { if (su.assignee) onShow.add(su.assignee); }));
+    }
+    const personOpts = App.state.data.people.filter(p => App.roleDept(p.role))
+      .filter(p => f.person.includes(p.id) ||
+        ((!onShow || onShow.has(p.id)) && (!f.dept.length || f.dept.includes(App.roleDept(p.role)))))
+      .map(p => [p.id, p.name]);
     bar.appendChild(el('span.toolbar-label', null, 'Owner'));
-    bar.appendChild(multiSelectEl('person', App.state.data.people.filter(p => App.roleDept(p.role)).map(p => [p.id, p.name]), f.person, 'Everyone',
+    bar.appendChild(multiSelectEl('person', personOpts, f.person, 'Everyone',
       arr => { f.person = arr; App.render(); }));
 
     // Sort By — the Board and the QC tab, each with its own options. The same trigger and popover as
