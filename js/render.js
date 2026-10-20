@@ -25,9 +25,15 @@ window.App = window.App || {};
   App.subsView = function (ep) {
     const f = App.state.filters;
     return App.subitems(ep).filter(su =>
-      App.filterHas(f.dept, su.dept) &&
+      App.deptFilterHas(f.dept, ep, su) &&
       App.filterHas(f.person, su.assignee));
   };
+  /* The Dept filter. QC owns no tasks of its own — it checks other
+     departments' — so ticking it ("With QC") means every department's tasks
+     that require QC (and not an old board's own QC-department task). */
+  App.deptFilterHas = (depts, ep, su) => !depts.length ||
+    (su.dept !== 'qc' && depts.includes(su.dept)) ||
+    (depts.includes('qc') && App.qcFor(ep, su.key).on);
 
   /* Sort By — the Board's episode order (the Timeline stays in start
      order). Device-local like the other view settings, never synced to teammates. Every
@@ -318,7 +324,8 @@ window.App = window.App || {};
     const keep = (sel) => (o) => sel.includes(o[0]);
     let depts = Object.keys(App.DEPARTMENTS);
     if (shows) { const used = new Set(); shows.forEach(s => App.showDepts(s).forEach(d => used.add(d))); depts = depts.filter(d => used.has(d)); }
-    const deptOpts = Object.keys(App.DEPARTMENTS).map(k => [k, App.DEPARTMENTS[k].label])
+    if (!depts.includes('qc') && App.DEPARTMENTS.qc) depts.push('qc');    // "With QC" spans every show
+    const deptOpts = Object.keys(App.DEPARTMENTS).map(k => [k, k === 'qc' ? 'With QC' : App.DEPARTMENTS[k].label])
       .filter(o => depts.includes(o[0]) || keep(f.dept)(o));
     bar.appendChild(el('span.toolbar-label', null, 'Dept'));
     bar.appendChild(multiSelectEl('dept', deptOpts, f.dept, 'All departments',
@@ -333,7 +340,7 @@ window.App = window.App || {};
     }
     const personOpts = App.state.data.people.filter(p => App.roleDept(p.role))
       .filter(p => f.person.includes(p.id) ||
-        ((!onShow || onShow.has(p.id)) && (!f.dept.length || f.dept.includes(App.roleDept(p.role)))))
+        ((!onShow || onShow.has(p.id)) && (!f.dept.length || f.dept.includes('qc') || f.dept.includes(App.roleDept(p.role)))))
       .map(p => [p.id, p.name]);
     bar.appendChild(el('span.toolbar-label', null, 'Owner'));
     bar.appendChild(multiSelectEl('person', personOpts, f.person, 'Everyone',
