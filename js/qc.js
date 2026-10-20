@@ -740,11 +740,11 @@ window.App = window.App || {};
         const past = day < today;
         if (p && awayOn(p, day)) return el('.qcr-day.away', { title: who + ' — away ' + App.fmtDate(day) }, el('span.qcr-day-n', null, 'Off'));
         const list = (byDay[id] && byDay[id][day]) || [];
-        const n = list.length, nd = list.filter(x => x.done).length, ratio = Math.min(1, n / perDay);
+        const n = list.length, ratio = Math.min(1, n / perDay);
         const ring = el('.res-ring.qcr-ring' + (n > perDay ? '.over' : '') + (day === today ? '.now' : ''), { title: n ? dayTip(who, day, list) : who + ' — nothing ' + (past ? 'done ' : 'planned ') + App.fmtDate(day) },
           [el('.res-disc', { style: { width: (20 * Math.sqrt(ratio)) + 'px', height: (20 * Math.sqrt(ratio)) + 'px' } })]);
         ring.style.setProperty('--res-c', LEVEL_C[levelOf(n)]);
-        return el('.qcr-day' + (past ? '.past' : ''), null, [ring, el('span.qcr-day-n', null, n ? [String(n), nd ? el('span.qcr-done', { title: nd + ' done' }, ' ✓' + (nd < n ? nd : '')) : null] : '')]);
+        return el('.qcr-day' + (past ? '.past' : ''), null, [ring, el('span.qcr-day-n', null, n ? String(n) : '')]);
       });
 
       const list = el('.qcr-list');
