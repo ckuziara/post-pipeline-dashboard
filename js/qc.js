@@ -450,7 +450,7 @@ window.App = window.App || {};
     },
 
     /* Create QC Project: QC's project for checking this version, in QC's
-       folder, named <EP>_<Deliverable>_QC_V<n> from QC's preferred
+       folder, named by the convention (…_QC_v001, server.js qcProjectStem) from QC's preferred
        software's template (the first desktop app in Admin → Department
        Software → QC), with the QC report beside it — then the folder opens,
        so QC sees both. Asking again for the same version just opens the

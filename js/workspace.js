@@ -240,7 +240,8 @@ window.App = window.App || {};
         : stage === 'review' ? [review(), folded('Project & files', [project(), assets()])]
         : stage === 'deliver' ? [deliver(), reviewPast(), folded('Project & files', [project(), assets()])]
         // QC's fix is a delivery fix: the project to fix it in, and Deliver to put it back
-        : stage === 'qcfix' ? [deliver(), project(), folded('Assets & past reviews', [assets(), reviewPast()])]
+        // the QC loop, in its order: a new version of the project, then the fixed deliverables, then Resubmit
+        : stage === 'qcfix' ? [project(), deliver(), folded('Assets & past reviews', [assets(), reviewPast()])]
         : /* qc, done */ [reviewPast(), folded(stage === 'qc' ? 'Delivered files & project' : 'Files & project', [deliver(), project(), assets()])];
       parts.filter(Boolean).forEach(n => box.appendChild(n));
       // opened to deliver (the Priority widget's Deliver button): bring that section into view
@@ -364,6 +365,12 @@ window.App = window.App || {};
       const projects = d.work.filter(f => !f.dir);
       const actions = el('.ws-actions');
 
+      /* Director feedback or a QC report: the loop starts with a new version
+         of the project (App.projectRedo), so until one's been saved since,
+         "+ New version" is the main action and says why. */
+      const redo = App.projectRedo(ep, su);
+      const redoDue = !!(redo && projects.length && redo.since &&
+        !projects.some(f => (f.mtime || 0) > Date.parse(redo.since)));
       if (!projects.length) {
         actions.appendChild(el('button.btn-primary.ws-btn', {
           onclick: () => this._createProject(d)
@@ -371,14 +378,18 @@ window.App = window.App || {};
       } else {
         // open the newest file directly — that's almost always the live one
         const newest = projects.slice().sort((a, b) => (b.mtime || 0) - (a.mtime || 0))[0];
-        actions.appendChild(el('button.btn-primary.ws-btn', {
-          onclick: () => this._open({ which: 'work', name: newest.name })
-        }, '▶ Open Project'));
         // the newest project, copied up a version (server.js /api/task/project)
-        actions.appendChild(el('button.btn-ghost.ws-btn', {
+        const newVer = el('button.ws-btn' + (redoDue ? '.btn-primary' : '.btn-ghost'), {
           title: 'Copy ' + newest.name + ' to the next version',
           onclick: () => this._newVersion()
-        }, '＋ New version'));
+        }, redoDue ? (redo.kind === 'qc' ? '＋ New QC version' : '＋ New version (' + redo.label + ')') : '＋ New version');
+        const open = el('button.ws-btn' + (redoDue ? '.btn-ghost' : '.btn-primary'), {
+          onclick: () => this._open({ which: 'work', name: newest.name })
+        }, '▶ Open Project');
+        (redoDue ? [newVer, open] : [open, newVer]).forEach(b => actions.appendChild(b));
+        if (redoDue) wrap.appendChild(el('.ws-note.tight.ws-redo', null, redo.kind === 'qc'
+          ? redo.label + ' is in — make a new version of the project for the fix, then render it and pick the deliverables again.'
+          : 'The Director sent feedback — make ' + redo.label + ' of the project before you work on it.'));
       }
       actions.appendChild(el('button.btn-ghost.ws-btn', {
         onclick: () => this._open({ which: 'work' })
@@ -412,7 +423,7 @@ window.App = window.App || {};
       const m = this._mounted;
       const ep = App.state.data.episodes.find(e => e.id === m.epId);
       App.api.taskProject({ epId: m.epId, taskKey: m.taskKey, pipeline: App.pipelineFor(ep), newVersion: true })
-        .then(r => { App.toast(r.created ? 'Created ' + r.created : 'Folder ready'); this.reload(); })
+        .then(r => { App.toast(r.created ? 'Created ' + r.created : 'Nothing to copy — use Create Project', !r.created); this.reload(); })
         .catch(e => App.toast(e.message, true));
     },
 

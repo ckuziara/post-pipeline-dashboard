@@ -641,6 +641,23 @@ window.App = window.App || {};
      picked up yet (In Progress) or not (Ready to Start — where a QC report
      puts it, see App.qcQueue.fail). Not Started too, in case a dependency
      came undone meanwhile. */
+  /* Both loops in the PAM flow start the same way — a new version of the
+     project: Director feedback makes the next revision (V2, V3…), a QC report
+     a QC version. While one is due this says which, and since when; the
+     Project block (js/workspace.js) asks for "+ New version" until a project
+     has been saved after `since`. null when neither loop is open. */
+  App.projectRedo = function (ep, su) {
+    if (App.isQcFix(ep, su)) {
+      const c = App.qcCheck(ep, su.key);
+      const r = ((c && c.reports) || []).filter(x => x.result !== 'pass').slice(-1)[0];
+      return { kind: 'qc', since: (r && r.at) || null, label: 'QC report V' + App.qcVersion(ep, su.key) };
+    }
+    const fb = App.review && App.review.feedbackAt(ep.id, su.key);
+    if (fb && App.revisionsUsed(ep, su.key) > 0 && ['not_started', 'ready', 'in_progress'].includes(su.status)) {
+      return { kind: 'feedback', since: fb, label: 'V' + (App.revisionsUsed(ep, su.key) + 1) };
+    }
+    return null;
+  };
   App.isQcFix = (ep, su) => App.qcFor(ep, su.key).on && App.qcState(ep, su.key) === 'failed' &&
     ['not_started', 'ready', 'in_progress'].includes(su.status);
   /* Approved, but its final files haven't gone on yet: not sent to QC, not
@@ -653,7 +670,7 @@ window.App = window.App || {};
        review   with Post Operations / the Director
        deliver  approved: deliver the final files and send them on
        qc       In QC
-       qcfix    back from QC: deliver the fix, then Resubmit to QC
+       qcfix    back from QC: a QC version of the project, the fix, its deliverables, then Resubmit to QC
        done     Delivered, or finished with nothing left to send */
   App.taskStage = function (ep, su) {
     const st = su.status;
@@ -690,20 +707,20 @@ window.App = window.App || {};
     switch (su.status) {
       case 'not_started':
       case 'ready':
-        if (App.isQcFix(ep, su)) return { aud: 'dept', who: dept, text: 'Fix what QC reported, pick the fixed file in Deliverables, then Resubmit to QC.', tone: 'bad' };
+        if (App.isQcFix(ep, su)) return { aud: 'dept', who: dept, text: 'QC report V' + App.qcVersion(ep, su.key) + ': make a new version of the project, render the fix, pick the deliverables again, then Resubmit to QC.', tone: 'bad' };
         // sent back by the Director (App.requestRevision): the next version is waiting to be picked up
         if (feedback && App.revisionsUsed(ep, su.key) > 0 && !blockedBy.length) {
-          return { aud: 'dept', who: dept, text: 'Start V' + (App.revisionsUsed(ep, su.key) + 1) + ' — set it In Progress, then work the Director’s feedback.', tone: 'go' };
+          return { aud: 'dept', who: dept, text: 'Start V' + (App.revisionsUsed(ep, su.key) + 1) + ' — make a new version of the project, set it In Progress, then work the Director’s feedback.', tone: 'go' };
         }
         return blockedBy.length
           ? { aud: 'dept', who: 'Waiting', text: 'Can’t start until ' + blockedBy.join(', ') + (blockedBy.length === 1 ? ' is' : ' are') + ' finished.', tone: 'wait' }
           : { aud: 'dept', who: dept, text: 'Start the work — create the project, then set it In Progress.', tone: 'go' };
       case 'in_progress':
-        if (q.on && qs === 'failed') return { aud: 'dept', who: dept, text: 'Fix what QC reported, pick the fixed file in Deliverables, then Resubmit to QC.', tone: 'bad' };
+        if (q.on && qs === 'failed') return { aud: 'dept', who: dept, text: 'QC report V' + App.qcVersion(ep, su.key) + ': make a new version of the project, render the fix, pick the deliverables again, then Resubmit to QC.', tone: 'bad' };
         return ups
           ? { aud: 'dept', who: dept, text: 'The cut is up — Send for Review when it’s ready.', tone: 'go' }
           : feedback
-            ? { aud: 'dept', who: dept, text: 'Work the Director’s feedback, put the revised cut (V' + (App.revisionsUsed(ep, su.key) + 1) + ') up in Review Uploads, then Send for Review.', tone: 'go' }
+            ? { aud: 'dept', who: dept, text: 'Work the Director’s feedback in a new version of the project, put the revised cut (V' + (App.revisionsUsed(ep, su.key) + 1) + ') up in Review Uploads, then Send for Review.', tone: 'go' }
             : { aud: 'dept', who: dept, text: 'Put the cut up in Review Uploads, then Send for Review.', tone: 'go' };
       case 'review':
         return sent
