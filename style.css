@@ -1311,6 +1311,12 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
   padding: 12px 16px; cursor: pointer; position: relative; background: var(--surface-2);
 }
 .ep-row:hover { background: var(--hover); }
+/* An open episode's header latches to the top of the Board while its
+   subitems scroll under it. Sticky can't work inside an overflow: hidden
+   card, so the card clips instead — the rounded corners still clip, but it
+   doesn't become a scroll box. -14px: #view's top padding. */
+.board .ep-row { position: sticky; top: -14px; z-index: 4; }
+.board .ep-group, :root[data-skin="expressive"] .board .ep-group { overflow: clip; }
 .ep-accent { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
 .ep-row .chev { color: var(--text-2); font-size: 11px; transition: transform .15s; justify-self: center; }
 .ep-row .chev.open { transform: rotate(90deg); }
