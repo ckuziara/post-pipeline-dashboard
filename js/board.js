@@ -10,19 +10,9 @@ window.App = window.App || {};
     render(episodes) {
       this._episodes = episodes;       // what "all" means for the Opt shortcuts
       const wrap = el('.board');
-      if (App.canManageShows(App.state.role)) wrap.appendChild(this.showManager());
       if (!episodes.length) { wrap.appendChild(el('.empty', null, 'No episodes match the current filters.')); return wrap; }
       App.sortEpisodes(episodes, 'board').forEach(ep => wrap.appendChild(this.group(ep)));
       return wrap;
-    },
-
-    // Timeline has no equivalent bar of its own — its Add Show lives in the
-    // kpis strip instead (see renderKpis in render.js) — so this stays
-    // Board-only.
-    showManager() {
-      const bar = el('.show-manager');
-      bar.appendChild(el('button.btn-addshow', { onclick: () => App.addShow.open() }, '＋ Add show'));
-      return bar;
     },
 
     // Role-aware episode rollup: simple Pending / In Production status, the
