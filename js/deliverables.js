@@ -40,7 +40,6 @@ window.App = window.App || {};
       };
       let id = SAMPLE;
       try { const got = opts.identity && opts.identity(); if (got && got.contentCode && got.format) id = got; } catch (e) { /* sample it is */ }
-      const sample = id === SAMPLE;
       const catalogue = App.deliverableCatalogue();
       const labelOf = (o) => {
         if (o.soft) return o.label || o.suffix;
@@ -82,10 +81,7 @@ window.App = window.App || {};
       layer.appendChild(el('.dlv-page', null, [
         el('.dlv-head', null, [
           el('div', null, [
-            el('.dlv-title', null, [App.icon('package'), ' PAM · Deliverables', opts.title ? el('span.dlv-title-sub', null, ' · ' + opts.title) : null]),
-            el('.dlv-sub', null, sample
-              ? 'What each task hands over. Example names use ' + SAMPLE.contentCode + SAMPLE.languages[0] + '_' + SAMPLE.format + ' — a real show uses its own.'
-              : 'What each task hands over, and the names PAM will give the files.')
+            el('.dlv-title', null, [App.icon('package'), ' PAM · Deliverables', opts.title ? el('span.dlv-title-sub', null, ' · ' + opts.title) : null])
           ]),
           el('button.btn-primary', { onclick: done }, 'Done')
         ]),
