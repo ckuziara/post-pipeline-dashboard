@@ -1117,9 +1117,25 @@ function versionDirs(ctx) {
 }
 // what QC can attach as a report (and what /api/task/qc-report will open)
 const QC_REPORT_EXT = /\.(xlsx|xls|xlsm|csv|numbers|pdf|docx|doc|pages|txt|rtf)$/i;
-// <EPCODE>_<Deliverable>_V<n>_QC-REPORT.xlsx
-const qcReportName = (ep, paths, version) =>
-  folders.safeFile(folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_V' + version + '_QC-REPORT.xlsx');
+/* QC's files follow the naming convention like every other file PAM writes:
+   the task's identity (content code, language, format) and its deliverable,
+   then QC and a version — one per QC round:
+     <CC><LANG>_<FORMAT>_<DELIVERABLE>_QC_v001.<ext>          the QC project
+     <CC><LANG>_<FORMAT>_<DELIVERABLE>_QC-REPORT_v001.xlsx    the QC report
+   A task PAM can't name yet (no Format) keeps the older names, and reports
+   made under those are still found: qcReportNames lists new, then old. */
+function qcStem(ctx) {
+  const first = ctx.expected && ctx.expected[0];
+  if (!first) return null;
+  return first.stem.split('_').slice(0, 2).join('_') + '_' +
+    String(ctx.paths.deliverable).toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+const qcV = (n) => '_v' + String(n).padStart(3, '0');
+const qcLegacy = (ctx, version) => folders.safeFile(folders.episodeFolder(ctx.ep).split('_')[0] + '_' + ctx.paths.deliverable + '_V' + version + '_QC-REPORT.xlsx');
+const qcReportName = (ctx, version) => { const st = qcStem(ctx); return st ? st + '_QC-REPORT' + qcV(version) + '.xlsx' : qcLegacy(ctx, version); };
+const qcReportNames = (ctx, version) => [...new Set([qcReportName(ctx, version), qcLegacy(ctx, version)])];
+const qcProjectStem = (ctx, version) => { const st = qcStem(ctx);
+  return st ? st + '_QC' + qcV(version) : folders.episodeFolder(ctx.ep).split('_')[0] + '_' + ctx.paths.deliverable + '_QC_V' + version; };
 
 function openNatively(target) {
   const { spawn } = require('child_process');
@@ -2164,7 +2180,7 @@ const server = http.createServer(async (req, res) => {
 
       /* Create QC Project — QC's own working project for checking one task's
          deliverable, made, named and saved without asking anything:
-           <QC department folder>/QC_<Deliverable>/<EPCODE>_<Deliverable>_QC_V<n>.<ext>
+           <QC department folder>/QC_<Deliverable>/<CC><LANG>_<FORMAT>_<DELIVERABLE>_QC_v00n.<ext>
          from the first template in the studio library that QC's preferred
          software opens (body.exts — one whose name mentions QC wins), with
          the QC report beside it, then opens that folder so QC sees both. One
@@ -2181,7 +2197,7 @@ const server = http.createServer(async (req, res) => {
 
         const version = Math.max(1, Math.min(99, parseInt(body.version, 10) || 1));
         const exts = (Array.isArray(body.exts) ? body.exts : []).map(e => String(e).toLowerCase().replace(/[^a-z0-9]/g, '')).filter(Boolean);
-        const stem = folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_QC_V' + version;
+        const stem = qcProjectStem(ctx, version);
         const extOf = (n) => (n.includes('.') ? n.split('.').pop().toLowerCase() : '');
 
         // this version's project already made: open it, don't make another
@@ -2202,7 +2218,7 @@ const server = http.createServer(async (req, res) => {
            in — show, content code, date, operator, the task and the files it
            delivered (Mezzanine, or Publish once it's been published). Made
            once per version, like the project. */
-        const reportName = qcReportName(ep, paths, version);
+        const reportName = qcReportName(ctx, version);
         const reportAbs = path.join(dirAbs, reportName);
         let reportCreated = false;
         if (!fs.existsSync(reportAbs)) {
@@ -2247,9 +2263,9 @@ const server = http.createServer(async (req, res) => {
         const { ep, paths } = ctx;
         const dirAbs = qcFolderFor(ctx);
         const version = Math.max(1, Math.min(99, parseInt(body.version, 10) || 1));
-        const reportAbs = path.join(dirAbs, qcReportName(ep, paths, version));
+        const reportAbs = qcReportNames(ctx, version).map(n => path.join(dirAbs, n)).find(f => fs.existsSync(f)) || null;
         return sendJson(res, 200, { ok: true, dir: dirAbs, exists: fs.existsSync(dirAbs),
-          report: fs.existsSync(reportAbs) ? reportAbs : null, root: path.resolve(ctx.masterPath) });
+          report: reportAbs, root: path.resolve(ctx.masterPath) });
       }
 
       /* Open QC Report — the report for a check QC has settled, from the QC
@@ -2282,8 +2298,8 @@ const server = http.createServer(async (req, res) => {
         const want = Math.max(1, Math.min(99, parseInt(body.version, 10) || 1));
         let found = null;
         for (let v = want; v >= 1 && !found; v--) {
-          const f = path.join(dirAbs, qcReportName(ep, paths, v));
-          if (fs.existsSync(f)) found = { file: f, version: v };
+          const f = qcReportNames(ctx, v).map(n => path.join(dirAbs, n)).find(x => fs.existsSync(x));
+          if (f) found = { file: f, version: v };
         }
         if (!found) return sendJson(res, 404, { error: 'No QC report for this task yet — Create QC Project makes one' });
         if (!isLocalRequest(req)) return sendJson(res, 200, { ok: true, opened: false, path: found.file, version: found.version });
