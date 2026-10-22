@@ -27,7 +27,9 @@ window.App = window.App || {};
     _latch() {
       document.querySelectorAll('.board .ep-group').forEach(g => {
         const head = g.querySelector('.ep-row'); if (!head) return;
-        const on = head.getBoundingClientRect().top - g.getBoundingClientRect().top > 0.5;
+        // pinned = pushed down past where it sits at rest, which is just inside the card's top border
+        const rest = parseFloat(getComputedStyle(g).borderTopWidth) || 0;
+        const on = head.getBoundingClientRect().top - g.getBoundingClientRect().top > rest + 0.5;
         if (head.classList.contains('latched') !== on) head.classList.toggle('latched', on);
       });
     },

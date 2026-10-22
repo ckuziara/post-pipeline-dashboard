@@ -1319,16 +1319,19 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
    it and its own rounded corners with the page's background — fixed, like
    the body's, so it lines up with the canvas exactly — and the rows that
    have scrolled past disappear behind a rounded card top. */
-.board .ep-row { position: sticky; top: 0; z-index: 4; border-radius: var(--radius) var(--radius) 0 0; }
+/* the header's corners follow the card's (which the expressive skin enlarges), less its 1px border */
+.board .ep-group { --ep-r: calc(var(--radius) - 1px); }
+:root[data-skin="expressive"] .board .ep-group { --ep-r: calc(var(--r-card) - 1px); }
+.board .ep-row { position: sticky; top: 0; z-index: 4; border-radius: var(--ep-r) var(--ep-r) 0 0; }
 .board .ep-row.latched::before {
-  content: ''; position: absolute; left: -1px; right: -1px; top: -15px; height: calc(15px + var(--radius));
+  content: ''; position: absolute; left: -1px; right: -1px; top: -15px; height: calc(15px + var(--ep-r));
   pointer-events: none; z-index: -1; background-color: var(--bg); background-attachment: fixed;
   -webkit-mask: linear-gradient(#000, #000) top / 100% 15px no-repeat,
-    radial-gradient(circle at 100% 100%, transparent calc(var(--radius) - .5px), #000 var(--radius)) left 0 bottom 0 / calc(var(--radius) + 1px) var(--radius) no-repeat,
-    radial-gradient(circle at 0 100%, transparent calc(var(--radius) - .5px), #000 var(--radius)) right 0 bottom 0 / calc(var(--radius) + 1px) var(--radius) no-repeat;
+    radial-gradient(circle at 100% 100%, transparent calc(var(--ep-r) - .5px), #000 var(--ep-r)) left 0 bottom 0 / calc(var(--ep-r) + 1px) var(--ep-r) no-repeat,
+    radial-gradient(circle at 0 100%, transparent calc(var(--ep-r) - .5px), #000 var(--ep-r)) right 0 bottom 0 / calc(var(--ep-r) + 1px) var(--ep-r) no-repeat;
           mask: linear-gradient(#000, #000) top / 100% 15px no-repeat,
-    radial-gradient(circle at 100% 100%, transparent calc(var(--radius) - .5px), #000 var(--radius)) left 0 bottom 0 / calc(var(--radius) + 1px) var(--radius) no-repeat,
-    radial-gradient(circle at 0 100%, transparent calc(var(--radius) - .5px), #000 var(--radius)) right 0 bottom 0 / calc(var(--radius) + 1px) var(--radius) no-repeat;
+    radial-gradient(circle at 100% 100%, transparent calc(var(--ep-r) - .5px), #000 var(--ep-r)) left 0 bottom 0 / calc(var(--ep-r) + 1px) var(--ep-r) no-repeat,
+    radial-gradient(circle at 0 100%, transparent calc(var(--ep-r) - .5px), #000 var(--ep-r)) right 0 bottom 0 / calc(var(--ep-r) + 1px) var(--ep-r) no-repeat;
 }
 :root[data-skin="expressive"] .board .ep-row.latched::before { background-image: var(--page-art); }
 .board .ep-group, :root[data-skin="expressive"] .board .ep-group { overflow: clip; }
