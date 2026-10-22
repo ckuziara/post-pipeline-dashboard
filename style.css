@@ -518,6 +518,42 @@ a.ws-name:hover { text-decoration: underline; }
 .ws-dep.pending .ws-dep-name { color: var(--text-2); }
 
 /* deliver drop area */
+/* Deliverables (PAM): one row per file the task owes, ticked once a version is in */
+.ws-out { gap: 10px; }
+.ws-out-tick { flex: none; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--border-2);
+  display: grid; place-items: center; font-size: 11px; font-weight: 800; color: #04321d; }
+.ws-out.done .ws-out-tick { background: var(--st-approved, #00c875); border-color: transparent; }
+.ws-out-type { flex: none; font-size: 10px; font-weight: 800; color: var(--text-3); }
+/* Check the matches: each picked file → the deliverable PipeDream matched it to */
+.modal-card.ws-step.ws-match { max-width: 640px; }
+.ws-match-list { display: flex; flex-direction: column; gap: 6px; }
+.ws-match-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) 42px; align-items: center; gap: 8px;
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: 9px; }
+.ws-match-file { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; font-weight: 600; }
+.ws-match-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-match-arrow { color: var(--text-3); }
+.ws-match-sel { width: 100%; min-width: 0; font-size: 12px; padding: 5px 8px; }
+.ws-match-flag { font-size: 10px; font-weight: 800; text-align: center; color: var(--text-3); }
+.ws-match-row.auto .ws-match-flag { color: var(--ink-ok); }
+.ws-match-row.none { opacity: .75; border-style: dashed; }
+.ws-match-row.dup { border-color: rgba(255,91,110,.6); }
+.ws-match-row.dup .ws-match-flag, .ws-note.bad { color: var(--ink-bad); }
+@media (max-width: 560px) { .ws-match-row { grid-template-columns: 1fr; } .ws-match-arrow, .ws-match-flag { display: none; } }
+/* Edit Pipeline → Deliverables: one chip per file the task hands over */
+.pipe-outs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pipe-out { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 9px; border: 1px solid var(--border-2); border-radius: 999px; font-size: 11.5px; }
+.pipe-out-add { width: auto; max-width: 240px; font-size: 11.5px; padding: 4px 8px; }
+.pipe-out-reset { border: 0; background: transparent; color: var(--text-3); font-size: 11px; cursor: pointer; text-decoration: underline; }
+/* Edit Show → Episode exceptions (how one episode's files are named, if not the show's way) */
+.ep-ov { margin: 4px 0 12px; }
+.ep-ov summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--text-2); padding: 4px 0; }
+.ep-ov-row { display: grid; grid-template-columns: 90px 1fr 110px 1fr; gap: 6px; align-items: center; margin-top: 6px; }
+.ep-ov-row.head span { font-size: 10px; font-weight: 800; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; }
+.ep-ov-row .fld { font-size: 12px; padding: 5px 8px; min-width: 0; }
+.ep-ov-code { font-size: 12px; font-weight: 700; }
+.ws-ambig { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* a text button inside a note, not the 28px icon square .btn-mini is by default */
+.ws-inline-btn { width: auto; height: auto; padding: 4px 9px; font-size: 11px; border-color: var(--border-2); color: var(--text-2); white-space: nowrap; }
 .ws-drop {
   border: 1.5px dashed var(--border-2); border-radius: 11px; padding: 20px 14px;
   text-align: center; cursor: pointer; transition: background .13s, border-color .13s;

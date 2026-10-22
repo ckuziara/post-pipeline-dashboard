@@ -338,7 +338,8 @@ window.App = window.App || {};
     // a deliverable that needs QC is published when QC passes it, not before
     if (!App.isCompleteKey(ep, key)) return;
     App.api.flush()
-      .then(() => App.api.taskPromote({ epId, taskKey: key, pipeline: App.pipelineFor(ep) }))
+      // linked: documents handed over as links don't need a file (see /api/task/promote)
+      .then(() => App.api.taskPromote({ epId, taskKey: key, pipeline: App.pipelineFor(ep), linked: App.taskLinks(epId, key).length > 0 }))
       .then(r => {
         if (!r.promoted) return;
         App.markDelivered(epId, key);      // published → Delivered
@@ -1600,6 +1601,8 @@ window.App = window.App || {};
     if (App.batchCfg(t)) o.batch = App.batchCfg(t);
     if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); if (App.hasRevGaps(t)) o.revGaps = t.revGaps.slice(0, t.maxRev); }
     if (t.needsQc) { o.needsQc = true; o.qcDays = App.qcDaysOf(t); }
+    // the files the task hands over (Edit Pipeline → Deliverables); left out = the defaults (js/naming.js)
+    if (Array.isArray(t.outputs) && t.outputs.length) o.outputs = t.outputs.map(x => ({ suffix: x.suffix, type: x.type || '' }));
     return o;
   });
   const pipelineValid = (pipeline) => {
@@ -1901,6 +1904,8 @@ window.App = window.App || {};
       if (App.batchCfg(t)) o.batch = App.batchCfg(t);
       if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = (t.revDays || []).slice(); if (App.hasRevGaps(t)) o.revGaps = t.revGaps.slice(0, t.maxRev); }
       if (t.needsQc) { o.needsQc = true; o.qcDays = App.qcDaysOf(t); }
+      // the files the task hands over (Edit Pipeline → Deliverables); left out = the defaults (js/naming.js)
+      if (Array.isArray(t.outputs) && t.outputs.length) o.outputs = t.outputs.map(x => ({ suffix: x.suffix, type: x.type || '' }));
       return o;
     });
     const LOCKED = ['in_progress', 'review', 'approved', 'in_qc', 'delivered'];
@@ -2121,7 +2126,11 @@ window.App = window.App || {};
     const lv = {};
     App.SHOW_LEVELS.forEach(l => { lv[l.key] = String(fields[l.key] == null ? (s[l.key] || '') : fields[l.key]).trim(); });
     const { brand, series } = lv;
-    if (name === s.name && code === oldCode && color === s.color &&
+    // naming (Edit Show → Format, Languages); left out of `fields` keeps what's there
+    const format = fields.format == null ? (s.format || '') : String(fields.format);
+    const languages = Array.isArray(fields.languages) ? fields.languages : (s.languages || null);
+    const sameLangs = JSON.stringify(languages || null) === JSON.stringify(s.languages || null);
+    if (name === s.name && code === oldCode && color === s.color && format === (s.format || '') && sameLangs &&
         App.SHOW_LEVELS.every(l => lv[l.key] === (s[l.key] || ''))) return true;   // nothing to save
 
     App.mutate(d => {
@@ -2131,6 +2140,8 @@ window.App = window.App || {};
       // blank means "not set" rather than an empty string on every show — the
       // Shows browser builds its pickers from the values that are actually there
       App.SHOW_LEVELS.forEach(l => { if (lv[l.key]) t[l.key] = lv[l.key]; else delete t[l.key]; });
+      if (format) t.format = format; else delete t.format;
+      if (languages && languages.length) t.languages = languages.slice(); else delete t.languages;
       if (oldCode && oldCode !== code) {
         d.episodes.forEach(e => {
           if (e.showId !== showId) return;

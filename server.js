@@ -1051,17 +1051,17 @@ function devLoginOn(req) { return !neonAuth && config.devLogin && isLoopback(req
    open Finder. Upload destinations are handed out as short-lived tokens: the
    client never names a filesystem path, so path authority stays server-side even
    though delivering isn't an admin-only action. */
-const deliverTokens = new Map();   // token -> { dir, exp }
-function issueDeliverToken(dir) {
+const deliverTokens = new Map();   // token -> { dir, naming, exp }
+function issueDeliverToken(dir, naming) {
   const t = crypto.randomBytes(18).toString('base64url');
   for (const [k, v] of deliverTokens) if (v.exp < Date.now()) deliverTokens.delete(k);
-  deliverTokens.set(t, { dir, exp: Date.now() + 3600000 });   // an hour to finish uploading
+  deliverTokens.set(t, { dir, naming: naming || null, exp: Date.now() + 3600000 });   // an hour to finish uploading
   return t;
 }
 function redeemDeliverToken(t) {
   const rec = deliverTokens.get(t);
   if (!rec || rec.exp < Date.now()) { deliverTokens.delete(t); return null; }
-  return rec.dir;
+  return rec;
 }
 
 // Native "Open" only makes sense when the server shares a machine with the user.
@@ -1077,9 +1077,43 @@ function isLocalRequest(req) {
 function qcFolderFor(ctx) {
   const { masterPath, show, ep, pipeline, paths } = ctx;
   const qcTask = pipeline.find(t => t.key === 'qc') || pipeline.find(t => t.dept === 'qc');
-  const qcPaths = qcTask ? folders.taskPaths(ep, pipeline, qcTask.key) : null;
+  const qcPaths = qcTask ? folders.taskPaths(ep, pipeline, qcTask.key, folders.resolveIn(masterPath, show, '')) : null;
   const qcRoot = qcPaths ? qcPaths.work : '0002_Episodes/' + folders.episodeFolder(ep) + '/zz_QC';
   return folders.resolveIn(masterPath, show, qcRoot + '/QC_' + paths.deliverable);
+}
+/* The name a delivery is filed under: the next version of the output asked
+   for (stem), or of the only output its type fits. { name: null } when the
+   task's outputs aren't known — an older client — so it keeps its own name. */
+function deliveryName(ctx, expected, stem, original, isDir) {
+  if (!expected.length) return { name: null };
+  const ext = folders.extOf(original);
+  // one name can come in two types (an IO-TEXTED MOV and MP4): the one this file is
+  let out = stem ? (expected.find(o => o.stem === stem && namingJs.typeFits(o.type, ext)) || expected.find(o => o.stem === stem)) : null;
+  if (stem && !out) return { error: 'that isn’t one of this task’s outputs' };
+  if (!out) {
+    // what the file's name says it is ("EP101_Dialogue.wav" → DIA), else the one deliverable its type fits
+    const said = namingJs.matchDeliverables([original], expected, ctx.data ? (ctx.data.naming || null) : undefined)[0];
+    if (said.out >= 0) out = expected[said.out];
+  }
+  if (!out) {
+    const fits = expected.filter(o => namingJs.typeFits(o.type, ext));
+    const uniq = fits.filter((o, i) => fits.findIndex(x => x.stem === o.stem) === i);
+    if (uniq.length > 1) return { error: original + ' could be more than one deliverable — click its row in Deliverables and pick it there', ambiguous: uniq.map(o => o.stem) };
+    if (!uniq.length) return { error: original + ' isn’t a type this task delivers (' + expected.map(o => o.type || 'any').join(', ') + ')' };
+    out = uniq[0];
+  } else if (!namingJs.typeFits(out.type, ext)) {
+    return { error: original + ' isn’t a ' + out.type };
+  }
+  const v = folders.latestVersion(versionDirs(ctx), out.stem, ext).version + 1;
+  return { name: folders.versioned(out.stem, v, ext) };
+}
+
+/* Every folder a task's export versions live in — Mezzanine, its copies in
+   Reviews, and what Publish has superseded — so a version number is never
+   handed out twice, even after the file it went to has moved on. */
+function versionDirs(ctx) {
+  const r = (p) => folders.resolveIn(ctx.masterPath, ctx.show, p);
+  return [r(ctx.paths.mezzanine), r(ctx.paths.reviews + '/' + ctx.paths.deliverable), r(ctx.paths.publish + '/zz_Superseded')];
 }
 // what QC can attach as a report (and what /api/task/qc-report will open)
 const QC_REPORT_EXT = /\.(xlsx|xls|xlsm|csv|numbers|pdf|docx|doc|pages|txt|rtf)$/i;
@@ -1195,7 +1229,10 @@ async function resolveTaskContext(body, opts) {
     if (!c.epCode || !c.showName) {
       return { error: 'a companion request needs epCode and showName in context' };
     }
-    ep = { id: body.epId, code: c.epCode, title: c.epTitle || '' };
+    ep = { id: body.epId, code: c.epCode, title: c.epTitle || '',
+      // what PAM names files from (js/naming.js App.namingIdentity)
+      contentCode: c.contentCode || undefined, languages: Array.isArray(c.languages) ? c.languages.map(String) : undefined,
+      format: c.format || undefined };
     show = { id: c.showId || '', prefix: c.showPrefix || '', name: c.showName };
     rawPipeline = body.pipeline;
   } else {
@@ -1208,9 +1245,17 @@ async function resolveTaskContext(body, opts) {
   let pipeline;
   try { pipeline = folders.normalisePipeline(rawPipeline); }
   catch (e) { return { error: e.message }; }
-  const paths = folders.taskPaths(ep, pipeline, body.taskKey);
+  // the show's folder as it is on disk, so existing folders keep their names (folders.js numbered)
+  const showAbs = masterOk ? folders.resolveIn(masterPath, show, '') : null;
+  const paths = folders.taskPaths(ep, pipeline, body.taskKey, showAbs);
   if (!paths) return { error: 'that task is not in this show’s pipeline' };
-  return { data, masterPath: masterOk ? masterPath : null, masterOk, masterError, show, ep, pipeline, paths };
+  /* The files this task must deliver, fully named (js/naming.js). Built here
+     from the episode, show and pipeline task, so a client can't name a file
+     anything the convention wouldn't. */
+  const named = namingJs.expectedFiles(ep, show, pipeline.find(t => t.key === body.taskKey), paths.deliverable);
+  const expected = folders.cleanExpected(named.files);
+  return { data, masterPath: masterOk ? masterPath : null, masterOk, masterError, show, ep, pipeline, paths,
+    expected, namingProblems: named.problems };
 }
 
 /* ------------------------------------------------------------- helpers ---- */
@@ -1986,8 +2031,8 @@ const server = http.createServer(async (req, res) => {
         const deps = (task.deps || []).map(depKey => {
           const dt = pipeline.find(t => t.key === depKey);
           if (!dt) return null;
-          const dp = folders.taskPaths(ep, pipeline, depKey);
-          const items = (masterOk && dp) ? folders.listDir(folders.resolveIn(masterPath, show, dp.publish)) : null;
+          const dp = folders.taskPaths(ep, pipeline, depKey, masterOk ? folders.resolveIn(masterPath, show, '') : null);
+          const items = (masterOk && dp) ? folders.listDir(folders.resolveIn(masterPath, show, dp.publish)).filter(i => !/^zz_/.test(i.name)) : null;   // zz_Superseded is history, not an asset
           return {
             key: depKey, name: dt.name, dept: dt.dept,
             status: (ep.statuses && ep.statuses[depKey]) || 'not_started',
@@ -2021,7 +2066,27 @@ const server = http.createServer(async (req, res) => {
         // to start a project from readme.txt.
         const templates = folders.templatesFor(masterPath, show);
 
+        /* Export to: what this task must deliver, by name. Mezzanine is made
+           up front, so it's somewhere to render INTO; anything already there
+           under a wrong name is renamed to the next version (see reconcile). */
+        const expected = ctx.expected;
+        const mezzAbs = rel(paths.mezzanine);
+        let reconciled = { renamed: [], ambiguous: [], stray: [] };
+        if (expected.length) {
+          fs.mkdirSync(mezzAbs, { recursive: true });
+          try { reconciled = folders.reconcile(mezzAbs, expected, versionDirs(ctx), ctx.data ? (ctx.data.naming || null) : undefined); }
+          catch (e) { console.error('[pam] reconcile ' + e.message); }
+          reconciled.renamed.forEach(r => console.log('[pam] renamed ' + r.from + ' → ' + r.to + ' in ' + mezzAbs));
+        }
+        const outputs = expected.map(o => {
+          const l = folders.latestVersion(versionDirs(ctx), o.stem, o.type);
+          const ext = l.file ? folders.extOf(l.file.name) : o.type.toLowerCase();
+          return Object.assign({}, o, { version: l.version, latest: l.file ? l.file.name : null,
+            next: folders.versioned(o.stem, l.version + 1, ext) });
+        });
+
         return sendJson(res, 200, {
+          outputs, reconciled, namingProblems: ctx.namingProblems,
           ok: true, masterOk: true,
           local: isLocalRequest(req),
           root: folders.resolveIn(masterPath, show, ''),
@@ -2033,7 +2098,7 @@ const server = http.createServer(async (req, res) => {
           // mtime = when it was delivered (deliver/prepare stamps it), so a QC fix
           // can be told from the delivery QC already reported on
           mezzanine: folders.listDir(rel(paths.mezzanine)).map(i => ({ name: i.name, dir: i.dir, size: i.size, mtime: i.mtime })),
-          publish: folders.listDir(rel(paths.publish)).map(i => ({ name: i.name, dir: i.dir, size: i.size })),
+          publish: folders.listDir(rel(paths.publish)).filter(i => !/^zz_/.test(i.name)).map(i => ({ name: i.name, dir: i.dir, size: i.size })),
           templates, deps
         });
       }
@@ -2049,7 +2114,21 @@ const server = http.createServer(async (req, res) => {
         fs.mkdirSync(workAbs, { recursive: true });
 
         let created = null;
-        if (body.template) {
+        /* Project files share the task's export name: <stem>_v###.<ext>, the
+           first output's stem — so v003 of the project renders v003-ish
+           exports and both read as one deliverable. "+ New version" copies
+           the newest project up a version rather than starting from the
+           template again. Older clients send no stem: the old name stands. */
+        const stem = (ctx.expected[0] || {}).stem || null;
+        if (stem && body.newVersion) {
+          const l = folders.latestVersion([workAbs], stem);
+          if (l.file) {
+            const dest = path.join(workAbs, folders.versioned(stem, l.version + 1, folders.extOf(l.file.name)));
+            fs.cpSync(l.file.path, dest, { recursive: l.file.dir });
+            created = path.basename(dest);
+          }
+        }
+        if (!created && body.template) {
           // templateSource says which library it came from: the studio-wide one,
           // or this show's own override folder
           const src = folders.templatePath(masterPath, show, body.template, body.templateSource);
@@ -2058,8 +2137,9 @@ const server = http.createServer(async (req, res) => {
           }
           // <EPCODE>_<Deliverable>_v001.<ext> — e.g. LA-101_Animatic_v001.aep
           const ext = path.extname(src);
-          const base = folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_v001' + ext;
-          const dest = folders.uniquePath(workAbs, folders.safeFile(base));
+          const dest = stem
+            ? path.join(workAbs, folders.versioned(stem, folders.latestVersion([workAbs], stem).version + 1, ext.slice(1).toLowerCase()))
+            : folders.uniquePath(workAbs, folders.safeFile(folders.episodeFolder(ep).split('_')[0] + '_' + paths.deliverable + '_v001' + ext));
           // a Logic .logicx (and friends) is a package directory, so copy recursively
           fs.cpSync(src, dest, { recursive: fs.statSync(src).isDirectory() });
           created = path.basename(dest);
@@ -2257,38 +2337,87 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, opened: true, path: target });
       }
 
-      /* Promote a task's delivered files from Mezzanine to Publish. Called when a
-         task reaches Approved, which is the moment its output becomes a usable
-         asset for everything downstream. Idempotent: re-running moves whatever is
-         still sitting in Mezzanine and reports honestly. */
+      /* Publish a task's delivery: called when the task is complete (approved,
+         or passed by QC), the moment its output becomes a usable asset for
+         everything downstream.
+
+         Each output's LATEST version in Mezzanine is COPIED to Publish under
+         its clean name — no version tag, exactly what Moonbase ingests —
+         and Mezzanine keeps every version. Publishing again moves the copy
+         it replaces into zz_Superseded/v###/ first, the one move left in
+         PAM, and only ever inside Publish. A task whose files PAM can't name
+         yet (no Format) publishes what's in Mezzanine as it is, still by copy. */
       if (route === 'POST /api/task/promote') {
         const body = JSON.parse(await readBody(req) || '{}');
         const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
-        const { masterPath, show, paths } = ctx;
+        const { masterPath, show, paths, expected } = ctx;
         const mezz = folders.resolveIn(masterPath, show, paths.mezzanine);
         const pub = folders.resolveIn(masterPath, show, paths.publish);
-        if (!fs.existsSync(mezz)) return sendJson(res, 200, { ok: true, promoted: 0 });
+        const manifestAbs = path.join(pub, '.published.json');   // name → version, for zz_Superseded
+        let manifest = {};
+        try { manifest = JSON.parse(fs.readFileSync(manifestAbs, 'utf8')) || {}; } catch (e) {}
 
-        const items = folders.listDir(mezz);
-        if (!items.length) return sendJson(res, 200, { ok: true, promoted: 0 });
+        // [{ src, name, version }] — what goes to Publish
+        let plan;
+        if (expected.length) {
+          const missing = [];
+          plan = expected.map(o => {
+            const l = folders.latestVersion([mezz], o.stem, o.type);
+            if (!l.file) { missing.push(o.stem + (o.type ? '.' + o.type.toLowerCase() : '')); return null; }
+            return { src: l.file.path, dir: l.file.dir, name: o.stem + path.extname(l.file.name), version: l.version };
+          });
+          plan = plan.filter(Boolean);
+          // documents handed over as a link have no file to publish — the link is the delivery
+          if (missing.length && !body.linked) {
+            return sendJson(res, 400, { error: 'Not every output has a version yet: ' + missing.join(', '), missing });
+          }
+        } else {
+          plan = folders.listDir(mezz).map(i => ({ src: i.path, dir: i.dir, name: folders.safeFile(i.name), version: null }));
+        }
+        if (!plan.length) return sendJson(res, 200, { ok: true, promoted: 0 });
         fs.mkdirSync(pub, { recursive: true });
 
-        const promoted = [];
-        for (const it of items) {
-          const dest = folders.uniquePath(pub, folders.safeFile(it.name));
-          try {
-            fs.renameSync(it.path, dest);
-          } catch (e) {
-            if (e.code !== 'EXDEV') throw e;
-            fs.cpSync(it.path, dest, { recursive: it.dir });
-            fs.rmSync(it.path, { recursive: it.dir, force: true });
+        const promoted = [], superseded = [];
+        for (const p of plan) {
+          const dest = path.join(pub, p.name);
+          if (fs.existsSync(dest)) {
+            if (p.version != null && manifest[p.name] === p.version) { promoted.push(p.name); continue; }   // already this version
+            const was = manifest[p.name] ? 'v' + String(manifest[p.name]).padStart(3, '0') : 'unversioned';
+            const keep = path.join(pub, 'zz_Superseded', was);
+            fs.mkdirSync(keep, { recursive: true });
+            fs.renameSync(dest, folders.uniquePath(keep, p.name));
+            superseded.push(was + '/' + p.name);
           }
-          promoted.push(path.basename(dest));
+          fs.cpSync(p.src, dest, { recursive: p.dir });
+          if (p.version != null) manifest[p.name] = p.version;
+          promoted.push(p.name);
         }
+        try { fs.writeFileSync(manifestAbs, JSON.stringify(manifest, null, 2)); } catch (e) { /* only labels zz_Superseded */ }
         console.log('[promote] ' + ((getSession(req) || {}).email || 'companion') + ' ' + paths.deliverable +
-          ': ' + promoted.length + ' → Publish');
-        return sendJson(res, 200, { ok: true, promoted: promoted.length, names: promoted, dir: pub });
+          ': ' + promoted.length + ' copied to Publish' + (superseded.length ? ', superseded ' + superseded.join(', ') : ''));
+        return sendJson(res, 200, { ok: true, promoted: promoted.length, names: promoted, superseded, dir: pub });
+      }
+
+      /* Put a version up for review: copy a Mezzanine file into
+         !!_Reviews/<Deliverable>/ under the same name. Post Operations makes
+         the review from that copy, so it stays put whatever happens to
+         Mezzanine next. Asking twice for the same file hands back the copy
+         already there. */
+      if (route === 'POST /api/task/review-copy') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const mezz = folders.resolveIn(ctx.masterPath, ctx.show, ctx.paths.mezzanine);
+        const src = path.join(mezz, folders.safeFile(body.file));
+        if (!fs.existsSync(src)) return sendJson(res, 404, { error: 'that version isn’t in Mezzanine' });
+        const st = fs.statSync(src);
+        const dir = folders.resolveIn(ctx.masterPath, ctx.show, ctx.paths.reviews + '/' + ctx.paths.deliverable);
+        fs.mkdirSync(dir, { recursive: true });
+        const dest = path.join(dir, path.basename(src));
+        if (!fs.existsSync(dest)) fs.cpSync(src, dest, { recursive: st.isDirectory() });
+        console.log('[review] ' + ((getSession(req) || {}).email || 'companion') + ' ' + path.basename(src) + ' → Reviews');
+        return sendJson(res, 200, { ok: true, name: path.basename(dest), path: dest, size: st.size });
       }
 
       /* Hand a URL to the OS so it opens in the real default browser (Create
@@ -2320,78 +2449,81 @@ const server = http.createServer(async (req, res) => {
         // downstream tasks once this task is approved (see /api/task/promote).
         const destAbs = folders.resolveIn(masterPath, show, paths.mezzanine);
         fs.mkdirSync(destAbs, { recursive: true });      // lazily created on first delivery
+        const expected = ctx.expected;
 
         if (body.src) {
           const src = path.resolve(String(body.src));
           if (!fs.existsSync(src)) return sendJson(res, 400, { error: 'source not found' });
           const st = fs.statSync(src);
-          /* Already in the delivery folder? Do nothing. Comparing src to dest
-             can't catch this — uniquePath has by then renamed dest to _2, so the
-             move would "succeed" and leave a pointless duplicate. */
-          if (path.dirname(path.resolve(src)) === path.resolve(destAbs)) {
+          if (path.dirname(src) === path.resolve(destAbs)) {
             return sendJson(res, 400, { error: path.basename(src) + ' is already delivered' });
           }
-          const dest = folders.uniquePath(destAbs, folders.safeFile(path.basename(src)));
-
-          /* Delivering MOVES the export out of the working folder, so there's one
-             copy of the master rather than a duplicate to keep in sync. The two
-             reference libraries are the exception: those are shared source
-             material, and emptying them to deliver would be data loss, so files
-             taken from there are copied instead. */
-          const isLibrary = /(^|\/)(!!_Templates|!!_ShowLibrary)\//.test(src + '/');
-          let moved = false;
-          try {
-            if (isLibrary) {
-              fs.cpSync(src, dest, { recursive: st.isDirectory() });
-            } else {
-              try {
-                fs.renameSync(src, dest);            // same volume: instant, even for a 40GB master
-                moved = true;
-              } catch (e) {
-                if (e.code !== 'EXDEV') throw e;      // different filesystem — fall back to copy+remove
-                fs.cpSync(src, dest, { recursive: st.isDirectory() });
-                fs.rmSync(src, { recursive: st.isDirectory(), force: true });
-                moved = true;
-              }
-            }
-          } catch (e) {
-            return sendJson(res, 400, { error: (moved ? 'move' : 'copy') + ' failed: ' + e.message });
-          }
-          /* A move keeps the export's own modified time; stamp it with now, so in
-             Mezzanine it reads as when it was DELIVERED — what Resubmit to QC
-             checks to tell a fix from the delivery QC already reported on. */
+          /* Delivering COPIES — storage is cheap on the shared volume, a lost
+             master isn't — under the name PAM gives it: the next version of
+             the output it was picked for (body.stem), or of the one output its
+             type fits. No outputs known (an older client) keeps its own name. */
+          const named = deliveryName(ctx, expected, body.stem, path.basename(src), st.isDirectory());
+          if (named.error) return sendJson(res, 400, named);
+          const dest = named.name ? path.join(destAbs, named.name) : folders.uniquePath(destAbs, folders.safeFile(path.basename(src)));
+          try { fs.cpSync(src, dest, { recursive: st.isDirectory() }); }
+          catch (e) { try { fs.rmSync(dest, { recursive: true, force: true }); } catch (err) {} return sendJson(res, 400, { error: 'copy failed: ' + e.message }); }
+          /* Stamp it with now, so in Mezzanine it reads as when it was
+             DELIVERED — what Resubmit to QC checks to tell a fix from the
+             delivery QC already reported on. */
           try { const now = new Date(); fs.utimesSync(dest, now, now); } catch (e) { /* cosmetic */ }
-          console.log('[deliver] ' + ((getSession(req) || {}).email || 'companion') + ' ' + (moved ? 'moved' : 'copied') + ' ' + src + ' → ' + dest);
+          console.log('[deliver] ' + ((getSession(req) || {}).email || 'companion') + ' copied ' + src + ' → ' + dest);
           return sendJson(res, 200, {
-            ok: true, filed: path.basename(dest), dir: destAbs,
-            size: st.size, dirEntry: st.isDirectory(), moved, fromLibrary: isLibrary
+            ok: true, filed: path.basename(dest), from: path.basename(src), dir: destAbs,
+            size: st.size, dirEntry: st.isDirectory(), moved: false, copied: true
           });
         }
-        return sendJson(res, 200, { ok: true, token: issueDeliverToken(destAbs), dir: destAbs });
+        return sendJson(res, 200, { ok: true, token: issueDeliverToken(destAbs, { ctx, expected, stem: body.stem }), dir: destAbs });
       }
 
       /* Deliver, step 2: stream the body straight to disk under the token's
-         directory. One request per file — no multipart parsing, and large media
-         never buffers in memory. */
+         directory, under the name PAM gives it. One request per file — no
+         multipart parsing, and large media never buffers in memory. */
       if (route === 'POST /api/task/deliver/upload') {
-        const dir = redeemDeliverToken(url.searchParams.get('token') || '');
-        if (!dir) return sendJson(res, 400, { error: 'upload window expired — press Deliver again' });
-        const name = folders.safeFile(url.searchParams.get('filename') || 'untitled');
-        const dest = folders.uniquePath(dir, name);
+        const rec = redeemDeliverToken(url.searchParams.get('token') || '');
+        if (!rec) return sendJson(res, 400, { error: 'upload window expired — press Deliver again' });
+        const dir = rec.dir;
+        const original = folders.safeFile(url.searchParams.get('filename') || 'untitled');
+        const named = rec.naming ? deliveryName(rec.naming.ctx, rec.naming.expected, url.searchParams.get('stem') || rec.naming.stem, original, false) : {};
+        if (named.error) { req.resume(); return sendJson(res, 400, named); }
+        const dest = named.name ? path.join(dir, named.name) : folders.uniquePath(dir, original);
         try {
           await new Promise((resolve, reject) => {
-            const out = fs.createWriteStream(dest);
+            const out = fs.createWriteStream(dest, { flags: 'wx' });   // never over a teammate's file
             req.pipe(out);
             out.on('finish', resolve);
             out.on('error', reject);
             req.on('error', reject);
           });
         } catch (e) {
-          try { fs.unlinkSync(dest); } catch (err) {}   // don't leave a half file behind
+          try { if (e.code !== 'EEXIST') fs.unlinkSync(dest); } catch (err) {}   // don't leave a half file behind
           return sendJson(res, 500, { error: 'write failed: ' + e.message });
         }
-        console.log('[deliver] ' + ((getSession(req) || {}).email || 'companion') + ' uploaded → ' + dest);
-        return sendJson(res, 200, { ok: true, filed: path.basename(dest), size: fs.statSync(dest).size });
+        console.log('[deliver] ' + ((getSession(req) || {}).email || 'companion') + ' uploaded ' + original + ' → ' + dest);
+        return sendJson(res, 200, { ok: true, filed: path.basename(dest), from: original, size: fs.statSync(dest).size });
+      }
+
+      /* A file Export to couldn't place on its own — two outputs share its
+         type — renamed to the next version of the one the person picked. */
+      if (route === 'POST /api/task/assign') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const expected = ctx.expected;
+        const fileExt = folders.extOf(String(body.file || ''));
+        const out = expected.find(o => o.stem === body.stem && namingJs.typeFits(o.type, fileExt)) || expected.find(o => o.stem === body.stem);
+        if (!out) return sendJson(res, 400, { error: 'that isn’t one of this task’s outputs' });
+        const mezzAbs = folders.resolveIn(ctx.masterPath, ctx.show, ctx.paths.mezzanine);
+        const file = path.join(mezzAbs, folders.safeFile(body.file));
+        if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) return sendJson(res, 404, { error: 'that file has gone from Mezzanine' });
+        if (!namingJs.typeFits(out.type, folders.extOf(file))) return sendJson(res, 400, { error: path.basename(file) + ' isn’t a ' + out.type });
+        const to = folders.assignVersion(file, mezzAbs, out.stem, versionDirs(ctx));
+        console.log('[pam] assigned ' + path.basename(file) + ' → ' + to);
+        return sendJson(res, 200, { ok: true, from: path.basename(file), to });
       }
 
       /* Add a project template to a library, so growing the template list is
@@ -2485,7 +2617,8 @@ const server = http.createServer(async (req, res) => {
           const pipeline = folders.normalisePipeline(show.pipeline || body.pipeline);
           const showEps = (data.episodes || []).filter(e => e.showId === show.id);
           let dirs = folders.showSkeleton(show);
-          showEps.forEach(ep => { dirs = dirs.concat(folders.episodeTree(ep, pipeline)); });
+          const showAbs = folders.resolveIn(masterPath, show, '');
+          showEps.forEach(ep => { dirs = dirs.concat(folders.episodeTree(ep, pipeline, showAbs)); });
 
           const result = folders.createDirs(masterPath, show, dirs);
           console.log('[folders] ' + s.email + ' → ' + result.root + ' (' + showEps.length + ' episode' +

@@ -122,19 +122,57 @@ function groupsFor(tasks) {
    files), approved handoffs collect in one !!_Publish, review packages in
    !!_Reviews. Long-term arrangement is the archival process's job, so nothing
    here exists purely for future browsing. */
-function episodeTree(ep, pipeline) {
+/* ---- Folder names don't drift --------------------------------------------
+   Numbers come from pipeline order, so editing a pipeline (a department
+   added, a task moved) would renumber folders that already hold work. With
+   the show's folder on disk to look at (showAbs), a folder that already
+   exists keeps its name, whatever number the pipeline would now give it;
+   only new ones are numbered, after the last number in use if theirs is
+   taken. Without it (nothing mounted), names come from the pipeline alone. */
+function dirsIn(abs) {
+  if (!abs) return null;
+  try { return fs.readdirSync(abs, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name); }
+  catch (e) { return null; }
+}
+function numbered(parentAbs, idx, name) {
+  const want = pad(idx) + '_' + name;
+  const have = dirsIn(parentAbs);
+  if (!have) return want;
+  const hit = have.find(n => /^\d{4}_/.test(n) && n.slice(5) === name);
+  if (hit) return hit;
+  if (!have.some(n => n.slice(0, 5) === pad(idx) + '_')) return want;
+  const max = Math.max(0, ...have.filter(n => /^\d{4}_/.test(n)).map(n => parseInt(n.slice(0, 4), 10)));
+  return pad(max + 1) + '_' + name;
+}
+/* One department's folder and its deliverable subfolders, as they are (or
+   will be) on disk. A department with a single deliverable IS that folder —
+   no Music/Music, no QC/QC. If one that was built that way later gains a
+   second deliverable, the first keeps the department folder its files are
+   already in, and only the new ones get subfolders. */
+function deptLayout(epRoot, epAbs, used, dept, groups) {
+  const dName = numbered(epAbs, used.indexOf(dept) + 1, DEPT_FOLDER[dept]);
+  const dRoot = epRoot + '/' + dName;
+  const dAbs = epAbs ? path.join(epAbs, dName) : null;
+  const sub = dirsIn(dAbs);
+  const builtFlat = !!sub && fs.readdirSync(dAbs).some(n => !n.startsWith('.')) && !sub.some(n => /^\d{4}_/.test(n));
+  const work = {};
+  groups.forEach((g, gi) => {
+    work[g] = groups.length === 1 || (builtFlat && gi === 0) ? dRoot : dRoot + '/' + numbered(dAbs, gi + 1, g);
+  });
+  return { dRoot, work };
+}
+
+function episodeTree(ep, pipeline, showAbs) {
   const epRoot = '0002_Episodes/' + episodeFolder(ep);
+  const epAbs = showAbs ? path.join(showAbs, epRoot) : null;
   // Mezzanine holds delivered-but-unapproved work; Publish holds approved
   // handoffs. Per-deliverable subfolders inside both are created on demand.
   const dirs = [epRoot, epRoot + '/!!_Mezzanine', epRoot + '/!!_Publish', epRoot + '/!!_Reviews'];
   const used = DEPT_ORDER.filter(d => pipeline.some(t => t.dept === d));
-  used.forEach((dept, di) => {
-    const dRoot = epRoot + '/' + pad(di + 1) + '_' + DEPT_FOLDER[dept];
-    dirs.push(dRoot);
-    const groups = groupsFor(pipeline.filter(t => t.dept === dept));
-    // A department with a single deliverable IS that folder — no Music/Music,
-    // no QC/QC. Otherwise each deliverable gets a numbered subfolder.
-    if (groups.length > 1) groups.forEach((g, gi) => dirs.push(dRoot + '/' + pad(gi + 1) + '_' + g));
+  used.forEach(dept => {
+    const lay = deptLayout(epRoot, epAbs, used, dept, groupsFor(pipeline.filter(t => t.dept === dept)));
+    dirs.push(lay.dRoot);
+    Object.values(lay.work).forEach(w => { if (!dirs.includes(w)) dirs.push(w); });
   });
   return dirs;
 }
@@ -145,20 +183,17 @@ function episodeTree(ep, pipeline) {
      publish — !!_Publish/<Deliverable>/, the approved handoff downstream reads.
                Created lazily on first delivery, so it costs nothing until used.
    Returns null if the task isn't in this pipeline. */
-function taskPaths(ep, pipeline, taskKey) {
+function taskPaths(ep, pipeline, taskKey, showAbs) {
   const task = pipeline.find(t => t.key === taskKey);
   if (!task) return null;
   const epRoot = '0002_Episodes/' + episodeFolder(ep);
   const used = DEPT_ORDER.filter(d => pipeline.some(t => t.dept === d));
-  const di = used.indexOf(task.dept);
-  if (di < 0) return null;
-  const dRoot = epRoot + '/' + pad(di + 1) + '_' + DEPT_FOLDER[task.dept];
-
-  const groups = groupsFor(pipeline.filter(t => t.dept === task.dept));
+  if (!used.includes(task.dept)) return null;
   const group = GROUPS[task.key] || safe(task.name);
-  const gi = groups.indexOf(group);
-  // single-deliverable departments collapse, exactly as episodeTree builds them
-  const work = groups.length > 1 ? dRoot + '/' + pad(gi + 1) + '_' + group : dRoot;
+  // exactly as episodeTree builds them — and as they already are on disk
+  const lay = deptLayout(epRoot, showAbs ? path.join(showAbs, epRoot) : null, used, task.dept,
+    groupsFor(pipeline.filter(t => t.dept === task.dept)));
+  const work = lay.work[group];
 
   return {
     deliverable: group,
@@ -192,7 +227,9 @@ function normalisePipeline(raw) {
       key: String(t.key || ''),
       name: String(t.name),
       dept: t.dept,
-      deps: Array.isArray(t.deps) ? t.deps.map(String) : []
+      deps: Array.isArray(t.deps) ? t.deps.map(String) : [],
+      // the files the task hands over (js/naming.js App.taskOutputs) — strings only, never path segments
+      outputs: Array.isArray(t.outputs) ? t.outputs.slice(0, 20).map(o => ({ suffix: String((o && o.suffix) || ''), type: String((o && o.type) || '') })) : undefined
     });
   }
   return out;
@@ -313,9 +350,86 @@ function templatePath(masterPath, show, name, source) {
     : resolveMaster(masterPath, MASTER_TEMPLATES + '/' + file);
 }
 
+/* ---- PAM: names and versions on disk -------------------------------------
+   The browser works out what a task must deliver (js/naming.js
+   App.expectedFiles) and sends the name stems; a companion has no board to
+   look them up in. A stem is only ever [A-Z0-9-]_[letters]_[A-Z0-9-], so it
+   is as path-safe as everything else here. */
+const naming = require('./js/naming.js');
+const STEM_RE = /^[A-Z0-9-]{2,40}_[A-Za-z]{1,10}_[A-Z0-9-]{1,40}$/;
+function cleanExpected(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, 60).filter(o => o && STEM_RE.test(String(o.stem || '')))
+    .map(o => ({ stem: String(o.stem), suffix: String(o.suffix || ''), language: String(o.language || ''), type: String(o.type || '').toUpperCase().replace(/[^A-Z0-9]/g, '') }));
+}
+
+const extOf = (n) => (path.extname(n).slice(1) || '').toLowerCase();
+const versionOf = (name, stem) => {
+  if (!name.startsWith(stem + '_v')) return 0;
+  const m = name.slice(stem.length).match(/^_v(\d{3,})(\.|$)/);
+  return m ? parseInt(m[1], 10) : 0;
+};
+/* The highest version of a stem across folders. Each folder is looked into
+   one level deep too, so Publish's zz_Superseded/v003/ counts. With a type,
+   only files of that type count: an output delivered as a MOV master and an
+   MP4 copy keeps the two in step (v001.mov and v001.mp4), not v001 and v002. */
+function latestVersion(absDirs, stem, type) {
+  let max = 0, file = null;
+  const look = (dir, depth) => listDir(dir).forEach(i => {
+    const v = type && !naming.typeFits(type, extOf(i.name)) ? 0 : versionOf(i.name, stem);
+    if (v > max) { max = v; file = i; }
+    if (i.dir && !v && depth) look(i.path, depth - 1);
+  });
+  absDirs.forEach(d => look(d, 2));
+  return { version: max, file };
+}
+// <stem>_v003.mov
+const versioned = (stem, v, ext) => stem + '_v' + String(v).padStart(3, '0') + (ext ? '.' + ext : '');
+
+/* Bring a Mezzanine folder into line: every file that isn't already
+   <stem>_v###.<ext> for one of the task's outputs is renamed, in place, to
+   the next version of the deliverable its name says it is ("EP101_M&E.wav"
+   → MNE) — or the only one its type fits. Renaming on one volume is atomic
+   and instant, whatever the size. A file whose name doesn't say which of
+   several it is is left for the person to pick; a type no output takes is
+   left alone and reported. Folders (image sequences, packages) are never touched. */
+function reconcile(mezzAbs, expected, versionDirs, stored) {
+  const out = { renamed: [], ambiguous: [], stray: [] };
+  if (!expected.length) return out;
+  /* Only files that don't follow the convention at all. One that does —
+     even for another identity, like an episode delivered as FD before its
+     Format became ND — was named by PipeDream already and is left as it is:
+     renaming it would rewrite history. */
+  const loose = listDir(mezzAbs).filter(it => !it.dir && !(naming.parseName(it.name) || {}).version);
+  if (!loose.length) return out;
+  // which deliverable each one is, from its name (js/naming.js) — the same matching Pick from the volume uses
+  const found = naming.matchDeliverables(loose.map(it => it.name), expected, stored);
+  loose.forEach((it, i) => {
+    if (found[i].out >= 0) {
+      const to = assignVersion(it.path, mezzAbs, expected[found[i].out].stem, versionDirs);
+      out.renamed.push({ from: it.name, to });
+      return;
+    }
+    const fits = expected.filter(o => naming.typeFits(o.type, extOf(it.name)));
+    const uniq = fits.filter((o, j) => fits.findIndex(x => x.stem === o.stem) === j);
+    if (uniq.length) out.ambiguous.push({ name: it.name, stems: uniq.map(o => o.stem) });
+    else out.stray.push(it.name);
+  });
+  return out;
+}
+
+// Rename one file in its own folder to the next version of `stem`; returns the new name.
+function assignVersion(fileAbs, dirAbs, stem, versionDirs) {
+  const v = latestVersion(versionDirs, stem, extOf(fileAbs)).version + 1;
+  const name = versioned(stem, v, extOf(fileAbs));
+  fs.renameSync(fileAbs, path.join(dirAbs, name));
+  return name;
+}
+
 module.exports = {
   showSkeleton, episodeTree, taskPaths, createDirs, normalisePipeline,
   showRoot, episodeFolder, safe, safeFile, resolveIn, resolveMaster,
   uniquePath, listDir, templatesFor, templatePath,
+  cleanExpected, latestVersion, versioned, versionOf, reconcile, assignVersion, extOf,
   MASTER_TEMPLATES, SHOW_TEMPLATES, GROUPS
 };
