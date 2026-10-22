@@ -1077,7 +1077,7 @@ function isLocalRequest(req) {
 function qcFolderFor(ctx) {
   const { masterPath, show, ep, pipeline, paths } = ctx;
   const qcTask = pipeline.find(t => t.key === 'qc') || pipeline.find(t => t.dept === 'qc');
-  const qcPaths = qcTask ? folders.taskPaths(ep, pipeline, qcTask.key) : null;
+  const qcPaths = qcTask ? folders.taskPaths(ep, pipeline, qcTask.key, folders.resolveIn(masterPath, show, '')) : null;
   const qcRoot = qcPaths ? qcPaths.work : '0002_Episodes/' + folders.episodeFolder(ep) + '/zz_QC';
   return folders.resolveIn(masterPath, show, qcRoot + '/QC_' + paths.deliverable);
 }
@@ -1245,7 +1245,9 @@ async function resolveTaskContext(body, opts) {
   let pipeline;
   try { pipeline = folders.normalisePipeline(rawPipeline); }
   catch (e) { return { error: e.message }; }
-  const paths = folders.taskPaths(ep, pipeline, body.taskKey);
+  // the show's folder as it is on disk, so existing folders keep their names (folders.js numbered)
+  const showAbs = masterOk ? folders.resolveIn(masterPath, show, '') : null;
+  const paths = folders.taskPaths(ep, pipeline, body.taskKey, showAbs);
   if (!paths) return { error: 'that task is not in this show’s pipeline' };
   /* The files this task must deliver, fully named (js/naming.js). Built here
      from the episode, show and pipeline task, so a client can't name a file
@@ -2029,7 +2031,7 @@ const server = http.createServer(async (req, res) => {
         const deps = (task.deps || []).map(depKey => {
           const dt = pipeline.find(t => t.key === depKey);
           if (!dt) return null;
-          const dp = folders.taskPaths(ep, pipeline, depKey);
+          const dp = folders.taskPaths(ep, pipeline, depKey, masterOk ? folders.resolveIn(masterPath, show, '') : null);
           const items = (masterOk && dp) ? folders.listDir(folders.resolveIn(masterPath, show, dp.publish)).filter(i => !/^zz_/.test(i.name)) : null;   // zz_Superseded is history, not an asset
           return {
             key: depKey, name: dt.name, dept: dt.dept,
@@ -2615,7 +2617,8 @@ const server = http.createServer(async (req, res) => {
           const pipeline = folders.normalisePipeline(show.pipeline || body.pipeline);
           const showEps = (data.episodes || []).filter(e => e.showId === show.id);
           let dirs = folders.showSkeleton(show);
-          showEps.forEach(ep => { dirs = dirs.concat(folders.episodeTree(ep, pipeline)); });
+          const showAbs = folders.resolveIn(masterPath, show, '');
+          showEps.forEach(ep => { dirs = dirs.concat(folders.episodeTree(ep, pipeline, showAbs)); });
 
           const result = folders.createDirs(masterPath, show, dirs);
           console.log('[folders] ' + s.email + ' → ' + result.root + ' (' + showEps.length + ' episode' +

@@ -122,19 +122,57 @@ function groupsFor(tasks) {
    files), approved handoffs collect in one !!_Publish, review packages in
    !!_Reviews. Long-term arrangement is the archival process's job, so nothing
    here exists purely for future browsing. */
-function episodeTree(ep, pipeline) {
+/* ---- Folder names don't drift --------------------------------------------
+   Numbers come from pipeline order, so editing a pipeline (a department
+   added, a task moved) would renumber folders that already hold work. With
+   the show's folder on disk to look at (showAbs), a folder that already
+   exists keeps its name, whatever number the pipeline would now give it;
+   only new ones are numbered, after the last number in use if theirs is
+   taken. Without it (nothing mounted), names come from the pipeline alone. */
+function dirsIn(abs) {
+  if (!abs) return null;
+  try { return fs.readdirSync(abs, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name); }
+  catch (e) { return null; }
+}
+function numbered(parentAbs, idx, name) {
+  const want = pad(idx) + '_' + name;
+  const have = dirsIn(parentAbs);
+  if (!have) return want;
+  const hit = have.find(n => /^\d{4}_/.test(n) && n.slice(5) === name);
+  if (hit) return hit;
+  if (!have.some(n => n.slice(0, 5) === pad(idx) + '_')) return want;
+  const max = Math.max(0, ...have.filter(n => /^\d{4}_/.test(n)).map(n => parseInt(n.slice(0, 4), 10)));
+  return pad(max + 1) + '_' + name;
+}
+/* One department's folder and its deliverable subfolders, as they are (or
+   will be) on disk. A department with a single deliverable IS that folder —
+   no Music/Music, no QC/QC. If one that was built that way later gains a
+   second deliverable, the first keeps the department folder its files are
+   already in, and only the new ones get subfolders. */
+function deptLayout(epRoot, epAbs, used, dept, groups) {
+  const dName = numbered(epAbs, used.indexOf(dept) + 1, DEPT_FOLDER[dept]);
+  const dRoot = epRoot + '/' + dName;
+  const dAbs = epAbs ? path.join(epAbs, dName) : null;
+  const sub = dirsIn(dAbs);
+  const builtFlat = !!sub && fs.readdirSync(dAbs).some(n => !n.startsWith('.')) && !sub.some(n => /^\d{4}_/.test(n));
+  const work = {};
+  groups.forEach((g, gi) => {
+    work[g] = groups.length === 1 || (builtFlat && gi === 0) ? dRoot : dRoot + '/' + numbered(dAbs, gi + 1, g);
+  });
+  return { dRoot, work };
+}
+
+function episodeTree(ep, pipeline, showAbs) {
   const epRoot = '0002_Episodes/' + episodeFolder(ep);
+  const epAbs = showAbs ? path.join(showAbs, epRoot) : null;
   // Mezzanine holds delivered-but-unapproved work; Publish holds approved
   // handoffs. Per-deliverable subfolders inside both are created on demand.
   const dirs = [epRoot, epRoot + '/!!_Mezzanine', epRoot + '/!!_Publish', epRoot + '/!!_Reviews'];
   const used = DEPT_ORDER.filter(d => pipeline.some(t => t.dept === d));
-  used.forEach((dept, di) => {
-    const dRoot = epRoot + '/' + pad(di + 1) + '_' + DEPT_FOLDER[dept];
-    dirs.push(dRoot);
-    const groups = groupsFor(pipeline.filter(t => t.dept === dept));
-    // A department with a single deliverable IS that folder — no Music/Music,
-    // no QC/QC. Otherwise each deliverable gets a numbered subfolder.
-    if (groups.length > 1) groups.forEach((g, gi) => dirs.push(dRoot + '/' + pad(gi + 1) + '_' + g));
+  used.forEach(dept => {
+    const lay = deptLayout(epRoot, epAbs, used, dept, groupsFor(pipeline.filter(t => t.dept === dept)));
+    dirs.push(lay.dRoot);
+    Object.values(lay.work).forEach(w => { if (!dirs.includes(w)) dirs.push(w); });
   });
   return dirs;
 }
@@ -145,20 +183,17 @@ function episodeTree(ep, pipeline) {
      publish — !!_Publish/<Deliverable>/, the approved handoff downstream reads.
                Created lazily on first delivery, so it costs nothing until used.
    Returns null if the task isn't in this pipeline. */
-function taskPaths(ep, pipeline, taskKey) {
+function taskPaths(ep, pipeline, taskKey, showAbs) {
   const task = pipeline.find(t => t.key === taskKey);
   if (!task) return null;
   const epRoot = '0002_Episodes/' + episodeFolder(ep);
   const used = DEPT_ORDER.filter(d => pipeline.some(t => t.dept === d));
-  const di = used.indexOf(task.dept);
-  if (di < 0) return null;
-  const dRoot = epRoot + '/' + pad(di + 1) + '_' + DEPT_FOLDER[task.dept];
-
-  const groups = groupsFor(pipeline.filter(t => t.dept === task.dept));
+  if (!used.includes(task.dept)) return null;
   const group = GROUPS[task.key] || safe(task.name);
-  const gi = groups.indexOf(group);
-  // single-deliverable departments collapse, exactly as episodeTree builds them
-  const work = groups.length > 1 ? dRoot + '/' + pad(gi + 1) + '_' + group : dRoot;
+  // exactly as episodeTree builds them — and as they already are on disk
+  const lay = deptLayout(epRoot, showAbs ? path.join(showAbs, epRoot) : null, used, task.dept,
+    groupsFor(pipeline.filter(t => t.dept === task.dept)));
+  const work = lay.work[group];
 
   return {
     deliverable: group,
