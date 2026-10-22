@@ -431,6 +431,7 @@ window.App = window.App || {};
        label for its suffix ("Mix", "No IO Texted Video Master"), else the
        suffix itself in title case (STORYBOARD → Storyboard). */
     _outLabel(o) {
+      if (o.soft && o.label) return o.label;      // a soft folder goes by what people call it
       const rows = App.namingConfig().tables.find(t => t.key === 'suffixes').rows;
       const hit = rows.find(rw => rw[0] === o.suffix && (!o.type || rw[1] === o.type)) || rows.find(rw => rw[0] === o.suffix);
       return hit ? hit[2] : o.suffix.toLowerCase().replace(/(^|-)([a-z])/g, (m, p, c) => (p ? ' ' : '') + c.toUpperCase());
@@ -852,9 +853,10 @@ window.App = window.App || {};
       const hasLink = App.taskLinks(ep.id, su.key).length > 0;
       const isDoc = (o) => !o.type || /^(PDF|DOCX?|XLSX?|CSV|TXT|RTF)$/.test(o.type);
       const outs = ((d.masterOk && !(d.namingProblems || []).length && d.outputs) || [])
-        .map(o => Object.assign({}, o, { linked: !o.version && hasLink && isDoc(o) }));
+        // in: an exact file has a version; a soft folder has a version with something in it
+        .map(o => Object.assign({}, o, { done: o.soft ? o.files > 0 : !!o.version, linked: !o.version && hasLink && isDoc(o) }));
       const checklist = outs.length > 0;
-      const readyN = outs.filter(o => o.version || o.linked).length;
+      const readyN = outs.filter(o => o.done || o.linked).length;
       wrap.appendChild(el('.ws-head', null, [
         el('.modal-section-title', { style: { margin: '0' } }, [App.icon('upload'), checklist ? ' Deliverables' : ' Deliver']),
         checklist
@@ -896,15 +898,18 @@ window.App = window.App || {};
         const multiLang = new Set(outs.map(o => o.language)).size > 1;
         outs.forEach(o => {
           const label = this._outLabel(o) + (multiLang && o.language ? ' · ' + o.language : '');
-          list.appendChild(el('button.ws-item.ws-out' + (o.version || o.linked ? '.done' : ''), {
+          const vTag = 'v' + String(o.version).padStart(3, '0');
+          list.appendChild(el('button.ws-item.ws-out' + (o.done || o.linked ? '.done' : ''), {
             disabled: phone,
-            title: (o.version ? 'In: ' + o.latest + ' — click to deliver a newer version' : 'Pick the ' + label + ' file from the volume'),
-            onclick: () => this._pickFromMount(o.stem, label)
+            title: o.soft
+              ? (o.done ? 'In: ' + o.latest + '/ — click to deliver more, or a new version' : 'Pick the files (or a folder) for ' + label)
+              : (o.version ? 'In: ' + o.latest + ' — click to deliver a newer version' : 'Pick the ' + label + ' file from the volume'),
+            onclick: () => this._pickFromMount(o.stem, label, o.soft)
           }, [
-            el('span.ws-out-tick', null, o.version || o.linked ? '✓' : ''),
+            el('span.ws-out-tick', null, o.done || o.linked ? '✓' : ''),
             el('span.ws-name', null, label),
-            el('span.ws-out-type', null, o.type || ''),
-            o.version ? el('span.ws-chip.ok', null, 'v' + String(o.version).padStart(3, '0'))
+            el('span.ws-out-type', null, o.soft ? 'folder' : (o.type || '')),
+            o.done ? el('span.ws-chip.ok', null, o.soft ? vTag + ' · ' + o.files + ' item' + (o.files === 1 ? '' : 's') : vTag)
               : o.linked ? el('span.ws-chip.ok', null, 'link') : el('span.ws-chip.pending', null, 'needed')
           ]));
         });
@@ -1027,7 +1032,7 @@ window.App = window.App || {};
               }, [App.icon('package'), ' Publish']) : null);
         /* Publish copies each output's latest version, so it (and QC, who
            checks what will be published) waits until every output has one. */
-        const missing = (checklist ? outs : []).filter(o => !o.version && !o.linked);
+        const missing = (checklist ? outs : []).filter(o => !o.done && !o.linked);
         if (sendBtn && missing.length) {
           sendBtn.disabled = true;
           sendBtn.title = 'Still to export: ' + missing.map(o => o.suffix + (o.type ? ' ' + o.type : '')).join(', ');
@@ -1119,7 +1124,8 @@ window.App = window.App || {};
     },
 
     // stem/label: deliver the pick as THAT deliverable (a row was clicked)
-    _pickFromMount(stem, label) {
+    // soft: a soft delivery's row — many files, or a folder, all into one version folder
+    _pickFromMount(stem, label, soft) {
       const m = this._mounted;
       const epId = m.epId, taskKey = m.taskKey;
       const ep = App.state.data.episodes.find(e => e.id === epId);
@@ -1135,16 +1141,18 @@ window.App = window.App || {};
         // several files for a task with a checklist: match each to its deliverable, and let the person check
         const d = m.data || {};
         const outs = (d.masterOk && !(d.namingProblems || []).length && d.outputs) || [];
-        if (!stem && outs.length) { this._matchFiles(items, outs); return; }
+        if ((!stem || soft) && outs.length) { this._matchFiles(items, outs, soft ? stem : null); return; }
         App.editTask.open(epId, taskKey);
         this._deliverFromMount(epId, taskKey, ep, items, stem);
       }, {
         pickFiles: true,
-        title: label ? 'Pick the ' + label + ' file' : 'Deliver from the volume',
-        subtitle: stem
+        title: label ? (soft ? 'Pick the files for ' + label : 'Pick the ' + label + ' file') : 'Deliver from the volume',
+        subtitle: soft
+          ? 'Tick the files, or a folder to deliver what’s inside it. They keep their own names, together in one versioned folder.'
+          : stem
           ? 'Starts in this task’s working folder. PipeDream copies it into place and names it — the original stays where it is.'
           : 'Starts in this task’s working folder. Tick any number of files. PipeDream works out which deliverable each one is, copies it into place and names it — the originals stay where they are.',
-        multiple: !stem,
+        multiple: !stem || !!soft,
         confirmLabel: 'Deliver',
         onCancel: () => this._back()
       });
@@ -1159,6 +1167,16 @@ window.App = window.App || {};
       const label = (p) => p.replace(/\/+$/, '').replace(/^.*\//, '');
       // items: paths, or { src, stem } when each was matched to a deliverable (_matchFiles)
       items = items.map(it => typeof it === 'string' ? { src: it, stem: stem || null } : it);
+      /* A soft delivery is one versioned folder per pick: its first item
+         starts the next version ('new', or 'add' to the newest when asked),
+         the rest join it. */
+      const softStems = new Set((((m && m.data) || {}).outputs || []).filter(o => o.soft).map(o => o.stem));
+      const started = new Set();
+      items.forEach(it => {
+        if (!it.isSoft && !softStems.has(it.stem)) return;   // isSoft: set by Check the matches, which knows (the panel may still be reloading)
+        it.soft = started.has(it.stem) ? 'add' : (it.softMode || 'new');
+        started.add(it.stem);
+      });
       App.toast(items.length === 1
         ? 'Copying ' + label(items[0].src) + ' into place…'
         : 'Delivering ' + items.length + ' items…');
@@ -1166,9 +1184,9 @@ window.App = window.App || {};
       App.track.flowStart('LucidLink delivery', { files: items.length, source: 'volume' });
       const failed = [];
       let done = 0, lastFiled = '', lastFrom = '';
-      for (const { src, stem: one } of items) {
+      for (const { src, stem: one, soft } of items) {
         try {
-          const r = await App.api.deliverPrepare({ epId, taskKey, pipeline: App.pipelineFor(ep), src, stem: one || undefined });
+          const r = await App.api.deliverPrepare({ epId, taskKey, pipeline: App.pipelineFor(ep), src, stem: one || undefined, soft: soft || undefined });
           done++; lastFiled = r.filed; lastFrom = r.from;
         } catch (e) {
           App.track.error('lucidlink.deliverFailed', { flow: 'LucidLink delivery', file: label(src), message: e.message });
@@ -1193,29 +1211,35 @@ window.App = window.App || {};
        from its name (App.matchDeliverables) and shows the result to check —
        one dropdown per file, already set, so a long delivery (MIX, MNE, SFX,
        DIA, ACA, INST, SONGMASTER) is one look and one click. */
-    _matchFiles(paths, outs) {
+    // softStem: every file starts out set to that soft delivery (its row was clicked)
+    _matchFiles(paths, outs, softStem) {
       const m = this._mounted;
       const ep = App.state.data.episodes.find(e => e.id === m.epId);
       const name = (p) => p.replace(/\/+$/, '').replace(/^.*\//, '');
       const names = paths.map(name);
       const found = App.matchDeliverables(names, outs);
-      const pick = found.map(r => r.out);                  // index into outs, -1 = don't deliver
+      // a soft row was clicked: everything goes to it, unless changed here
+      const softIdx = softStem ? outs.findIndex(o => o.stem === softStem) : -1;
+      const pick = found.map(r => softIdx >= 0 ? softIdx : r.out);   // index into outs, -1 = don't deliver
       const multiLang = new Set(outs.map(o => o.language)).size > 1;
-      const optLabel = (o) => this._outLabel(o) + (o.type ? ' · ' + o.type : '') + (multiLang && o.language ? ' · ' + o.language : '');
+      const optLabel = (o) => this._outLabel(o) + (o.soft ? ' · folder' : o.type ? ' · ' + o.type : '') + (multiLang && o.language ? ' · ' + o.language : '');
+      const fits = (o, n, ext) => o.soft ? (!o.types || !o.types.length || !n.includes('.') || o.types.some(t => App.typeFits(t, ext)))
+        : App.typeFits(o.type, n.includes('.') ? ext : '');
+      let addToCurrent = false;     // soft deliveries: add to the newest version instead of starting the next
 
       const body = el('div');
       const footBtn = el('button.btn-primary');
       const draw = () => {
         body.innerHTML = '';
         const counts = {};
-        pick.forEach(i => { if (i >= 0) counts[i] = (counts[i] || 0) + 1; });
+        pick.forEach(i => { if (i >= 0 && !outs[i].soft) counts[i] = (counts[i] || 0) + 1; });   // a folder takes many
         const list = el('.ws-match-list');
         paths.forEach((p, fi) => {
           const ext = (names[fi].split('.').pop() || '').toLowerCase();
           const sel = el('select.fld.ws-match-sel');
           const add = (v, t) => { const o = document.createElement('option'); o.value = String(v); o.textContent = t; sel.appendChild(o); };
           add(-1, pick[fi] < 0 && found[fi].out < 0 ? 'Choose…' : 'Don’t deliver');
-          outs.forEach((o, oi) => { if (App.typeFits(o.type, names[fi].includes('.') ? ext : '')) add(oi, optLabel(o)); });
+          outs.forEach((o, oi) => { if (fits(o, names[fi], ext)) add(oi, optLabel(o)); });
           sel.value = String(pick[fi]);
           sel.addEventListener('change', () => { pick[fi] = parseInt(sel.value, 10); draw(); });
           const dup = pick[fi] >= 0 && counts[pick[fi]] > 1;
@@ -1232,17 +1256,27 @@ window.App = window.App || {};
         const dups = Object.keys(counts).filter(k => counts[k] > 1).map(k => this._outLabel(outs[k]));
         const unmatched = pick.filter(i => i < 0).length;
         // what this delivery still leaves out
-        const still = outs.filter((o, oi) => !o.version && !pick.includes(oi)).map(o => optLabel(o));
+        const still = outs.filter((o, oi) => !(o.soft ? o.files : o.version) && !pick.includes(oi)).map(o => optLabel(o));
         const notes = [];
         if (dups.length) notes.push(el('.ws-note.tight.bad', null, '⚠ Two files are set to ' + dups.join(', ') + ' — pick one.'));
         if (unmatched) notes.push(el('.ws-note.tight', null, unmatched + ' file' + (unmatched === 1 ? '' : 's') + ' won’t be delivered — choose a deliverable to include ' + (unmatched === 1 ? 'it' : 'them') + '.'));
         if (still.length) notes.push(el('.ws-note.tight', null, 'Still needed after this: ' + still.join(', ') + '.'));
         notes.forEach(x => body.appendChild(x));
+        // soft folders this pick goes into that already have a version: start the next one, or add to it?
+        const softUsed = [...new Set(pick.filter(i => i >= 0 && outs[i].soft && outs[i].version))].map(i => outs[i]);
+        if (softUsed.length) {
+          const cb = el('input', { type: 'checkbox', id: 'ws-soft-add', onchange: (e) => { addToCurrent = e.target.checked; } });
+          cb.checked = addToCurrent;
+          body.appendChild(el('label.ws-note.tight.ws-soft-add', { for: 'ws-soft-add' }, [cb, ' Add to ' +
+            softUsed.map(o => this._outLabel(o) + ' v' + String(o.version).padStart(3, '0')).join(', ') +
+            ' instead of starting the next version']));
+        }
         footBtn.disabled = !n || dups.length > 0;
         footBtn.textContent = n ? 'Deliver ' + n + ' file' + (n === 1 ? '' : 's') : 'Deliver';
       };
       footBtn.onclick = () => {
-        const items = paths.map((p, fi) => ({ src: p, stem: pick[fi] >= 0 ? outs[pick[fi]].stem : null })).filter(x => x.stem);
+        const items = paths.map((p, fi) => ({ src: p, stem: pick[fi] >= 0 ? outs[pick[fi]].stem : null,
+          isSoft: pick[fi] >= 0 && !!outs[pick[fi]].soft, softMode: addToCurrent ? 'add' : 'new' })).filter(x => x.stem);
         App.editTask.open(m.epId, m.taskKey);
         this._deliverFromMount(m.epId, m.taskKey, ep, items);
       };

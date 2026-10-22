@@ -1602,7 +1602,7 @@ window.App = window.App || {};
     if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); if (App.hasRevGaps(t)) o.revGaps = t.revGaps.slice(0, t.maxRev); }
     if (t.needsQc) { o.needsQc = true; o.qcDays = App.qcDaysOf(t); }
     // the files the task hands over (Edit Pipeline → Deliverables); left out = the defaults (js/naming.js)
-    if (Array.isArray(t.outputs) && t.outputs.length) o.outputs = t.outputs.map(x => ({ suffix: x.suffix, type: x.type || '' }));
+    if (Array.isArray(t.outputs) && t.outputs.length) o.outputs = t.outputs.map(App.cleanOutput);
     return o;
   });
   const pipelineValid = (pipeline) => {
@@ -1905,7 +1905,7 @@ window.App = window.App || {};
       if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = (t.revDays || []).slice(); if (App.hasRevGaps(t)) o.revGaps = t.revGaps.slice(0, t.maxRev); }
       if (t.needsQc) { o.needsQc = true; o.qcDays = App.qcDaysOf(t); }
       // the files the task hands over (Edit Pipeline → Deliverables); left out = the defaults (js/naming.js)
-      if (Array.isArray(t.outputs) && t.outputs.length) o.outputs = t.outputs.map(x => ({ suffix: x.suffix, type: x.type || '' }));
+      if (Array.isArray(t.outputs) && t.outputs.length) o.outputs = t.outputs.map(App.cleanOutput);
       return o;
     });
     const LOCKED = ['in_progress', 'review', 'approved', 'in_qc', 'delivered'];

@@ -1130,7 +1130,7 @@ window.App = window.App || {};
 
   function presetEditor(draft) {
     const wrap = el('div');
-    const editor = App.pipelineEditor(draft.pipeline, {});
+    const editor = App.pipelineEditor(draft.pipeline, { dlvTitle: draft.name || 'pipeline preset' });
 
     const nameInput = el('input.wf-name', { type: 'text', value: draft.name, placeholder: 'Pipeline name', style: { maxWidth: '280px' } });
     nameInput.addEventListener('input', () => { draft.name = nameInput.value; });
@@ -1157,6 +1157,7 @@ window.App = window.App || {};
       editor.count,
       editor.undoBtn,
       editor.redoBtn,
+      el('button.btn-mini.pipe-dlv-btn', { type: 'button', title: 'Choose what every task delivers', onclick: () => editor.openDeliverables() }, [App.icon('package'), ' Deliverables']),
       el('button.btn-icon', { type: 'button', title: 'Add task', onclick: () => editor.addTask() }, '＋')
     ]));
     cardEl.appendChild(el('.preset-pipe-body', null, editor.list));

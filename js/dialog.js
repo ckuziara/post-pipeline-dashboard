@@ -1960,6 +1960,14 @@ window.App = window.App || {};
       undoBtn.disabled = !undoStack.length;
       redoBtn.disabled = !redoStack.length;
     }
+    /* The Deliverables page edits this pipeline in place: one undo step for
+       the whole visit, then the list redraws with what was chosen. */
+    function openDeliverables(focusKey) {
+      closeDepMenu();
+      snapshot();
+      App.deliverablesPage.open(pipe, { focusKey, identity: opts && opts.identity, title: opts && opts.dlvTitle,
+        onDone: () => { renderPipe(); onChange(); } });
+    }
     // call immediately BEFORE mutating `pipe`
     function snapshot() {
       undoStack.push({ pipe: clonePipe(pipe), editingKey });
@@ -2257,35 +2265,16 @@ window.App = window.App || {};
         t.needsQc ? el('span.pipe-qc-unit', null, 'QC days') : null
       ]);
 
-      /* Deliverables: the files this task hands over, each a suffix from
-         Naming Conventions in one type — what PAM's Deliverables checklist
-         asks for and names. Until it's changed here the task uses the
-         defaults (App.taskOutputs); the first edit makes the list its own. */
-      const outRows = App.namingConfig().tables.find(x => x.key === 'suffixes').rows;
-      const outLabel = (o) => { const h = outRows.find(rw => rw[0] === o.suffix && (!o.type || rw[1] === o.type)) || outRows.find(rw => rw[0] === o.suffix); return h ? h[2] : o.suffix; };
+      /* Deliverables: a one-line summary here; choosing them happens on the
+         Deliverables page (js/deliverables.js), opened on this task. */
       const curOuts = App.taskOutputs(t, null);
-      const setOuts = (list) => { snapshot(); if (list) t.outputs = list; else delete t.outputs; renderPipe(); onChange(); };
-      const outAdd = el('select.fld.pipe-out-add', {
-        title: tip('Add a file this task delivers'),
-        onchange: (e) => {
-          const rw = outRows[parseInt(e.target.value, 10)]; if (!rw) return;
-          if (curOuts.some(o => o.suffix === rw[0] && o.type === rw[1])) { App.toast('Already in the list'); e.target.value = ''; return; }
-          setOuts(curOuts.concat([{ suffix: rw[0], type: rw[1] }]));
-        }
-      });
-      // grouped by file type, so a long Naming Conventions table reads as WAVs, MOVs, MP4s…
-      const ph = document.createElement('option'); ph.value = ''; ph.textContent = '＋ Add a file…'; outAdd.appendChild(ph);
-      [...new Set(outRows.map(rw => rw[1] || 'Any'))].forEach(type => {
-        const g = document.createElement('optgroup'); g.label = type;
-        outRows.forEach((rw, ri) => { if ((rw[1] || 'Any') !== type) return;
-          const o = document.createElement('option'); o.value = String(ri); o.textContent = rw[2] + ' (' + rw[0] + ')'; g.appendChild(o); });
-        outAdd.appendChild(g);
-      });
-      const outBox = el('.pipe-outs', null, curOuts.map((o, oi) => el('span.pipe-out', { title: o.suffix + (o.type ? ' · ' + o.type : '') }, [
-        el('span', null, outLabel(o) + (o.type ? ' · ' + o.type : '')),
-        el('button.pipe-ver-x', { type: 'button', title: tip('Remove'), onclick: () => setOuts(curOuts.filter((_, j) => j !== oi)) }, '✕')
-      ])).concat([outAdd,
-        t.outputs ? el('button.pipe-out-reset', { type: 'button', title: tip('Back to the default list'), onclick: () => setOuts(null) }, 'Default') : null]));
+      const softN = curOuts.filter(o => o.soft).length, fileN = curOuts.length - softN;
+      const outBox = el('.pipe-outs', null, [
+        el('span.pipe-out-sum', null, [fileN ? fileN + ' file' + (fileN === 1 ? '' : 's') : null, softN ? softN + ' soft folder' + (softN === 1 ? '' : 's') : null]
+          .filter(Boolean).join(' · ') + (t.outputs && t.outputs.length ? '' : ' · default')),
+        el('span.pipe-out-names', null, curOuts.map(o => o.soft ? (o.label || o.suffix) + ' (folder)' : o.suffix + (o.type ? '.' + o.type.toLowerCase() : '')).join(', ')),
+        el('button.btn-mini.pipe-out-edit', { type: 'button', title: tip('Choose what this task delivers'), onclick: () => openDeliverables(t.key) }, 'Edit deliverables…')
+      ]);
 
       return el('.pipe-row.editing', null, [
         leadCell(i),
@@ -2453,7 +2442,7 @@ window.App = window.App || {};
        don't stack. No teardown hook to unregister from, so the handler checks
        `list.isConnected` instead: a closed dialog's list is detached. */
     const api = {
-      list: pipeList, count: pipeCount, addTask, render: renderPipe,
+      list: pipeList, count: pipeCount, addTask, render: renderPipe, openDeliverables,
       undoBtn, redoBtn, undo, redo,
       getPipe: () => pipe,
       // a wholesale swap (different show type or preset) starts a new history —
@@ -2903,6 +2892,7 @@ window.App = window.App || {};
       }
     });
     editor = App.pipelineEditor(pipe, {
+      identity: o.identity, dlvTitle: o.dlvTitle,
       onChange: () => o.onChange(),
       onDraft: () => (o.onDraft || o.onChange)(),
       onEdit: (key) => viz.setSelected(key),
@@ -2985,6 +2975,9 @@ window.App = window.App || {};
       /* The split screen: episode 1 drawn across the top, the task list below,
          each able to edit the other (see App.pipelineWorkspace). */
       const ws = App.pipelineWorkspace(pipe, {
+        // the Deliverables page previews real names for a show being edited
+        identity: editShow ? () => App.namingIdentity(editEps[0] || {}, editShow) : null,
+        dlvTitle: editShow ? editShow.name : 'new show',
         onChange: () => updateSchedule(),
         onDraft: () => paintPreview(),
         onSelect: () => { if (!pipePanel.open) pipePanel.setOpen(true); },
@@ -3462,10 +3455,14 @@ window.App = window.App || {};
         editor.list
       ]);
       // the pipeline controls only make sense once the section is expanded
-      const pipeTools = [savePresetBtn, editor.undoBtn, editor.redoBtn, addTaskBtn];
+      const dlvBtn = el('button.btn-mini.pipe-dlv-btn', {
+        type: 'button', title: 'Choose what every task delivers',
+        onclick: (e) => { e.stopPropagation(); editor.openDeliverables(); }
+      }, [App.icon('package'), ' Deliverables']);
+      const pipeTools = [dlvBtn, savePresetBtn, editor.undoBtn, editor.redoBtn, addTaskBtn];
       pipeTools.forEach(b => { b.style.display = 'none'; });
       const pipePanel = collapsible('Customize Pipeline Tasks',
-        [editor.count, savePresetBtn, editor.undoBtn, editor.redoBtn, addTaskBtn],
+        [editor.count, dlvBtn, savePresetBtn, editor.undoBtn, editor.redoBtn, addTaskBtn],
         pipeBody,
         (open) => {
           pipeTools.forEach(b => { b.style.display = open ? '' : 'none'; });
@@ -3910,7 +3907,7 @@ window.App = window.App || {};
               if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); if (App.hasRevGaps(t)) o.revGaps = t.revGaps.slice(0, t.maxRev); }
               if (t.needsQc) { o.needsQc = true; o.qcDays = App.qcDaysOf(t); }
               // the files the task hands over (Edit Pipeline → Deliverables); left out = the defaults (js/naming.js)
-              if (Array.isArray(t.outputs) && t.outputs.length) o.outputs = t.outputs.map(x => ({ suffix: x.suffix, type: x.type || '' }));
+              if (Array.isArray(t.outputs) && t.outputs.length) o.outputs = t.outputs.map(App.cleanOutput);
               return o;
             });
             const teamOut = team.read();

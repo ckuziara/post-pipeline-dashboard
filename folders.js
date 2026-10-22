@@ -42,38 +42,8 @@ const PRODUCTION = ['Schedules', 'Scripts', 'Contracts_AndCrew', 'Notes'];
 
    Keyed by pipeline task key. Anything unmapped (a custom preset's task) falls
    back to its own folder, so no task is ever left without a home. */
-const GROUPS = {
-  // Creative
-  core_premises: 'Story', scripts: 'Story',
-  design: 'Design',
-  storyboard: 'Storyboard',
-  animatic_v1: 'Animatic', animatic_v2: 'Animatic', animatic_v3: 'Animatic',
-  // Music
-  music_skeleton: 'Skeleton',
-  vocal_records: 'Vocals', vocal_comps: 'Vocals',
-  song_master: 'Master',
-  music_score: 'Score',
-  // Animation
-  layout: 'Layout_Blocking', blocking: 'Layout_Blocking',
-  animation: 'Animation',
-  lrc: 'LRC', final_lrc: 'LRC',
-  vfx_cleanup: 'VFX_Cleanup',
-  // Audio Post
-  vo_records: 'VO', vo_comps: 'VO',
-  wallah_v1: 'Wallah', wallah_v2: 'Wallah', wallah_v3: 'Wallah',
-  sfx_v1: 'SFX', sfx_v2: 'SFX', sfx_v3: 'SFX',
-  sound_design: 'SoundDesign', final_mix: 'Mix',
-  // Video Post
-  edit_v1: 'Edit', edit_v2: 'Edit',
-  picture_lock: 'PictureLock',
-  color_grade: 'Grade',
-  online_conform: 'Online',
-  subtitle: 'Subtitle',
-  // Post Ops / QC
-  footage_ingest: 'Ingest',
-  deliverys: 'Deliverys',
-  qc: 'QC'
-};
+// shared with the browser (js/naming.js), so the Deliverables page names files the way the server will
+const GROUPS = require('./js/naming.js').DELIVERABLE_GROUPS;
 
 const pad = n => String(n).padStart(4, '0');
 // Folder-safe name: everything outside [A-Za-z0-9] collapses away, so "../" and
@@ -229,7 +199,7 @@ function normalisePipeline(raw) {
       dept: t.dept,
       deps: Array.isArray(t.deps) ? t.deps.map(String) : [],
       // the files the task hands over (js/naming.js App.taskOutputs) — strings only, never path segments
-      outputs: Array.isArray(t.outputs) ? t.outputs.slice(0, 20).map(o => ({ suffix: String((o && o.suffix) || ''), type: String((o && o.type) || '') })) : undefined
+      outputs: Array.isArray(t.outputs) ? t.outputs.slice(0, 30).filter(o => o && o.suffix).map(naming.cleanOutput) : undefined
     });
   }
   return out;
@@ -360,7 +330,7 @@ const STEM_RE = /^[A-Z0-9-]{2,40}_[A-Za-z]{1,10}_[A-Z0-9-]{1,40}$/;
 function cleanExpected(raw) {
   if (!Array.isArray(raw)) return [];
   return raw.slice(0, 60).filter(o => o && STEM_RE.test(String(o.stem || '')))
-    .map(o => ({ stem: String(o.stem), suffix: String(o.suffix || ''), language: String(o.language || ''), type: String(o.type || '').toUpperCase().replace(/[^A-Z0-9]/g, '') }));
+    .map(o => ({ stem: String(o.stem), suffix: String(o.suffix || ''), language: String(o.language || ''), soft: !!o.soft, label: o.label ? String(o.label) : null, types: Array.isArray(o.types) ? o.types.map(String) : [], type: String(o.type || '').toUpperCase().replace(/[^A-Z0-9]/g, '') }));
 }
 
 const extOf = (n) => (path.extname(n).slice(1) || '').toLowerCase();
@@ -404,9 +374,18 @@ function reconcile(mezzAbs, expected, versionDirs, stored) {
   if (!loose.length) return out;
   // which deliverable each one is, from its name (js/naming.js) — the same matching Pick from the volume uses
   const found = naming.matchDeliverables(loose.map(it => it.name), expected, stored);
+  const softDirs = {};       // one new version folder per soft delivery, for all its loose files
   loose.forEach((it, i) => {
     if (found[i].out >= 0) {
-      const to = assignVersion(it.path, mezzAbs, expected[found[i].out].stem, versionDirs);
+      const o = expected[found[i].out];
+      if (o.soft) {
+        // a soft delivery keeps its files' own names — they go INTO its next version folder
+        const t = softDirs[o.stem] = softDirs[o.stem] || softTarget(mezzAbs, o.stem, versionDirs, 'new');
+        fs.renameSync(it.path, uniquePath(t.abs, it.name));
+        out.renamed.push({ from: it.name, to: t.name + '/' + it.name });
+        return;
+      }
+      const to = assignVersion(it.path, mezzAbs, o.stem, versionDirs);
       out.renamed.push({ from: it.name, to });
       return;
     }
@@ -416,6 +395,33 @@ function reconcile(mezzAbs, expected, versionDirs, stored) {
     else out.stray.push(it.name);
   });
   return out;
+}
+
+/* Soft deliveries are versioned FOLDERS (<stem>_v001/) holding files under
+   their own names. The newest version folder of a stem across folders, and
+   its file count. */
+function latestSoft(absDirs, stem) {
+  let best = { version: 0, file: null };
+  absDirs.forEach(d => listDir(d).forEach(i => {
+    if (!i.dir) return;
+    const v = versionOf(i.name, stem);
+    if (v > best.version) best = { version: v, file: i };
+  }));
+  if (best.file) best.count = listDir(best.file.path).length;   // files and sub-folders alike
+  return best;
+}
+/* Where a soft delivery's files go in Mezzanine: mode 'add' → the newest
+   version folder there (made if there's none yet); 'new' → the next version,
+   made now. → { abs, name, version } */
+function softTarget(mezzAbs, stem, versionDirs, mode) {
+  const l = latestSoft(versionDirs, stem);
+  if (mode === 'add' && l.file && path.dirname(l.file.path) === path.resolve(mezzAbs)) {
+    return { abs: l.file.path, name: l.file.name, version: l.version };
+  }
+  const name = versioned(stem, l.version + 1, '');
+  const abs = path.join(mezzAbs, name);
+  fs.mkdirSync(abs, { recursive: true });
+  return { abs, name, version: l.version + 1 };
 }
 
 // Rename one file in its own folder to the next version of `stem`; returns the new name.
@@ -430,6 +436,6 @@ module.exports = {
   showSkeleton, episodeTree, taskPaths, createDirs, normalisePipeline,
   showRoot, episodeFolder, safe, safeFile, resolveIn, resolveMaster,
   uniquePath, listDir, templatesFor, templatePath,
-  cleanExpected, latestVersion, versioned, versionOf, reconcile, assignVersion, extOf,
+  cleanExpected, latestVersion, versioned, versionOf, reconcile, assignVersion, extOf, latestSoft, softTarget,
   MASTER_TEMPLATES, SHOW_TEMPLATES, GROUPS
 };
