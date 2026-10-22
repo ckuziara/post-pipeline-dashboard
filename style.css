@@ -1313,10 +1313,24 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 .ep-row:hover { background: var(--hover); }
 /* An open episode's header latches to the top of the Board while its
    subitems scroll under it, a little below the edge so the card's rounded
-   top reads (App.board._latch clips the card there, with the same rounding).
-   Sticky can't work inside an overflow: hidden card, so the card clips
-   instead — rounded corners kept, without becoming a scroll box. */
+   top reads. Sticky can't work inside an overflow: hidden card, so the card
+   clips instead — rounded corners kept, without becoming a scroll box.
+   Latched (App.board._latch sets .latched), the header masks the gap above
+   it and its own rounded corners with the page's background — fixed, like
+   the body's, so it lines up with the canvas exactly — and the rows that
+   have scrolled past disappear behind a rounded card top. */
 .board .ep-row { position: sticky; top: 0; z-index: 4; border-radius: var(--radius) var(--radius) 0 0; }
+.board .ep-row.latched::before {
+  content: ''; position: absolute; left: -1px; right: -1px; top: -15px; height: calc(15px + var(--radius));
+  pointer-events: none; z-index: -1; background-color: var(--bg); background-attachment: fixed;
+  -webkit-mask: linear-gradient(#000, #000) top / 100% 15px no-repeat,
+    radial-gradient(circle at 100% 100%, transparent calc(var(--radius) - .5px), #000 var(--radius)) left 0 bottom 0 / calc(var(--radius) + 1px) var(--radius) no-repeat,
+    radial-gradient(circle at 0 100%, transparent calc(var(--radius) - .5px), #000 var(--radius)) right 0 bottom 0 / calc(var(--radius) + 1px) var(--radius) no-repeat;
+          mask: linear-gradient(#000, #000) top / 100% 15px no-repeat,
+    radial-gradient(circle at 100% 100%, transparent calc(var(--radius) - .5px), #000 var(--radius)) left 0 bottom 0 / calc(var(--radius) + 1px) var(--radius) no-repeat,
+    radial-gradient(circle at 0 100%, transparent calc(var(--radius) - .5px), #000 var(--radius)) right 0 bottom 0 / calc(var(--radius) + 1px) var(--radius) no-repeat;
+}
+:root[data-skin="expressive"] .board .ep-row.latched::before { background-image: var(--page-art); }
 .board .ep-group, :root[data-skin="expressive"] .board .ep-group { overflow: clip; }
 .ep-accent { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
 .ep-row .chev { color: var(--text-2); font-size: 11px; transition: transform .15s; justify-self: center; }
