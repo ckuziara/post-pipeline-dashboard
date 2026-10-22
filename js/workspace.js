@@ -881,8 +881,10 @@ window.App = window.App || {};
         const docOut = outs.some(isDoc);
         const online = docOut && App.deptSoftware(su.dept).some(sw => sw.kind === 'online');
         const list = el('.ws-list');
+        // a show delivered in several languages has one row per language — say which
+        const multiLang = new Set(outs.map(o => o.language)).size > 1;
         outs.forEach(o => {
-          const label = this._outLabel(o);
+          const label = this._outLabel(o) + (multiLang && o.language ? ' · ' + o.language : '');
           list.appendChild(el('button.ws-item.ws-out' + (o.version || o.linked ? '.done' : ''), {
             disabled: phone,
             title: (o.version ? 'In: ' + o.latest + ' — click to deliver a newer version' : 'Pick the ' + label + ' file from the volume'),

@@ -396,8 +396,11 @@ const versioned = (stem, v, ext) => stem + '_v' + String(v).padStart(3, '0') + (
 function reconcile(mezzAbs, expected, versionDirs, stored) {
   const out = { renamed: [], ambiguous: [], stray: [] };
   if (!expected.length) return out;
-  const loose = listDir(mezzAbs).filter(it => !it.dir &&
-    !expected.some(o => versionOf(it.name, o.stem) && naming.typeFits(o.type, extOf(it.name))));   // the rest are already right
+  /* Only files that don't follow the convention at all. One that does —
+     even for another identity, like an episode delivered as FD before its
+     Format became ND — was named by PipeDream already and is left as it is:
+     renaming it would rewrite history. */
+  const loose = listDir(mezzAbs).filter(it => !it.dir && !(naming.parseName(it.name) || {}).version);
   if (!loose.length) return out;
   // which deliverable each one is, from its name (js/naming.js) — the same matching Pick from the volume uses
   const found = naming.matchDeliverables(loose.map(it => it.name), expected, stored);

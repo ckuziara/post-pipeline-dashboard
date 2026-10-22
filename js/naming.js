@@ -115,7 +115,8 @@
   App.taskOutputs = (task, deliverable) => {
     const own = task && Array.isArray(task.outputs) && task.outputs.length ? task.outputs.map(o => [o.suffix, o.type]) : null;
     const rows = own || (task && App.DEFAULT_OUTPUTS[task.key]) || [[groupSuffix(deliverable || (task && task.name)), '']];
-    return rows.map(([suffix, type]) => ({ suffix: String(suffix || '').trim().toUpperCase(), type: String(type || '').trim().toUpperCase() }))
+    // spaces can't go in a file name — the standard document's 'ACA -RADIOEDIT' is ACA-RADIOEDIT
+    return rows.map(([suffix, type]) => ({ suffix: String(suffix || '').replace(/\s+/g, '').toUpperCase(), type: String(type || '').trim().toUpperCase() }))
       .filter(o => o.suffix);
   };
 

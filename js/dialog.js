@@ -1944,7 +1944,7 @@ window.App = window.App || {};
        created, so replacing it would silently create the show from pre-undo
        state. Free-text/number edits aren't recorded — snapshotting per
        keystroke would bury the structural steps people actually want back. */
-    const clonePipe = (p) => p.map(t => Object.assign({}, t, { deps: t.deps.slice() }));
+    const clonePipe = (p) => p.map(t => Object.assign({}, t, { deps: t.deps.slice() }, t.outputs ? { outputs: t.outputs.slice() } : {}));
     const HISTORY_LIMIT = 50;
     let undoStack = [], redoStack = [];
 
@@ -2257,6 +2257,36 @@ window.App = window.App || {};
         t.needsQc ? el('span.pipe-qc-unit', null, 'QC days') : null
       ]);
 
+      /* Deliverables: the files this task hands over, each a suffix from
+         Naming Conventions in one type — what PAM's Deliverables checklist
+         asks for and names. Until it's changed here the task uses the
+         defaults (App.taskOutputs); the first edit makes the list its own. */
+      const outRows = App.namingConfig().tables.find(x => x.key === 'suffixes').rows;
+      const outLabel = (o) => { const h = outRows.find(rw => rw[0] === o.suffix && (!o.type || rw[1] === o.type)) || outRows.find(rw => rw[0] === o.suffix); return h ? h[2] : o.suffix; };
+      const curOuts = App.taskOutputs(t, null);
+      const setOuts = (list) => { snapshot(); if (list) t.outputs = list; else delete t.outputs; renderPipe(); onChange(); };
+      const outAdd = el('select.fld.pipe-out-add', {
+        title: tip('Add a file this task delivers'),
+        onchange: (e) => {
+          const rw = outRows[parseInt(e.target.value, 10)]; if (!rw) return;
+          if (curOuts.some(o => o.suffix === rw[0] && o.type === rw[1])) { App.toast('Already in the list'); e.target.value = ''; return; }
+          setOuts(curOuts.concat([{ suffix: rw[0], type: rw[1] }]));
+        }
+      });
+      // grouped by file type, so a long Naming Conventions table reads as WAVs, MOVs, MP4s…
+      const ph = document.createElement('option'); ph.value = ''; ph.textContent = '＋ Add a file…'; outAdd.appendChild(ph);
+      [...new Set(outRows.map(rw => rw[1] || 'Any'))].forEach(type => {
+        const g = document.createElement('optgroup'); g.label = type;
+        outRows.forEach((rw, ri) => { if ((rw[1] || 'Any') !== type) return;
+          const o = document.createElement('option'); o.value = String(ri); o.textContent = rw[2] + ' (' + rw[0] + ')'; g.appendChild(o); });
+        outAdd.appendChild(g);
+      });
+      const outBox = el('.pipe-outs', null, curOuts.map((o, oi) => el('span.pipe-out', { title: o.suffix + (o.type ? ' · ' + o.type : '') }, [
+        el('span', null, outLabel(o) + (o.type ? ' · ' + o.type : '')),
+        el('button.pipe-ver-x', { type: 'button', title: tip('Remove'), onclick: () => setOuts(curOuts.filter((_, j) => j !== oi)) }, '✕')
+      ])).concat([outAdd,
+        t.outputs ? el('button.pipe-out-reset', { type: 'button', title: tip('Back to the default list'), onclick: () => setOuts(null) }, 'Default') : null]));
+
       return el('.pipe-row.editing', null, [
         leadCell(i),
         dragGrip(i, t),
@@ -2273,6 +2303,7 @@ window.App = window.App || {};
           versBox
         ]) : null,
         el('.pipe-rev-block', { style: { gridColumn: '1 / -1' } }, [qcBox]),
+        el('.pipe-rev-block', { style: { gridColumn: '1 / -1' } }, [el('span.pipe-rev-block-lbl', null, 'Deliverables'), outBox]),
         el('.pipe-actions', null, [
           vcToggle,
           el('button.btn-done', {
@@ -3878,6 +3909,8 @@ window.App = window.App || {};
               if (App.batchCfg(t)) o.batch = App.batchCfg(t);
               if (t.maxRev) { o.maxRev = t.maxRev; o.revDays = t.revDays.slice(); if (App.hasRevGaps(t)) o.revGaps = t.revGaps.slice(0, t.maxRev); }
               if (t.needsQc) { o.needsQc = true; o.qcDays = App.qcDaysOf(t); }
+              // the files the task hands over (Edit Pipeline → Deliverables); left out = the defaults (js/naming.js)
+              if (Array.isArray(t.outputs) && t.outputs.length) o.outputs = t.outputs.map(x => ({ suffix: x.suffix, type: x.type || '' }));
               return o;
             });
             const teamOut = team.read();
@@ -4459,6 +4492,29 @@ window.App = window.App || {};
       fmtSel.value = show.format || '';
       const langCodes = ncfg.tables.find(t => t.key === 'languages').rows.map(rw => rw[0]);
       const langInput = el('input.fld', { type: 'text', value: (show.languages || ['ENUS']).join(', '), placeholder: 'ENUS, LAS', spellcheck: 'false' });
+      const parseLangs = (v) => String(v || '').split(/[,\s]+/).map(x => x.trim().toUpperCase()).filter(Boolean);
+
+      /* Episode exceptions: an episode whose files are named differently —
+         its own content code (the default is worked out from its episode
+         code: LA-101 → LA0101), a different Format, or other languages.
+         Blank means the show's. Folded away: most shows need none. */
+      const fmtOpts = [['', 'Show’s']].concat(ncfg.tables.find(t => t.key === 'formats').rows.map(rw => [rw[0], rw[0]]));
+      const epRows = App.state.data.episodes.filter(e => e.showId === showId && !e.archived)
+        .sort((a, b) => String(a.code).localeCompare(String(b.code), undefined, { numeric: true }))
+        .map(e => {
+          const cc = el('input.fld', { type: 'text', value: e.contentCode || '', placeholder: App.contentCodeFor(Object.assign({}, e, { contentCode: null })), spellcheck: 'false' });
+          const fs2 = el('select.fld');
+          fmtOpts.forEach(([v, l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; fs2.appendChild(o); });
+          fs2.value = e.format || '';
+          const lg = el('input.fld', { type: 'text', value: (e.languages || []).join(', '), placeholder: 'Show’s', spellcheck: 'false' });
+          return { e, cc, fs2, lg, row: el('.ep-ov-row', null, [el('span.ep-ov-code', null, e.code), cc, fs2, lg]) };
+        });
+      const epExceptions = epRows.length ? el('details.ep-ov', null, [
+        el('summary', null, 'Episode exceptions' + (epRows.some(x => x.e.contentCode || x.e.format || x.e.languages) ? ' · ' +
+          epRows.filter(x => x.e.contentCode || x.e.format || x.e.languages).length + ' set' : '')),
+        el('.ep-ov-row.head', null, ['Episode', 'Content code', 'Format', 'Languages'].map(h => el('span', null, h))),
+        ...epRows.map(x => x.row)
+      ]) : null;
 
       /* Colour is picked, not typed: the palette is what every show chip, bar
          and dot on the board is drawn from, and a free-text hex would let a
@@ -4491,6 +4547,7 @@ window.App = window.App || {};
           field('Format', fmtSel, 'Part of every delivered file’s name'),
           field('Languages', langInput, 'Language codes, comma-separated — one file per language')
         ]),
+        epExceptions,
         el('.field', null, [
           el('label.fld-label', null, 'Show Colour'),
           swatches
@@ -4537,13 +4594,28 @@ window.App = window.App || {};
           onclick: () => {
             // a rejected save (blank name, a code another show holds) leaves the
             // dialog up with what was typed still in it
-            const langs = langInput.value.split(/[,\s]+/).map(x => x.trim().toUpperCase()).filter(Boolean);
-            const bad = langs.filter(x => !langCodes.includes(x));
-            if (bad.length) { App.toast(bad.join(', ') + ' isn’t a language code in Naming Conventions', true); return; }
+            const langs = parseLangs(langInput.value);
+            const bad = langs.concat(...epRows.map(x => parseLangs(x.lg.value))).filter(x => !langCodes.includes(x));
+            if (bad.length) { App.toast([...new Set(bad)].join(', ') + ' isn’t a language code in Naming Conventions', true); return; }
+            // episode exceptions, only where something actually changed
+            const epPatch = epRows.map(x => {
+              const cc = x.cc.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+              const lg = parseLangs(x.lg.value);
+              return { id: x.e.id, contentCode: cc || null, format: x.fs2.value || null, languages: lg.length ? lg : null };
+            }).filter(p => { const e = epRows.find(x => x.e.id === p.id).e;
+              return (e.contentCode || null) !== p.contentCode || (e.format || null) !== p.format ||
+                JSON.stringify(e.languages || null) !== JSON.stringify(p.languages); });
+
             if (App.updateShow(showId, {
               name: nameInput.value, code: codeInput.value, color: color, ...levels.read(),
               format: fmtSel.value, languages: langs
-            })) goBack();
+            })) {
+              if (epPatch.length) App.mutate(d => epPatch.forEach(p => {
+                const e = d.episodes.find(x => x.id === p.id); if (!e) return;
+                ['contentCode', 'format', 'languages'].forEach(k => { if (p[k]) e[k] = p[k]; else delete e[k]; });
+              }), 'episode naming');
+              goBack();
+            }
           }
         }, 'Save Show')
       ];

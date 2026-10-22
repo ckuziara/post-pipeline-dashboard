@@ -336,6 +336,20 @@ window.App = window.App || {};
       };
     },
 
+    /* An episode frozen on an older pipeline (App.replanShow) still delivers
+       what the show's pipeline asks for today: deliverables are a naming
+       matter, not a schedule one. The hosted/local server reads the show's
+       pipeline itself; a companion only has this. */
+    _withShowOutputs(body) {
+      const ep = body.epId && App.state.data.episodes.find(e => e.id === body.epId);
+      const show = ep && App.state.data.shows.find(s => s.id === ep.showId);
+      if (!Array.isArray(body.pipeline) || !ep || !ep.pipeline || !show || !show.pipeline) return body.pipeline;
+      return body.pipeline.map(t => {
+        const now = show.pipeline.find(x => x.key === t.key);
+        return now && now.outputs ? Object.assign({}, t, { outputs: now.outputs }) : t;
+      });
+    },
+
     /* File routes only. When a companion is reachable (a local server on a
        machine that actually has the volume mounted) these go there instead of
        to the host, which has no filesystem to act on. Everything else — board
@@ -357,7 +371,7 @@ window.App = window.App || {};
          the request. Same-origin calls send nothing extra and the server
          keeps using stored state, so hosted and plain-local behaviour is
          untouched. */
-      const payload = base ? Object.assign({}, body, { context: this._pathContext(body) }) : body;
+      const payload = base ? Object.assign({}, body, { context: this._pathContext(body), pipeline: this._withShowOutputs(body) }) : body;
       const headers = { 'Content-Type': 'application/json' };
       // the companion's gate: Origin is a header anyone can claim, so the
       // code is what actually authorises this
