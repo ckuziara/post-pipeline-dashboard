@@ -2121,7 +2121,11 @@ window.App = window.App || {};
     const lv = {};
     App.SHOW_LEVELS.forEach(l => { lv[l.key] = String(fields[l.key] == null ? (s[l.key] || '') : fields[l.key]).trim(); });
     const { brand, series } = lv;
-    if (name === s.name && code === oldCode && color === s.color &&
+    // naming (Edit Show → Format, Languages); left out of `fields` keeps what's there
+    const format = fields.format == null ? (s.format || '') : String(fields.format);
+    const languages = Array.isArray(fields.languages) ? fields.languages : (s.languages || null);
+    const sameLangs = JSON.stringify(languages || null) === JSON.stringify(s.languages || null);
+    if (name === s.name && code === oldCode && color === s.color && format === (s.format || '') && sameLangs &&
         App.SHOW_LEVELS.every(l => lv[l.key] === (s[l.key] || ''))) return true;   // nothing to save
 
     App.mutate(d => {
@@ -2131,6 +2135,8 @@ window.App = window.App || {};
       // blank means "not set" rather than an empty string on every show — the
       // Shows browser builds its pickers from the values that are actually there
       App.SHOW_LEVELS.forEach(l => { if (lv[l.key]) t[l.key] = lv[l.key]; else delete t[l.key]; });
+      if (format) t.format = format; else delete t.format;
+      if (languages && languages.length) t.languages = languages.slice(); else delete t.languages;
       if (oldCode && oldCode !== code) {
         d.episodes.forEach(e => {
           if (e.showId !== showId) return;

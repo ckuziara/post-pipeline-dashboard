@@ -518,6 +518,18 @@ a.ws-name:hover { text-decoration: underline; }
 .ws-dep.pending .ws-dep-name { color: var(--text-2); }
 
 /* deliver drop area */
+/* Export to (PAM): where renders go and what they're called */
+.ws-export-dir { display: flex; align-items: center; gap: 6px; margin: 8px 0; }
+.ws-export-dir code { flex: 1; min-width: 0; font-size: 11px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-out { gap: 10px; }
+.ws-out.over { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.ws-out-type { flex: none; width: 38px; font-size: 10px; font-weight: 800; color: var(--text-3); }
+.ws-out-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ws-out-label { font-size: 12px; font-weight: 600; }
+.ws-out-name { font-size: 11px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* text buttons, not the 28px icon square .btn-mini is by default (same as .arch-actions) */
+.ws-export .btn-mini { flex: none; white-space: nowrap; width: auto; height: auto; gap: 4px; padding: 5px 9px; font-size: 11px; border-color: var(--border-2); color: var(--text-2); }
+.ws-ambig { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .ws-drop {
   border: 1.5px dashed var(--border-2); border-radius: 11px; padding: 20px 14px;
   text-align: center; cursor: pointer; transition: background .13s, border-color .13s;

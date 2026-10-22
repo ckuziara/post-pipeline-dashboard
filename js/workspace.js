@@ -6,9 +6,13 @@
      • Assets    — only what THIS task needs: each dependency's published files,
                    folders and links, labelled by source. A dependency that
                    hasn't published anything shows as Pending.
+     • Export to — the exact folder and file names this task delivers, by the
+                   naming convention (js/naming.js), so a render lands in
+                   !!_Mezzanine already named and nothing has to be moved.
      • Deliver   — drop files in, or pick something already on the mount, or add
-                   a URL. The server files them into the task's !!_Publish folder,
-                   which is what dependent tasks then see as their assets.
+                   a URL. Each is COPIED into !!_Mezzanine under its proper
+                   name; approval publishes a copy to !!_Publish, which is what
+                   dependent tasks then see as their assets.
 
    Files are the filesystem's truth (listed live by the server); links live in
    shared board state, since there's nothing on disk to point at. */
@@ -169,6 +173,11 @@ window.App = window.App || {};
           epId: m.epId, taskKey: m.taskKey, pipeline: App.pipelineFor(ep)
         });
         m.error = null;
+        /* PAM renames misnamed exports as it lists them (server.js reconcile);
+           the record of it goes to the board's activity log from here, since a
+           companion has no board of its own to write to. */
+        ((m.data && m.data.reconciled && m.data.reconciled.renamed) || []).forEach(x =>
+          App.track.audit('pam.rename', { episode: ep.code, task: m.taskKey, from: x.from, to: x.to }));
       } catch (e) {
         m.error = e.message;
       }
@@ -223,16 +232,17 @@ window.App = window.App || {};
       const review = () => App.reviewFlow ? App.reviewFlow.inlineSection(ep, su, m.data) : null;
       const reviewPast = () => App.reviewFlow ? App.reviewFlow.compactSection(ep, su) : null;
       const deliver = () => this._deliver(ep, su, m.data);
+      const exportTo = () => App.isPhone() ? null : this._exportTo(ep, su, m.data);
       const folded = (label, nodes) => {
         nodes = nodes.filter(Boolean); if (!nodes.length) return null;
         return el('details.ws-more', null, [el('summary', null, label)].concat(nodes));
       };
       const parts = stage === 'start' ? [project(), assets()]
-        : stage === 'work' ? [project(), assets(), review()]
+        : stage === 'work' ? [project(), exportTo(), assets(), review()]
         : stage === 'review' ? [review(), folded('Project & files', [project(), assets()])]
-        : stage === 'deliver' ? [deliver(), reviewPast(), folded('Project & files', [project(), assets()])]
+        : stage === 'deliver' ? [exportTo(), deliver(), reviewPast(), folded('Project & files', [project(), assets()])]
         // QC's fix is a delivery fix: the project to fix it in, and Deliver to put it back
-        : stage === 'qcfix' ? [deliver(), project(), folded('Assets & past reviews', [assets(), reviewPast()])]
+        : stage === 'qcfix' ? [exportTo(), deliver(), project(), folded('Assets & past reviews', [assets(), reviewPast()])]
         : /* qc, done */ [reviewPast(), folded(stage === 'qc' ? 'Delivered files & project' : 'Files & project', [deliver(), project(), assets()])];
       parts.filter(Boolean).forEach(n => box.appendChild(n));
       // opened to deliver (the Priority widget's Deliver button): bring that section into view
@@ -366,8 +376,10 @@ window.App = window.App || {};
         actions.appendChild(el('button.btn-primary.ws-btn', {
           onclick: () => this._open({ which: 'work', name: newest.name })
         }, '▶ Open Project'));
+        // the newest project, copied up a version (server.js /api/task/project)
         actions.appendChild(el('button.btn-ghost.ws-btn', {
-          onclick: () => this._createProject(d)
+          title: 'Copy ' + newest.name + ' to the next version',
+          onclick: () => this._newVersion()
         }, '＋ New version'));
       }
       actions.appendChild(el('button.btn-ghost.ws-btn', {
@@ -396,6 +408,93 @@ window.App = window.App || {};
           : 'No project yet. ' + App.dept(su.dept).label + ' has no templated software, so Create Project just prepares the folder.'));
       }
       return wrap;
+    },
+
+    _newVersion() {
+      const m = this._mounted;
+      const ep = App.state.data.episodes.find(e => e.id === m.epId);
+      App.api.taskProject({ epId: m.epId, taskKey: m.taskKey, pipeline: App.pipelineFor(ep), newVersion: true })
+        .then(r => { App.toast(r.created ? 'Created ' + r.created : 'Folder ready'); this.reload(); })
+        .catch(e => App.toast(e.message, true));
+    },
+
+    /* -------------------------------------------------------- export to ---- */
+    /* Where this task's renders go, and what they're called — so they're right
+       the first time instead of fixed afterwards. One row per file the task
+       delivers (App.expectedFiles): the next name, ready to copy into the
+       render dialog. Dropping a file on a row files it as that output. */
+    _exportTo(ep, su, d) {
+      if (!d.masterOk || !d.outputs) return null;
+      const wrap = el('.ws-block.ws-export');
+      const dir = (d.absolute && d.absolute.mezzanine) || '';
+      wrap.appendChild(el('.ws-head', null, [
+        el('.modal-section-title', { style: { margin: '0' } }, [App.icon('upload'), ' Export to']),
+        el('span.ws-path', null, '!!_Mezzanine/' + d.deliverable + '/')
+      ]));
+      if ((d.namingProblems || []).length) {
+        wrap.appendChild(el('.ws-note', null, '⚠ ' + d.namingProblems.join('. ') + ' — until then PAM can’t name this task’s files.'));
+        return wrap;
+      }
+      wrap.appendChild(el('.ws-export-dir', null, [
+        el('code', { title: dir }, dir),
+        el('button.btn-mini', { onclick: () => App.copy(dir, 'Folder path') }, 'Copy path'),
+        el('button.btn-mini', { onclick: () => this._open({ which: 'mezzanine' }) }, [App.icon('folderOpen'), ' Open'])
+      ]));
+      const labels = {};
+      const sfx = App.namingConfig().tables.find(t => t.key === 'suffixes');
+      sfx.rows.forEach(rw => { labels[rw[0] + '|' + rw[1]] = rw[2]; labels[rw[0]] = labels[rw[0]] || rw[2]; });
+      const list = el('.ws-list');
+      d.outputs.forEach(o => {
+        const row = el('.ws-item.static.ws-out', null, [
+          el('span.ws-out-type', null, o.type || 'ANY'),
+          el('span.ws-out-main', null, [
+            el('span.ws-out-label', null, labels[o.suffix + '|' + o.type] || labels[o.suffix] || o.suffix),
+            el('code.ws-out-name', { title: 'Next version' }, o.next)
+          ]),
+          o.version ? el('span.ws-chip.ok', { title: o.latest }, 'v' + String(o.version).padStart(3, '0')) : el('span.ws-chip.pending', null, 'none yet'),
+          el('button.btn-mini', { title: 'Copy the file name to paste into the render dialog',
+            onclick: () => App.copy(o.next.replace(/\.[^.]+$/, ''), 'File name') }, 'Copy name')
+        ]);
+        // a file dropped here is filed as THIS output, whatever it was called
+        row.addEventListener('dragover', e => { e.preventDefault(); row.classList.add('over'); });
+        row.addEventListener('dragleave', () => row.classList.remove('over'));
+        row.addEventListener('drop', e => {
+          e.preventDefault(); row.classList.remove('over');
+          const files = [...(e.dataTransfer.files || [])];
+          if (files.length) this._upload(files, wrap.querySelector('.ws-export-status'), o.stem);
+        });
+        list.appendChild(row);
+      });
+      wrap.appendChild(list);
+      wrap.appendChild(el('.ws-export-status'));
+
+      const rec = d.reconciled || {};
+      if ((rec.renamed || []).length) {
+        wrap.appendChild(el('.ws-note.tight', null, 'Renamed to the convention: ' +
+          rec.renamed.map(x => x.from + ' → ' + x.to).join(', ')));
+      }
+      (rec.ambiguous || []).forEach(a => {
+        wrap.appendChild(el('.ws-note.ws-ambig', null, [
+          el('span', null, 'Which is ' + a.name + '? '),
+          ...a.stems.map(st => el('button.btn-mini', { onclick: () => this._assign(a.name, st) },
+            (d.outputs.find(o => o.stem === st) || {}).suffix || st))
+        ]));
+      });
+      if ((rec.stray || []).length) {
+        wrap.appendChild(el('.ws-note.tight', null, '⚠ Not a type this task delivers, left as is: ' + rec.stray.join(', ')));
+      }
+      return wrap;
+    },
+
+    _assign(file, stem) {
+      const m = this._mounted;
+      const ep = App.state.data.episodes.find(e => e.id === m.epId);
+      App.api.taskAssign({ epId: m.epId, taskKey: m.taskKey, pipeline: App.pipelineFor(ep), file, stem })
+        .then(r => {
+          App.track.audit('pam.rename', { episode: ep.code, task: m.taskKey, from: r.from, to: r.to });
+          App.toast('Filed as ' + r.to); this.reload();
+        })
+        .catch(e => App.toast(e.message, true));
     },
 
     // shared shell for the Create Project steps, so Back/Cancel behave the same
@@ -963,7 +1062,7 @@ window.App = window.App || {};
 
     /* Upload one file per request so multi-GB media streams straight to disk
        instead of buffering. The destination comes from a server-issued token. */
-    async _upload(files, statusBox) {
+    async _upload(files, statusBox, stem) {
       const m = this._mounted; if (!m || !files.length) return;
       const ep = App.state.data.episodes.find(e => e.id === m.epId);
       statusBox.innerHTML = '';
@@ -985,9 +1084,9 @@ window.App = window.App || {};
       for (const f of files) {
         line.textContent = 'Delivering ' + f.name + ' (' + (done + 1) + ' of ' + files.length + ')…';
         try {
-          const r = await App.api.deliverUpload(token, f);
+          const r = await App.api.deliverUpload(token, f, stem);
           done++;
-          if (r.filed !== f.name) App.toast('Filed as ' + r.filed + ' (a file of that name was already there)');
+          if (r.filed !== f.name) App.toast('Filed as ' + r.filed);
         } catch (e) {
           App.track.error('lucidlink.uploadFailed', { flow: 'LucidLink delivery', file: f.name, message: e.message });
           App.track.flowDone('LucidLink delivery', false, { reason: 'upload failed', delivered: done });
@@ -1022,31 +1121,31 @@ window.App = window.App || {};
         multiple: true,
         title: 'Deliver from the volume',
         subtitle: 'Starts in this task’s working folder. Tick any number of files — or tick a ' +
-          'folder to deliver it whole. Everything moves into ' +
-          (m.data ? '!!_Publish/' + m.data.deliverable : 'the delivery folder') + '.',
-        confirmLabel: 'Move & deliver',
+          'folder to deliver it whole. Each is copied into ' +
+          (m.data ? '!!_Mezzanine/' + m.data.deliverable : 'the delivery folder') + ' under its proper name — the original stays where it is.',
+        confirmLabel: 'Copy & deliver',
         onCancel: () => this._back()
       });
     },
 
-    /* One prepare call per picked item — the endpoint moves a file or a whole
+    /* One prepare call per picked item — the endpoint copies a file or a whole
        directory, so a ticked folder arrives intact rather than flattened. Run
-       in sequence: these are renames on the same volume, and a 40GB master
-       shouldn't race three others. */
+       in sequence, so a 40GB master doesn't race three others for the disk,
+       and each takes the next version number in turn. */
     async _deliverFromMount(epId, taskKey, ep, items) {
       const m = this._mounted;
       const label = (p) => p.replace(/\/+$/, '').replace(/^.*\//, '');
       App.toast(items.length === 1
-        ? 'Moving ' + label(items[0]) + ' into place…'
+        ? 'Copying ' + label(items[0]) + ' into place…'
         : 'Delivering ' + items.length + ' items…');
 
       App.track.flowStart('LucidLink delivery', { files: items.length, source: 'volume' });
       const failed = [];
-      let done = 0, lastFiled = '', moved = false, fromLibrary = false;
+      let done = 0, lastFiled = '', lastFrom = '';
       for (const src of items) {
         try {
           const r = await App.api.deliverPrepare({ epId, taskKey, pipeline: App.pipelineFor(ep), src });
-          done++; lastFiled = r.filed; moved = r.moved; fromLibrary = r.fromLibrary;
+          done++; lastFiled = r.filed; lastFrom = r.from;
         } catch (e) {
           App.track.error('lucidlink.deliverFailed', { flow: 'LucidLink delivery', file: label(src), message: e.message });
           failed.push(label(src) + ': ' + e.message);
@@ -1055,9 +1154,7 @@ window.App = window.App || {};
       App.track.flowDone('LucidLink delivery', !failed.length, { files: done, failed: failed.length });
 
       if (done === 1 && !failed.length) {
-        App.toast(moved
-          ? 'Delivered ' + lastFiled + ' — moved out of ' + (m && m.data ? m.data.deliverable : 'the working folder')
-          : 'Delivered ' + lastFiled + (fromLibrary ? ' — copied, so the library keeps its original' : ''));
+        App.toast('Delivered ' + lastFiled + (lastFrom && lastFrom !== lastFiled ? ' (from ' + lastFrom + ')' : ''));
       } else if (done && !failed.length) {
         App.toast('Delivered ' + done + ' items');
       } else if (done) {

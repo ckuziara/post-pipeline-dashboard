@@ -4448,6 +4448,18 @@ window.App = window.App || {};
       const levels = showLevelFields(show);
       let color = show.color;
 
+      /* What PAM names this show's files from (js/naming.js): the Format part
+         of [Content Code][Language]_[Format]_[Suffix], and the languages each
+         file is delivered in — one file per language. Both from the Naming
+         Conventions tables, so a name can't carry a code Moonbase rejects. */
+      const ncfg = App.namingConfig();
+      const fmtSel = el('select.fld');
+      [['', 'Not set']].concat(ncfg.tables.find(t => t.key === 'formats').rows.map(rw => [rw[0], rw[0] + ' — ' + rw[1]]))
+        .forEach(([v, l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; fmtSel.appendChild(o); });
+      fmtSel.value = show.format || '';
+      const langCodes = ncfg.tables.find(t => t.key === 'languages').rows.map(rw => rw[0]);
+      const langInput = el('input.fld', { type: 'text', value: (show.languages || ['ENUS']).join(', '), placeholder: 'ENUS, LAS', spellcheck: 'false' });
+
       /* Colour is picked, not typed: the palette is what every show chip, bar
          and dot on the board is drawn from, and a free-text hex would let a
          show land unreadable against the timeline. */
@@ -4475,6 +4487,10 @@ window.App = window.App || {};
           field('Content Code', codeInput, 'Renaming it renames every episode code with it (LA-1 → NEW-1)')
         ]),
         el('.plan-grid.four.show-levels', null, levels.fields),
+        el('.plan-grid.two', null, [
+          field('Format', fmtSel, 'Part of every delivered file’s name'),
+          field('Languages', langInput, 'Language codes, comma-separated — one file per language')
+        ]),
         el('.field', null, [
           el('label.fld-label', null, 'Show Colour'),
           swatches
@@ -4521,8 +4537,12 @@ window.App = window.App || {};
           onclick: () => {
             // a rejected save (blank name, a code another show holds) leaves the
             // dialog up with what was typed still in it
+            const langs = langInput.value.split(/[,\s]+/).map(x => x.trim().toUpperCase()).filter(Boolean);
+            const bad = langs.filter(x => !langCodes.includes(x));
+            if (bad.length) { App.toast(bad.join(', ') + ' isn’t a language code in Naming Conventions', true); return; }
             if (App.updateShow(showId, {
-              name: nameInput.value, code: codeInput.value, color: color, ...levels.read()
+              name: nameInput.value, code: codeInput.value, color: color, ...levels.read(),
+              format: fmtSel.value, languages: langs
             })) goBack();
           }
         }, 'Save Show')

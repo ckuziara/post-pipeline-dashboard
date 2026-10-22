@@ -329,7 +329,10 @@ window.App = window.App || {};
       return {
         epCode: ep.code, epTitle: ep.title || '',
         showId: show ? show.id : '', showPrefix: show ? (show.prefix || '') : '',
-        showName: show ? show.name : ''
+        showName: show ? show.name : '',
+        // what PAM names files from — the companion has no board to read them in
+        contentCode: App.contentCodeFor(ep), languages: App.namingIdentity(ep, show).languages,
+        format: App.namingIdentity(ep, show).format
       };
     },
 
@@ -385,6 +388,8 @@ window.App = window.App || {};
     // copies a file already on the mount into a template library (admin-only)
     templateAdd(b)   { return this._post('/api/task/template/add', b); },
     deliverPrepare(b) { return this._post('/api/task/deliver/prepare', b); },
+    // files an export PAM couldn't place (two outputs share its type) as the one picked
+    taskAssign(b) { return this._post('/api/task/assign', b); },
     // moves a task's delivered files from Mezzanine to Publish, on approval
     taskPromote(b) { return this._post('/api/task/promote', b); },
     // opens in the OS default browser when the server is on this machine
@@ -392,8 +397,9 @@ window.App = window.App || {};
 
     /* Streams one file straight to the token's folder. Kept as a raw body (not
        multipart) so multi-GB media never buffers in memory on either side. */
-    async deliverUpload(token, file) {
-      const q = '?token=' + encodeURIComponent(token) + '&filename=' + encodeURIComponent(file.name);
+    async deliverUpload(token, file, stem) {
+      const q = '?token=' + encodeURIComponent(token) + '&filename=' + encodeURIComponent(file.name) +
+        (stem ? '&stem=' + encodeURIComponent(stem) : '');
       const r = await fetch('/api/task/deliver/upload' + q, {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream' },

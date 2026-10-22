@@ -82,6 +82,85 @@
     return (suffixes || []).find(sx => { const S = sx.toUpperCase(); return B === S || B.endsWith('_' + S); }) || null;
   };
 
+  /* ---- Building names (PAM) -------------------------------------------
+     Every file PAM writes is named here, browser and server alike:
+       [Content Code][Language]_[Format]_[Suffix]_v###.<ext>
+     Mezzanine and Reviews keep the version tag; Publish drops it, so what
+     lands there is exactly what Moonbase ingests. */
+
+  // LA-101 → LA0101, KYI-246 → KYI0246: letters, then the number padded to 4
+  App.contentCodeFor = (ep) => {
+    if (ep && ep.contentCode) return String(ep.contentCode).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const c = String((ep && ep.code) || '').toUpperCase();
+    const m = c.match(/^([A-Z]+)[^A-Z0-9]*(\d+)$/);
+    return m ? m[1] + m[2].padStart(4, '0') : c.replace(/[^A-Z0-9]/g, '');
+  };
+
+  /* What a pipeline task must hand over: one row per file, by suffix and
+     type. A task's own `outputs` win; then these defaults for the stock
+     pipelines; anything else delivers one file named after its deliverable
+     folder (STORYBOARD, ANIMATIC…) in whatever type it is. */
+  App.DEFAULT_OUTPUTS = {
+    scripts: [['SP', 'PDF']],
+    song_master: [['SONGMASTER', 'WAV'], ['ACA', 'WAV'], ['INST', 'WAV']],
+    music_score: [['SCR', 'WAV']],
+    final_mix: [['MIX', 'WAV'], ['MNE', 'WAV'], ['DIA', 'WAV']],
+    subtitle: [['SUB', 'SRT']],
+    final_lrc: [['NOIO-TEXTED', 'MOV']],
+    online_conform: [['NOIO-TEXTED', 'MOV'], ['NOIO-TEXTLESS', 'MOV']],
+    deliverys: [['IO-TEXTED', 'MOV'], ['IO-TEXTED', 'MP4'], ['NOIO-TEXTED-BITC', 'MP4']]
+  };
+  // deliverable folder → suffix: "Layout_Blocking" → LAYOUT-BLOCKING
+  const groupSuffix = (g) => String(g || 'FILE').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '');
+  App.taskOutputs = (task, deliverable) => {
+    const own = task && Array.isArray(task.outputs) && task.outputs.length ? task.outputs.map(o => [o.suffix, o.type]) : null;
+    const rows = own || (task && App.DEFAULT_OUTPUTS[task.key]) || [[groupSuffix(deliverable || (task && task.name)), '']];
+    return rows.map(([suffix, type]) => ({ suffix: String(suffix || '').trim().toUpperCase(), type: String(type || '').trim().toUpperCase() }))
+      .filter(o => o.suffix);
+  };
+
+  // Language and format: the episode's own, else the show's, else English US / no format yet
+  App.namingIdentity = (ep, show) => ({
+    contentCode: App.contentCodeFor(ep),
+    languages: [].concat((ep && ep.languages) || (show && show.languages) || ['ENUS']).filter(Boolean),
+    format: (ep && ep.format) || (show && show.format) || ''
+  });
+
+  App.buildName = ({ contentCode, language, format, suffix, version, ext }) => {
+    const v = version == null ? '' : '_v' + String(version).padStart(3, '0');
+    const e = ext ? '.' + String(ext).replace(/^\./, '').toLowerCase() : '';
+    return String(contentCode) + String(language || '') + '_' + String(format) + '_' + String(suffix) + v + e;
+  };
+
+  /* Every file one task is expected to deliver, as name stems (no version, no
+     extension). Missing pieces come back in `problems` rather than as a
+     half-built name, so PAM can say what to fill in. */
+  App.expectedFiles = (ep, show, task, deliverable) => {
+    const id = App.namingIdentity(ep, show);
+    const problems = [];
+    if (!id.contentCode) problems.push('This episode has no content code');
+    if (!id.format) problems.push('Set the show’s Format (FN, FD, ND or Song) in Edit Show');
+    const files = [];
+    App.taskOutputs(task, deliverable).forEach(o => id.languages.forEach(lang => {
+      files.push(Object.assign({}, o, { language: lang,
+        stem: problems.length ? null : App.buildName({ contentCode: id.contentCode, language: lang, format: id.format, suffix: o.suffix }) }));
+    }));
+    return { files, problems };
+  };
+
+  /* A name back into its parts, or null if it doesn't follow the convention.
+     "KYI0246ENUS_FD_NOIO-TEXTED-BITC_v003.mp4" → { stem, version: 3, ext: 'mp4', … } */
+  App.parseName = (name) => {
+    const m = String(name || '').match(/^([A-Z0-9-]+)_([A-Za-z]+)_([A-Z0-9-]+?)(?:_v(\d{3,}))?(?:\.([A-Za-z0-9]+))?$/);
+    if (!m) return null;
+    return { head: m[1], format: m[2], suffix: m[3], version: m[4] ? parseInt(m[4], 10) : null, ext: (m[5] || '').toLowerCase(),
+      stem: m[1] + '_' + m[2] + '_' + m[3] };
+  };
+
+  // Does a file's extension fit an output's type? An output with no type takes anything.
+  App.typeFits = (type, ext) => !type || String(type).toUpperCase() === String(ext || '').toUpperCase() ||
+    (/^TIFF?$/i.test(type) && /^tiff?$/i.test(ext)) || (/^JPE?G$/i.test(type) && /^jpe?g$/i.test(ext));
+
   /* Example names for a format: each [Part] filled in from a sample
      delivery. A part the samples don't know stays as written, [Like This]. */
   App.namingExamples = (pattern) => App.NAMING_DEFAULTS.samples.map(smp =>
