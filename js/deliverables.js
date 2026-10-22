@@ -1,7 +1,8 @@
 /* Deliverables page — what every task in a pipeline hands over.
 
    Opened from Edit Pipeline / Add Show and from Admin → Workflow pipeline
-   presets ("Deliverables…", or a task's "Edit deliverables…"). It edits the
+   presets ("PAM", or a task's "Edit in PAM…"), and from Edit Show ("PAM",
+   App.openShowPam, which saves on Done). It edits the
    pipeline it was given IN PLACE — the same array the pipeline editor holds —
    so the draft, and the editor's undo step taken before opening, stay whole.
 
@@ -39,7 +40,6 @@ window.App = window.App || {};
       };
       let id = SAMPLE;
       try { const got = opts.identity && opts.identity(); if (got && got.contentCode && got.format) id = got; } catch (e) { /* sample it is */ }
-      const sample = id === SAMPLE;
       const catalogue = App.deliverableCatalogue();
       const labelOf = (o) => {
         if (o.soft) return o.label || o.suffix;
@@ -81,10 +81,7 @@ window.App = window.App || {};
       layer.appendChild(el('.dlv-page', null, [
         el('.dlv-head', null, [
           el('div', null, [
-            el('.dlv-title', null, [App.icon('package'), ' Deliverables', opts.title ? el('span.dlv-title-sub', null, ' · ' + opts.title) : null]),
-            el('.dlv-sub', null, sample
-              ? 'What each task hands over. Example names use ' + SAMPLE.contentCode + SAMPLE.languages[0] + '_' + SAMPLE.format + ' — a real show uses its own.'
-              : 'What each task hands over, and the names PAM will give the files.')
+            el('.dlv-title', null, [App.icon('package'), ' PAM · Deliverables', opts.title ? el('span.dlv-title-sub', null, ' · ' + opts.title) : null])
           ]),
           el('button.btn-primary', { onclick: done }, 'Done')
         ]),
@@ -274,5 +271,34 @@ window.App = window.App || {};
       if (this._keys) { document.removeEventListener('keydown', this._keys, true); this._keys = null; }
       if (this._layer) { this._layer.remove(); this._layer = null; }
     }
+  };
+
+  /* PAM from Edit Show: the page over a copy of the show's pipeline, saved
+     to the show on Done. Only deliverables change — nothing is re-planned. A
+     show still on the built-in pipeline takes its own copy the first time
+     its deliverables are set, as Edit Pipeline would. */
+  App.openShowPam = function (showId) {
+    const show = App.state.data.shows.find(s => s.id === showId);
+    if (!show) return;
+    if (!App.canManageShows(App.state.role)) { App.toast('Only Producers can change shows', true); return; }
+    const pipe = JSON.parse(JSON.stringify(App.showPipeline(show)));
+    const before = JSON.stringify(pipe.map(t => t.outputs || null));
+    const ep0 = App.state.data.episodes.find(e => e.showId === showId && !e.archived) || {};
+    App.deliverablesPage.open(pipe, {
+      title: show.name,
+      identity: () => App.namingIdentity(ep0, show),
+      onDone: () => {
+        if (JSON.stringify(pipe.map(t => t.outputs || null)) === before) return;
+        App.mutate(d => {
+          const s = d.shows.find(x => x.id === showId); if (!s) return;
+          if (!Array.isArray(s.pipeline)) s.pipeline = JSON.parse(JSON.stringify(App.showPipeline(s)));
+          s.pipeline.forEach(t => {
+            const mine = pipe.find(x => x.key === t.key);
+            if (mine && mine.outputs && mine.outputs.length) t.outputs = mine.outputs.map(App.cleanOutput); else delete t.outputs;
+          });
+        }, 'deliverables');
+        App.toast('Saved deliverables for ' + show.name);
+      }
+    });
   };
 })();

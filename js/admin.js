@@ -1157,7 +1157,7 @@ window.App = window.App || {};
       editor.count,
       editor.undoBtn,
       editor.redoBtn,
-      el('button.btn-mini.pipe-dlv-btn', { type: 'button', title: 'Choose what every task delivers', onclick: () => editor.openDeliverables() }, [App.icon('package'), ' Deliverables']),
+      el('button.btn-mini.pipe-dlv-btn', { type: 'button', title: 'PAM — choose what every task delivers', onclick: () => editor.openDeliverables() }, [App.icon('package'), ' PAM']),
       el('button.btn-icon', { type: 'button', title: 'Add task', onclick: () => editor.addTask() }, '＋')
     ]));
     cardEl.appendChild(el('.preset-pipe-body', null, editor.list));

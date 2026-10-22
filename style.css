@@ -6624,14 +6624,14 @@ button.qcq-report-link:hover { text-decoration: underline; }
 .dlv-layer { position: fixed; inset: 0; z-index: 600; background: rgba(0,0,0,.55); display: flex;
   padding: max(18px, env(safe-area-inset-top, 0px)) max(18px, env(safe-area-inset-right, 0px)) 18px max(18px, env(safe-area-inset-left, 0px)); }
 .dlv-page { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; background: var(--surface); border: 1px solid var(--border-2);
-  border-radius: 14px; box-shadow: var(--shadow); padding: 16px 18px; max-width: 1500px; margin: 0 auto; }
-.dlv-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+  border-radius: 8px; box-shadow: var(--shadow); padding: 16px 18px; max-width: 1500px; margin: 0 auto; }
+.dlv-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .dlv-title { font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
 .dlv-title-sub { font-weight: 500; color: var(--text-2); }
 .dlv-sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
 .dlv-filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .dlv-spacer { flex: 1; }
-.dlv-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 4px 10px; border-radius: 999px;
+.dlv-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 4px 10px; border-radius: 5px;
   border: 1px solid var(--border-2); background: var(--surface-2); color: var(--text); cursor: pointer; white-space: nowrap; }
 .dlv-chip:hover { border-color: var(--accent); }
 .dlv-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -6641,21 +6641,21 @@ button.qcq-report-link:hover { text-decoration: underline; }
 .dlv-chip.ghost { background: transparent; color: var(--text-3); }
 .dlv-chip-meta { font-size: 10.5px; color: var(--text-3); margin-left: 4px; font-weight: 400; }
 .dlv-chip.on .dlv-chip-meta { color: inherit; }
-.dlv-tasks { flex: 0 0 auto; max-height: 34vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; padding: 4px; }
+.dlv-tasks { flex: 0 0 auto; max-height: 34vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
 .dlv-dept { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase;
   color: var(--text-3); padding: 8px 8px 3px; }
 .dlv-dept .dot { width: 8px; height: 8px; border-radius: 50%; }
 .dlv-task { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; width: 100%; text-align: left;
-  border: 0; background: transparent; color: var(--text); padding: 6px 10px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; }
+  border: 0; background: transparent; color: var(--text); padding: 6px 10px; border-radius: 4px; cursor: pointer; font: inherit; font-size: 13px; }
 .dlv-task:hover { background: var(--hover); }
 .dlv-task.on { background: rgba(91,108,255,.14); box-shadow: inset 0 0 0 1px var(--accent); }
 .dlv-task-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dlv-task-sum { font-size: 12px; color: var(--text-2); white-space: nowrap; }
-.dlv-state { font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 999px; }
+.dlv-state { font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 4px; }
 .dlv-state.default { background: var(--hover); color: var(--text-3); }
 .dlv-state.custom { background: rgba(0,200,117,.16); color: var(--ink-ok); }
 .dlv-bottom { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 12px; }
-.dlv-left, .dlv-right { min-height: 0; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.dlv-left, .dlv-right { min-height: 0; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .dlv-sugg { display: flex; flex-direction: column; gap: 6px; }
 .dlv-sugg-title { font-size: 11px; font-weight: 700; color: var(--text-3); }
 .dlv-sugg-none { font-size: 12px; color: var(--text-3); }
@@ -6672,7 +6672,7 @@ button.qcq-report-link:hover { text-decoration: underline; }
 .dlv-row-desc { font-size: 11.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dlv-type { font-size: 10.5px; font-weight: 800; color: var(--text-3); white-space: nowrap; }
 .dlv-type.soft { color: var(--accent); } .dlv-type.internal { color: var(--ink-warn); }
-.dlv-add { width: 26px; height: 26px; padding: 0; border-radius: 7px; border: 1px solid var(--border-2); background: var(--surface-2); color: var(--text); cursor: pointer; }
+.dlv-add { width: 26px; height: 26px; padding: 0; border-radius: 5px; border: 1px solid var(--border-2); background: var(--surface-2); color: var(--text); cursor: pointer; }
 .dlv-add:hover { border-color: var(--accent); }
 .dlv-make { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 2px; border-top: 1px solid var(--border); }
 .dlv-empty { font-size: 12px; color: var(--text-3); padding: 10px 4px; }
@@ -6681,7 +6681,7 @@ button.qcq-report-link:hover { text-decoration: underline; }
 .dlv-count { font-size: 11px; color: var(--text-3); white-space: nowrap; }
 .dlv-name { display: block; font-size: 11px; color: var(--text-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dlv-soft-label { font-size: 13px; font-weight: 600; padding: 3px 8px; width: 100%; }
-.dlv-adder { border: 1px dashed var(--accent); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.dlv-adder { border: 1px dashed var(--accent); border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
 .dlv-adder-title { font-size: 12px; font-weight: 600; }
 .dlv-adder-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .dlv-adder-row .fld { flex: 1 1 140px; min-width: 0; }
@@ -6691,6 +6691,10 @@ button.qcq-report-link:hover { text-decoration: underline; }
 .pipe-out-sum { font-size: 12px; font-weight: 600; }
 .pipe-out-names { font-size: 11.5px; color: var(--text-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 160px; }
 .btn-mini.pipe-out-edit, .btn-mini.pipe-dlv-btn { width: auto; height: auto; padding: 4px 10px; font-size: 11.5px; border-color: var(--border-2); color: var(--text-2); white-space: nowrap; gap: 4px; }
+/* the app's pill fields and buttons, squared off to match the page — the
+   expressive skin rounds controls through --r-ctl, so set it here too */
+.dlv-layer { --r-ctl: 6px; }
+.dlv-layer .fld, .dlv-layer .btn-primary, .dlv-layer .btn-ghost { border-radius: 6px; }
 @media (max-width: 760px) {
   .dlv-bottom { grid-template-columns: 1fr; overflow-y: auto; }
   .dlv-left, .dlv-right { overflow: visible; }
