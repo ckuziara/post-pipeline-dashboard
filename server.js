@@ -2121,11 +2121,24 @@ const server = http.createServer(async (req, res) => {
            template again. Older clients send no stem: the old name stands. */
         const stem = (ctx.expected[0] || {}).stem || null;
         if (stem && body.newVersion) {
-          const l = folders.latestVersion([workAbs], stem);
+          /* The project to copy: the newest one already named for this stem,
+             else — a project from before PAM named things, or one named for an
+             earlier Format — the newest project file in the folder. Renders
+             (the deliverables' own types and common media) never count. */
+          let l = folders.latestVersion([workAbs], stem);
+          if (!l.file) {
+            const media = new Set(['wav', 'aif', 'aiff', 'mp3', 'mov', 'mp4', 'mxf', 'png', 'jpg', 'jpeg', 'tif', 'tiff', 'exr', 'srt', 'pdf']
+              .concat(ctx.expected.map(o => o.type.toLowerCase())));
+            const proj = folders.listDir(workAbs).filter(i => !media.has(folders.extOf(i.name)) && (!i.dir || folders.extOf(i.name)))
+              .sort((x, y) => (y.mtime || 0) - (x.mtime || 0))[0];
+            if (proj) l = { version: 0, file: proj };
+          }
           if (l.file) {
             const dest = path.join(workAbs, folders.versioned(stem, l.version + 1, folders.extOf(l.file.name)));
             fs.cpSync(l.file.path, dest, { recursive: l.file.dir });
             created = path.basename(dest);
+          } else if (!body.template) {
+            return sendJson(res, 400, { error: 'There’s no project in this task’s folder to copy — use Create Project first' });
           }
         }
         if (!created && body.template) {

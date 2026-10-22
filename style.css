@@ -551,6 +551,8 @@ a.ws-name:hover { text-decoration: underline; }
 .ep-ov-row.head span { font-size: 10px; font-weight: 800; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; }
 .ep-ov-row .fld { font-size: 12px; padding: 5px 8px; min-width: 0; }
 .ep-ov-code { font-size: 12px; font-weight: 700; }
+/* Project block: a new version is due (Director feedback or a QC report) */
+.ws-redo { color: var(--ink-warn); }
 .ws-ambig { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 /* a text button inside a note, not the 28px icon square .btn-mini is by default */
 .ws-inline-btn { width: auto; height: auto; padding: 4px 9px; font-size: 11px; border-color: var(--border-2); color: var(--text-2); white-space: nowrap; }
