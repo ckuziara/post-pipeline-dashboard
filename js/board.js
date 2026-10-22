@@ -10,19 +10,34 @@ window.App = window.App || {};
     render(episodes) {
       this._episodes = episodes;       // what "all" means for the Opt shortcuts
       const wrap = el('.board');
-      if (App.canManageShows(App.state.role)) wrap.appendChild(this.showManager());
       if (!episodes.length) { wrap.appendChild(el('.empty', null, 'No episodes match the current filters.')); return wrap; }
       App.sortEpisodes(episodes, 'board').forEach(ep => wrap.appendChild(this.group(ep)));
+      this._watchLatch();
+      requestAnimationFrame(() => this._latch());
       return wrap;
     },
 
-    // Timeline has no equivalent bar of its own — its Add Show lives in the
-    // kpis strip instead (see renderKpis in render.js) — so this stays
-    // Board-only.
-    showManager() {
-      const bar = el('.show-manager');
-      bar.appendChild(el('button.btn-addshow', { onclick: () => App.addShow.open() }, '＋ Add show'));
-      return bar;
+    /* An open episode's header latches to the top while its subitems scroll
+       under it (CSS position: sticky, held inside its own card — so at the
+       last subitem the card's end pushes it off and the next episode's header
+       takes over). While latched it wears .latched, which masks the strip
+       above it and its rounded corners with the page's own background (see
+       style.css) — the mask rides with the header on the compositor, so it
+       never lags the scroll. Only the class is set here. */
+    _latch() {
+      document.querySelectorAll('.board .ep-group').forEach(g => {
+        const head = g.querySelector('.ep-row'); if (!head) return;
+        // pinned = pushed down past where it sits at rest, which is just inside the card's top border
+        const rest = parseFloat(getComputedStyle(g).borderTopWidth) || 0;
+        const on = head.getBoundingClientRect().top - g.getBoundingClientRect().top > rest + 0.5;
+        if (head.classList.contains('latched') !== on) head.classList.toggle('latched', on);
+      });
+    },
+    _watchLatch() {
+      const view = document.getElementById('view');
+      if (!view || view._latchWatched) return;
+      view._latchWatched = true;
+      view.addEventListener('scroll', () => { if (App.state.view === 'board') this._latch(); }, { passive: true });
     },
 
     // Role-aware episode rollup: simple Pending / In Production status, the

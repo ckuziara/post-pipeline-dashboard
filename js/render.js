@@ -613,9 +613,8 @@ window.App = window.App || {};
     /* Re-Arrange, Create and Add Show all reshape the schedule rather than
        filter the view, so they cluster together on the right of the KPI
        strip, in one wrapper that owns the push-right — not each button
-       floating there on its own margin. Timeline has no separate toolbar of
-       its own the way Board does (see App.board.showManager), so this strip
-       is where they ride. */
+       floating there on its own margin. Board has no Add Show of its own —
+       shows are added from the Shows browser (the Shows button here). */
     const actions = el('.kpi-actions');
 
     // Re-Arrange opens straight into its own dialog, which picks the show
