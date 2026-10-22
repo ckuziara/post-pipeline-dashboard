@@ -1093,7 +1093,7 @@ function deliveryName(ctx, expected, stem, original, isDir) {
   if (!out) {
     const fits = expected.filter(o => namingJs.typeFits(o.type, ext));
     const uniq = fits.filter((o, i) => fits.findIndex(x => x.stem === o.stem) === i);
-    if (uniq.length > 1) return { error: 'Which output is ' + original + '? Drop it on its row in Export to.', ambiguous: uniq.map(o => o.stem) };
+    if (uniq.length > 1) return { error: original + ' could be more than one deliverable — click its row in Deliverables and pick it there', ambiguous: uniq.map(o => o.stem) };
     if (!uniq.length) return { error: original + ' isn’t a type this task delivers (' + expected.map(o => o.type || 'any').join(', ') + ')' };
     out = uniq[0];
   } else if (!namingJs.typeFits(out.type, ext)) {
@@ -2360,7 +2360,9 @@ const server = http.createServer(async (req, res) => {
             if (!l.file) { missing.push(o.stem + (o.type ? '.' + o.type.toLowerCase() : '')); return null; }
             return { src: l.file.path, dir: l.file.dir, name: o.stem + path.extname(l.file.name), version: l.version };
           });
-          if (missing.length) {
+          plan = plan.filter(Boolean);
+          // documents handed over as a link have no file to publish — the link is the delivery
+          if (missing.length && !body.linked) {
             return sendJson(res, 400, { error: 'Not every output has a version yet: ' + missing.join(', '), missing });
           }
         } else {

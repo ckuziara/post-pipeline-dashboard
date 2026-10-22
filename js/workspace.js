@@ -6,12 +6,11 @@
      • Assets    — only what THIS task needs: each dependency's published files,
                    folders and links, labelled by source. A dependency that
                    hasn't published anything shows as Pending.
-     • Export to — the exact folder and file names this task delivers, by the
-                   naming convention (js/naming.js), so a render lands in
-                   !!_Mezzanine already named and nothing has to be moved.
-     • Deliver   — drop files in, or pick something already on the mount, or add
-                   a URL. Each is COPIED into !!_Mezzanine under its proper
-                   name; approval publishes a copy to !!_Publish, which is what
+     • Deliverables — a checklist of the files this task owes (js/naming.js),
+                   filled by picking each from the volume (or a link, for
+                   online documents). Each is COPIED into !!_Mezzanine under
+                   its convention name — nobody types a name or a path — and
+                   approval publishes a copy to !!_Publish, which is what
                    dependent tasks then see as their assets.
 
    Files are the filesystem's truth (listed live by the server); links live in
@@ -232,17 +231,16 @@ window.App = window.App || {};
       const review = () => App.reviewFlow ? App.reviewFlow.inlineSection(ep, su, m.data) : null;
       const reviewPast = () => App.reviewFlow ? App.reviewFlow.compactSection(ep, su) : null;
       const deliver = () => this._deliver(ep, su, m.data);
-      const exportTo = () => App.isPhone() ? null : this._exportTo(ep, su, m.data);
       const folded = (label, nodes) => {
         nodes = nodes.filter(Boolean); if (!nodes.length) return null;
         return el('details.ws-more', null, [el('summary', null, label)].concat(nodes));
       };
       const parts = stage === 'start' ? [project(), assets()]
-        : stage === 'work' ? [project(), exportTo(), assets(), review()]
+        : stage === 'work' ? [project(), assets(), review()]
         : stage === 'review' ? [review(), folded('Project & files', [project(), assets()])]
-        : stage === 'deliver' ? [exportTo(), deliver(), reviewPast(), folded('Project & files', [project(), assets()])]
+        : stage === 'deliver' ? [deliver(), reviewPast(), folded('Project & files', [project(), assets()])]
         // QC's fix is a delivery fix: the project to fix it in, and Deliver to put it back
-        : stage === 'qcfix' ? [exportTo(), deliver(), project(), folded('Assets & past reviews', [assets(), reviewPast()])]
+        : stage === 'qcfix' ? [deliver(), project(), folded('Assets & past reviews', [assets(), reviewPast()])]
         : /* qc, done */ [reviewPast(), folded(stage === 'qc' ? 'Delivered files & project' : 'Files & project', [deliver(), project(), assets()])];
       parts.filter(Boolean).forEach(n => box.appendChild(n));
       // opened to deliver (the Priority widget's Deliver button): bring that section into view
@@ -418,72 +416,13 @@ window.App = window.App || {};
         .catch(e => App.toast(e.message, true));
     },
 
-    /* -------------------------------------------------------- export to ---- */
-    /* Where this task's renders go, and what they're called — so they're right
-       the first time instead of fixed afterwards. One row per file the task
-       delivers (App.expectedFiles): the next name, ready to copy into the
-       render dialog. Dropping a file on a row files it as that output. */
-    _exportTo(ep, su, d) {
-      if (!d.masterOk || !d.outputs) return null;
-      const wrap = el('.ws-block.ws-export');
-      const dir = (d.absolute && d.absolute.mezzanine) || '';
-      wrap.appendChild(el('.ws-head', null, [
-        el('.modal-section-title', { style: { margin: '0' } }, [App.icon('upload'), ' Export to']),
-        el('span.ws-path', null, '!!_Mezzanine/' + d.deliverable + '/')
-      ]));
-      if ((d.namingProblems || []).length) {
-        wrap.appendChild(el('.ws-note', null, '⚠ ' + d.namingProblems.join('. ') + ' — until then PAM can’t name this task’s files.'));
-        return wrap;
-      }
-      wrap.appendChild(el('.ws-export-dir', null, [
-        el('code', { title: dir }, dir),
-        el('button.btn-mini', { onclick: () => App.copy(dir, 'Folder path') }, 'Copy path'),
-        el('button.btn-mini', { onclick: () => this._open({ which: 'mezzanine' }) }, [App.icon('folderOpen'), ' Open'])
-      ]));
-      const labels = {};
-      const sfx = App.namingConfig().tables.find(t => t.key === 'suffixes');
-      sfx.rows.forEach(rw => { labels[rw[0] + '|' + rw[1]] = rw[2]; labels[rw[0]] = labels[rw[0]] || rw[2]; });
-      const list = el('.ws-list');
-      d.outputs.forEach(o => {
-        const row = el('.ws-item.static.ws-out', null, [
-          el('span.ws-out-type', null, o.type || 'ANY'),
-          el('span.ws-out-main', null, [
-            el('span.ws-out-label', null, labels[o.suffix + '|' + o.type] || labels[o.suffix] || o.suffix),
-            el('code.ws-out-name', { title: 'Next version' }, o.next)
-          ]),
-          o.version ? el('span.ws-chip.ok', { title: o.latest }, 'v' + String(o.version).padStart(3, '0')) : el('span.ws-chip.pending', null, 'none yet'),
-          el('button.btn-mini', { title: 'Copy the file name to paste into the render dialog',
-            onclick: () => App.copy(o.next.replace(/\.[^.]+$/, ''), 'File name') }, 'Copy name')
-        ]);
-        // a file dropped here is filed as THIS output, whatever it was called
-        row.addEventListener('dragover', e => { e.preventDefault(); row.classList.add('over'); });
-        row.addEventListener('dragleave', () => row.classList.remove('over'));
-        row.addEventListener('drop', e => {
-          e.preventDefault(); row.classList.remove('over');
-          const files = [...(e.dataTransfer.files || [])];
-          if (files.length) this._upload(files, wrap.querySelector('.ws-export-status'), o.stem);
-        });
-        list.appendChild(row);
-      });
-      wrap.appendChild(list);
-      wrap.appendChild(el('.ws-export-status'));
-
-      const rec = d.reconciled || {};
-      if ((rec.renamed || []).length) {
-        wrap.appendChild(el('.ws-note.tight', null, 'Renamed to the convention: ' +
-          rec.renamed.map(x => x.from + ' → ' + x.to).join(', ')));
-      }
-      (rec.ambiguous || []).forEach(a => {
-        wrap.appendChild(el('.ws-note.ws-ambig', null, [
-          el('span', null, 'Which is ' + a.name + '? '),
-          ...a.stems.map(st => el('button.btn-mini', { onclick: () => this._assign(a.name, st) },
-            (d.outputs.find(o => o.stem === st) || {}).suffix || st))
-        ]));
-      });
-      if ((rec.stray || []).length) {
-        wrap.appendChild(el('.ws-note.tight', null, '⚠ Not a type this task delivers, left as is: ' + rec.stray.join(', ')));
-      }
-      return wrap;
+    /* What a deliverable is called in plain words: the Naming Conventions
+       label for its suffix ("Mix", "No IO Texted Video Master"), else the
+       suffix itself in title case (STORYBOARD → Storyboard). */
+    _outLabel(o) {
+      const rows = App.namingConfig().tables.find(t => t.key === 'suffixes').rows;
+      const hit = rows.find(rw => rw[0] === o.suffix && (!o.type || rw[1] === o.type)) || rows.find(rw => rw[0] === o.suffix);
+      return hit ? hit[2] : o.suffix.toLowerCase().replace(/(^|-)([a-z])/g, (m, p, c) => (p ? ' ' : '') + c.toUpperCase());
     },
 
     _assign(file, stem) {
@@ -892,9 +831,24 @@ window.App = window.App || {};
     /* ---------------------------------------------------------- deliver ---- */
     _deliver(ep, su, d) {
       const wrap = el('.ws-block');
+      /* Checklist mode — whenever PAM can name this task's files. The person
+         never sees a path or a file name: each file the task owes is a row,
+         ticked once a version is in, and picking a file from the volume (or
+         clicking its row) is the whole job — PipeDream copies it into place
+         under the right name. */
+      /* A document handed over as a link (Add a link) counts as in: its row is
+         ticked "link" and it doesn't hold up Publish. */
+      const hasLink = App.taskLinks(ep.id, su.key).length > 0;
+      const isDoc = (o) => !o.type || /^(PDF|DOCX?|XLSX?|CSV|TXT|RTF)$/.test(o.type);
+      const outs = ((d.masterOk && !(d.namingProblems || []).length && d.outputs) || [])
+        .map(o => Object.assign({}, o, { linked: !o.version && hasLink && isDoc(o) }));
+      const checklist = outs.length > 0;
+      const readyN = outs.filter(o => o.version || o.linked).length;
       wrap.appendChild(el('.ws-head', null, [
-        el('.modal-section-title', { style: { margin: '0' } }, [App.icon('upload'), ' Deliver']),
-        el('span.ws-path', null, '!!_Mezzanine/' + d.deliverable + '/')
+        el('.modal-section-title', { style: { margin: '0' } }, [App.icon('upload'), checklist ? ' Deliverables' : ' Deliver']),
+        checklist
+          ? el('span.ws-chip' + (readyN === outs.length ? '.ok' : '.pending'), null, readyN + ' of ' + outs.length + ' ready')
+          : el('span.ws-path', null, '!!_Mezzanine/' + d.deliverable + '/')
       ]));
 
       const canEdit = App.canEditTask(App.state.role, su);
@@ -913,7 +867,49 @@ window.App = window.App || {};
          is the one section that genuinely has a read-only mode to fall back
          to, unlike Project. */
       const phone = App.isPhone();
-      if (!phone && d.masterOk) {
+      if (d.masterOk && (d.namingProblems || []).length && d.outputs) {
+        wrap.appendChild(el('.ws-note', null, [
+          '⚠ PipeDream can’t name this task’s files until the show has a Format. ',
+          App.canManageShows(App.state.role)
+            ? el('button.btn-mini.ws-inline-btn', { onclick: () => App.editShowDialog.open(ep.showId) }, 'Edit Show')
+            : 'Ask a Producer to set it in Edit Show.'
+        ]));
+      }
+      if (checklist) {
+        /* A link is for documents that live online (Google Docs/Sheets): offered when the
+           department works in online software AND this task owes a document — never for a WAV. */
+        const docOut = outs.some(isDoc);
+        const online = docOut && App.deptSoftware(su.dept).some(sw => sw.kind === 'online');
+        const list = el('.ws-list');
+        outs.forEach(o => {
+          const label = this._outLabel(o);
+          list.appendChild(el('button.ws-item.ws-out' + (o.version || o.linked ? '.done' : ''), {
+            disabled: phone,
+            title: (o.version ? 'In: ' + o.latest + ' — click to deliver a newer version' : 'Pick the ' + label + ' file from the volume'),
+            onclick: () => this._pickFromMount(o.stem, label)
+          }, [
+            el('span.ws-out-tick', null, o.version || o.linked ? '✓' : ''),
+            el('span.ws-name', null, label),
+            el('span.ws-out-type', null, o.type || ''),
+            o.version ? el('span.ws-chip.ok', null, 'v' + String(o.version).padStart(3, '0'))
+              : o.linked ? el('span.ws-chip.ok', null, 'link') : el('span.ws-chip.pending', null, 'needed')
+          ]));
+        });
+        wrap.appendChild(list);
+        // files saved straight into the folder that could be either of two deliverables
+        ((d.reconciled && d.reconciled.ambiguous) || []).forEach(x => {
+          wrap.appendChild(el('.ws-note.ws-ambig', null, [el('span', null, 'Which is ' + x.name + '?')].concat(
+            x.stems.map(st => { const o = outs.find(q => q.stem === st); return el('button.btn-mini.ws-inline-btn', { onclick: () => this._assign(x.name, st) }, o ? this._outLabel(o) : st); }))));
+        });
+        if (!phone) {
+          wrap.appendChild(el('.ws-actions', null, [
+            // the primary action only while something's still needed — after that it's Publish / Send to QC
+            el('button.ws-btn' + (readyN < outs.length ? '.btn-primary' : '.btn-ghost'), { onclick: () => this._pickFromMount() }, [App.icon('archive'), ' Pick from the volume']),
+            // documents that live online (Google Docs/Sheets) are handed over as a link
+            online ? el('button.btn-ghost.ws-btn', { onclick: () => this._addLink() }, [App.icon('link'), ' Add a link']) : null
+          ]));
+        }
+      } else if (!phone && d.masterOk) {
         const status = el('.ws-progress');
         // what the files are waiting on: QC sent back a fix → QC passing it, not approval
         const sentBack = App.isQcFix(ep, su);
@@ -981,9 +977,9 @@ window.App = window.App || {};
          departments downstream. Approving this task moves these into Publish. */
       const mezz = d.mezzanine || [];
       const links = App.taskLinks(ep.id, su.key);
-      if (mezz.length || links.length) {
+      if (checklist || mezz.length || links.length) {
         const list = el('.ws-list');
-        mezz.forEach(f => list.appendChild(fileRow(f, 'mezzanine')));
+        if (!checklist) mezz.forEach(f => list.appendChild(fileRow(f, 'mezzanine')));
         links.forEach(l => list.appendChild(el('.ws-item.static', null, [
           App.icon('link', { cls: 'ws-ic' }),
           el('a.ws-name', { href: l.url, target: '_blank', rel: 'noopener noreferrer' }, l.url.replace(/^https?:\/\//, '')),
@@ -1018,7 +1014,7 @@ window.App = window.App || {};
               }, [App.icon('package'), ' Publish']) : null);
         /* Publish copies each output's latest version, so it (and QC, who
            checks what will be published) waits until every output has one. */
-        const missing = (d.outputs || []).filter(o => !o.version);
+        const missing = (checklist ? outs : []).filter(o => !o.version && !o.linked);
         if (sendBtn && missing.length) {
           sendBtn.disabled = true;
           sendBtn.title = 'Still to export: ' + missing.map(o => o.suffix + (o.type ? ' ' + o.type : '')).join(', ');
@@ -1028,13 +1024,13 @@ window.App = window.App || {};
           : App.isApproved(su.status) ? el('span.ws-chip.ok', null, needsQc && App.qcState(ep, su.key) !== 'passed' ? 'approved — not sent to QC' : 'approved')
           : el('span.ws-chip.pending', null, 'awaiting approval');
         wrap.appendChild(el('.ws-delivered', null, [
-          el('.ws-sub', null, ['Delivered · ', chip]),
-          list,
+          el('.ws-sub', null, [checklist ? 'Status · ' : 'Delivered · ', chip]),
+          list.children.length ? list : null,
           sendBtn ? el('.ws-actions', null, sendBtn) : null,
-          sendBtn && missing.length ? el('.ws-note.tight', null, '⚠ ' + sendBtn.title + ' — see Export to.') : null,
+          sendBtn && missing.length && !checklist ? el('.ws-note.tight', null, '⚠ ' + sendBtn.title) : null,
           qcFix ? el('.ws-note.tight', null, fresh
             ? fresh + ' new since QC’s report — Resubmit sends the fix back to QC.'
-            : 'Nothing new since QC’s report yet — export the fix as the next version (Export to), or deliver it here, then Resubmit.') : null,
+            : 'Nothing new since QC’s report yet — pick the fixed file above, then Resubmit.') : null,
           App.isApproved(su.status) || qcFix ? null : el('.ws-note.tight', null,
             'These stay out of the next department’s Assets until ' + su.name + (needsQc ? ' passes QC' : ' is approved and published') + '.')
         ]));
@@ -1042,7 +1038,7 @@ window.App = window.App || {};
 
       // already approved and published — what downstream tasks can actually see
       const publish = d.publish || [];
-      if (publish.length) {
+      if (publish.length && !checklist) {
         const list = el('.ws-list');
         publish.forEach(f => list.appendChild(fileRow(f, 'publish')));
         wrap.appendChild(el('.ws-delivered', null, [
@@ -1109,7 +1105,8 @@ window.App = window.App || {};
       this.reload();
     },
 
-    _pickFromMount() {
+    // stem/label: deliver the pick as THAT deliverable (a row was clicked)
+    _pickFromMount(stem, label) {
       const m = this._mounted;
       const epId = m.epId, taskKey = m.taskKey;
       const ep = App.state.data.episodes.find(e => e.id === epId);
@@ -1123,15 +1120,15 @@ window.App = window.App || {};
         // the picker replaced the Edit Task dialog — put it back so the delivery
         // shows up where the user started, then refresh it with the result
         App.editTask.open(epId, taskKey);
-        this._deliverFromMount(epId, taskKey, ep, items);
+        this._deliverFromMount(epId, taskKey, ep, items, stem);
       }, {
         pickFiles: true,
-        multiple: true,
-        title: 'Deliver from the volume',
-        subtitle: 'Starts in this task’s working folder. Tick any number of files — or tick a ' +
-          'folder to deliver it whole. Each is copied into ' +
-          (m.data ? '!!_Mezzanine/' + m.data.deliverable : 'the delivery folder') + ' under its proper name — the original stays where it is.',
-        confirmLabel: 'Copy & deliver',
+        title: label ? 'Pick the ' + label + ' file' : 'Deliver from the volume',
+        subtitle: stem
+          ? 'Starts in this task’s working folder. PipeDream copies it into place and names it — the original stays where it is.'
+          : 'Starts in this task’s working folder. Tick any number of files. PipeDream works out which deliverable each one is, copies it into place and names it — the originals stay where they are.',
+        multiple: !stem,
+        confirmLabel: 'Deliver',
         onCancel: () => this._back()
       });
     },
@@ -1140,7 +1137,7 @@ window.App = window.App || {};
        directory, so a ticked folder arrives intact rather than flattened. Run
        in sequence, so a 40GB master doesn't race three others for the disk,
        and each takes the next version number in turn. */
-    async _deliverFromMount(epId, taskKey, ep, items) {
+    async _deliverFromMount(epId, taskKey, ep, items, stem) {
       const m = this._mounted;
       const label = (p) => p.replace(/\/+$/, '').replace(/^.*\//, '');
       App.toast(items.length === 1
@@ -1152,7 +1149,7 @@ window.App = window.App || {};
       let done = 0, lastFiled = '', lastFrom = '';
       for (const src of items) {
         try {
-          const r = await App.api.deliverPrepare({ epId, taskKey, pipeline: App.pipelineFor(ep), src });
+          const r = await App.api.deliverPrepare({ epId, taskKey, pipeline: App.pipelineFor(ep), src, stem: stem || undefined });
           done++; lastFiled = r.filed; lastFrom = r.from;
         } catch (e) {
           App.track.error('lucidlink.deliverFailed', { flow: 'LucidLink delivery', file: label(src), message: e.message });

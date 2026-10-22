@@ -338,7 +338,8 @@ window.App = window.App || {};
     // a deliverable that needs QC is published when QC passes it, not before
     if (!App.isCompleteKey(ep, key)) return;
     App.api.flush()
-      .then(() => App.api.taskPromote({ epId, taskKey: key, pipeline: App.pipelineFor(ep) }))
+      // linked: documents handed over as links don't need a file (see /api/task/promote)
+      .then(() => App.api.taskPromote({ epId, taskKey: key, pipeline: App.pipelineFor(ep), linked: App.taskLinks(epId, key).length > 0 }))
       .then(r => {
         if (!r.promoted) return;
         App.markDelivered(epId, key);      // published → Delivered

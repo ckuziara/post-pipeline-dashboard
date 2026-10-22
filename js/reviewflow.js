@@ -359,7 +359,7 @@ window.App = window.App || {};
             : null,
           el('button.btn-ghost.ws-btn', { onclick: () => this._addLink(ep, su) }, [App.icon('link'), ' Add a link'])
         ]));
-        /* Already rendered into Mezzanine (Export to)? Put that version up
+        /* Already delivered into Mezzanine? Put that version up
            as it is — the usual way, once renders land in the right place. */
         const ready = ((d && d.outputs) || []).filter(o => o.latest && !items.some(a => a.name === o.latest));
         if (ready.length) {

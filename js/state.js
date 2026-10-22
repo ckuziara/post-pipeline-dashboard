@@ -690,7 +690,7 @@ window.App = window.App || {};
     switch (su.status) {
       case 'not_started':
       case 'ready':
-        if (App.isQcFix(ep, su)) return { aud: 'dept', who: dept, text: 'Fix what QC reported, export the next version, then Resubmit to QC.', tone: 'bad' };
+        if (App.isQcFix(ep, su)) return { aud: 'dept', who: dept, text: 'Fix what QC reported, pick the fixed file in Deliverables, then Resubmit to QC.', tone: 'bad' };
         // sent back by the Director (App.requestRevision): the next version is waiting to be picked up
         if (feedback && App.revisionsUsed(ep, su.key) > 0 && !blockedBy.length) {
           return { aud: 'dept', who: dept, text: 'Start V' + (App.revisionsUsed(ep, su.key) + 1) + ' — set it In Progress, then work the Director’s feedback.', tone: 'go' };
@@ -699,21 +699,20 @@ window.App = window.App || {};
           ? { aud: 'dept', who: 'Waiting', text: 'Can’t start until ' + blockedBy.join(', ') + (blockedBy.length === 1 ? ' is' : ' are') + ' finished.', tone: 'wait' }
           : { aud: 'dept', who: dept, text: 'Start the work — create the project, then set it In Progress.', tone: 'go' };
       case 'in_progress':
-        if (q.on && qs === 'failed') return { aud: 'dept', who: dept, text: 'Fix what QC reported, export the next version, then Resubmit to QC.', tone: 'bad' };
-        // the file side follows PAM: render into Export to (Mezzanine), put that version up, send it
+        if (q.on && qs === 'failed') return { aud: 'dept', who: dept, text: 'Fix what QC reported, pick the fixed file in Deliverables, then Resubmit to QC.', tone: 'bad' };
         return ups
           ? { aud: 'dept', who: dept, text: 'The cut is up — Send for Review when it’s ready.', tone: 'go' }
           : feedback
-            ? { aud: 'dept', who: dept, text: 'Work the Director’s feedback, export the next version (V' + (App.revisionsUsed(ep, su.key) + 1) + ') to Export to, put it up for review, then Send for Review.', tone: 'go' }
-            : { aud: 'dept', who: dept, text: 'Export the cut to Export to, put that version up for review, then Send for Review.', tone: 'go' };
+            ? { aud: 'dept', who: dept, text: 'Work the Director’s feedback, put the revised cut (V' + (App.revisionsUsed(ep, su.key) + 1) + ') up in Review Uploads, then Send for Review.', tone: 'go' }
+            : { aud: 'dept', who: dept, text: 'Put the cut up in Review Uploads, then Send for Review.', tone: 'go' };
       case 'review':
         return sent
           ? { aud: 'director', who: 'Director', text: 'Watch the cut and Approve it or Send Feedback.', tone: 'wait' }
           : { aud: 'ops', who: 'Post Operations', text: 'Set up the review and send it to the Director.', tone: 'wait' };
       case 'approved':
-        if (q.on && qs !== 'passed') return { aud: 'dept', who: dept, text: 'Make sure every output in Export to has its final version, then Send to QC.', tone: 'go' };
+        if (q.on && qs !== 'passed') return { aud: 'dept', who: dept, text: 'Pick each file in Deliverables until every one is ticked, then Send to QC.', tone: 'go' };
         if (q.on) return { aud: 'dept', who: dept, text: 'QC passed — the latest versions publish automatically.', tone: 'wait' };
-        return { aud: 'dept', who: dept, text: 'Make sure every output in Export to has its final version, then Publish — the latest of each is copied to Publish.', tone: 'go' };
+        return { aud: 'dept', who: dept, text: 'Pick each file in Deliverables until every one is ticked, then Publish.', tone: 'go' };
       case 'in_qc': {
         const w = App.qcWindow(ep, su);
         return { aud: 'qc', who: 'QC', text: 'Check the delivery and Pass it or send a QC report' + (w ? ' — due ' + App.fmtDate(w.due) : '') + '.', tone: 'wait' };
