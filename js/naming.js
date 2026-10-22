@@ -292,16 +292,18 @@
     const res = names.map(n => ({ name: n, out: -1, score: 0 })), taken = new Set();
     // a soft delivery is a folder: it takes as many files as name it, so it's never "taken"
     pairs.forEach(p => { if (res[p.fi].out < 0 && !taken.has(p.oi)) { res[p.fi].out = p.oi; res[p.fi].score = p.s; if (!outs[p.oi].soft) taken.add(p.oi); } });
-    // nothing in the name says which, but only one deliverable takes this type: that's it
+    /* Nothing in the name says which. A task with a soft folder takes it
+       there — that's what a soft delivery is for, and a guess would rename
+       someone's Narrator_02.wav as the Dialogue master. Otherwise, when only
+       one deliverable takes this type, that's it. */
     res.forEach(r => {
       if (r.out >= 0) return;
       const ext = (String(r.name).split('.').pop() || '').toLowerCase();
+      const soft = outs.map((o, i) => i).filter(i => outs[i].soft && softFits(outs[i], ext));
+      if (soft.length === 1) { r.out = soft[0]; return; }
       const fit = outs.map((o, i) => i).filter(i => !taken.has(i) && outs[i].type && App.typeFits(outs[i].type, ext));
       const sameType = outs.filter(o => o.type && App.typeFits(o.type, ext));
-      if (fit.length === 1 && sameType.length === 1) { r.out = fit[0]; taken.add(fit[0]); return; }
-      // still nobody's: the task's one soft folder, if it takes this type
-      const soft = outs.map((o, i) => i).filter(i => outs[i].soft && softFits(outs[i], ext));
-      if (soft.length === 1) r.out = soft[0];
+      if (fit.length === 1 && sameType.length === 1) { r.out = fit[0]; taken.add(fit[0]); }
     });
     return res;
   };

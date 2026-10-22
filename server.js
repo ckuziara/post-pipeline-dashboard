@@ -1088,7 +1088,12 @@ function deliveryName(ctx, expected, stem, original, isDir) {
   if (!expected.length) return { name: null };
   const ext = folders.extOf(original);
   // one name can come in two types (an IO-TEXTED MOV and MP4): the one this file is
-  let out = stem ? (expected.find(o => o.stem === stem && namingJs.typeFits(o.type, ext)) || expected.find(o => o.stem === stem)) : null;
+  let out = stem ? (expected.find(o => o.stem === stem && (o.soft || namingJs.typeFits(o.type, ext))) || expected.find(o => o.stem === stem)) : null;
+  // a soft delivery takes any file (or folder) its types allow, under its own name
+  if (out && out.soft) {
+    if (!isDir && out.types && out.types.length && !out.types.some(t => namingJs.typeFits(t, ext))) return { error: original + ' isn’t a ' + out.types.join(' or ') };
+    return { soft: out };
+  }
   if (stem && !out) return { error: 'that isn’t one of this task’s outputs' };
   if (!out) {
     // what the file's name says it is ("EP101_Dialogue.wav" → DIA), else the one deliverable its type fits
@@ -1104,6 +1109,7 @@ function deliveryName(ctx, expected, stem, original, isDir) {
   } else if (!namingJs.typeFits(out.type, ext)) {
     return { error: original + ' isn’t a ' + out.type };
   }
+  if (out.soft) return { soft: out };
   const v = folders.latestVersion(versionDirs(ctx), out.stem, ext).version + 1;
   return { name: folders.versioned(out.stem, v, ext) };
 }
@@ -2095,6 +2101,11 @@ const server = http.createServer(async (req, res) => {
           reconciled.renamed.forEach(r => console.log('[pam] renamed ' + r.from + ' → ' + r.to + ' in ' + mezzAbs));
         }
         const outputs = expected.map(o => {
+          if (o.soft) {
+            const l = folders.latestSoft(versionDirs(ctx), o.stem);
+            return Object.assign({}, o, { version: l.version, latest: l.file ? l.file.name : null, files: l.count || 0,
+              next: folders.versioned(o.stem, l.version + 1, '') });
+          }
           const l = folders.latestVersion(versionDirs(ctx), o.stem, o.type);
           const ext = l.file ? folders.extOf(l.file.name) : o.type.toLowerCase();
           return Object.assign({}, o, { version: l.version, latest: l.file ? l.file.name : null,
@@ -2392,6 +2403,11 @@ const server = http.createServer(async (req, res) => {
         if (expected.length) {
           const missing = [];
           plan = expected.map(o => {
+            if (o.soft) {
+              const l = folders.latestSoft([mezz], o.stem);
+              if (!l.file || !l.count) { missing.push((o.label || o.stem) + ' (folder)'); return null; }
+              return { src: l.file.path, dir: true, name: o.stem, version: l.version };
+            }
             const l = folders.latestVersion([mezz], o.stem, o.type);
             if (!l.file) { missing.push(o.stem + (o.type ? '.' + o.type.toLowerCase() : '')); return null; }
             return { src: l.file.path, dir: l.file.dir, name: o.stem + path.extname(l.file.name), version: l.version };
@@ -2493,6 +2509,19 @@ const server = http.createServer(async (req, res) => {
              type fits. No outputs known (an older client) keeps its own name. */
           const named = deliveryName(ctx, expected, body.stem, path.basename(src), st.isDirectory());
           if (named.error) return sendJson(res, 400, named);
+          if (named.soft) {
+            /* body.soft: 'new' starts the next version folder, 'add' adds to
+               the newest one — the client sends 'new' for the first file of a
+               pick and 'add' for the rest, so one pick is one version. */
+            const t = folders.softTarget(destAbs, named.soft.stem, versionDirs(ctx), body.soft === 'add' ? 'add' : 'new');
+            const items = st.isDirectory() ? folders.listDir(src) : [{ path: src, name: path.basename(src), dir: false }];
+            try {
+              items.forEach(i => fs.cpSync(i.path, folders.uniquePath(t.abs, folders.safeFile(i.name)), { recursive: i.dir }));
+            } catch (e) { return sendJson(res, 400, { error: 'copy failed: ' + e.message }); }
+            console.log('[deliver] ' + ((getSession(req) || {}).email || 'companion') + ' copied ' + items.length + ' into ' + t.abs);
+            return sendJson(res, 200, { ok: true, filed: t.name + '/', from: path.basename(src), dir: destAbs, soft: true,
+              version: t.version, files: items.length, copied: true });
+          }
           const dest = named.name ? path.join(destAbs, named.name) : folders.uniquePath(destAbs, folders.safeFile(path.basename(src)));
           try { fs.cpSync(src, dest, { recursive: st.isDirectory() }); }
           catch (e) { try { fs.rmSync(dest, { recursive: true, force: true }); } catch (err) {} return sendJson(res, 400, { error: 'copy failed: ' + e.message }); }
@@ -2519,7 +2548,16 @@ const server = http.createServer(async (req, res) => {
         const original = folders.safeFile(url.searchParams.get('filename') || 'untitled');
         const named = rec.naming ? deliveryName(rec.naming.ctx, rec.naming.expected, url.searchParams.get('stem') || rec.naming.stem, original, false) : {};
         if (named.error) { req.resume(); return sendJson(res, 400, named); }
-        const dest = named.name ? path.join(dir, named.name) : folders.uniquePath(dir, original);
+        let dest;
+        if (named.soft) {
+          // one upload session is one version: the first file starts it, the rest join it
+          rec.softDirs = rec.softDirs || {};
+          const t = rec.softDirs[named.soft.stem] = rec.softDirs[named.soft.stem] ||
+            folders.softTarget(dir, named.soft.stem, versionDirs(rec.naming.ctx), url.searchParams.get('soft') === 'add' ? 'add' : 'new');
+          dest = folders.uniquePath(t.abs, original);
+        } else {
+          dest = named.name ? path.join(dir, named.name) : folders.uniquePath(dir, original);
+        }
         try {
           await new Promise((resolve, reject) => {
             const out = fs.createWriteStream(dest, { flags: 'wx' });   // never over a teammate's file
