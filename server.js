@@ -2025,7 +2025,7 @@ const server = http.createServer(async (req, res) => {
           const dt = pipeline.find(t => t.key === depKey);
           if (!dt) return null;
           const dp = folders.taskPaths(ep, pipeline, depKey);
-          const items = (masterOk && dp) ? folders.listDir(folders.resolveIn(masterPath, show, dp.publish)) : null;
+          const items = (masterOk && dp) ? folders.listDir(folders.resolveIn(masterPath, show, dp.publish)).filter(i => !/^zz_/.test(i.name)) : null;   // zz_Superseded is history, not an asset
           return {
             key: depKey, name: dt.name, dept: dt.dept,
             status: (ep.statuses && ep.statuses[depKey]) || 'not_started',
@@ -2091,7 +2091,7 @@ const server = http.createServer(async (req, res) => {
           // mtime = when it was delivered (deliver/prepare stamps it), so a QC fix
           // can be told from the delivery QC already reported on
           mezzanine: folders.listDir(rel(paths.mezzanine)).map(i => ({ name: i.name, dir: i.dir, size: i.size, mtime: i.mtime })),
-          publish: folders.listDir(rel(paths.publish)).map(i => ({ name: i.name, dir: i.dir, size: i.size })),
+          publish: folders.listDir(rel(paths.publish)).filter(i => !/^zz_/.test(i.name)).map(i => ({ name: i.name, dir: i.dir, size: i.size })),
           templates, deps
         });
       }
@@ -2330,38 +2330,85 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, opened: true, path: target });
       }
 
-      /* Promote a task's delivered files from Mezzanine to Publish. Called when a
-         task reaches Approved, which is the moment its output becomes a usable
-         asset for everything downstream. Idempotent: re-running moves whatever is
-         still sitting in Mezzanine and reports honestly. */
+      /* Publish a task's delivery: called when the task is complete (approved,
+         or passed by QC), the moment its output becomes a usable asset for
+         everything downstream.
+
+         Each output's LATEST version in Mezzanine is COPIED to Publish under
+         its clean name — no version tag, exactly what Moonbase ingests —
+         and Mezzanine keeps every version. Publishing again moves the copy
+         it replaces into zz_Superseded/v###/ first, the one move left in
+         PAM, and only ever inside Publish. A task whose files PAM can't name
+         yet (no Format) publishes what's in Mezzanine as it is, still by copy. */
       if (route === 'POST /api/task/promote') {
         const body = JSON.parse(await readBody(req) || '{}');
         const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
         if (ctx.error) return sendJson(res, 400, { error: ctx.error });
-        const { masterPath, show, paths } = ctx;
+        const { masterPath, show, paths, expected } = ctx;
         const mezz = folders.resolveIn(masterPath, show, paths.mezzanine);
         const pub = folders.resolveIn(masterPath, show, paths.publish);
-        if (!fs.existsSync(mezz)) return sendJson(res, 200, { ok: true, promoted: 0 });
+        const manifestAbs = path.join(pub, '.published.json');   // name → version, for zz_Superseded
+        let manifest = {};
+        try { manifest = JSON.parse(fs.readFileSync(manifestAbs, 'utf8')) || {}; } catch (e) {}
 
-        const items = folders.listDir(mezz);
-        if (!items.length) return sendJson(res, 200, { ok: true, promoted: 0 });
+        // [{ src, name, version }] — what goes to Publish
+        let plan;
+        if (expected.length) {
+          const missing = [];
+          plan = expected.map(o => {
+            const l = folders.latestVersion([mezz], o.stem, o.type);
+            if (!l.file) { missing.push(o.stem + (o.type ? '.' + o.type.toLowerCase() : '')); return null; }
+            return { src: l.file.path, dir: l.file.dir, name: o.stem + path.extname(l.file.name), version: l.version };
+          });
+          if (missing.length) {
+            return sendJson(res, 400, { error: 'Not every output has a version yet: ' + missing.join(', '), missing });
+          }
+        } else {
+          plan = folders.listDir(mezz).map(i => ({ src: i.path, dir: i.dir, name: folders.safeFile(i.name), version: null }));
+        }
+        if (!plan.length) return sendJson(res, 200, { ok: true, promoted: 0 });
         fs.mkdirSync(pub, { recursive: true });
 
-        const promoted = [];
-        for (const it of items) {
-          const dest = folders.uniquePath(pub, folders.safeFile(it.name));
-          try {
-            fs.renameSync(it.path, dest);
-          } catch (e) {
-            if (e.code !== 'EXDEV') throw e;
-            fs.cpSync(it.path, dest, { recursive: it.dir });
-            fs.rmSync(it.path, { recursive: it.dir, force: true });
+        const promoted = [], superseded = [];
+        for (const p of plan) {
+          const dest = path.join(pub, p.name);
+          if (fs.existsSync(dest)) {
+            if (p.version != null && manifest[p.name] === p.version) { promoted.push(p.name); continue; }   // already this version
+            const was = manifest[p.name] ? 'v' + String(manifest[p.name]).padStart(3, '0') : 'unversioned';
+            const keep = path.join(pub, 'zz_Superseded', was);
+            fs.mkdirSync(keep, { recursive: true });
+            fs.renameSync(dest, folders.uniquePath(keep, p.name));
+            superseded.push(was + '/' + p.name);
           }
-          promoted.push(path.basename(dest));
+          fs.cpSync(p.src, dest, { recursive: p.dir });
+          if (p.version != null) manifest[p.name] = p.version;
+          promoted.push(p.name);
         }
+        try { fs.writeFileSync(manifestAbs, JSON.stringify(manifest, null, 2)); } catch (e) { /* only labels zz_Superseded */ }
         console.log('[promote] ' + ((getSession(req) || {}).email || 'companion') + ' ' + paths.deliverable +
-          ': ' + promoted.length + ' → Publish');
-        return sendJson(res, 200, { ok: true, promoted: promoted.length, names: promoted, dir: pub });
+          ': ' + promoted.length + ' copied to Publish' + (superseded.length ? ', superseded ' + superseded.join(', ') : ''));
+        return sendJson(res, 200, { ok: true, promoted: promoted.length, names: promoted, superseded, dir: pub });
+      }
+
+      /* Put a version up for review: copy a Mezzanine file into
+         !!_Reviews/<Deliverable>/ under the same name. Post Operations makes
+         the review from that copy, so it stays put whatever happens to
+         Mezzanine next. Asking twice for the same file hands back the copy
+         already there. */
+      if (route === 'POST /api/task/review-copy') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const mezz = folders.resolveIn(ctx.masterPath, ctx.show, ctx.paths.mezzanine);
+        const src = path.join(mezz, folders.safeFile(body.file));
+        if (!fs.existsSync(src)) return sendJson(res, 404, { error: 'that version isn’t in Mezzanine' });
+        const st = fs.statSync(src);
+        const dir = folders.resolveIn(ctx.masterPath, ctx.show, ctx.paths.reviews + '/' + ctx.paths.deliverable);
+        fs.mkdirSync(dir, { recursive: true });
+        const dest = path.join(dir, path.basename(src));
+        if (!fs.existsSync(dest)) fs.cpSync(src, dest, { recursive: st.isDirectory() });
+        console.log('[review] ' + ((getSession(req) || {}).email || 'companion') + ' ' + path.basename(src) + ' → Reviews');
+        return sendJson(res, 200, { ok: true, name: path.basename(dest), path: dest, size: st.size });
       }
 
       /* Hand a URL to the OS so it opens in the real default browser (Create

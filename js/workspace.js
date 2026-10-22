@@ -1016,6 +1016,13 @@ window.App = window.App || {};
             : (mezz.length ? el('button.btn-primary.ws-btn', {
                 onclick: (e) => App.sendPulse(e.currentTarget, () => App.promoteDelivered(ep.id, su.key))
               }, [App.icon('package'), ' Publish']) : null);
+        /* Publish copies each output's latest version, so it (and QC, who
+           checks what will be published) waits until every output has one. */
+        const missing = (d.outputs || []).filter(o => !o.version);
+        if (sendBtn && missing.length) {
+          sendBtn.disabled = true;
+          sendBtn.title = 'Still to export: ' + missing.map(o => o.suffix + (o.type ? ' ' + o.type : '')).join(', ');
+        }
         const chip = qcFix ? el('span.ws-chip.pending', null, 'QC sent it back — fix it here')
           : su.status === 'in_qc' ? el('span.ws-chip.pending', null, 'with QC')
           : App.isApproved(su.status) ? el('span.ws-chip.ok', null, needsQc && App.qcState(ep, su.key) !== 'passed' ? 'approved — not sent to QC' : 'approved')
@@ -1024,9 +1031,10 @@ window.App = window.App || {};
           el('.ws-sub', null, ['Delivered · ', chip]),
           list,
           sendBtn ? el('.ws-actions', null, sendBtn) : null,
+          sendBtn && missing.length ? el('.ws-note.tight', null, '⚠ ' + sendBtn.title + ' — see Export to.') : null,
           qcFix ? el('.ws-note.tight', null, fresh
             ? fresh + ' new since QC’s report — Resubmit sends the fix back to QC.'
-            : 'Nothing new since QC’s report yet — deliver the fixed files (or a link) here, then Resubmit.') : null,
+            : 'Nothing new since QC’s report yet — export the fix as the next version (Export to), or deliver it here, then Resubmit.') : null,
           App.isApproved(su.status) || qcFix ? null : el('.ws-note.tight', null,
             'These stay out of the next department’s Assets until ' + su.name + (needsQc ? ' passes QC' : ' is approved and published') + '.')
         ]));

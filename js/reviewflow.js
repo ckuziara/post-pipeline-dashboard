@@ -18,8 +18,12 @@
    Two pieces of state, both keyed "<epId>::<taskKey>":
 
      data.reviewUploads[k]  what the department put up — files, volume paths
-                            and links. Metadata only, like js/uploads.js: this
-                            records what and where, it doesn't move bytes.
+                            and links. With the volume connected a cut is a
+                            real file: it goes into !!_Mezzanine under its
+                            versioned name (like any delivery), and a copy of
+                            that version into !!_Reviews/<Deliverable>/, which
+                            is the path recorded here and what Post Operations
+                            opens. Without the volume only the name is noted.
      data.reviews[k]        where the review has got to. Written by step 2
                             (`state: 'sent'` + frameUrl) and step 3
                             (`state: 'under'`).
@@ -126,6 +130,37 @@ window.App = window.App || {};
       this._add(epId, taskKey, items, 'review upload');
       if (items.length) App.toast(items.length === 1 ? baseName(paths[0]) + ' up for review' : items.length + ' items up for review');
       return items.length;
+    },
+
+    /* A version in Mezzanine, copied into !!_Reviews and put up (server.js
+       /api/task/review-copy). Returns the item, or null on failure. */
+    async fromMezzanine(ep, su, file) {
+      const r = await App.api.reviewCopy({ epId: ep.id, taskKey: su.key, pipeline: App.pipelineFor(ep), file });
+      if (this.list(ep.id, su.key).some(a => a.path === r.path)) { App.toast(r.name + ' is already up for review'); return null; }
+      const item = Object.assign({ id: App.uid(), kind: 'volume', name: r.name, path: r.path,
+        size: r.size || 0, sizeLabel: fmtSize(r.size || 0), at: new Date().toISOString() }, me());
+      this._add(ep.id, su.key, [item], 'review upload');
+      return item;
+    },
+
+    /* Files from the desktop or the volume: delivered into Mezzanine first —
+       named and versioned like every other export — then that version put up. */
+    async putUp(ep, su, { files, srcs }) {
+      const P = App.pipelineFor(ep);
+      const filed = [];
+      try {
+        if (files && files.length) {
+          const prep = await App.api.deliverPrepare({ epId: ep.id, taskKey: su.key, pipeline: P });
+          for (const f of files) filed.push((await App.api.deliverUpload(prep.token, f)).filed);
+        }
+        for (const src of (srcs || [])) filed.push((await App.api.deliverPrepare({ epId: ep.id, taskKey: su.key, pipeline: P, src })).filed);
+        let n = 0;
+        for (const name of filed) if (await this.fromMezzanine(ep, su, name)) n++;
+        if (n) App.toast(n === 1 ? filed[filed.length - 1] + ' up for review' : n + ' versions up for review');
+      } catch (e) {
+        App.toast(e.message, true);
+      }
+      App.workspace && App.workspace.reload && App.workspace.reload();
     },
 
     addLink(epId, taskKey, raw) {
@@ -284,7 +319,9 @@ window.App = window.App || {};
       if (canEdit && !phone) {
         const drop = el('.ws-drop', null, [
           el('.ws-drop-main', null, [App.icon('upload'), '  Drop the cut here for review']),
-          el('.ws-drop-sub', null, 'Post Operations picks it up from here, sets up the review and sends it to the Director')
+          el('.ws-drop-sub', null, d && d.masterOk && d.outputs
+            ? 'Filed in Mezzanine as the next version and copied to Reviews, where Post Operations picks it up'
+            : 'Post Operations picks it up from here, sets up the review and sends it to the Director')
         ]);
         ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => {
           e.preventDefault(); e.stopPropagation(); drop.classList.add('over');
@@ -303,7 +340,12 @@ window.App = window.App || {};
             }
           }
           if (dirs) App.toast('Folders can’t be dropped in — use “Pick from the volume” for those', true);
-          App.reviewUploads.addFiles(ep.id, su.key, dt.files);
+          if (d && d.masterOk && d.outputs) {
+            const real = Array.from(dt.files || []).filter(f => f.size > 0 || f.type);
+            if (real.length) App.reviewUploads.putUp(ep, su, { files: real });
+          } else {
+            App.reviewUploads.addFiles(ep.id, su.key, dt.files);
+          }
         });
         /* Same reason as Deliver: never <input type="file">. A native file
            dialog crashes the embedded webview, and Finder is what this whole
@@ -317,6 +359,17 @@ window.App = window.App || {};
             : null,
           el('button.btn-ghost.ws-btn', { onclick: () => this._addLink(ep, su) }, [App.icon('link'), ' Add a link'])
         ]));
+        /* Already rendered into Mezzanine (Export to)? Put that version up
+           as it is — the usual way, once renders land in the right place. */
+        const ready = ((d && d.outputs) || []).filter(o => o.latest && !items.some(a => a.name === o.latest));
+        if (ready.length) {
+          wrap.appendChild(el('.ws-actions', null, ready.map(o => el('button.btn-ghost.ws-btn', {
+            title: 'Copy ' + o.latest + ' into Reviews and put it up',
+            onclick: () => App.reviewUploads.fromMezzanine(ep, su, o.latest)
+              .then(it => { if (it) App.toast(it.name + ' up for review'); })
+              .catch(e => App.toast(e.message, true))
+          }, [App.icon('target'), ' Put up v' + String(o.version).padStart(3, '0') + ' · ' + o.suffix + (o.type ? ' ' + o.type : '')]))));
+        }
       }
 
       // after Send Feedback, only what's gone up since counts as the cut to send
@@ -412,12 +465,15 @@ window.App = window.App || {};
         const items = Array.isArray(chosen) ? chosen : (chosen ? [chosen] : []);
         // the picker replaced the Edit Task dialog — put it back either way
         App.editTask.open(ep.id, su.key);
-        if (items.length) App.reviewUploads.addPaths(ep.id, su.key, items);
+        if (!items.length) return;
+        if (d && d.outputs) App.reviewUploads.putUp(ep, su, { srcs: items });
+        else App.reviewUploads.addPaths(ep.id, su.key, items);
       }, {
         pickFiles: true, multiple: true,
         title: 'Put a cut up for review',
-        subtitle: 'Starts in this task’s working folder. Nothing is moved — this just tells ' +
-          'Post Operations which file to make the review from.',
+        subtitle: d && d.outputs
+          ? 'Starts in this task’s working folder. Each is copied into Mezzanine as the next version and into Reviews for Post Operations — the original stays put.'
+          : 'Starts in this task’s working folder. Nothing is moved — this just tells Post Operations which file to make the review from.',
         confirmLabel: 'Put up for review',
         onCancel: () => App.editTask.open(ep.id, su.key)
       });

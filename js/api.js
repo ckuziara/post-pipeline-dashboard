@@ -390,6 +390,8 @@ window.App = window.App || {};
     deliverPrepare(b) { return this._post('/api/task/deliver/prepare', b); },
     // files an export PAM couldn't place (two outputs share its type) as the one picked
     taskAssign(b) { return this._post('/api/task/assign', b); },
+    // a Mezzanine version copied into !!_Reviews for Post Operations (see /api/task/review-copy)
+    reviewCopy(b) { return this._post('/api/task/review-copy', b); },
     // moves a task's delivered files from Mezzanine to Publish, on approval
     taskPromote(b) { return this._post('/api/task/promote', b); },
     // opens in the OS default browser when the server is on this machine
