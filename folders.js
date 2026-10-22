@@ -325,7 +325,7 @@ const STEM_RE = /^[A-Z0-9-]{2,40}_[A-Za-z]{1,10}_[A-Z0-9-]{1,40}$/;
 function cleanExpected(raw) {
   if (!Array.isArray(raw)) return [];
   return raw.slice(0, 60).filter(o => o && STEM_RE.test(String(o.stem || '')))
-    .map(o => ({ stem: String(o.stem), suffix: String(o.suffix || ''), type: String(o.type || '').toUpperCase().replace(/[^A-Z0-9]/g, '') }));
+    .map(o => ({ stem: String(o.stem), suffix: String(o.suffix || ''), language: String(o.language || ''), type: String(o.type || '').toUpperCase().replace(/[^A-Z0-9]/g, '') }));
 }
 
 const extOf = (n) => (path.extname(n).slice(1) || '').toLowerCase();
@@ -353,23 +353,29 @@ const versioned = (stem, v, ext) => stem + '_v' + String(v).padStart(3, '0') + (
 
 /* Bring a Mezzanine folder into line: every file that isn't already
    <stem>_v###.<ext> for one of the task's outputs is renamed, in place, to
-   the next version of the output its type fits. Renaming on one volume is
-   atomic and instant, whatever the size. Two outputs a file could be (two
-   MOVs) is left for the person to pick; a type no output takes is left
-   alone and reported. Folders (image sequences, packages) are never touched. */
-function reconcile(mezzAbs, expected, versionDirs) {
+   the next version of the deliverable its name says it is ("EP101_M&E.wav"
+   → MNE) — or the only one its type fits. Renaming on one volume is atomic
+   and instant, whatever the size. A file whose name doesn't say which of
+   several it is is left for the person to pick; a type no output takes is
+   left alone and reported. Folders (image sequences, packages) are never touched. */
+function reconcile(mezzAbs, expected, versionDirs, stored) {
   const out = { renamed: [], ambiguous: [], stray: [] };
   if (!expected.length) return out;
-  listDir(mezzAbs).forEach(it => {
-    if (it.dir) return;
-    const ext = extOf(it.name);
-    if (expected.some(o => versionOf(it.name, o.stem) && naming.typeFits(o.type, ext))) return;   // already right
-    const fits = expected.filter(o => naming.typeFits(o.type, ext));
-    const uniq = fits.filter((o, i) => fits.findIndex(x => x.stem === o.stem) === i);
-    if (uniq.length > 1) { out.ambiguous.push({ name: it.name, stems: uniq.map(o => o.stem) }); return; }
-    if (!uniq.length) { out.stray.push(it.name); return; }
-    const to = assignVersion(it.path, mezzAbs, uniq[0].stem, versionDirs);
-    out.renamed.push({ from: it.name, to });
+  const loose = listDir(mezzAbs).filter(it => !it.dir &&
+    !expected.some(o => versionOf(it.name, o.stem) && naming.typeFits(o.type, extOf(it.name))));   // the rest are already right
+  if (!loose.length) return out;
+  // which deliverable each one is, from its name (js/naming.js) — the same matching Pick from the volume uses
+  const found = naming.matchDeliverables(loose.map(it => it.name), expected, stored);
+  loose.forEach((it, i) => {
+    if (found[i].out >= 0) {
+      const to = assignVersion(it.path, mezzAbs, expected[found[i].out].stem, versionDirs);
+      out.renamed.push({ from: it.name, to });
+      return;
+    }
+    const fits = expected.filter(o => naming.typeFits(o.type, extOf(it.name)));
+    const uniq = fits.filter((o, j) => fits.findIndex(x => x.stem === o.stem) === j);
+    if (uniq.length) out.ambiguous.push({ name: it.name, stems: uniq.map(o => o.stem) });
+    else out.stray.push(it.name);
   });
   return out;
 }

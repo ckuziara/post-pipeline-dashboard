@@ -1091,6 +1091,11 @@ function deliveryName(ctx, expected, stem, original, isDir) {
   let out = stem ? (expected.find(o => o.stem === stem && namingJs.typeFits(o.type, ext)) || expected.find(o => o.stem === stem)) : null;
   if (stem && !out) return { error: 'that isn’t one of this task’s outputs' };
   if (!out) {
+    // what the file's name says it is ("EP101_Dialogue.wav" → DIA), else the one deliverable its type fits
+    const said = namingJs.matchDeliverables([original], expected, ctx.data ? (ctx.data.naming || null) : undefined)[0];
+    if (said.out >= 0) out = expected[said.out];
+  }
+  if (!out) {
     const fits = expected.filter(o => namingJs.typeFits(o.type, ext));
     const uniq = fits.filter((o, i) => fits.findIndex(x => x.stem === o.stem) === i);
     if (uniq.length > 1) return { error: original + ' could be more than one deliverable — click its row in Deliverables and pick it there', ambiguous: uniq.map(o => o.stem) };
@@ -2067,7 +2072,7 @@ const server = http.createServer(async (req, res) => {
         let reconciled = { renamed: [], ambiguous: [], stray: [] };
         if (expected.length) {
           fs.mkdirSync(mezzAbs, { recursive: true });
-          try { reconciled = folders.reconcile(mezzAbs, expected, versionDirs(ctx)); }
+          try { reconciled = folders.reconcile(mezzAbs, expected, versionDirs(ctx), ctx.data ? (ctx.data.naming || null) : undefined); }
           catch (e) { console.error('[pam] reconcile ' + e.message); }
           reconciled.renamed.forEach(r => console.log('[pam] renamed ' + r.from + ' → ' + r.to + ' in ' + mezzAbs));
         }

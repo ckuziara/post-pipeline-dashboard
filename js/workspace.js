@@ -1119,6 +1119,10 @@ window.App = window.App || {};
         if (!items.length) return this._back();
         // the picker replaced the Edit Task dialog — put it back so the delivery
         // shows up where the user started, then refresh it with the result
+        // several files for a task with a checklist: match each to its deliverable, and let the person check
+        const d = m.data || {};
+        const outs = (d.masterOk && !(d.namingProblems || []).length && d.outputs) || [];
+        if (!stem && outs.length) { this._matchFiles(items, outs); return; }
         App.editTask.open(epId, taskKey);
         this._deliverFromMount(epId, taskKey, ep, items, stem);
       }, {
@@ -1140,16 +1144,18 @@ window.App = window.App || {};
     async _deliverFromMount(epId, taskKey, ep, items, stem) {
       const m = this._mounted;
       const label = (p) => p.replace(/\/+$/, '').replace(/^.*\//, '');
+      // items: paths, or { src, stem } when each was matched to a deliverable (_matchFiles)
+      items = items.map(it => typeof it === 'string' ? { src: it, stem: stem || null } : it);
       App.toast(items.length === 1
-        ? 'Copying ' + label(items[0]) + ' into place…'
+        ? 'Copying ' + label(items[0].src) + ' into place…'
         : 'Delivering ' + items.length + ' items…');
 
       App.track.flowStart('LucidLink delivery', { files: items.length, source: 'volume' });
       const failed = [];
       let done = 0, lastFiled = '', lastFrom = '';
-      for (const src of items) {
+      for (const { src, stem: one } of items) {
         try {
-          const r = await App.api.deliverPrepare({ epId, taskKey, pipeline: App.pipelineFor(ep), src, stem: stem || undefined });
+          const r = await App.api.deliverPrepare({ epId, taskKey, pipeline: App.pipelineFor(ep), src, stem: one || undefined });
           done++; lastFiled = r.filed; lastFrom = r.from;
         } catch (e) {
           App.track.error('lucidlink.deliverFailed', { flow: 'LucidLink delivery', file: label(src), message: e.message });
@@ -1168,6 +1174,72 @@ window.App = window.App || {};
         App.toast(failed[0] || 'Nothing was delivered', true);
       }
       this.reload();
+    },
+
+    /* Picked several files: PipeDream works out which deliverable each one is
+       from its name (App.matchDeliverables) and shows the result to check —
+       one dropdown per file, already set, so a long delivery (MIX, MNE, SFX,
+       DIA, ACA, INST, SONGMASTER) is one look and one click. */
+    _matchFiles(paths, outs) {
+      const m = this._mounted;
+      const ep = App.state.data.episodes.find(e => e.id === m.epId);
+      const name = (p) => p.replace(/\/+$/, '').replace(/^.*\//, '');
+      const names = paths.map(name);
+      const found = App.matchDeliverables(names, outs);
+      const pick = found.map(r => r.out);                  // index into outs, -1 = don't deliver
+      const multiLang = new Set(outs.map(o => o.language)).size > 1;
+      const optLabel = (o) => this._outLabel(o) + (o.type ? ' · ' + o.type : '') + (multiLang && o.language ? ' · ' + o.language : '');
+
+      const body = el('div');
+      const footBtn = el('button.btn-primary');
+      const draw = () => {
+        body.innerHTML = '';
+        const counts = {};
+        pick.forEach(i => { if (i >= 0) counts[i] = (counts[i] || 0) + 1; });
+        const list = el('.ws-match-list');
+        paths.forEach((p, fi) => {
+          const ext = (names[fi].split('.').pop() || '').toLowerCase();
+          const sel = el('select.fld.ws-match-sel');
+          const add = (v, t) => { const o = document.createElement('option'); o.value = String(v); o.textContent = t; sel.appendChild(o); };
+          add(-1, pick[fi] < 0 && found[fi].out < 0 ? 'Choose…' : 'Don’t deliver');
+          outs.forEach((o, oi) => { if (App.typeFits(o.type, names[fi].includes('.') ? ext : '')) add(oi, optLabel(o)); });
+          sel.value = String(pick[fi]);
+          sel.addEventListener('change', () => { pick[fi] = parseInt(sel.value, 10); draw(); });
+          const dup = pick[fi] >= 0 && counts[pick[fi]] > 1;
+          const state = dup ? 'dup' : pick[fi] < 0 ? 'none' : found[fi].out === pick[fi] ? 'auto' : 'set';
+          list.appendChild(el('.ws-match-row.' + state, null, [
+            el('.ws-match-file', { title: p }, [App.icon(iconFor(names[fi], false), { cls: 'ws-ic' }), el('span', null, names[fi])]),
+            el('span.ws-match-arrow', null, '→'),
+            sel,
+            el('span.ws-match-flag', null, dup ? 'twice' : state === 'none' ? 'skip' : state === 'auto' ? '✓' : 'set')
+          ]));
+        });
+        body.appendChild(list);
+        const n = pick.filter(i => i >= 0).length;
+        const dups = Object.keys(counts).filter(k => counts[k] > 1).map(k => this._outLabel(outs[k]));
+        const unmatched = pick.filter(i => i < 0).length;
+        // what this delivery still leaves out
+        const still = outs.filter((o, oi) => !o.version && !pick.includes(oi)).map(o => optLabel(o));
+        const notes = [];
+        if (dups.length) notes.push(el('.ws-note.tight.bad', null, '⚠ Two files are set to ' + dups.join(', ') + ' — pick one.'));
+        if (unmatched) notes.push(el('.ws-note.tight', null, unmatched + ' file' + (unmatched === 1 ? '' : 's') + ' won’t be delivered — choose a deliverable to include ' + (unmatched === 1 ? 'it' : 'them') + '.'));
+        if (still.length) notes.push(el('.ws-note.tight', null, 'Still needed after this: ' + still.join(', ') + '.'));
+        notes.forEach(x => body.appendChild(x));
+        footBtn.disabled = !n || dups.length > 0;
+        footBtn.textContent = n ? 'Deliver ' + n + ' file' + (n === 1 ? '' : 's') : 'Deliver';
+      };
+      footBtn.onclick = () => {
+        const items = paths.map((p, fi) => ({ src: p, stem: pick[fi] >= 0 ? outs[pick[fi]].stem : null })).filter(x => x.stem);
+        App.editTask.open(m.epId, m.taskKey);
+        this._deliverFromMount(m.epId, m.taskKey, ep, items);
+      };
+      draw();
+      const auto = found.filter(r => r.out >= 0).length;
+      this._step('archive', 'Check the matches',
+        'PipeDream matched ' + auto + ' of ' + paths.length + ' file' + (paths.length === 1 ? '' : 's') + ' by name. Change any that are wrong.',
+        body, [el('button.btn-ghost', { onclick: () => this._back() }, 'Cancel'), footBtn]);
+      const card = document.querySelector('.modal-card.ws-step');
+      if (card) card.classList.add('ws-match');
     },
 
     _addLink() {

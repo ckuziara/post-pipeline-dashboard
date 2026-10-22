@@ -161,6 +161,82 @@
   App.typeFits = (type, ext) => !type || String(type).toUpperCase() === String(ext || '').toUpperCase() ||
     (/^TIFF?$/i.test(type) && /^tiff?$/i.test(ext)) || (/^JPE?G$/i.test(type) && /^jpe?g$/i.test(ext));
 
+  /* ---- Which deliverable is this file? -------------------------------
+     A delivery is often a long list of near-identical WAVs (MIX, MNE, SFX,
+     DIA, ACA, INST, SONGMASTER) named however the mixer's session named
+     them. Each file is matched to a deliverable from what its name says:
+     the suffix itself, its Naming Conventions label, and the words people
+     actually use for it below. Words count in any order ("ME_Mix",
+     "mix-M&E"); the longest match wins, so "Instrumental Mix" is INST, not
+     MIX, and "NoIO Texted BITC" is the BITC copy, not the master. A file
+     already named by the convention matches its own deliverable outright. */
+  App.DELIVERY_ALIASES = {
+    MIX: ['full mix', 'final mix', 'print master', 'printmaster', 'main mix'],
+    MNE: ['m n e', 'mne', 'me', 'me mix', 'music and effects', 'music effects', 'm and e'],
+    'MNE-FOLEY': ['mne foley', 'me foley', 'foley'],
+    SFX: ['sfx', 'fx', 'sound effects', 'effects'],
+    DIA: ['dia', 'dialog', 'dialogue', 'dx', 'dial'],
+    ACA: ['aca', 'acapella', 'a cappella', 'acappella', 'a capella', 'vocal only', 'vocals only', 'vox only', 'clean vocal', 'clean vocals'],
+    INST: ['inst', 'instrumental', 'instr', 'music only'],
+    SONGMASTER: ['songmaster', 'song master', 'song mix', 'full song'],
+    SCR: ['scr', 'score'],
+    AMB: ['amb', 'ambience', 'ambiance', 'atmos'],
+    SUB: ['sub', 'subs', 'subtitle', 'subtitles'],
+    SP: ['sp', 'script'],
+    MCS: ['mcs', 'cue sheet', 'cuesheet']
+  };
+  // "EP101_M&E-mix v2.wav" → ['ep101', 'mne', 'mix', 'v2']
+  const tokensOf = (name) => {
+    const dot = String(name).lastIndexOf('.');
+    const base = dot > 0 ? String(name).slice(0, dot) : String(name);
+    return base.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
+      .replace(/m\s*&\s*e/g, 'mne').replace(/&/g, ' and ')
+      .split(/[^a-z0-9]+/).filter(Boolean);
+  };
+  const phraseScore = (phrase, toks, compact) => {
+    const words = phrase.split(' ').filter(Boolean);
+    if (words.every(w => toks.includes(w))) return words.join('').length;
+    // run together in the file name ("SongMaster", "NOIOTEXTED"): long phrases only, so "me" can't hide in "frame"
+    const joined = words.join('');
+    return joined.length >= 5 && compact.includes(joined) ? joined.length : 0;
+  };
+  /* names: file names. outs: [{ stem, suffix, type, language }]. Returns, per
+     file, { name, out (index into outs, or -1), score }. Each deliverable is
+     given to at most one file — the best-matching one. `stored` is a board's
+     d.naming (the server passes its own). */
+  App.matchDeliverables = (names, outs, stored) => {
+    const labels = {};
+    App.namingConfig(stored).tables.find(t => t.key === 'suffixes').rows.forEach(rw => { labels[rw[0]] = labels[rw[0]] || rw[2]; });
+    const langs = [...new Set(outs.map(o => o.language).filter(Boolean))];
+    const scoreOf = (name, o) => {
+      const ext = (String(name).split('.').pop() || '').toLowerCase();
+      if (!App.typeFits(o.type, String(name).includes('.') ? ext : '')) return 0;
+      if (o.stem && (String(name) === o.stem || String(name).startsWith(o.stem + '_v') || String(name).startsWith(o.stem + '.'))) return 1000;
+      const toks = tokensOf(name), compact = toks.join('');
+      const phrases = [o.suffix.toLowerCase().replace(/-/g, ' '), String(labels[o.suffix] || '').toLowerCase().replace(/&/g, 'n').replace(/[^a-z0-9]+/g, ' ').trim()]
+        .concat(App.DELIVERY_ALIASES[o.suffix] || []).filter(Boolean);
+      let best = 0;
+      phrases.forEach(p => { best = Math.max(best, phraseScore(p, toks, compact)); });
+      // several languages: the one named in the file breaks the tie
+      if (best && langs.length > 1 && o.language && toks.includes(o.language.toLowerCase().replace(/[^a-z0-9]/g, ''))) best += 0.5;
+      return best;
+    };
+    const pairs = [];
+    names.forEach((n, fi) => outs.forEach((o, oi) => { const s = scoreOf(n, o); if (s > 0) pairs.push({ fi, oi, s }); }));
+    pairs.sort((a, b) => b.s - a.s || a.fi - b.fi || a.oi - b.oi);
+    const res = names.map(n => ({ name: n, out: -1, score: 0 })), taken = new Set();
+    pairs.forEach(p => { if (res[p.fi].out < 0 && !taken.has(p.oi)) { res[p.fi].out = p.oi; res[p.fi].score = p.s; taken.add(p.oi); } });
+    // nothing in the name says which, but only one deliverable takes this type: that's it
+    res.forEach(r => {
+      if (r.out >= 0) return;
+      const ext = (String(r.name).split('.').pop() || '').toLowerCase();
+      const fit = outs.map((o, i) => i).filter(i => !taken.has(i) && outs[i].type && App.typeFits(outs[i].type, ext));
+      const sameType = outs.filter(o => o.type && App.typeFits(o.type, ext));
+      if (fit.length === 1 && sameType.length === 1) { r.out = fit[0]; taken.add(fit[0]); }
+    });
+    return res;
+  };
+
   /* Example names for a format: each [Part] filled in from a sample
      delivery. A part the samples don't know stays as written, [Like This]. */
   App.namingExamples = (pattern) => App.NAMING_DEFAULTS.samples.map(smp =>
