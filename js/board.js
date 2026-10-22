@@ -12,7 +12,34 @@ window.App = window.App || {};
       const wrap = el('.board');
       if (!episodes.length) { wrap.appendChild(el('.empty', null, 'No episodes match the current filters.')); return wrap; }
       App.sortEpisodes(episodes, 'board').forEach(ep => wrap.appendChild(this.group(ep)));
+      this._watchLatch();
+      requestAnimationFrame(() => this._latch());
       return wrap;
+    },
+
+    /* An open episode's header latches to the top while its subitems scroll
+       under it (CSS position: sticky, held inside its own card — so at the
+       last subitem the card's end pushes it off and the next episode's header
+       takes over). To keep the card's rounded corners while latched, the card
+       is clipped at the header's edge with the same rounding: rows that have
+       scrolled past are trimmed away instead of showing in the corners. */
+    _latch() {
+      document.querySelectorAll('.board .ep-group').forEach(g => {
+        const head = g.querySelector('.ep-row');
+        const off = head ? head.getBoundingClientRect().top - g.getBoundingClientRect().top : 0;
+        g.style.clipPath = off > 0.5 ? 'inset(' + off + 'px 0 0 0 round var(--radius))' : '';
+      });
+    },
+    _watchLatch() {
+      const view = document.getElementById('view');
+      if (!view || view._latchWatched) return;
+      view._latchWatched = true;
+      let queued = false;
+      view.addEventListener('scroll', () => {
+        if (queued || App.state.view !== 'board') return;
+        queued = true;
+        requestAnimationFrame(() => { queued = false; this._latch(); });
+      }, { passive: true });
     },
 
     // Role-aware episode rollup: simple Pending / In Production status, the
