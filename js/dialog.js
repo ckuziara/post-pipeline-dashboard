@@ -2273,7 +2273,7 @@ window.App = window.App || {};
         el('span.pipe-out-sum', null, [fileN ? fileN + ' file' + (fileN === 1 ? '' : 's') : null, softN ? softN + ' soft folder' + (softN === 1 ? '' : 's') : null]
           .filter(Boolean).join(' · ') + (t.outputs && t.outputs.length ? '' : ' · default')),
         el('span.pipe-out-names', null, curOuts.map(o => o.soft ? (o.label || o.suffix) + ' (folder)' : o.suffix + (o.type ? '.' + o.type.toLowerCase() : '')).join(', ')),
-        el('button.btn-mini.pipe-out-edit', { type: 'button', title: tip('Choose what this task delivers'), onclick: () => openDeliverables(t.key) }, 'Edit deliverables…')
+        el('button.btn-mini.pipe-out-edit', { type: 'button', title: tip('Choose what this task delivers'), onclick: () => openDeliverables(t.key) }, 'Edit in PAM…')
       ]);
 
       return el('.pipe-row.editing', null, [
@@ -3456,9 +3456,9 @@ window.App = window.App || {};
       ]);
       // the pipeline controls only make sense once the section is expanded
       const dlvBtn = el('button.btn-mini.pipe-dlv-btn', {
-        type: 'button', title: 'Choose what every task delivers',
+        type: 'button', title: 'PAM — choose what every task delivers',
         onclick: (e) => { e.stopPropagation(); editor.openDeliverables(); }
-      }, [App.icon('package'), ' Deliverables']);
+      }, [App.icon('package'), ' PAM']);
       const pipeTools = [dlvBtn, savePresetBtn, editor.undoBtn, editor.redoBtn, addTaskBtn];
       pipeTools.forEach(b => { b.style.display = 'none'; });
       const pipePanel = collapsible('Customize Pipeline Tasks',
@@ -4559,6 +4559,10 @@ window.App = window.App || {};
             type: 'button', title: 'Schedule, episodes and live dates, and the pipeline with its episode preview',
             onclick: () => { nav = true; App.addShow.open({ showId, back: reopen }); }
           }, [App.icon('calendar'), ' Edit Pipeline']),
+          el('button.btn-mini', {
+            type: 'button', title: 'PAM — what every task in this show delivers, and the names PAM gives the files',
+            onclick: () => App.openShowPam(showId)
+          }, [App.icon('package'), ' PAM']),
           el('button.btn-mini', {
             type: 'button', title: 'Working week, national holidays and time off for this show',
             onclick: () => { nav = true; App.addShow.open({ showId, step: 3, back: reopen }); }
