@@ -110,15 +110,78 @@
     online_conform: [['NOIO-TEXTED', 'MOV'], ['NOIO-TEXTLESS', 'MOV']],
     deliverys: [['IO-TEXTED', 'MOV'], ['IO-TEXTED', 'MP4'], ['NOIO-TEXTED-BITC', 'MP4']]
   };
+  /* Deliverable grouping — tasks that are iterations of one deliverable share
+     a folder (Animatic V1–V3 → Animatic). Used by folders.js for the folder
+     tree, and here so a task with no outputs of its own is named after the
+     same folder the server files it in. Anything unmapped keeps its own name. */
+  App.DELIVERABLE_GROUPS = {
+  // Creative
+  core_premises: 'Story', scripts: 'Story',
+  design: 'Design',
+  storyboard: 'Storyboard',
+  animatic_v1: 'Animatic', animatic_v2: 'Animatic', animatic_v3: 'Animatic',
+  // Music
+  music_skeleton: 'Skeleton',
+  vocal_records: 'Vocals', vocal_comps: 'Vocals',
+  song_master: 'Master',
+  music_score: 'Score',
+  // Animation
+  layout: 'Layout_Blocking', blocking: 'Layout_Blocking',
+  animation: 'Animation',
+  lrc: 'LRC', final_lrc: 'LRC',
+  vfx_cleanup: 'VFX_Cleanup',
+  // Audio Post
+  vo_records: 'VO', vo_comps: 'VO',
+  wallah_v1: 'Wallah', wallah_v2: 'Wallah', wallah_v3: 'Wallah',
+  sfx_v1: 'SFX', sfx_v2: 'SFX', sfx_v3: 'SFX',
+  sound_design: 'SoundDesign', final_mix: 'Mix',
+  // Video Post
+  edit_v1: 'Edit', edit_v2: 'Edit',
+  picture_lock: 'PictureLock',
+  color_grade: 'Grade',
+  online_conform: 'Online',
+  subtitle: 'Subtitle',
+  // Post Ops / QC
+  footage_ingest: 'Ingest',
+  deliverys: 'Deliverys',
+  qc: 'QC'
+};
+  // the folder a task delivers into: its group, else its name made folder-safe ("My Task" → MyTask)
+  App.deliverableGroup = (task) => (task && App.DELIVERABLE_GROUPS[task.key]) ||
+    String((task && task.name) || '').replace(/[^A-Za-z0-9]+/g, ' ').trim().split(' ').join('');
+  // a name people typed → a suffix: "VO stems" → VO-STEMS
+  App.suffixFromLabel = (v) => String(v || '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   // deliverable folder → suffix: "Layout_Blocking" → LAYOUT-BLOCKING
   const groupSuffix = (g) => String(g || 'FILE').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '');
+  /* An output is one of:
+       { suffix, type }                   one exact file, from Naming Conventions
+       { suffix, type, internal: true }   one exact file, but the suffix is the
+                                          studio's own (WALLA) — never for Moonbase
+       { suffix, soft: true, label, types }  a soft delivery: a versioned FOLDER
+                                          (…_VO-STEMS_v001/) of files that keep
+                                          their own names — stem exports and the like */
+  App.cleanSuffix = (v) => String(v || '').replace(/\s+/g, '').toUpperCase().replace(/[^A-Z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
   App.taskOutputs = (task, deliverable) => {
-    const own = task && Array.isArray(task.outputs) && task.outputs.length ? task.outputs.map(o => [o.suffix, o.type]) : null;
-    const rows = own || (task && App.DEFAULT_OUTPUTS[task.key]) || [[groupSuffix(deliverable || (task && task.name)), '']];
+    const own = task && Array.isArray(task.outputs) && task.outputs.length ? task.outputs : null;
+    const rows = own || ((task && App.DEFAULT_OUTPUTS[task.key]) || [[groupSuffix(deliverable || App.deliverableGroup(task)), '']])
+      .map(([suffix, type]) => ({ suffix, type }));
     // spaces can't go in a file name — the standard document's 'ACA -RADIOEDIT' is ACA-RADIOEDIT
-    return rows.map(([suffix, type]) => ({ suffix: String(suffix || '').replace(/\s+/g, '').toUpperCase(), type: String(type || '').trim().toUpperCase() }))
-      .filter(o => o.suffix);
+    return rows.map(o => {
+      const out = { suffix: App.cleanSuffix(o.suffix), type: o.soft ? '' : String(o.type || '').trim().toUpperCase() };
+      if (o.soft) { out.soft = true; out.label = String(o.label || '').trim() || null; out.types = (o.types || []).map(t => String(t).toUpperCase()).filter(Boolean); }
+      if (o.internal) out.internal = true;
+      return out;
+    }).filter(o => o.suffix);
   };
+  // an output as it's saved with a pipeline — only the fields that mean something
+  App.cleanOutput = (x) => {
+    const o = { suffix: App.cleanSuffix(x.suffix), type: x.soft ? '' : String(x.type || '').toUpperCase() };
+    if (x.soft) { o.soft = true; if (x.label) o.label = String(x.label).slice(0, 60); if (x.types && x.types.length) o.types = x.types.slice(0, 10); }
+    if (x.internal) o.internal = true;
+    return o;
+  };
+  // one output's identity, for comparing lists: MIX|WAV, VO-STEMS|soft
+  App.outputKey = (o) => App.cleanSuffix(o.suffix) + '|' + (o.soft ? 'soft' : String(o.type || '').toUpperCase());
 
   // Language and format: the episode's own, else the show's, else English US / no format yet
   App.namingIdentity = (ep, show) => ({
@@ -209,12 +272,13 @@
     const labels = {};
     App.namingConfig(stored).tables.find(t => t.key === 'suffixes').rows.forEach(rw => { labels[rw[0]] = labels[rw[0]] || rw[2]; });
     const langs = [...new Set(outs.map(o => o.language).filter(Boolean))];
+    const softFits = (o, ext) => !o.types || !o.types.length || o.types.some(t => App.typeFits(t, ext));
     const scoreOf = (name, o) => {
       const ext = (String(name).split('.').pop() || '').toLowerCase();
-      if (!App.typeFits(o.type, String(name).includes('.') ? ext : '')) return 0;
+      if (o.soft ? !softFits(o, ext) : !App.typeFits(o.type, String(name).includes('.') ? ext : '')) return 0;
       if (o.stem && (String(name) === o.stem || String(name).startsWith(o.stem + '_v') || String(name).startsWith(o.stem + '.'))) return 1000;
       const toks = tokensOf(name), compact = toks.join('');
-      const phrases = [o.suffix.toLowerCase().replace(/-/g, ' '), String(labels[o.suffix] || '').toLowerCase().replace(/&/g, 'n').replace(/[^a-z0-9]+/g, ' ').trim()]
+      const phrases = [o.suffix.toLowerCase().replace(/-/g, ' '), String(o.label || labels[o.suffix] || '').toLowerCase().replace(/&/g, 'n').replace(/[^a-z0-9]+/g, ' ').trim()]
         .concat(App.DELIVERY_ALIASES[o.suffix] || []).filter(Boolean);
       let best = 0;
       phrases.forEach(p => { best = Math.max(best, phraseScore(p, toks, compact)); });
@@ -226,16 +290,128 @@
     names.forEach((n, fi) => outs.forEach((o, oi) => { const s = scoreOf(n, o); if (s > 0) pairs.push({ fi, oi, s }); }));
     pairs.sort((a, b) => b.s - a.s || a.fi - b.fi || a.oi - b.oi);
     const res = names.map(n => ({ name: n, out: -1, score: 0 })), taken = new Set();
-    pairs.forEach(p => { if (res[p.fi].out < 0 && !taken.has(p.oi)) { res[p.fi].out = p.oi; res[p.fi].score = p.s; taken.add(p.oi); } });
+    // a soft delivery is a folder: it takes as many files as name it, so it's never "taken"
+    pairs.forEach(p => { if (res[p.fi].out < 0 && !taken.has(p.oi)) { res[p.fi].out = p.oi; res[p.fi].score = p.s; if (!outs[p.oi].soft) taken.add(p.oi); } });
     // nothing in the name says which, but only one deliverable takes this type: that's it
     res.forEach(r => {
       if (r.out >= 0) return;
       const ext = (String(r.name).split('.').pop() || '').toLowerCase();
       const fit = outs.map((o, i) => i).filter(i => !taken.has(i) && outs[i].type && App.typeFits(outs[i].type, ext));
       const sameType = outs.filter(o => o.type && App.typeFits(o.type, ext));
-      if (fit.length === 1 && sameType.length === 1) { r.out = fit[0]; taken.add(fit[0]); }
+      if (fit.length === 1 && sameType.length === 1) { r.out = fit[0]; taken.add(fit[0]); return; }
+      // still nobody's: the task's one soft folder, if it takes this type
+      const soft = outs.map((o, i) => i).filter(i => outs[i].soft && softFits(outs[i], ext));
+      if (soft.length === 1) r.out = soft[0];
     });
     return res;
+  };
+
+  /* ---- The deliverables catalogue (Deliverables page, js/deliverables.js) --
+     Every Naming Conventions suffix × type, grouped into what people think in:
+     stems, music, masters, MP4 copies… so a long table reads as a short shelf. */
+  App.DELIVERABLE_CATEGORIES = ['Audio stems', 'Music', 'Video masters', 'MP4 copies', 'Subtitles', 'Scripts and lyrics',
+    'Graphics and titles', 'Access', 'QC reports', 'Thumbnails', 'Other'];
+  App.deliverableCategory = (suffix, type) => {
+    const s = String(suffix || '').toUpperCase(), t = String(type || '').toUpperCase();
+    if (/-QC$|^EQC$/.test(s)) return 'QC reports';
+    if (/^AD-/.test(s)) return 'Access';
+    if (/^THUMB/.test(s)) return 'Thumbnails';
+    if (/TITLECARD|^GFX|ALPHA|CREDIT/.test(s)) return 'Graphics and titles';
+    if (/^(SUB|SCC)|CATSUB|KAR/.test(s) && t !== 'MOV' || t === 'SRT') return 'Subtitles';
+    if (/^(SP|GFXINS-SP|SPSUB|LY-|MCS)/.test(s)) return 'Scripts and lyrics';
+    if (/TEXTED|TEXTLESS/.test(s)) return t === 'MOV' ? 'Video masters' : 'MP4 copies';
+    if (/SONGMASTER|^ACA|^INST|^SCR|MUSICMIX|VOTITLE/.test(s)) return 'Music';
+    if (t === 'WAV') return 'Audio stems';
+    return 'Other';
+  };
+  App.deliverableCatalogue = (stored) => {
+    const rows = App.namingConfig(stored).tables.find(t => t.key === 'suffixes').rows;
+    const seen = new Set(), out = [];
+    rows.forEach(rw => {
+      const suffix = App.cleanSuffix(rw[0]), type = String(rw[1] || '').toUpperCase();
+      if (!suffix || seen.has(suffix + '|' + type)) return;
+      seen.add(suffix + '|' + type);
+      out.push({ suffix, type, label: rw[2] || suffix, desc: rw[3] || '', category: App.deliverableCategory(suffix, type) });
+    });
+    return out;
+  };
+
+  /* Smart search over the catalogue. Words count in any order and match the
+     code, label, description, category and the everyday words in
+     DELIVERY_ALIASES ("m&e", "dx", "acapella"). Delivery-speak is read too:
+     "no intro" → NOIO, "with intro" → IO, "burnt in timecode" → BITC,
+     "audio description" → AD, and a file type ("mp4") filters by type.
+     → [{ ...entry, score }] best first. */
+  const SEARCH_PHRASES = [[/\bno\s*intro\b|\bwithout intro\b|\bno io\b/g, ' noio '], [/\bwith intro\b/g, ' io '],
+    [/\bburnt?[\s-]*in(\s*time\s*code)?\b|\btime\s*code\b/g, ' bitc '], [/\baudio\s*desc(ription)?\b/g, ' ad '],
+    [/\bm\s*&\s*e\b|\bm and e\b/g, ' mne '], [/\btext\s*less\b/g, ' textless '], [/\bvo\b|\bvoice\s*over\b/g, ' vo ']];
+  App.searchDeliverables = (query, opts) => {
+    const cat = (opts && opts.catalogue) || App.deliverableCatalogue(opts && opts.stored);
+    let q = ' ' + String(query || '').toLowerCase() + ' ';
+    SEARCH_PHRASES.forEach(([re, to]) => { q = q.replace(re, to); });
+    let words = q.split(/[^a-z0-9]+/).filter(Boolean);
+    const types = new Set(cat.map(e => e.type.toLowerCase()).filter(Boolean));
+    const wantTypes = words.filter(w => types.has(w));
+    words = words.filter(w => !types.has(w));
+    if (!words.length && !wantTypes.length) return cat.map(e => Object.assign({ score: 0 }, e));
+    return cat.map(e => {
+      if (wantTypes.length && !wantTypes.includes(e.type.toLowerCase())) return null;
+      if (!words.length) return Object.assign({ score: 1 }, e);
+      const codeToks = e.suffix.toLowerCase().split('-');
+      const hay = [e.suffix.toLowerCase().replace(/-/g, ' '), e.label.toLowerCase(), e.desc.toLowerCase(), e.category.toLowerCase(),
+        (App.DELIVERY_ALIASES[e.suffix] || []).join(' ')].join(' ').replace(/&/g, ' and ');
+      const hayToks = hay.split(/[^a-z0-9]+/);
+      let score = 0;
+      for (const w of words) {
+        // the code's own parts weigh most: "noio texted" must not pick IO-TEXTED
+        if (codeToks.includes(w)) score += 6;
+        else if (hayToks.includes(w)) score += 3;
+        else if (w.length >= 3 && hayToks.some(h => h.startsWith(w))) score += 1;
+        else return null;                                 // every word has to land somewhere
+      }
+      // the IO / NOIO pair: asking for one rules the other out
+      if (words.includes('io') && codeToks.includes('noio')) return null;
+      if (words.includes('noio') && codeToks.includes('io')) return null;
+      score -= codeToks.length * 0.1;                    // the plainer code first, on a tie
+      return Object.assign({ score }, e);
+    }).filter(Boolean).sort((a, b) => b.score - a.score);
+  };
+
+  /* What to suggest for a task: what's been picked before, learned from every
+     pipeline on the board (shows, presets, custom defaults). The same task
+     first ("Final Mix usually delivers"), then its department ("Audio Post
+     often picks"), then the built-in defaults when there's no history.
+     → { task: [...], dept: [...], set: [...] | null, defaults: [...] },
+     each item an output plus { count, of }. */
+  App.suggestDeliverables = (taskKey, dept, data) => {
+    const d = data || (App.state && App.state.data) || {};
+    const pipes = [];
+    (d.shows || []).forEach(s => { if (Array.isArray(s.pipeline)) pipes.push(s.pipeline); });
+    (d.pipelinePresets || []).forEach(p => { if (Array.isArray(p.pipeline)) pipes.push(p.pipeline); });
+    Object.values(d.defaultPipelines || {}).forEach(p => { if (Array.isArray(p)) pipes.push(p); });
+    const tally = (filter) => {
+      const counts = {}, sets = {}; let of = 0;
+      pipes.forEach(p => p.forEach(t => {
+        if (!filter(t) || !Array.isArray(t.outputs) || !t.outputs.length) return;
+        of++;
+        const outs = App.taskOutputs(t, null);
+        outs.forEach(o => { const k = App.outputKey(o); (counts[k] = counts[k] || { o, count: 0 }).count++; });
+        const setKey = outs.map(App.outputKey).sort().join(',');
+        (sets[setKey] = sets[setKey] || { items: outs, count: 0 }).count++;
+      }));
+      const items = Object.values(counts).sort((a, b) => b.count - a.count).map(x => Object.assign({}, x.o, { count: x.count, of }));
+      const best = Object.values(sets).sort((a, b) => b.count - a.count)[0];
+      return { items, set: best && best.items.length > 1 && best.count > 1 ? Object.assign({ count: best.count, of }, { items: best.items }) : null };
+    };
+    const byTask = tally(t => t.key === taskKey);
+    const byDept = tally(t => t.dept === dept && t.key !== taskKey);
+    const have = new Set(byTask.items.map(App.outputKey));
+    return {
+      task: byTask.items,
+      dept: byDept.items.filter(o => !have.has(App.outputKey(o))).slice(0, 12),
+      set: byTask.set,
+      defaults: (App.DEFAULT_OUTPUTS[taskKey] || []).map(([suffix, type]) => ({ suffix, type }))
+    };
   };
 
   /* Example names for a format: each [Part] filled in from a sample
