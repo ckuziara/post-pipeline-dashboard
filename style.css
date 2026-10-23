@@ -6781,3 +6781,21 @@ button.qcq-report-link:hover { text-decoration: underline; }
 .aqc-vc-row .aqc-file-name { flex: 1; min-width: 0; }
 .aqc-vc-acts { display: inline-flex; gap: 4px; flex: none; }
 .aqc-vc-err { color: var(--ink-bad); margin: -2px 0 0 0; }
+/* the delivery check (App.deliveryCheck): a delivered file's badge, the note by Send, QC's flag */
+.aqc-pre-chip { display: inline-flex; align-items: center; gap: 2px; flex: none; font-size: 10.5px; font-weight: 800; padding: 1px 7px 1px 5px;
+  border-radius: 999px; cursor: pointer; white-space: nowrap; }
+.aqc-pre-chip svg { width: 11px; height: 11px; }
+.aqc-pre-chip.pass { color: var(--ink-ok); background: rgba(46,204,113,.14); }
+.aqc-pre-chip.flag { color: var(--ink-warn); background: rgba(255,170,60,.16); }
+.aqc-pre-chip.fail { color: var(--ink-bad); background: rgba(255,91,110,.16); }
+.ws-item .aqc-pre-chip { margin-left: auto; }
+.ws-item .aqc-pre-chip + .ws-meta, .ws-item .aqc-pre-chip + .ws-chip { margin-left: 6px; }
+.aqc-pre-warn { cursor: pointer; display: flex; align-items: flex-start; gap: 4px; }
+.aqc-pre-warn svg { flex: none; margin-top: 2px; width: 13px; height: 13px; }
+.aqc-pre-warn.fail { color: var(--ink-bad); }
+.aqc-pre-warn.flag { color: var(--ink-warn); }
+.aqc-pre-note { font-size: 12.5px; font-weight: 600; padding: 9px 12px; border-radius: 9px; }
+.aqc-pre-note.fail { color: var(--ink-bad); background: rgba(255,91,110,.12); }
+.aqc-pre-note.flag { color: var(--ink-warn); background: rgba(255,170,60,.14); }
+.aqc-adm-switch { display: flex; align-items: flex-start; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); cursor: pointer; }
+.aqc-adm-switch .switch { flex: none; margin-top: 2px; }

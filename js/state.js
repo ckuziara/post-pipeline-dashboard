@@ -571,7 +571,9 @@ window.App = window.App || {};
       perDay: Math.max(1, Math.round(q.perDay || 5)), defaultDays: Math.max(1, Math.round(q.defaultDays || 1)),
       // AQC: who runs Run AQC — PipeDream's own checks, VidChecker (watch folders), or both (server.js /api/task/aqc)
       aqcMode: ['internal', 'vidchecker', 'both'].includes(q.aqcMode) ? q.aqcMode : 'internal',
-      vcIn: q.vcIn || '', vcOut: q.vcOut || ''
+      vcIn: q.vcIn || '', vcOut: q.vcOut || '',
+      // the delivery check: internal AQC on every delivery, before QC (App.deliveryCheck) — on unless switched off
+      aqcOnDeliver: q.aqcOnDeliver !== false
     };
   };
   /* Brand Configuration (Admin → Workflow): the studio's logo (a PNG or

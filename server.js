@@ -2338,6 +2338,20 @@ const server = http.createServer(async (req, res) => {
         const version = Math.max(1, Math.min(99, parseInt(body.version, 10) || 1));
         const { files, dirs } = deliveredFiles(ctx);
         if (!files.length) return sendJson(res, 200, { ok: true, empty: true, folders: dirs });
+
+        /* The delivery check: right after a department delivers, the internal
+           checks on just the files it delivered (body.files — names in
+           Mezzanine), whatever the AQC mode, so a problem is fixed before
+           it reaches QC. Nothing is written: the result is the department's
+           own, kept on the board (ep.aqcPre). */
+        if (body.precheck) {
+          const want = new Set((Array.isArray(body.files) ? body.files : []).map(n => path.basename(String(n))));
+          const mine = files.filter(f => want.has(f.name));
+          if (!mine.length) return sendJson(res, 200, { ok: true, empty: true });
+          const suffixes = ctx.data ? namingJs.namingSuffixes(ctx.data.naming || null)
+            : (Array.isArray(body.suffixes) ? body.suffixes.map(String).slice(0, 500) : []);
+          return sendJson(res, 200, { ok: true, precheck: true, result: aqc.run(mine, (n) => namingJs.assetSuffix(n, suffixes), {}) });
+        }
         const cfg = aqcConfig(ctx, body);
         const dirAbs = qcFolderFor(ctx);
         fs.mkdirSync(dirAbs, { recursive: true });
