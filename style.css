@@ -1323,6 +1323,9 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
 .board .ep-group { --ep-r: calc(var(--radius) - 1px); }
 :root[data-skin="expressive"] .board .ep-group { --ep-r: calc(var(--r-card) - 1px); }
 .board .ep-row { position: sticky; top: 0; z-index: 4; border-radius: var(--ep-r) var(--ep-r) 0 0; }
+/* stuck (see App.board._latch): the scroll-state query where the browser has
+   one — same frame as the stick, no script — or the .latched class elsewhere */
+.board .ep-row { container-type: scroll-state; }
 .board .ep-row.latched::before {
   content: ''; position: absolute; left: -1px; right: -1px; top: -15px; height: calc(15px + var(--ep-r));
   pointer-events: none; z-index: -1; background-color: var(--bg); background-attachment: fixed;
@@ -1334,7 +1337,30 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
     radial-gradient(circle at 0 100%, transparent calc(var(--ep-r) - .5px), #000 var(--ep-r)) right 0 bottom 0 / calc(var(--ep-r) + 1px) var(--ep-r) no-repeat;
 }
 :root[data-skin="expressive"] .board .ep-row.latched::before { background-image: var(--page-art); }
-.board .ep-group, :root[data-skin="expressive"] .board .ep-group { overflow: clip; }
+@container scroll-state(stuck: top) {
+  .board .ep-row::before {
+    content: ''; position: absolute; left: -1px; right: -1px; top: -15px; height: calc(15px + var(--ep-r));
+    pointer-events: none; z-index: -1; background-color: var(--bg); background-attachment: fixed;
+    -webkit-mask: linear-gradient(#000, #000) top / 100% 15px no-repeat,
+      radial-gradient(circle at 100% 100%, transparent calc(var(--ep-r) - .5px), #000 var(--ep-r)) left 0 bottom 0 / calc(var(--ep-r) + 1px) var(--ep-r) no-repeat,
+      radial-gradient(circle at 0 100%, transparent calc(var(--ep-r) - .5px), #000 var(--ep-r)) right 0 bottom 0 / calc(var(--ep-r) + 1px) var(--ep-r) no-repeat;
+            mask: linear-gradient(#000, #000) top / 100% 15px no-repeat,
+      radial-gradient(circle at 100% 100%, transparent calc(var(--ep-r) - .5px), #000 var(--ep-r)) left 0 bottom 0 / calc(var(--ep-r) + 1px) var(--ep-r) no-repeat,
+      radial-gradient(circle at 0 100%, transparent calc(var(--ep-r) - .5px), #000 var(--ep-r)) right 0 bottom 0 / calc(var(--ep-r) + 1px) var(--ep-r) no-repeat;
+  }
+  :root[data-skin="expressive"] .board .ep-row::before { background-image: var(--page-art); }
+}
+/* clipped at the border, not inside it, so the latched header's mask can cover
+   the card's own outline in the strip above it — otherwise its top edge and
+   sides show through there */
+.board .ep-group, :root[data-skin="expressive"] .board .ep-group { overflow: clip; overflow-clip-margin: border-box; }
+/* clipped at the outer edge, the corners of what sits inside the outline round
+   themselves to its inner curve: the accent bar and header at the top, and
+   whichever is last — the header of a closed card, or the table — at the bottom */
+.board .ep-accent { border-top-left-radius: var(--ep-r); }
+.board .ep-row:last-child { border-radius: var(--ep-r); }
+.board .ep-row:last-child .ep-accent { border-bottom-left-radius: var(--ep-r); }
+.board .ep-group > .subtable:last-child { border-radius: 0 0 var(--ep-r) var(--ep-r); }
 .ep-accent { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
 .ep-row .chev { color: var(--text-2); font-size: 11px; transition: transform .15s; justify-self: center; }
 .ep-row .chev.open { transform: rotate(90deg); }
@@ -1378,6 +1404,16 @@ body.gantt-shift .g-row.sub .g-track { cursor: crosshair; }
   align-items: center; border-top: 1px solid var(--border);
 }
 .subrow.head { background: var(--bg-2); position: sticky; top: 0; }
+/* the Board's column headings: a strip of their own above the table (see
+   App.board.subtable), latched under the episode header — the same card holds
+   both, so the end of the episode pushes them off together. Below the
+   header (4), above the rows. */
+.board .subhead {
+  position: sticky; top: var(--ep-head-h, 61px); z-index: 3;
+  overflow: hidden; background: var(--bg-2); border-top: 1px solid var(--border-2);
+}
+.board .subhead .subrow.head { position: static; border-top: 0; }
+.board .subhead + .subtable { border-top: 0; }
 .subrow.head .cell { font-size: 10px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; padding: 9px 12px; }
 .subrow:not(.head):hover { background: var(--hover); }
 /* a Board task in the shared selection (Shift+click) — the Timeline's accent, as a row tint */
@@ -4342,8 +4378,12 @@ textarea.fld, :root[data-skin] textarea.fld { border-radius: min(var(--r-ctl, 8p
   .subrow { grid-template-columns: 1fr 38px 22px 108px; column-gap: 8px; }
   .subrow .cell.c-num,
   .subrow .cell.c-dept, .subrow .cell.c-date, .subrow .cell.c-deps { display: none; }
-  .subrow.head .cell:nth-child(3), .subrow.head .cell:nth-child(7),
-  .subrow.head .cell:nth-child(8), .subrow.head .cell:nth-child(9) { display: none; }
+  /* the Board's headings to match: Department, Start, Due, Dependency.
+     .board for the weight to beat .subrow.head .cell.sortable's display: flex,
+     which comes later in the file (column sorting) and otherwise wins. The
+     QC queue's grid has its own columns, so it's left out. */
+  .board .subrow.head .cell:nth-child(3), .board .subrow.head .cell:nth-child(7),
+  .board .subrow.head .cell:nth-child(8), .board .subrow.head .cell:nth-child(9) { display: none; }
   .subrow .cell.c-name { font-size: 13.5px; }
   .status-cell { font-size: 12px; min-height: 46px; }
   .status-opt { min-height: 46px; font-size: 12.5px; }
