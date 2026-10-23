@@ -389,7 +389,13 @@ function reconcile(mezzAbs, expected, versionDirs, stored) {
       out.renamed.push({ from: it.name, to });
       return;
     }
-    const fits = expected.filter(o => naming.typeFits(o.type, extOf(it.name)));
+    /* what could take it: a file output of its type, or a folder (soft
+       delivery) whose types allow it — a folder with types set isn't
+       offered for a file it would refuse */
+    const ext = extOf(it.name);
+    const fits = expected.filter(o => o.soft
+      ? !o.types || !o.types.length || o.types.some(t => naming.typeFits(t, ext))
+      : naming.typeFits(o.type, ext));
     const uniq = fits.filter((o, j) => fits.findIndex(x => x.stem === o.stem) === j);
     if (uniq.length) out.ambiguous.push({ name: it.name, stems: uniq.map(o => o.stem) });
     else out.stray.push(it.name);

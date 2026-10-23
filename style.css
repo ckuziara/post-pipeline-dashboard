@@ -554,9 +554,19 @@ a.ws-name:hover { text-decoration: underline; }
 /* Project block: a new version is due (Director feedback or a QC report) */
 .ws-redo { color: var(--ink-warn); }
 .ws-soft-add { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-.ws-ambig { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-/* a text button inside a note, not the 28px icon square .btn-mini is by default */
-.ws-inline-btn { width: auto; height: auto; padding: 4px 9px; font-size: 11px; border-color: var(--border-2); color: var(--text-2); white-space: nowrap; }
+/* files that could be more than one deliverable: a two-column table — the
+   file, then its choices — one subgrid so every row's columns line up */
+.ws-ambig-list { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; margin: 8px 0 4px;
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.ws-ambig-head { grid-column: 1 / -1; font-size: 11.5px; font-weight: 700; color: var(--text-2); padding: 8px 12px; background: var(--hover); }
+.ws-ambig { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; padding: 6px 12px; border-top: 1px solid var(--border); }
+.ws-ambig-name { min-width: 0; font-size: 12px; color: var(--text-2); font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-ambig-picks { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.ws-ambig.stray .ws-ambig-name { color: var(--text-3); }
+.ws-ambig.stray .ws-ambig-picks { font-size: 11px; color: var(--text-3); font-style: italic; white-space: nowrap; }
+/* a text button inside a note, not the 28px icon square .btn-mini is by default —
+   two classes, so it outranks .btn-mini's own size rules further down */
+.btn-mini.ws-inline-btn { width: auto; height: auto; padding: 4px 9px; font-size: 11px; border-color: var(--border-2); color: var(--text-2); white-space: nowrap; }
 .ws-drop {
   border: 1.5px dashed var(--border-2); border-radius: 11px; padding: 20px 14px;
   text-align: center; cursor: pointer; transition: background .13s, border-color .13s;
