@@ -19,6 +19,7 @@ const os = require('os');
 const crypto = require('crypto');
 const folders = require('./folders');
 const qcReport = require('./qcreport');
+const aqc = require('./aqc');
 const namingJs = require('./js/naming.js');
 const { makePgChat, parseTaskId } = require('./chat-store');
 const { makeKeyVault } = require('./keyvault');
@@ -1142,6 +1143,42 @@ const qcReportName = (ctx, version) => { const st = qcStem(ctx); return st ? st 
 const qcReportNames = (ctx, version) => [...new Set([qcReportName(ctx, version), qcLegacy(ctx, version)])];
 const qcProjectStem = (ctx, version) => { const st = qcStem(ctx);
   return st ? st + '_QC' + qcV(version) : folders.episodeFolder(ctx.ep).split('_')[0] + '_' + ctx.paths.deliverable + '_QC_V' + version; };
+
+/* AQC (POST /api/task/aqc): who runs it, and VidChecker's watch folders —
+   the board's QC settings, or for a companion (no board) the copy the
+   client sent. A watch folder that isn't absolute is inside the production
+   folder, so every machine finds it under its own mount. */
+const VIDCHECKER_EXT = /\.(mov|mp4|mxf|m4v|wav|aif|aiff)$/i;
+const REPORT_EXT_ANY = /\.(pdf|xml|csv|xlsx|xls|txt|html?)$/i;
+function aqcConfig(ctx, body) {
+  const q = (ctx.data ? ctx.data.qcSettings : body.aqc) || {};
+  const mode = ['internal', 'vidchecker', 'both'].includes(q.aqcMode) ? q.aqcMode : 'internal';
+  return { mode, vcIn: String(q.vcIn || '').trim(), vcOut: String(q.vcOut || '').trim() };
+}
+function watchFolder(p, masterPath) {
+  const abs = path.isAbsolute(p) ? path.resolve(p) : path.resolve(masterPath, p);
+  try { return fs.statSync(abs).isDirectory() ? abs : null; } catch (e) { return null; }
+}
+const aqcStem = (ctx) => qcStem(ctx) || folders.episodeFolder(ctx.ep).split('_')[0] + '_' + ctx.paths.deliverable;
+function deliveredFiles(ctx) {
+  const { masterPath, show, paths } = ctx;
+  const listed = (rel) => { const abs = folders.resolveIn(masterPath, show, rel); return folders.listDir(abs).map(i => Object.assign(i, { abs: path.join(abs, i.name) })); };
+  let items = listed(paths.mezzanine);
+  if (!items.length) items = listed(paths.publish);
+  return { files: items.filter(i => !i.dir), dirs: items.filter(i => i.dir).map(i => i.name) };
+}
+// EP_NOIO-TEXTED.mov + "EP_NOIO-TEXTED_report.pdf" → EP_NOIO-TEXTED-PR-QC.pdf, when the convention has that suffix
+function vidcheckerReportName(media, report, suffixes, n) {
+  const ext = path.extname(report).toLowerCase();
+  // Mezzanine names keep their version tag (…_NOIO-TEXTED_v002): the suffix sits before it
+  const stem = media.replace(/\.[^.]+$/, ''), base = stem.replace(/[_\- ]v\d+$/i, ''), tag = stem.slice(base.length);
+  const sx = namingJs.assetSuffix(media, suffixes);
+  const kind = /\.mp4$/i.test(media) ? 'MP4' : /\.(mov|mxf)$/i.test(media) ? 'PR' : null;
+  const qcSx = sx && kind ? sx + '-' + kind + '-QC' : null;
+  if (qcSx && suffixes.includes(qcSx) && base.toUpperCase().endsWith(sx.toUpperCase()))
+    return folders.safeFile(base.slice(0, base.length - sx.length) + qcSx + tag + (n ? '_' + (n + 1) : '') + ext);
+  return folders.safeFile(report);
+}
 
 function openNatively(target) {
   const { spawn } = require('child_process');
@@ -2277,6 +2314,111 @@ const server = http.createServer(async (req, res) => {
         const reportAbs = qcReportNames(ctx, version).map(n => path.join(dirAbs, n)).find(f => fs.existsSync(f)) || null;
         return sendJson(res, 200, { ok: true, dir: dirAbs, exists: fs.existsSync(dirAbs),
           report: reportAbs, root: path.resolve(ctx.masterPath) });
+      }
+
+      /* Run AQC on every file the task delivered (Mezzanine, or Publish once
+         it's been published). Admin → Workflow → QC picks who does it
+         (qcSettings.aqcMode):
+           internal    aqc.js checks the files against the Moonbase spec here,
+                       and the results come straight back — saved as
+                         <CC><LANG>_<FORMAT>_<DELIVERABLE>_AQC_v001.csv
+                       in QC's folder beside the project and report
+           vidchecker  the media is copied into VidChecker's watch-in folder;
+                       its reports land in the watch-out folder and Collect
+                       (/api/task/aqc-collect) files them in QC's folder
+           both        the two together: the quick checks now, VidChecker's
+                       report when it's done
+         Folders (soft deliveries such as project folders) are listed, never
+         opened or sent — they keep their own files and names. */
+      if (route === 'POST /api/task/aqc') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const { show, ep, paths } = ctx;
+        const version = Math.max(1, Math.min(99, parseInt(body.version, 10) || 1));
+        const { files, dirs } = deliveredFiles(ctx);
+        if (!files.length) return sendJson(res, 200, { ok: true, empty: true, folders: dirs });
+        const cfg = aqcConfig(ctx, body);
+        const dirAbs = qcFolderFor(ctx);
+        fs.mkdirSync(dirAbs, { recursive: true });
+        const out = { ok: true, mode: cfg.mode, folders: dirs, dir: dirAbs };
+
+        if (cfg.mode !== 'vidchecker') {
+          const suffixes = ctx.data ? namingJs.namingSuffixes(ctx.data.naming || null)
+            : (Array.isArray(body.suffixes) ? body.suffixes.map(String).slice(0, 500) : []);
+          const result = aqc.run(files, (n) => namingJs.assetSuffix(n, suffixes), {});
+          const csvName = folders.safeFile(aqcStem(ctx) + '_AQC' + qcV(version) + '.csv');
+          fs.writeFileSync(path.join(dirAbs, csvName), aqc.toCsv(result, {
+            show: show.name, code: ep.code, task: String(body.taskName || body.taskKey || '').slice(0, 120), version,
+            date: new Date().toISOString().slice(0, 16).replace('T', ' ')
+          }));
+          Object.assign(out, { result, report: csvName });
+        }
+
+        if (cfg.mode !== 'internal') {
+          const inDir = cfg.vcIn && watchFolder(cfg.vcIn, ctx.masterPath);
+          if (!inDir) return sendJson(res, 400, { error: cfg.vcIn ? 'VidChecker’s watch-in folder isn’t there: ' + cfg.vcIn : 'Set VidChecker’s watch-in folder in Admin → Workflow → QC first' });
+          const media = files.filter(f => VIDCHECKER_EXT.test(f.name));
+          if (!media.length) Object.assign(out, { vidchecker: { submitted: [], note: 'no media files to send' } });
+          else {
+            /* Copied in the background: ProRes masters run to gigabytes, and
+               this answers at once. The job record is how Collect knows what
+               to look for, and since when. */
+            const job = { submittedAt: new Date().toISOString(), version, in: inDir, files: media.map(f => ({ name: f.name, state: 'copying' })) };
+            const jobAbs = path.join(dirAbs, folders.safeFile(aqcStem(ctx) + '_VIDCHECKER' + qcV(version) + '.json'));
+            const saveJob = () => { try { fs.writeFileSync(jobAbs, JSON.stringify(job, null, 2)); } catch (e) { /* the QC folder went away */ } };
+            saveJob();
+            (async () => {
+              for (const [i, f] of media.entries()) {
+                try { await fs.promises.copyFile(f.abs, path.join(inDir, f.name)); job.files[i].state = 'sent'; }
+                catch (e) { job.files[i].state = 'failed'; job.files[i].error = e.message; }
+                saveJob();
+              }
+            })();
+            Object.assign(out, { vidchecker: { submitted: media.map(f => f.name), submittedAt: job.submittedAt, in: inDir } });
+          }
+        }
+        return sendJson(res, 200, out);
+      }
+
+      /* Collect VidChecker's reports for a task's AQC run: anything in the
+         watch-out folder named after a file that was sent, written since it
+         was sent, is copied into QC's folder under the naming convention's
+         automated-QC suffix — NOIO-TEXTED.mov's report becomes
+         …_NOIO-TEXTED-PR-QC.pdf, an MP4's …-MP4-QC — or, for a file the
+         convention has no QC suffix for, keeps VidChecker's own name. Reads
+         only, apart from that copy; safe to ask again. */
+      if (route === 'POST /api/task/aqc-collect') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ctx = await resolveTaskContext(body, { companion: !!companionOrigin(req), req });
+        if (ctx.error) return sendJson(res, 400, { error: ctx.error });
+        const version = Math.max(1, Math.min(99, parseInt(body.version, 10) || 1));
+        const dirAbs = qcFolderFor(ctx);
+        const jobAbs = path.join(dirAbs, folders.safeFile(aqcStem(ctx) + '_VIDCHECKER' + qcV(version) + '.json'));
+        let job = null;
+        try { job = JSON.parse(fs.readFileSync(jobAbs, 'utf8')); } catch (e) { return sendJson(res, 200, { ok: true, none: true }); }
+        const cfg = aqcConfig(ctx, body);
+        const outDir = cfg.vcOut && watchFolder(cfg.vcOut, ctx.masterPath);
+        if (!outDir) return sendJson(res, 400, { error: cfg.vcOut ? 'VidChecker’s watch-out folder isn’t there: ' + cfg.vcOut : 'Set VidChecker’s watch-out folder in Admin → Workflow → QC first' });
+        const since = Date.parse(job.submittedAt) - 60 * 1000;
+        const found = folders.listDir(outDir).filter(i => !i.dir && i.mtime >= since && REPORT_EXT_ANY.test(i.name));
+        const suffixes = ctx.data ? namingJs.namingSuffixes(ctx.data.naming || null)
+          : (Array.isArray(body.suffixes) ? body.suffixes.map(String).slice(0, 500) : []);
+        const reports = [], waiting = [];
+        job.files.forEach(f => {
+          const stem = f.name.replace(/\.[^.]+$/, '');
+          const mine = found.filter(r => r.name.toLowerCase().startsWith(stem.toLowerCase()));
+          if (!mine.length) { waiting.push(f.name); return; }
+          // VidChecker can write more than one (a PDF and an XML): numbered so neither overwrites the other
+          mine.forEach((r, n) => {
+            const name = vidcheckerReportName(f.name, r.name, suffixes, mine.length > 1 ? n : 0);
+            try {
+              fs.copyFileSync(path.join(outDir, r.name), path.join(dirAbs, name));
+              reports.push({ for: f.name, file: name, original: r.name, path: path.relative(path.resolve(ctx.masterPath), path.join(dirAbs, name)) });
+            } catch (e) { reports.push({ for: f.name, original: r.name, error: e.message }); }
+          });
+        });
+        return sendJson(res, 200, { ok: true, submittedAt: job.submittedAt, files: job.files, reports, waiting, out: outDir });
       }
 
       /* Open QC Report — the report for a check QC has settled, from the QC

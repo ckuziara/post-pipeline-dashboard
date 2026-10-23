@@ -460,6 +460,63 @@ window.App = window.App || {};
     if (type === 'live_action') return withoutQcStep(App.LIVE_PIPELINE.map(t => ({ ...t, deps: t.deps.slice() })));
     return withoutQcStep(App.defaultPipeline());
   };
+
+  /* Built-in pipeline presets — offered in Add Show beside the board's own
+     (d.pipelinePresets), read-only here; Duplicate in Admin → Workflow makes
+     an editable copy.
+
+     Moonbase Animation is built from the Moonbug KB: the animation review
+     stages in "Creative Production Process Summary" and the mandatory files
+     in "Moonbase Deliverables & Technical Specification (Animation)". A
+     version is a revision round of its task, not a task of its own
+     (Script Drafts 1–2 → Scripts, Animatic V1–V2, LRC → Final LRC, Wallah
+     and SFX V1–V3), and every task that hands Moonbase files is marked
+     Requires QC so AQC and QC see them. Project files (After Effects,
+     Logic, Premiere) are soft deliveries: a folder that keeps its own files. */
+  {
+  const out = (suffix, type) => ({ suffix, type });
+  const soft = (suffix, label, types) => ({ suffix, soft: true, label, types });
+  const rev = (days, revDays) => ({ days, minDays: Math.max(1, Math.ceil(days / 2)), maxRev: revDays.length, revDays });
+  const P = (key, name, dept, days, deps, more) => Object.assign({ key, name, dept, days, minDays: Math.max(1, Math.ceil(days / 2)), deps }, more);
+  App.BUILTIN_PRESETS = [{
+    id: 'builtin-moonbase-animation', name: 'Moonbase Animation', type: 'animation', builtin: true,
+    source: 'Moonbug KB — Creative Production Process Summary; Moonbase Deliverables & Technical Specification (Animation)',
+    pipeline: [
+      P('core_premises', 'Core Premises', 'creative', 7, []),
+      P('outline',       'Outline',       'creative', 2, ['core_premises']),
+      P('scripts',       'Scripts',       'creative', 4, ['outline'], Object.assign(rev(4, [2, 2]), { outputs: [out('SP', 'PDF'), out('SPSUB', 'PDF')] })),
+      P('design',        'Design',        'creative', 4, ['core_premises']),
+      P('storyboard',    'Storyboard',    'creative', 5, ['core_premises', 'scripts']),
+      P('music_skeleton','Music Skeleton','music',    6, ['core_premises', 'design', 'scripts']),
+      P('vocal_records', 'Vocal Records', 'music',    6, ['music_skeleton']),
+      P('vocal_comps',   'Vocal Comps',   'music',    4, ['vocal_records']),
+      P('song_master',   'Song Master',   'music',    8, ['vocal_comps'], { needsQc: true, outputs: [
+        out('SONGMASTER', 'WAV'), out('ACA', 'WAV'), out('INST', 'WAV'), out('LY-CL', 'DOCX'), out('LY-TCSUB', 'DOCX'),
+        soft('AUDIO-PROJECT', 'Logic project', ['LOGICX', 'ZIP'])] }),
+      P('animatic',      'Animatic',      'creative', 7, ['design', 'scripts', 'music_skeleton'], rev(7, [5, 5])),
+      P('layout',        'Layout',        'animation', 12, ['animatic']),
+      P('color_layout',  'Color Layout',  'animation', 2, ['layout']),
+      P('blocking',      'Blocking',      'animation', 6, ['layout', 'wallah']),
+      P('animation',     'Animation',     'animation', 17, ['blocking', 'color_layout']),
+      P('lrc',           'LRC',           'animation', 9, ['animation'], Object.assign(rev(9, [8]), { needsQc: true, outputs: [
+        out('NOIO-TEXTED', 'MOV'), out('NOIO-TEXTLESS', 'MOV'), out('ALPHA-GFX', 'MOV'), soft('GFX', 'GFX project', ['AEP'])] })),
+      P('vo_records',    'VO Records',    'audio', 4, ['scripts']),
+      P('vo_comps',      'VO Comps',      'audio', 4, ['vo_records']),
+      P('wallah',        'Wallah',        'audio', 5, ['animatic'], rev(5, [3, 5])),
+      P('final_mix',     'SFX & Final Mix', 'audio', 5, ['lrc', 'vo_comps', 'song_master'], Object.assign(rev(5, [5, 5]), { needsQc: true, outputs: [
+        out('MIX', 'WAV'), out('MNE', 'WAV'), out('SFX', 'WAV'), out('DIA', 'WAV'), out('EPISODIC-MUSICMIX', 'WAV'),
+        soft('AUDIO-PROJECT', 'Logic project', ['LOGICX', 'ZIP'])] })),
+      P('subtitle',      'Subtitle',      'video', 10, ['scripts', 'lrc'], { needsQc: true, outputs: [
+        out('ALPHA-KAR', 'MOV'), soft('SUB-KAR', 'Karaoke subs project', ['AEP'])] }),
+      P('deliverys',     'Deliverys',     'ops', 5, ['lrc', 'final_mix', 'subtitle'], { needsQc: true, outputs: [
+        out('IO-TEXTED', 'MOV'), out('IO-TEXTLESS', 'MOV'), out('NOIO-TEXTED', 'MOV'), out('NOIO-TEXTLESS', 'MOV'),
+        out('MCS', 'XLSX'), out('CREDIT', 'XLSX'), out('EQC', 'PDF'), soft('EDIT-PROJECT', 'Premiere project', ['PRPROJ', 'ZIP'])] })
+    ]
+  }];
+  }
+  // every preset a show can start from: the built-ins, then the board's own
+  App.allPipelinePresets = () => App.BUILTIN_PRESETS.concat((App.state.data && App.state.data.pipelinePresets) || []);
+
   // A show's team departments: its pipeline's, plus QC — QC staff are put on
   // a show to take its QC checks even though no task belongs to QC
   App.teamDepts = function (pipe) {
@@ -510,7 +567,12 @@ window.App = window.App || {};
      The names keep clear of the `qc` task key and the `qc` department. */
   App.qcSettings = function () {
     const q = (App.state.data && App.state.data.qcSettings) || {};
-    return { perDay: Math.max(1, Math.round(q.perDay || 5)), defaultDays: Math.max(1, Math.round(q.defaultDays || 1)) };
+    return {
+      perDay: Math.max(1, Math.round(q.perDay || 5)), defaultDays: Math.max(1, Math.round(q.defaultDays || 1)),
+      // AQC: who runs Run AQC — PipeDream's own checks, VidChecker (watch folders), or both (server.js /api/task/aqc)
+      aqcMode: ['internal', 'vidchecker', 'both'].includes(q.aqcMode) ? q.aqcMode : 'internal',
+      vcIn: q.vcIn || '', vcOut: q.vcOut || ''
+    };
   };
   /* Brand Configuration (Admin → Workflow): the studio's logo (a PNG or
      JPEG data URL, scaled down when it's set) on everything PipeDream

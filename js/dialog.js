@@ -3049,14 +3049,14 @@ window.App = window.App || {};
         const def = document.createElement('option');
         def.value = ''; def.textContent = 'Standard ' + (t === 'animation' ? 'Animation' : 'Live Action');
         presetSel.appendChild(def);
-        (App.state.data.pipelinePresets || []).filter(p => p.type === t).forEach(p => {
+        App.allPipelinePresets().filter(p => p.type === t).forEach(p => {
           const o = document.createElement('option');
           o.value = p.id; o.textContent = p.name + ' · ' + p.pipeline.length + ' tasks';
           presetSel.appendChild(o);
         });
       }
       function loadPipeline() {
-        const preset = presetSel.value && (App.state.data.pipelinePresets || []).find(p => p.id === presetSel.value);
+        const preset = presetSel.value && App.allPipelinePresets().find(p => p.id === presetSel.value);
         pipe = preset
           ? JSON.parse(JSON.stringify(preset.pipeline))
           : App.defaultPipelineFor(typeSel.value);
@@ -3389,7 +3389,7 @@ window.App = window.App || {};
         qc: App.qcDaysOf(t)
       })));
       const baselinePipe = () => {
-        const preset = presetSel.value && (App.state.data.pipelinePresets || []).find(p => p.id === presetSel.value);
+        const preset = presetSel.value && App.allPipelinePresets().find(p => p.id === presetSel.value);
         return preset ? preset.pipeline : App.defaultPipelineFor(typeSel.value);
       };
       const pipeAdjusted = () => normPipe(pipe) !== normPipe(baselinePipe());
