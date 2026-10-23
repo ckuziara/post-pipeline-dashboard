@@ -183,9 +183,64 @@ window.App = window.App || {};
       const k = KEY(epId, taskKey);
       const old = (d.reviews && d.reviews[k]) || {};
       const at = new Date().toISOString();
-      const round = { version, frameUrl: old.frameUrl || null, sentAt: old.sentAt || null, sentBy: old.sentBy || null, feedbackAt: at };
+      const round = { version, frameUrl: old.frameUrl || null, sentAt: old.sentAt || null, sentBy: old.sentBy || null, feedbackAt: at,
+        // each Director's verdict on this round, kept so the Daily Summary can still show who said what
+        verdicts: old.verdicts || null };
       d.reviews = d.reviews || {};
       d.reviews[k] = { rounds: (old.rounds || []).concat([round]), feedbackAt: at };
+    },
+
+    /* ---- several Directors on one review ----
+       A show can have more than one Director, and each of them has to sign
+       off. So on the Reviews tab, Approve and Send Feedback each record that
+       Director's VERDICT on this round rather than finishing the review; the
+       review finishes once every one of the show's Directors has given one —
+       approved if they all approved, another pass if anyone sent feedback.
+       A Producer or Post Operations can finish it early from the Daily
+       Summary (complete()). With one Director (or none) nothing waits: a
+       press finishes it, as before. Verdicts live on the review record, so a
+       new round (closeRound) starts with none. */
+    reviewers(ep) {
+      const show = App.show(ep.showId);
+      return show ? App.deptTeam(show, App.ROLE_SLOT + 'director').ids : [];
+    },
+    verdicts(epId, taskKey) { const r = this.get(epId, taskKey); return (r && r.verdicts) || {}; },
+    // the Directors still to give a verdict on this round
+    waitingOn(ep, taskKey) {
+      const v = this.verdicts(ep.id, taskKey);
+      return this.reviewers(ep).filter(id => !v[id]);
+    },
+    // what the verdicts so far add up to: any feedback means another pass
+    outcome(epId, taskKey) {
+      const v = this.verdicts(epId, taskKey);
+      return Object.keys(v).some(id => v[id].verdict === 'feedback') ? 'feedback' : 'approved';
+    },
+    verdict(epId, taskKey, kind) {
+      const ep = App.state.data.episodes.find(e => e.id === epId); if (!ep) return;
+      const su = App.subitem(ep, taskKey); if (!su) return;
+      const role = App.state.role;
+      if (!(App.canApprove(role) || App.canSeeReviewQueue(role))) { App.toast('Only a Director or Producer can review this', true); return; }
+      const u = me();
+      const revs = this.reviewers(ep);
+      // not one of several Directors (a Producer pressing it, or a one-Director show): it finishes the review
+      if (!u.by || revs.length < 2 || revs.indexOf(u.by) < 0) return this.complete(epId, taskKey, kind);
+      App.mutate(d => {
+        d.reviews = d.reviews || {};
+        const k = KEY(epId, taskKey);
+        const rec = Object.assign({}, d.reviews[k]);
+        rec.verdicts = Object.assign({}, rec.verdicts, { [u.by]: { verdict: kind, at: new Date().toISOString(), byName: u.byName } });
+        d.reviews[k] = rec;
+      }, kind === 'approved' ? 'Approve (your review)' : 'Send feedback (your review)');
+      const waiting = this.waitingOn(ep, taskKey);
+      if (!waiting.length) return this.complete(epId, taskKey, this.outcome(epId, taskKey));
+      const names = waiting.map(id => (App.person(id) || {}).name || 'a Director').map(n => n.split(' ')[0]);
+      App.toast((kind === 'approved' ? 'Your approval' : 'Your feedback') + ' is in — waiting on ' +
+        (names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0]));
+    },
+    // finish the review: approve the task, or send it for another pass
+    complete(epId, taskKey, kind) {
+      if (kind === 'approved') App.setStatus(epId, taskKey, 'approved');
+      else App.requestRevision(epId, taskKey);
     },
 
     /* Step 2 → 3. The Frame.io URL is the payload: it's the whole reason the

@@ -325,8 +325,27 @@ window.App = window.App || {};
     }, App.icon('note')));
 
     if (x.stage !== 'done') {
-      out.push(el('button.rvq-mini.ok', { onclick: () => App.setStatus(ep.id, su.key, 'approved') }, '✓ Approve'));
-      out.push(revisionButton(ep, su));
+      /* With several Directors on the show, each button records only the
+         signed-in Director's verdict (App.review.verdict); the review finishes
+         when the last of them has given one. The one they picked stays lit,
+         and pressing the other changes their mind. */
+      const revs = App.review.reviewers(ep);
+      const v = App.review.verdicts(ep.id, su.key);
+      const meId = App.state.user && App.state.user.personId;
+      const mine = revs.length > 1 && meId && v[meId] ? v[meId].verdict : null;
+      if (revs.length > 1) {
+        const done = revs.filter(id => v[id]).length;
+        const tip = revs.map(id => {
+          const p = App.person(id); const n = p ? p.name : 'Director';
+          return n + ' — ' + (v[id] ? (v[id].verdict === 'approved' ? 'approved' : 'sent feedback') : 'still to review');
+        }).join('\n');
+        out.push(el('span.rvq-progress' + (done ? '.some' : ''), { title: tip }, done + ' of ' + revs.length + ' reviewed'));
+      }
+      out.push(el('button.rvq-mini.ok' + (mine === 'approved' ? '.chosen' : ''), {
+        title: mine === 'approved' ? 'You approved this — waiting on the other Directors' : null,
+        onclick: () => App.review.verdict(ep.id, su.key, 'approved')
+      }, mine === 'approved' ? '✓ You approved' : '✓ Approve'));
+      out.push(revisionButton(ep, su, mine === 'feedback'));
     } else {
       /* a signed-off row keeps the button, now saying so. Not `disabled`:
          a disabled button never receives the right-click that reverses it. */
@@ -363,14 +382,18 @@ window.App = window.App || {};
      is the last one before the schedule has to absorb extra passes. At zero
      it still works — feedback is never blocked — and the tooltip says the
      pass is over budget. */
-  function revisionButton(ep, su) {
+  function revisionButton(ep, su, chosen) {
     const { max, used, left } = App.taskRevisions(ep, su.key);
+    if (chosen) return el('button.rvq-mini.warn.chosen', {
+      title: 'You sent feedback — it goes back to the department once every Director has reviewed',
+      onclick: () => App.review.verdict(ep.id, su.key, 'feedback')
+    }, '↺ Feedback sent');
     return el('button.rvq-mini.warn', {
       title: left
         ? 'Send feedback — revision ' + (used + 1) + ' of ' + max
         : max ? 'Send feedback — all ' + max + ' budgeted revision' + (max === 1 ? '' : 's') + ' already used, so this one is extra'
           : 'Send feedback — this task has no revisions budgeted, so this one is extra',
-      onclick: () => App.requestRevision(ep.id, su.key)
+      onclick: () => App.review.verdict(ep.id, su.key, 'feedback')
     }, max ? '↺ Send Feedback (' + left + ')' : '↺ Send Feedback');
   }
 
