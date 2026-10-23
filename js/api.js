@@ -396,6 +396,10 @@ window.App = window.App || {};
     qcReport(b)      { return this._post('/api/task/qc-report', b); },
     // a task's QC folder and this version's report, if made (see /api/task/qc-folder)
     qcFolder(b)      { return this._post('/api/task/qc-folder', b); },
+    // automatic QC of a task's delivered files against the Moonbase spec (see /api/task/aqc)
+    aqc(b)           { return this._post('/api/task/aqc', b); },
+    // VidChecker's reports for an AQC run, filed in QC's folder (see /api/task/aqc-collect)
+    aqcCollect(b)    { return this._post('/api/task/aqc-collect', b); },
     // open the folder a path on the volume sits in — confined server-side to
     // the master directory (see /api/task/reveal)
     taskReveal(b)    { return this._post('/api/task/reveal', b); },

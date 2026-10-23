@@ -1677,12 +1677,14 @@ window.App = window.App || {};
 
   App.duplicatePipelinePreset = function (id) {
     if (!guardAdmin()) return;
-    const p = (App.state.data.pipelinePresets || []).find(x => x.id === id);
+    // a built-in (App.BUILTIN_PRESETS) can be copied, never edited in place
+    const p = App.allPipelinePresets().find(x => x.id === id);
     if (!p) return;
     const copy = JSON.parse(JSON.stringify(p));
     copy.id = App.uid();
     copy.name = p.name + ' copy';
-    App.mutate(d => { d.pipelinePresets.push(copy); });
+    delete copy.builtin;
+    App.mutate(d => { d.pipelinePresets = d.pipelinePresets || []; d.pipelinePresets.push(copy); });
     App.toast('Duplicated “' + p.name + '”');
   };
 

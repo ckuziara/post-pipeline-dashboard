@@ -966,12 +966,52 @@ window.App = window.App || {};
     const c = el('.adm-permcard');
     c.appendChild(el('.adm-permcard-head', null, [
       el('.adm-permcard-title', null, 'QC'),
-      el('.adm-permcard-desc', null, 'How much QC can check a day, and the days a task gets when it’s first marked Requires QC.')
+      el('.adm-permcard-desc', null, 'How much QC can check a day, the days a task gets when it’s first marked Requires QC, and who runs automatic QC.')
     ]));
     c.appendChild(el('.qcq-adm-row', null, [
       el('label.qcq-adm-fld', null, [el('span', null, 'Checks per day'), num('perDay', q.perDay, 50)]),
       el('label.qcq-adm-fld', null, [el('span', null, 'Default QC days'), num('defaultDays', q.defaultDays, 60)])
     ]));
+
+    /* AQC — what the QC tab's Run AQC does: PipeDream's own checks against
+       the Moonbase spec, VidChecker through its watch folders, or both. The
+       watch folders only show while VidChecker is in use. */
+    const MODES = [['internal', 'Internal AQC'], ['vidchecker', 'VidChecker'], ['both', 'Both']];
+    const aqcBox = el('.aqc-adm', null, [
+      el('.aqc-adm-head', null, [
+        el('span.aqc-adm-label', null, 'Automatic QC'),
+        el('.prefs-seg.aqc-adm-seg', null, MODES.map(([v, l]) => el('button.seg' + (q.aqcMode === v ? '.active' : ''), {
+          type: 'button', onclick: () => { if (q.aqcMode !== v) { App.setQcSettings({ aqcMode: v }); App.render(); } }
+        }, l)))
+      ]),
+      el('.adm-name-sub.aqc-adm-hint', null, q.aqcMode === 'internal'
+        ? 'Run AQC checks the delivered files here against the Moonbase spec — codec, frame size and rate, timecode, sample rate, bit depth, loudness and true peak.'
+        : q.aqcMode === 'vidchecker'
+          ? 'Run AQC copies the delivered media into VidChecker’s watch-in folder; Collect Reports picks its reports up from the watch-out folder and files them in QC’s folder.'
+          : 'Run AQC does both: PipeDream’s checks straight away, and VidChecker’s report once it lands in the watch-out folder.')
+    ]);
+    c.appendChild(aqcBox);
+    if (q.aqcMode !== 'internal') {
+      const folderRow = (key, label, hint) => {
+        const input = el('input.fld', { type: 'text', value: q[key], placeholder: '/Volumes/VidChecker/' + (key === 'vcIn' ? 'Watch In' : 'Watch Out'),
+          style: { flex: '1', minWidth: '240px', fontFamily: 'ui-monospace, monospace' } });
+        const save = () => { if (input.value.trim() !== q[key]) App.setQcSettings({ [key]: input.value.trim() }); };
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+        input.addEventListener('blur', save);
+        return el('.aqc-adm-folder', null, [
+          el('.aqc-adm-folder-label', null, [el('span', null, label), el('span.adm-name-sub', null, hint)]),
+          el('.wf-add', null, [
+            input,
+            el('button.btn-ghost', { type: 'button', onclick: () => App.folderPicker.open(/^\//.test(input.value.trim()) ? input.value.trim() : undefined, p => {
+              input.value = p; App.setQcSettings({ [key]: p });
+            }) }, [App.icon('folderOpen'), ' Browse…'])
+          ])
+        ]);
+      };
+      aqcBox.appendChild(folderRow('vcIn', 'Watch folder in', 'where VidChecker picks up files to check'));
+      aqcBox.appendChild(folderRow('vcOut', 'Watch folder out', 'where VidChecker writes its reports'));
+      aqcBox.appendChild(el('.adm-name-sub.aqc-adm-hint', null, 'A path that doesn’t start with / is inside the production folder, so every machine finds it under its own mount.'));
+    }
     return c;
   }
 
@@ -1056,18 +1096,20 @@ window.App = window.App || {};
       el('.adm-permcard-desc', null, 'Reusable task pipelines for Animation or Live Action shows. When adding a show, pick a preset instead of the standard pipeline.')
     ]));
 
-    const presets = App.state.data.pipelinePresets || [];
+    // built-ins first (read-only: Duplicate makes an editable copy), then the board's own
+    const presets = App.allPipelinePresets();
     const list = el('.wf-list');
-    if (!presets.length) list.appendChild(el('.adm-empty', null, 'No presets yet — create one below, starting from a standard pipeline.'));
     presets.forEach(p => {
       list.appendChild(el('.preset-row', null, [
         el('span.preset-type.' + p.type, null, p.type === 'live_action' ? 'Live Action' : 'Animation'),
         el('div', { style: { minWidth: 0 } }, [
-          el('.adm-name', null, p.name),
+          el('.adm-name', null, p.builtin ? [p.name, el('span.preset-builtin', { title: p.source || '' }, 'Built-in')] : p.name),
           el('.adm-name-sub', null, p.pipeline.length + ' tasks · ' +
             [...new Set(p.pipeline.map(t => t.dept))].map(d => App.dept(d).label).join(', '))
         ]),
-        el('.preset-actions', null, [
+        p.builtin ? el('.preset-actions', null, [
+          el('button.btn-mini', { title: 'Duplicate preset — an editable copy', onclick: () => App.duplicatePipelinePreset(p.id) }, '⧉')
+        ]) : el('.preset-actions', null, [
           el('button.btn-mini', { title: 'Edit preset',
             onclick: () => { App.state.admin.presetDraft = JSON.parse(JSON.stringify(p)); App.render(); } }, App.icon('pencil')),
           el('button.btn-mini', { title: 'Duplicate preset', onclick: () => App.duplicatePipelinePreset(p.id) }, '⧉'),

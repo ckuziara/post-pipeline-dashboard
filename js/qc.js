@@ -488,6 +488,126 @@ window.App = window.App || {};
       } catch (e) { App.toast('Couldn’t create the QC project: ' + e.message, true); }
     },
 
+    /* Run AQC over everything the task delivered. Admin → Workflow → QC
+       says who checks (App.qcSettings().aqcMode):
+         internal    PipeDream's own checks (aqc.js on the server) against the
+                     Moonbase spec — results at once, saved as a CSV in QC's folder
+         vidchecker  the media goes to VidChecker's watch-in folder; Collect
+                     Reports files what it writes to the watch-out folder
+         both        the two together
+       The check keeps a summary per QC version, so the row shows how the
+       last run went. It never passes or fails the check: that stays QC's call. */
+    aqcBody(ep, su) {
+      const q = App.qcSettings();
+      return { epId: ep.id, taskKey: su.key, taskName: su.name, pipeline: App.pipelineFor(ep), version: App.qcVersion(ep, su.key),
+        suffixes: App.namingSuffixes(),
+        // the server reads the board's own; a companion has no board, so it uses this
+        aqc: { aqcMode: q.aqcMode, vcIn: q.vcIn, vcOut: q.vcOut } };
+    },
+    async runAqc(ep, su) {
+      if (App.masterPathSet && !App.masterPathSet()) { App.toast('Connect this device to the production folder first (Preferences → Connect to Workspace)', true); return; }
+      const version = App.qcVersion(ep, su.key);
+      const mode = App.qcSettings().aqcMode;
+      App.toast((mode === 'vidchecker' ? 'Sending ' + su.name + ' to VidChecker' : 'Running AQC on ' + su.name) + '…');
+      try {
+        const r = await App.api.aqc(this.aqcBody(ep, su));
+        if (r.empty) { App.toast('Nothing delivered for ' + su.name + ' yet — no files to check', true); return; }
+        mutateCheck(ep.id, su.key, 'the AQC result', (e, c) => {
+          const prev = (c.aqc && c.aqc['V' + version]) || {};
+          const rec = { at: new Date().toISOString(), by: me().byName, mode: r.mode };
+          if (r.result) Object.assign(rec, { result: r.result.result, counts: r.result.counts, report: r.report });
+          if (r.vidchecker) rec.vc = { submittedAt: r.vidchecker.submittedAt || null, files: r.vidchecker.submitted.length, reports: [] };
+          else if (prev.vc && r.mode === 'internal') delete rec.vc;
+          c.aqc = Object.assign({}, c.aqc, { ['V' + version]: rec });
+        });
+        App.track.audit('task.aqc', { episode: ep.code, task: su.name, version: 'V' + version, mode: r.mode,
+          result: r.result ? r.result.result : null, sent: r.vidchecker ? r.vidchecker.submitted.length : 0 });
+        this.aqcDialog(ep, su, version, r);
+      } catch (e) { App.toast('Couldn’t run AQC: ' + e.message, true); }
+    },
+    // VidChecker's reports, from its watch-out folder into QC's folder
+    async collectAqc(ep, su, version, then) {
+      try {
+        const r = await App.api.aqcCollect(this.aqcBody(ep, su));
+        if (r.none) { App.toast('Nothing has been sent to VidChecker for QC V' + version + ' yet', true); return null; }
+        const got = r.reports.filter(x => x.file);
+        mutateCheck(ep.id, su.key, 'the VidChecker reports', (e, c) => {
+          const rec = Object.assign({}, c.aqc && c.aqc['V' + version]);
+          rec.vc = Object.assign({}, rec.vc, { reports: got.map(x => ({ file: x.file, path: x.path, for: x.for })), waiting: r.waiting.length, collectedAt: new Date().toISOString() });
+          c.aqc = Object.assign({}, c.aqc, { ['V' + version]: rec });
+        });
+        App.toast(got.length ? 'Filed ' + got.length + ' VidChecker report' + (got.length === 1 ? '' : 's') + ' in QC’s folder'
+          + (r.waiting.length ? ' — ' + r.waiting.length + ' still waiting' : '')
+          : 'No VidChecker reports yet — ' + r.waiting.length + ' file' + (r.waiting.length === 1 ? '' : 's') + ' still being checked');
+        if (then) then(r);
+        return r;
+      } catch (e) { App.toast('Couldn’t collect VidChecker’s reports: ' + e.message, true); return null; }
+    },
+    aqcDialog(ep, su, version, r) {
+      const res = r.result;
+      const word = { pass: 'Pass', flag: 'Flag', fail: 'Fail', info: '' };
+      const body = [];
+      if (res) {
+        if (r.mode === 'both') body.push(el('.modal-section-title', { style: { marginTop: '0' } }, [App.icon('bolt'), ' Internal AQC']));
+        res.files.forEach(f => body.push(el('.aqc-file', null, [
+          el('.aqc-file-head', null, [el('span.aqc-badge.' + f.result, null, word[f.result]), el('span.aqc-file-name', { title: f.name }, f.name)]),
+          el('table.aqc-table', null, f.rows.map(x => el('tr.' + x.result, null, [
+            el('td.aqc-res', null, x.result === 'info' ? '·' : x.result === 'pass' ? '✓' : x.result === 'flag' ? '!' : '✕'),
+            el('td', null, x.label), el('td.aqc-act', null, x.actual), el('td.aqc-exp', null, x.expected)
+          ])))
+        ])));
+      }
+      if (r.vidchecker) {
+        const vcBox = el('.aqc-vc');
+        const draw = (col) => {
+          vcBox.innerHTML = '';
+          vcBox.appendChild(el('.modal-section-title', { style: { marginTop: res ? '6px' : '0' } }, [App.icon('package'), ' VidChecker']));
+          const sent = r.vidchecker.submitted;
+          if (!sent.length) { vcBox.appendChild(el('.fld-hint', null, 'No media files to send — VidChecker only takes movies and audio.')); return; }
+          const reports = col ? col.reports.filter(x => x.file) : [];
+          sent.forEach(n => {
+            const mine = reports.filter(x => x.for === n);
+            const st = col && col.files.find(f => f.name === n);
+            const state = mine.length ? 'done' : st && st.state === 'failed' ? 'failed' : st && st.state === 'copying' ? 'copying' : 'waiting';
+            vcBox.appendChild(el('.aqc-vc-row', null, [
+              el('span.aqc-badge.' + (state === 'done' ? 'pass' : state === 'failed' ? 'fail' : 'flag'), null,
+                state === 'done' ? 'Report' : state === 'failed' ? 'Not sent' : state === 'copying' ? 'Copying' : 'Checking'),
+              el('span.aqc-file-name', { title: n }, n),
+              // REPORT_EXT: what the server will open; an XML or HTML report is filed, and named, but opened from the folder
+              el('span.aqc-vc-acts', null, mine.map(x => REPORT_EXT.test(x.file)
+                ? el('button.btn-mini', { type: 'button', title: 'Open ' + x.file, onclick: () => this.openReportFile(ep, su, x.path) },
+                    [App.icon('file'), ' ' + x.file.split('.').pop().toUpperCase()])
+                : el('span.btn-mini', { title: x.file + ' — in QC’s folder' }, x.file.split('.').pop().toUpperCase())))
+            ]));
+            if (state === 'failed' && st.error) vcBox.appendChild(el('.fld-hint.aqc-vc-err', null, st.error));
+          });
+          vcBox.appendChild(el('.fld-hint', null, col
+            ? (col.waiting.length ? 'VidChecker is still checking ' + col.waiting.length + ' — collect again once it’s done.' : 'Every report is in QC’s folder.')
+            : 'Sent to ' + r.vidchecker.in + '. VidChecker’s reports land in its watch-out folder; Collect Reports files them in QC’s folder.'));
+        };
+        draw(null);
+        body.push(vcBox);
+        this._aqcRedraw = draw;
+      }
+      if (r.folders && r.folders.length) body.push(el('.fld-hint', null, 'Folders not opened (soft deliveries): ' + r.folders.join(', ')));
+      const c = res && res.counts;
+      const title = 'AQC · QC V' + version + (res ? ' — ' + word[res.result] : ' — sent to VidChecker');
+      const sub = su.name + ' · ' + ep.code + (c ? ' · ' + c.pass + ' pass · ' + c.flag + ' flag · ' + c.fail + ' fail' : '');
+      App.modal.open(el('.modal-card.aqc-card', { onclick: e => e.stopPropagation() }, [
+        el('.modal-head', null, [
+          el('.modal-head-main', null, [App.icon('bolt', { cls: 'modal-ic' }), el('div', null, [el('.modal-title', null, title), el('.modal-subtitle', null, sub)])]),
+          el('button.modal-x', { onclick: () => App.modal.close(), title: 'Close' }, '✕')
+        ]),
+        el('.modal-body.aqc-body', null, body),
+        el('.modal-foot', null, [
+          r.report ? el('.fld-hint', { style: { marginRight: 'auto' } }, 'Saved to QC’s folder as ' + r.report) : el('span', { style: { marginRight: 'auto' } }),
+          r.vidchecker && r.vidchecker.submitted.length ? el('button.btn-ghost', { type: 'button',
+            onclick: () => this.collectAqc(ep, su, version, (col) => this._aqcRedraw && this._aqcRedraw(col)) }, [App.icon('download'), ' Collect Reports']) : null,
+          el('button.btn-primary', { onclick: () => App.modal.close() }, 'Done')
+        ])
+      ]));
+    },
+
     /* A settled check's QC report. The file QC attached when they decided it
        (the newest report's), or — for checks decided before reports were
        attached — the version's report by name in the QC folder. */
@@ -904,7 +1024,25 @@ window.App = window.App || {};
               onclick: () => App.qcQueue.createProject(ep, su)
             }, madeV ? App.icon('checkBadge') : App.icon('plus'))
             : el('button.rvq-icon.qcq-go', { title: 'Open QC Report — QC V' + App.qcVersion(ep, su.key), 'aria-label': 'Open QC Report',
-                onclick: () => App.qcQueue.openReport(ep, su) }, App.icon('file'))
+                onclick: () => App.qcQueue.openReport(ep, su) }, App.icon('file')),
+          // Run AQC — the dot is the last run for this version: pass / flag / fail
+          ...(waiting ? (() => {
+            const v = App.qcVersion(ep, su.key), last = check.aqc && check.aqc['V' + v];
+            // files with a report in — a PDF and an XML for one master count once
+            const vcIn = last && last.vc ? new Set((last.vc.reports || []).map(x => x.for)).size : 0;
+            const vcOpen = !!(last && last.vc && last.vc.files && vcIn < last.vc.files);
+            const parts = [];
+            if (last && last.result) parts.push('internal: ' + last.result + ' (' + last.counts.pass + ' pass · ' + last.counts.flag + ' flag · ' + last.counts.fail + ' fail)');
+            if (last && last.vc) parts.push('VidChecker: ' + vcIn + ' of ' + last.vc.files + ' files reported');
+            const btns = [el('button.rvq-icon.aqc-go' + (last && last.result ? '.' + last.result : vcOpen ? '.vc' : ''), {
+              title: last ? 'Run AQC again — last run ' + parts.join(' · ') : 'Run AQC — automatic checks of the delivered files',
+              'aria-label': 'Run AQC',
+              onclick: () => App.qcQueue.runAqc(ep, su)
+            }, App.icon('bolt'))];
+            if (vcOpen) btns.push(el('button.rvq-icon', { title: 'Collect VidChecker’s reports — ' + vcIn + ' of ' + last.vc.files + ' files reported so far', 'aria-label': 'Collect VidChecker reports',
+              onclick: () => App.qcQueue.collectAqc(ep, su, v) }, App.icon('download')));
+            return btns;
+          })() : [])
         ]),
         el('.cell.rvq-acts', null, acts)
       ]);

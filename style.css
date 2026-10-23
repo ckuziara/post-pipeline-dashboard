@@ -6485,8 +6485,8 @@ button.qcq-report-link:hover { text-decoration: underline; }
 /* QC tab as a table, in the Board's columns */
 .qcq-card { overflow: hidden; }
 .qcq-card .rvq-ep-head { justify-content: space-between; }
-.qcq-grid { min-width: 856px; }   /* the columns' minimums, summed; wider screens share the extra across all of them */   /* the columns below, summed */
-.qcq-grid .subrow { grid-template-columns: 30px minmax(170px, 3fr) minmax(100px, 1fr) minmax(116px, 1.1fr) minmax(84px, .8fr) minmax(84px, .8fr) minmax(76px, .7fr) minmax(196px, 1.4fr); }
+.qcq-grid { min-width: 888px; }   /* the columns' minimums, summed; wider screens share the extra across all of them */   /* the columns below, summed */
+.qcq-grid .subrow { grid-template-columns: 30px minmax(170px, 3fr) minmax(100px, 1fr) minmax(116px, 1.1fr) minmax(84px, .8fr) minmax(84px, .8fr) minmax(108px, .8fr) minmax(196px, 1.4fr); }
 .qcq-grid .subrow .cell { padding-left: 8px; padding-right: 8px; }
 .qcq-grid .subrow.head .cell { padding-left: 8px; padding-right: 8px; white-space: nowrap; }
 .qcq-grid .qcq-go { color: var(--ink-info); border-color: rgba(91,108,255,.55); }
@@ -6740,3 +6740,44 @@ button.qcq-report-link:hover { text-decoration: underline; }
   .dlv-left, .dlv-right { overflow: visible; }
   .dlv-task { grid-template-columns: minmax(0, 1fr) auto; } .dlv-task-sum { display: none; }
 }
+
+/* AQC — automatic QC (js/qc.js runAqc): the row button's dot is the last run, the dialog lists every check */
+.qcq-grid .aqc-go { position: relative; }
+.qcq-grid .aqc-go.pass::after, .qcq-grid .aqc-go.flag::after, .qcq-grid .aqc-go.fail::after {
+  content: ''; position: absolute; top: 2px; right: 2px; width: 7px; height: 7px; border-radius: 50%;
+}
+.qcq-grid .aqc-go.pass::after { background: var(--ink-ok); }
+.qcq-grid .aqc-go.flag::after { background: var(--ink-warn); }
+.qcq-grid .aqc-go.fail::after { background: var(--ink-bad); }
+.modal-card.aqc-card { max-width: 720px; width: 100%; }
+.aqc-body { display: grid; gap: 14px; max-height: 62vh; overflow-y: auto; }
+.aqc-file-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; min-width: 0; }
+.aqc-file-name { font-weight: 700; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
+.aqc-badge { flex: none; font-size: 10.5px; font-weight: 800; padding: 2px 7px; border-radius: 999px; text-transform: uppercase; letter-spacing: .4px; }
+.aqc-badge.pass { color: var(--ink-ok); background: rgba(46,204,113,.14); }
+.aqc-badge.flag { color: var(--ink-warn); background: rgba(255,170,60,.16); }
+.aqc-badge.fail { color: var(--ink-bad); background: rgba(255,91,110,.16); }
+.aqc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.aqc-table td { padding: 4px 8px; border-top: 1px solid var(--border); vertical-align: top; }
+.aqc-table .aqc-res { width: 18px; text-align: center; font-weight: 800; }
+.aqc-table .aqc-act { font-weight: 600; }
+.aqc-table .aqc-exp { color: var(--text-3); }
+.aqc-table tr.pass .aqc-res { color: var(--ink-ok); }
+.aqc-table tr.flag .aqc-res, .aqc-table tr.flag .aqc-act { color: var(--ink-warn); }
+.aqc-table tr.fail .aqc-res, .aqc-table tr.fail .aqc-act { color: var(--ink-bad); }
+.aqc-table tr.info { color: var(--text-2); }
+@media (max-width: 640px) { .aqc-table .aqc-exp { display: none; } }
+.preset-builtin { margin-left: 8px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; padding: 1px 6px; border-radius: 999px; color: var(--ink-info); background: rgba(91,108,255,.14); vertical-align: 1px; }
+/* Admin → Workflow → QC: the AQC mode and VidChecker's watch folders */
+.aqc-adm { margin-top: 4px; padding: 12px 18px 16px; border-top: 1px solid var(--border); font-size: 13px; }
+.aqc-adm-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.aqc-adm-label { font-size: 12.5px; font-weight: 700; }
+.aqc-adm-hint { margin-top: 6px; white-space: normal; }
+.aqc-adm-folder { margin-top: 12px; }
+.aqc-adm-folder-label { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.qcq-grid .aqc-go.vc::after { content: ''; position: absolute; top: 2px; right: 2px; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-info); }
+.aqc-vc { display: grid; gap: 6px; }
+.aqc-vc-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.aqc-vc-row .aqc-file-name { flex: 1; min-width: 0; }
+.aqc-vc-acts { display: inline-flex; gap: 4px; flex: none; }
+.aqc-vc-err { color: var(--ink-bad); margin: -2px 0 0 0; }
