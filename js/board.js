@@ -20,24 +20,44 @@ window.App = window.App || {};
     /* An open episode's header latches to the top while its subitems scroll
        under it (CSS position: sticky, held inside its own card — so at the
        last subitem the card's end pushes it off and the next episode's header
-       takes over). While latched it wears .latched, which masks the strip
-       above it and its rounded corners with the page's own background (see
-       style.css) — the mask rides with the header on the compositor, so it
-       never lags the scroll. Only the class is set here. */
+       takes over). Latched, it masks the strip above it and its rounded
+       corners with the page's own background (see style.css).
+
+       Where the browser can tell a sticky element is stuck (scroll-state
+       container queries), CSS switches the mask on in the same frame the
+       header sticks, so a fast scroll never shows a frame without it — no
+       script on scroll at all. Elsewhere the .latched class does it from
+       here, at most once a frame. */
+    _cssLatch: typeof CSS !== 'undefined' && CSS.supports && CSS.supports('container-type: scroll-state'),
     _latch() {
       document.querySelectorAll('.board .ep-group').forEach(g => {
         const head = g.querySelector('.ep-row'); if (!head) return;
-        // pinned = pushed down past where it sits at rest, which is just inside the card's top border
-        const rest = parseFloat(getComputedStyle(g).borderTopWidth) || 0;
-        const on = head.getBoundingClientRect().top - g.getBoundingClientRect().top > rest + 0.5;
-        if (head.classList.contains('latched') !== on) head.classList.toggle('latched', on);
+        if (!this._cssLatch) {
+          // pinned = pushed down past where it sits at rest, which is just inside the card's top border
+          const rest = parseFloat(getComputedStyle(g).borderTopWidth) || 0;
+          const on = head.getBoundingClientRect().top - g.getBoundingClientRect().top > rest + 0.5;
+          if (head.classList.contains('latched') !== on) head.classList.toggle('latched', on);
+        }
+        // the column headings latch just under the header, at its exact height —
+        // offsetHeight rounds, and a half-pixel seam lets the rows show through
+        const h = head.getBoundingClientRect().height + 'px';
+        if (g.style.getPropertyValue('--ep-head-h') !== h) g.style.setProperty('--ep-head-h', h);
       });
     },
     _watchLatch() {
       const view = document.getElementById('view');
       if (!view || view._latchWatched) return;
       view._latchWatched = true;
-      view.addEventListener('scroll', () => { if (App.state.view === 'board') this._latch(); }, { passive: true });
+      let queued = false;
+      const soon = () => {
+        if (queued || App.state.view !== 'board') return;
+        queued = true;
+        requestAnimationFrame(() => { queued = false; this._latch(); });
+      };
+      // scrolling only changes what's latched — which CSS handles itself where it can
+      if (!this._cssLatch) view.addEventListener('scroll', soon, { passive: true });
+      // a resize can rewrap the header, and the headings latch at its height
+      window.addEventListener('resize', soon, { passive: true });
     },
 
     // Role-aware episode rollup: simple Pending / In Production status, the
@@ -159,7 +179,7 @@ window.App = window.App || {};
         ])
       ]);
       grp.appendChild(head);
-      if (open) grp.appendChild(this.subtable(ep));
+      if (open) { const t = this.subtable(ep); grp.appendChild(t._head); grp.appendChild(t); }
       return grp;
     },
 
@@ -324,7 +344,16 @@ window.App = window.App || {};
         onclick: (e) => { e.stopPropagation(); if (cs.key) { App.prefs.set('boardColSort', null); App.render(); } }
       }, '#');
       const koHead = el('.cell.c-ko', { title: 'Kick Off — click a cell to add one, click again to mark it done, right-click to remove' }, 'KO');
-      grid.appendChild(el('.subrow.head', null, [numHead].concat(cols.map(([k, label]) => {
+      /* The column headings sit in their own strip above the table, not in
+         it: the table scrolls sideways (overflow-x), which makes it its own
+         scroll box, and a sticky row inside one never latches to the Board.
+         Out here the strip latches under the episode header (style.css,
+         --ep-head-h from _latch) and follows the table's sideways scroll. */
+      const headGrid = el('.subgrid');
+      const headWrap = el('.subhead', null, headGrid);
+      box._head = headWrap;
+      box.addEventListener('scroll', () => { headWrap.scrollLeft = box.scrollLeft; }, { passive: true });
+      headGrid.appendChild(el('.subrow.head', null, [numHead].concat(cols.map(([k, label]) => {
         const on = cs.key === k;
         return el('.cell.sortable' + (on ? '.sorted' : ''), {
           title: !on ? 'Sort by ' + label.toLowerCase() : cs.dir === 'asc' ? 'Sorted ascending — click for descending' : 'Sorted descending — click for pipeline order',
