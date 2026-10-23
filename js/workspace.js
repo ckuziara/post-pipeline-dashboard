@@ -915,11 +915,28 @@ window.App = window.App || {};
           ]));
         });
         wrap.appendChild(list);
-        // files saved straight into the folder that could be either of two deliverables
-        ((d.reconciled && d.reconciled.ambiguous) || []).forEach(x => {
-          wrap.appendChild(el('.ws-note.ws-ambig', null, [el('span', null, 'Which is ' + x.name + '?')].concat(
-            x.stems.map(st => { const o = outs.find(q => q.stem === st); return el('button.btn-mini.ws-inline-btn', { onclick: () => this._assign(x.name, st) }, o ? this._outLabel(o) : st); }))));
-        });
+        /* Files saved straight into the folder that could be more than one
+           deliverable: one row each, the file in one column and its choices in
+           the next, so a long list stays in line. */
+        const ambig = (d.reconciled && d.reconciled.ambiguous) || [];
+        // and files no deliverable of this task takes — left where they are, said rather than hidden
+        const stray = (d.reconciled && d.reconciled.stray) || [];
+        if (ambig.length || stray.length) {
+          wrap.appendChild(el('.ws-ambig-list', null, [
+            el('.ws-ambig-head', null, ambig.length
+              ? (ambig.length === 1 ? 'Which deliverable is this file?' : 'Which deliverable is each of these files?')
+              : 'In the delivery folder, but not one of this task’s deliverables')
+          ].concat(ambig.map(x => el('.ws-ambig', null, [
+            el('span.ws-ambig-name', { title: x.name }, x.name),
+            el('span.ws-ambig-picks', null, x.stems.map(st => {
+              const o = outs.find(q => q.stem === st);
+              return el('button.btn-mini.ws-inline-btn', { onclick: () => this._assign(x.name, st) }, o ? this._outLabel(o) : st);
+            }))
+          ]))).concat(stray.map(n => el('.ws-ambig.stray', null, [
+            el('span.ws-ambig-name', { title: n }, n),
+            el('span.ws-ambig-picks', { title: 'Its type isn’t one this task delivers — move it out of the delivery folder, or deliver it to the task it belongs to' }, 'not a deliverable here')
+          ])))));
+        }
         if (!phone) {
           wrap.appendChild(el('.ws-actions', null, [
             // the primary action only while something's still needed — after that it's Publish / Send to QC
