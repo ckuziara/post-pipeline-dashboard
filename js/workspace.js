@@ -23,7 +23,7 @@ window.App = window.App || {};
 
   const EXT_ICON = {
     mov: 'clapper', mp4: 'clapper', mxf: 'clapper', prproj: 'clapper', aep: 'clapper', r3d: 'clapper', braw: 'clapper',
-    wav: 'music', mp3: 'music', aif: 'music', aiff: 'music', ptx: 'music',
+    wav: 'music', mp3: 'music', aif: 'music', aiff: 'music', ptx: 'music', ptxt: 'music',
     jpg: 'image', jpeg: 'image', png: 'image', psd: 'image', ai: 'image', tif: 'image', exr: 'image',
     pdf: 'file', doc: 'file', docx: 'file', txt: 'file', csv: 'file', xlsx: 'file', fdx: 'file'
   };
@@ -45,7 +45,7 @@ window.App = window.App || {};
     gsheets:  { label: 'Google Sheets',        kind: 'online',  icon: 'chart',
                 gallery: 'https://docs.google.com/spreadsheets/u/0/', blank: 'https://docs.google.com/spreadsheets/create' },
     logic:    { label: 'Logic Pro X',          kind: 'desktop', icon: 'piano', ext: ['logicx', 'logic'] },
-    protools: { label: 'Pro Tools',            kind: 'desktop', icon: 'sliders', ext: ['ptx', 'ptt', 'ptf'] },
+    protools: { label: 'Pro Tools',            kind: 'desktop', icon: 'sliders', ext: ['ptxt', 'ptx', 'ptt', 'ptf'] },
     audition: { label: 'Adobe Audition',       kind: 'desktop', icon: 'headphones', ext: ['sesx'] },
     resolve:  { label: 'DaVinci Resolve',      kind: 'desktop', icon: 'palette', ext: ['drp', 'drt'] },
     premiere: { label: 'Adobe Premiere Pro',   kind: 'desktop', icon: 'clapper', ext: ['prproj'] },

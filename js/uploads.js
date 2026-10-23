@@ -17,7 +17,7 @@ window.App = window.App || {};
   // extension → smart category (mirrors the studio's file taxonomy)
   const TYPES = {
     Video: ['mp4', 'mov', 'avi', 'mkv', 'prproj', 'mxf', 'r3d', 'braw', 'aep'],
-    Audio: ['mp3', 'wav', 'aac', 'flac', 'ptx', 'aif', 'aiff', 'ptf'],
+    Audio: ['mp3', 'wav', 'aac', 'flac', 'ptx', 'ptxt', 'aif', 'aiff', 'ptf'],
     Images: ['jpg', 'jpeg', 'png', 'gif', 'svg', 'psd', 'ai', 'tif', 'tiff', 'exr', 'webp'],
     Documents: ['pdf', 'doc', 'docx', 'txt', 'csv', 'xlsx', 'pptx', 'key', 'rtf']
   };
