@@ -112,7 +112,12 @@ window.App = window.App || {};
       App.toast('Only Producer, Director or Manager can approve tasks', true); return;
     }
     if (!guardReady(g, status)) return;
-    App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = status; App.refreshReadiness(e); App.syncBatch(d, e, key); }, 'the status change');
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId); e.statuses[key] = status; App.refreshReadiness(e); App.syncBatch(d, e, key);
+      // when the review was signed off — the Daily Summary keeps it on the sheet for 48 hours from here
+      const rk = epId + '::' + key;
+      if (status === 'approved' && d.reviews && d.reviews[rk]) d.reviews[rk] = Object.assign({}, d.reviews[rk], { approvedAt: new Date().toISOString() });
+    }, 'the status change');
     App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: g.su.status, to: status });
     App.toast(g.su.name + ' → ' + App.status(status).label);
   };
@@ -125,7 +130,12 @@ window.App = window.App || {};
     const g = guardEdit(epId, key); if (!g) return;
     if (!App.canApprove(App.state.role)) { App.toast('Only Producer, Director or Manager can reverse an approval', true); return; }
     if (!App.isApproved(g.su.status)) return;
-    App.mutate(d => { const e = d.episodes.find(x => x.id === epId); e.statuses[key] = 'review'; App.refreshReadiness(e); App.syncBatch(d, e, key); }, 'reversing the approval');
+    App.mutate(d => {
+      const e = d.episodes.find(x => x.id === epId); e.statuses[key] = 'review'; App.refreshReadiness(e); App.syncBatch(d, e, key);
+      // reopened: the Directors review it again from scratch
+      const rk = epId + '::' + key;
+      if (d.reviews && d.reviews[rk]) { const r = Object.assign({}, d.reviews[rk]); delete r.verdicts; delete r.approvedAt; d.reviews[rk] = r; }
+    }, 'reversing the approval');
     App.track.audit('task.status', { episode: g.ep.code, task: g.su.name, from: 'approved', to: 'review', reversed: true });
     App.toast('Approval reversed — ' + g.su.name + ' is back to ' + App.status('review').label);
   };

@@ -85,6 +85,12 @@ window.App = window.App || {};
     return su.name + ' V' + String(App.revisionsUsed(ep, su.key) + 1).padStart(2, '0');
   }
 
+  // the version a finished round was ("Animation V01"), however far the task has moved on since
+  function reviewedName(su, version) {
+    const base = su.name.replace(/\s*v\d+$/i, '');
+    return /\bv\d+$/i.test(su.name) ? su.name : base + ' V' + String(version || 1).padStart(2, '0');
+  }
+
   const isoOf = (ts) => ts ? App.isoDate(new Date(ts)) : null;
 
   // "Frame.io Link" rather than a URL — shared with Edit Task (js/reviewflow.js)
@@ -143,12 +149,26 @@ window.App = window.App || {};
     rows(m) {
       const now = Date.now();
       const out = [];
+      const recent = (ts) => !!ts && now - new Date(ts).getTime() <= RECENT_HOURS * 3600e3;
       App.reviewFlow.allSubs(m).forEach(({ ep, su }) => {
         const rev = App.review.get(ep.id, su.key);
+        /* Everything the day's reviews touched, not just what's still open:
+           a review that finished — signed off, or sent back for another pass
+           — stays on the sheet (greyed) for 48 hours, the way the team kept
+           the day's outcomes on the spreadsheet. A sent-back task shows the
+           round that was reviewed (its link, its version, who said what). */
+        let round = null, state = null;
         if (App.isApproved(su.status)) {
-          const ts = rev && (rev.at || rev.sentAt);
-          if (!ts || now - new Date(ts).getTime() > RECENT_HOURS * 3600e3) return;
-        } else if (su.status !== 'review') return;
+          if (!recent(rev && (rev.approvedAt || rev.at || rev.sentAt))) return;
+          state = 'approved';
+        } else if (su.status === 'review') {
+          state = rev && rev.state === 'under' ? 'under' : rev && rev.frameUrl ? 'sent' : 'waiting';
+        } else {
+          const rounds = (rev && rev.rounds) || [];
+          round = rounds[rounds.length - 1] || null;
+          if (!round || !recent(round.feedbackAt)) return;
+          state = 'sentback';
+        }
 
         const uploads = App.reviewUploads.list(ep.id, su.key);
         const newest = uploads.length ? uploads[uploads.length - 1] : null;
@@ -159,12 +179,12 @@ window.App = window.App || {};
           id, ep, su, rev, uploads, newest, extra, rec,
           show: App.show(ep.showId),
           stage: stageOf(su),
-          name: versionName(ep, su),
+          name: round ? reviewedName(su, round.version) : versionName(ep, su),
+          round,
+          link: (rev && rev.frameUrl) || (round && round.frameUrl) || null,
           added: (newest && newest.at) || (rev && rev.sentAt) || null,
           due: extra.feedbackDue || rec.date,
-          state: App.isApproved(su.status) ? 'approved'
-            : rev && rev.state === 'under' ? 'under'
-            : rev && rev.frameUrl ? 'sent' : 'waiting'
+          state
         });
       });
       return out;
@@ -252,6 +272,10 @@ window.App = window.App || {};
     reviewerStatus(r, pid) {
       const set = r.extra.reviewers && r.extra.reviewers[pid];
       if (set) return { value: set, derived: false };
+      // what this Director actually said on the Reviews tab (the finished round's, for a sent-back row)
+      const v = ((r.round ? r.round.verdicts : r.rev && r.rev.verdicts) || {})[pid];
+      if (v) return { value: v.verdict === 'approved' ? 'Approved' : 'Feedback Done', derived: true };
+      if (r.state === 'sentback') return { value: null, derived: true };
       if (r.state === 'approved') return { value: 'Approved', derived: true };
       if (r.state === 'under') return { value: 'Under Review', derived: true };
       if (r.state === 'sent') return { value: 'Needs Reviewing', derived: true };
@@ -261,7 +285,7 @@ window.App = window.App || {};
     /* ----------------------------------------------------------- widget */
     widget(m, t) {
       const rows = this.rows(m);
-      const due = rows.filter(r => r.state !== 'approved');
+      const due = rows.filter(r => r.state !== 'approved' && r.state !== 'sentback');
       const todayIso = App.isoDate(App.today());
       const overdue = due.filter(r => r.due < todayIso).length;
       return {
@@ -340,14 +364,17 @@ window.App = window.App || {};
       const todayIso = App.isoDate(App.today());
       const STATE = {
         waiting: ['With Post Ops', 'info'], sent: ['Sent', 'warn'],
-        under: ['Under Review', 'warn'], approved: ['Approved', 'ok']
+        under: ['Under Review', 'warn'], approved: ['Approved', 'ok'], sentback: ['Sent for another pass', 'bad']
       }[r.state];
 
       const cells = [
         el('td.dsum-code', null, el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color) } }, ep.code)),
         el('td.dsum-name', null, [
           el('button.dsum-name-btn', { title: 'Open the task', onclick: (e) => { e.stopPropagation(); App.editTask.open(ep.id, su.key); } }, r.name),
-          el('span.dsum-state.dsum-t-' + STATE[1], null, STATE[0])
+          el('.dsum-name-foot', null, [
+            el('span.dsum-state.dsum-t-' + STATE[1], null, STATE[0]),
+            this.completeCell(r, o.edit)
+          ])
         ]),
         el('td.dsum-link', null, this.linkCell(r, o.edit)),
         el('td', null, r.stage),
@@ -374,15 +401,36 @@ window.App = window.App || {};
       cells.push(el('td', null, this.choice(r, 'priority', PRIORITIES, o.edit)));
       cells.push(el('td', null, this.qcCell(r, o.edit)));
       cells.push(el('td.dsum-notes-cell', null, this.notesCell(r, o.edit)));
-      return el('tr' + (r.state === 'approved' ? '.done' : ''), null, cells);
+      return el('tr' + (r.state === 'approved' || r.state === 'sentback' ? '.done' : ''), null, cells);
+    },
+
+    /* Finishing a review by hand — a Producer or Post Operations closing it
+       without waiting for every Director (someone's away, it was signed off
+       in the room). The choice the verdicts so far point to is ticked; how
+       many Directors have reviewed is the button's label. */
+    completeCell(r, edit) {
+      if (!edit || (r.state !== 'sent' && r.state !== 'under')) return null;
+      const revs = App.review.reviewers(r.ep);
+      const v = App.review.verdicts(r.ep.id, r.su.key);
+      const done = revs.filter(id => v[id]).length;
+      const suggest = App.review.outcome(r.ep.id, r.su.key);
+      const finish = (kind) => () => { App.filterMenu.close(); App.review.complete(r.ep.id, r.su.key, kind); };
+      const label = revs.length > 1 ? done + '/' + revs.length + ' reviewed' : 'Complete';
+      const btn = App.choiceMenu('dsum:complete:' + r.id, label, [[
+        { label: 'Approve', tip: 'Sign it off now', on: done > 0 && suggest === 'approved', pick: finish('approved') },
+        { label: 'Send for another pass', tip: 'Send the feedback back to the department now', on: done > 0 && suggest === 'feedback', pick: finish('feedback') }
+      ]], 'Complete the review now' + (revs.length > 1 ? ' — ' + done + ' of ' + revs.length + ' Directors have reviewed' : ''));
+      btn.classList.add('dsum-pick', 'dsum-complete');
+      return btn;
     },
 
     linkCell(r, edit) {
-      const url = r.rev && r.rev.frameUrl;
+      const url = r.link;
       if (url) {
         const a = copyOnRightClick(el('a.dsum-url', { href: url, target: '_blank', rel: 'noopener noreferrer',
           title: 'Right-click to copy the link', onclick: e => e.stopPropagation() }, linkLabel(url)), url, 'link');
-        if (!edit) return a;
+        // a finished round's link is history — nothing to change
+        if (!edit || r.state === 'sentback' || r.state === 'approved') return a;
         // clicking the link opens it and right-click copies it, so changing it gets its own button
         const btn = el('button.dsum-link-edit', { type: 'button', title: 'Change the review link',
           onclick: (e) => { e.stopPropagation(); this.openLinkPop(btn, r); } }, App.icon('pencil'));
@@ -474,7 +522,7 @@ window.App = window.App || {};
     dueCell(r, edit, todayIso) {
       const chosen = !!r.extra.feedbackDue;
       // the sheet's colouring: overdue red, today/tomorrow amber, later plain
-      const tone = r.state === 'approved' ? 'mute'
+      const tone = r.state === 'approved' || r.state === 'sentback' ? 'mute'
         : r.due < todayIso ? 'bad' : r.due <= App.shiftIso(todayIso, 1) ? 'warn' : 'none';
       const btn = el((edit ? 'button' : 'span') + '.dsum-due-btn.dsum-t-' + tone, edit ? {
         onclick: (e) => { e.stopPropagation(); this.openDuePop(btn, r); }
