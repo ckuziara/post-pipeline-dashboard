@@ -991,6 +991,15 @@ window.App = window.App || {};
           : 'Run AQC does both: PipeDream’s checks straight away, and VidChecker’s report once it lands in the watch-out folder.')
     ]);
     c.appendChild(aqcBox);
+    // the delivery check runs the internal checks whatever the mode above — it's the department's, before QC
+    const onDel = q.aqcOnDeliver;
+    aqcBox.appendChild(el('.aqc-adm-switch', { onclick: () => { App.setQcSettings({ aqcOnDeliver: !onDel }); App.render(); } }, [
+      el('span.switch' + (onDel ? '.on' : ''), { role: 'switch', 'aria-checked': String(onDel) }, el('span.knob')),
+      el('div', null, [
+        el('.aqc-adm-label', null, 'Check deliveries when they’re submitted'),
+        el('.adm-name-sub.aqc-adm-hint', { style: { marginTop: '2px' } }, 'Runs the internal checks on every movie and WAV a department delivers, and shows them what to fix before it reaches QC.')
+      ])
+    ]));
     if (q.aqcMode !== 'internal') {
       const folderRow = (key, label, hint) => {
         const input = el('input.fld', { type: 'text', value: q[key], placeholder: '/Volumes/VidChecker/' + (key === 'vcIn' ? 'Watch In' : 'Watch Out'),

@@ -265,6 +265,110 @@ window.App = window.App || {};
   const opOk = (x) => App.qcOperatorMatch(x.ep, x.su.key) && deptOk(x.su);
   let curLoad = null;     // App.qcWorkload(), once per render — every row's picker reads it
 
+  /* One file's AQC rows — the QC tab's Run AQC and the delivery check draw the same table */
+  const AQC_WORD = { pass: 'Pass', flag: 'Flag', fail: 'Fail', info: '' };
+  function aqcFileBlock(f) {
+    return el('.aqc-file', null, [
+      el('.aqc-file-head', null, [el('span.aqc-badge.' + f.result, null, AQC_WORD[f.result]), el('span.aqc-file-name', { title: f.name }, f.name)]),
+      el('table.aqc-table', null, (f.rows || []).map(x => el('tr.' + x.result, null, [
+        el('td.aqc-res', null, x.result === 'info' ? '·' : x.result === 'pass' ? '✓' : x.result === 'flag' ? '!' : '✕'),
+        el('td', null, x.label), el('td.aqc-act', null, x.actual), el('td.aqc-exp', null, x.expected)
+      ])))
+    ]);
+  }
+
+  /* ---- The delivery check ----
+     Right after a department delivers (js/workspace.js), the internal AQC
+     runs on the movies and WAVs it just delivered, so a wrong frame rate or
+     a hot mix is fixed — by delivering a new version — before it reaches
+     QC. Admin → Workflow → QC can switch it off (qcSettings.aqcOnDeliver).
+
+     The result is kept per delivered file on the episode:
+       ep.aqcPre[taskKey][fileName] = { result, rows, at, by }
+     Each file's badge in Deliver reads it, and the QC tab flags a task
+     whose newest version of any file failed. It never blocks a delivery
+     or a send: it says what's wrong, early. */
+  const MEDIA = /\.(mov|mp4|m4v|wav)$/i;
+  const KEEP = 40;                          // per task, newest first — old versions drop off
+  const verOf = (n) => { const m = String(n).match(/[_\- ]v(\d+)(\.[^.]+)?$/i); return m ? +m[1] : 0; };
+  const baseOf = (n) => String(n).replace(/\.[^.]+$/, '').replace(/[_\- ]v\d+$/i, '').toLowerCase() + String(n).replace(/^.*(\.[^.]+)$/, '$1').toLowerCase();
+  App.deliveryCheck = {
+    enabled: () => App.qcSettings().aqcOnDeliver,
+    get(ep, key, name) { return (ep && ep.aqcPre && ep.aqcPre[key] && ep.aqcPre[key][name]) || null; },
+    // the newest version of each delivered file, and how its check went
+    latest(ep, key) {
+      const all = (ep && ep.aqcPre && ep.aqcPre[key]) || {};
+      const best = {};
+      Object.keys(all).forEach(n => { const b = baseOf(n); if (!best[b] || verOf(n) > verOf(best[b])) best[b] = n; });
+      return Object.values(best).map(n => Object.assign({ name: n }, all[n]));
+    },
+    problems(ep, key) { return this.latest(ep, key).filter(x => x.result === 'fail' || x.result === 'flag'); },
+
+    async run(ep, su, names) {
+      if (!this.enabled()) return;
+      const media = [...new Set((names || []).filter(n => n && MEDIA.test(n)))];
+      if (!media.length) return;
+      let r;
+      try {
+        r = await App.api.aqc({ epId: ep.id, taskKey: su.key, taskName: su.name, pipeline: App.pipelineFor(ep),
+          precheck: true, files: media, suffixes: App.namingSuffixes() });
+      } catch (e) { App.toast('Couldn’t check the delivery: ' + e.message, true); return; }
+      if (!r || r.empty || !r.result) return;
+      const res = r.result, at = new Date().toISOString(), by = me().byName;
+      App.mutate(d => {
+        const e = d.episodes.find(x => x.id === ep.id); if (!e) return;
+        e.aqcPre = e.aqcPre || {};
+        const mine = Object.assign({}, e.aqcPre[su.key]);
+        res.files.forEach(f => { mine[f.name] = { result: f.result, rows: f.rows, at, by }; });
+        const keep = Object.keys(mine).sort((a, b) => String(mine[b].at).localeCompare(String(mine[a].at))).slice(0, KEEP);
+        e.aqcPre[su.key] = Object.fromEntries(keep.map(k => [k, mine[k]]));
+      }, 'the delivery check');
+      App.track.audit('task.aqcDelivery', { episode: ep.code, task: su.name, result: res.result, files: res.files.length });
+      if (res.result === 'pass') {
+        App.toast('✓ AQC passed — ' + (res.files.length === 1 ? 'it meets' : 'all ' + res.files.length + ' files meet') + ' the Moonbase spec');
+        return;
+      }
+      // delivered from Edit Task: closing the check goes back there
+      this.open(ep, su, res.files, { back: () => App.editTask.open(ep.id, su.key) });
+    },
+
+    /* The check's results: just after delivering (files: that run), or
+       from a file's badge (files: that one). Problems first. opts.back():
+       where closing returns to — Edit Task, when it was opened from there. */
+    open(ep, su, files, opts) {
+      const order = { fail: 0, flag: 1, pass: 2 };
+      const list = files.slice().sort((a, b) => order[a.result] - order[b.result]);
+      const bad = list.filter(f => f.result === 'fail').length, warn = list.filter(f => f.result === 'flag').length;
+      const head = bad ? (bad === 1 ? '1 file doesn’t' : bad + ' files don’t') + ' meet the Moonbase spec'
+        : warn ? (warn === 1 ? '1 file' : warn + ' files') + ' worth a look' : 'Meets the Moonbase spec';
+      App.modal.open(el('.modal-card.aqc-card', { onclick: e => e.stopPropagation() }, [
+        el('.modal-head', null, [
+          el('.modal-head-main', null, [App.icon('bolt', { cls: 'modal-ic' }), el('div', null, [
+            el('.modal-title', null, 'Delivery check — ' + head),
+            el('.modal-subtitle', null, su.name + ' · ' + ep.code + (ep.title ? ' ' + ep.title : ''))
+          ])]),
+          el('button.modal-x', { onclick: () => App.modal.close(), title: 'Close' }, '✕')
+        ]),
+        el('.modal-body.aqc-body', null, [
+          bad || warn ? el('.aqc-pre-note' + (bad ? '.fail' : '.flag'), null, bad
+            ? 'Fix these and deliver a new version before this goes to QC — the new version replaces this one.'
+            : 'Nothing fails the spec, but QC will look at the flagged rows — worth checking now.') : null
+        ].concat(list.map(f => aqcFileBlock(f)))),
+        el('.modal-foot', null, [el('button.btn-primary', { onclick: () => App.modal.close() }, bad ? 'I’ll fix it' : 'Done')])
+      ]), { onClose: opts && opts.back });
+    },
+
+    // a delivered file's badge — Deliver's rows (in Edit Task); clicking it opens that file's check
+    badge(ep, su, name) {
+      const c = this.get(ep, su.key, name);
+      if (!c) return null;
+      return el('span.aqc-pre-chip.' + c.result, {
+        title: 'AQC ' + AQC_WORD[c.result].toLowerCase() + ' — click for the details',
+        onclick: (e) => { e.stopPropagation(); e.preventDefault(); this.open(ep, su, [Object.assign({ name }, c)], { back: () => App.editTask.open(ep.id, su.key) }); }
+      }, [App.icon('bolt'), ' ' + AQC_WORD[c.result]]);
+    }
+  };
+
   App.qcQueue = {
     collect, plan, doneByDay,
     pendingCount(episodes) { return collect(episodes, false).length; },
@@ -549,13 +653,7 @@ window.App = window.App || {};
       const body = [];
       if (res) {
         if (r.mode === 'both') body.push(el('.modal-section-title', { style: { marginTop: '0' } }, [App.icon('bolt'), ' Internal AQC']));
-        res.files.forEach(f => body.push(el('.aqc-file', null, [
-          el('.aqc-file-head', null, [el('span.aqc-badge.' + f.result, null, word[f.result]), el('span.aqc-file-name', { title: f.name }, f.name)]),
-          el('table.aqc-table', null, f.rows.map(x => el('tr.' + x.result, null, [
-            el('td.aqc-res', null, x.result === 'info' ? '·' : x.result === 'pass' ? '✓' : x.result === 'flag' ? '!' : '✕'),
-            el('td', null, x.label), el('td.aqc-act', null, x.actual), el('td.aqc-exp', null, x.expected)
-          ])))
-        ])));
+        res.files.forEach(f => body.push(aqcFileBlock(f)));
       }
       if (r.vidchecker) {
         const vcBox = el('.aqc-vc');
@@ -984,6 +1082,12 @@ window.App = window.App || {};
         : x.atRisk && !late ? el('span.qcq-flag.risk', { title: 'QC is already full every day before this is due' }, 'At risk')
         : x.date && x.date > todayIso ? el('span.qcq-flag', { title: 'Planned for ' + App.fmtDate(x.date) + (x.pinned ? ' (pinned)' : '') }, App.fmtDate(x.date)) : null;
       const madeV = check.projects && check.projects['V' + App.qcVersion(ep, su.key)];
+      // the department's delivery check found problems in the newest version of a file (App.deliveryCheck)
+      const pre = App.deliveryCheck.problems(ep, su.key), preFails = pre.filter(p => p.result === 'fail').length;
+      const preChip = pre.length ? el('span.aqc-pre-chip.' + (preFails ? 'fail' : 'flag'), {
+        title: 'Delivery check: ' + (preFails ? preFails + ' file' + (preFails === 1 ? '' : 's') + ' failed the Moonbase spec' : pre.length + ' flagged') + ' — click for the details',
+        onclick: (e) => { e.stopPropagation(); App.deliveryCheck.open(ep, su, pre); }
+      }, [App.icon('bolt'), preFails ? ' AQC fail' : ' AQC flag']) : null;
 
       const acts = [el('button.rvq-icon', { title: 'Open the discussion on this task', 'aria-label': 'Open discussion',
         onclick: () => App.openTaskChat(ep.id, su.key) }, App.icon('chat'))];
@@ -1009,7 +1113,7 @@ window.App = window.App || {};
       const row = el('.subrow.qcq-row' + (waiting ? '' : pending ? '.pending' : '.done'), null, [
         el('.cell.c-num', null, rank != null ? String(rank) : ''),
         el('.cell.c-name.qcq-task', null,
-          [el('span', null, su.name), el('span.rvq-ver', null, 'QC V' + App.qcVersion(ep, su.key)), flag]),
+          [el('span', null, su.name), el('span.rvq-ver', null, 'QC V' + App.qcVersion(ep, su.key)), flag, preChip]),
         el('.cell', null, el('span.ep-code', { style: { background: show.color, color: App.pickInk(show.color) }, title: show.name + ' · ' + (ep.title || '') }, ep.code)),
         el('.cell.c-dept', null, el('span.dept-chip', null, [el('span.dot', { style: { background: dep.color } }), dep.label])),
         el('.cell.c-assignee', null, ownerControl(ep, su)),

@@ -909,6 +909,7 @@ window.App = window.App || {};
             el('span.ws-out-tick', null, o.done || o.linked ? '✓' : ''),
             el('span.ws-name', null, label),
             el('span.ws-out-type', null, o.soft ? 'folder' : (o.type || '')),
+            o.done && !o.soft && App.deliveryCheck ? App.deliveryCheck.badge(ep, su, o.latest) : null,
             o.done ? el('span.ws-chip.ok', null, o.soft ? vTag + ' · ' + o.files + ' item' + (o.files === 1 ? '' : 's') : vTag)
               : o.linked ? el('span.ws-chip.ok', null, 'link') : el('span.ws-chip.pending', null, 'needed')
           ]));
@@ -987,6 +988,7 @@ window.App = window.App || {};
       }, [
         App.icon(iconFor(f.name, f.dir), { cls: 'ws-ic' }),
         el('span.ws-name', null, f.name),
+        which === 'mezzanine' && !f.dir && App.deliveryCheck ? App.deliveryCheck.badge(ep, su, f.name) : null,
         el('span.ws-meta', null, f.dir ? 'folder' : fmtSize(f.size)),
         el('span.ws-go', null, '↗')
       ]);
@@ -1037,6 +1039,15 @@ window.App = window.App || {};
           sendBtn.disabled = true;
           sendBtn.title = 'Still to export: ' + missing.map(o => o.suffix + (o.type ? ' ' + o.type : '')).join(', ');
         }
+        /* The delivery check found problems in the newest version of a file:
+           said beside the send, so it's fixed now rather than by QC. */
+        const preBad = App.deliveryCheck ? App.deliveryCheck.problems(ep, su.key) : [];
+        const preFail = preBad.filter(x => x.result === 'fail');
+        const preNote = preBad.length ? el('.ws-note.tight.aqc-pre-warn' + (preFail.length ? '.fail' : '.flag'), {
+          onclick: () => App.deliveryCheck.open(ep, su, preBad, { back: () => App.editTask.open(ep.id, su.key) })
+        }, [App.icon('bolt'), ' ', preFail.length
+          ? 'AQC: ' + preFail.map(x => x.name).join(', ') + (preFail.length === 1 ? ' doesn’t' : ' don’t') + ' meet the Moonbase spec — deliver a fixed version' + (needsQc ? ' before it goes to QC.' : '.')
+          : 'AQC flagged ' + preBad.length + ' file' + (preBad.length === 1 ? '' : 's') + ' — worth a look' + (needsQc ? ' before QC does.' : '.'), ' ', el('u', null, 'Details')]) : null;
         const chip = qcFix ? el('span.ws-chip.pending', null, 'QC sent it back — fix it here')
           : su.status === 'in_qc' ? el('span.ws-chip.pending', null, 'with QC')
           : App.isApproved(su.status) ? el('span.ws-chip.ok', null, needsQc && App.qcState(ep, su.key) !== 'passed' ? 'approved — not sent to QC' : 'approved')
@@ -1045,6 +1056,7 @@ window.App = window.App || {};
           el('.ws-sub', null, [checklist ? 'Status · ' : 'Delivered · ', chip]),
           list.children.length ? list : null,
           sendBtn ? el('.ws-actions', null, sendBtn) : null,
+          preNote,
           sendBtn && missing.length && !checklist ? el('.ws-note.tight', null, '⚠ ' + sendBtn.title) : null,
           qcFix ? el('.ws-note.tight', null, fresh
             ? fresh + ' new since QC’s report — Resubmit sends the fix back to QC.'
@@ -1103,11 +1115,12 @@ window.App = window.App || {};
       }
 
       let done = 0;
+      const filed = [];
       for (const f of files) {
         line.textContent = 'Delivering ' + f.name + ' (' + (done + 1) + ' of ' + files.length + ')…';
         try {
           const r = await App.api.deliverUpload(token, f, stem);
-          done++;
+          done++; filed.push(r.filed);
           if (r.filed !== f.name) App.toast('Filed as ' + r.filed);
         } catch (e) {
           App.track.error('lucidlink.uploadFailed', { flow: 'LucidLink delivery', file: f.name, message: e.message });
@@ -1121,6 +1134,15 @@ window.App = window.App || {};
       line.textContent = '✓ Delivered ' + done + ' file' + (done === 1 ? '' : 's');
       line.classList.add('ok');
       this.reload();
+      this._checkDelivery(m.epId, m.taskKey, filed);
+    },
+
+    // the delivery check (App.deliveryCheck, js/qc.js): internal AQC on what was just delivered
+    _checkDelivery(epId, taskKey, filed) {
+      if (!App.deliveryCheck || !filed.length) return;
+      const ep = App.state.data.episodes.find(e => e.id === epId);
+      const su = ep && App.subitems(ep).find(s => s.key === taskKey);
+      if (su) App.deliveryCheck.run(ep, su, filed);
     },
 
     // stem/label: deliver the pick as THAT deliverable (a row was clicked)
@@ -1182,12 +1204,12 @@ window.App = window.App || {};
         : 'Delivering ' + items.length + ' items…');
 
       App.track.flowStart('LucidLink delivery', { files: items.length, source: 'volume' });
-      const failed = [];
+      const failed = [], filed = [];
       let done = 0, lastFiled = '', lastFrom = '';
       for (const { src, stem: one, soft } of items) {
         try {
           const r = await App.api.deliverPrepare({ epId, taskKey, pipeline: App.pipelineFor(ep), src, stem: one || undefined, soft: soft || undefined });
-          done++; lastFiled = r.filed; lastFrom = r.from;
+          done++; lastFiled = r.filed; lastFrom = r.from; if (!soft) filed.push(r.filed);
         } catch (e) {
           App.track.error('lucidlink.deliverFailed', { flow: 'LucidLink delivery', file: label(src), message: e.message });
           failed.push(label(src) + ': ' + e.message);
@@ -1205,6 +1227,7 @@ window.App = window.App || {};
         App.toast(failed[0] || 'Nothing was delivered', true);
       }
       this.reload();
+      this._checkDelivery(epId, taskKey, filed);
     },
 
     /* Picked several files: PipeDream works out which deliverable each one is
